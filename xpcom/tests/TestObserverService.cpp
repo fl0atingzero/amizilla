@@ -60,7 +60,7 @@ static void testResult( nsresult rv ) {
 void printString(nsString &str) {
     const char *cstr = ToNewCString(str);
     printf("%s", cstr);
-    delete [] (char*)cstr;
+    delete (char*)cstr;
 }
 
 class TestObserver : public nsIObserver, public nsSupportsWeakReference {
