@@ -43,6 +43,8 @@
 #include <windows.h>
 #elif defined(XP_OS2_VACPP)
 #include <sys/timeb.h>
+#elif defined(OMIT_LIB_BUILD_TIME)
+/** we output nothing so we don't need any includes */
 #else
 #error "Architecture not supported"
 #endif
