@@ -84,7 +84,10 @@ SHARED_LIBRARY_LIBS = \
 		$(NULL)
 
 # due to symbol conflicts on win32, this needs to be shared
+# due to no shared libs on amigas, we build it static
+ifneq ($(OS_ARCH),XP_AMIGAOS)
 FORCE_SHARED_LIB = 1
+endif
 
 include $(topsrcdir)/config/rules.mk
 
