@@ -436,6 +436,8 @@ static void _MD_Exit(void) {
         _PR_CleanupSocket();
         _PR_CleanupRandom();
         killThreads(PR_TRUE);
+        /* Clean up primorial thread */
+        procExit(primordialThread);
         _PR_CleanupMW();
         _PR_CleanupDtoa();
         _PR_CleanupCallOnce();
@@ -447,8 +449,6 @@ static void _MD_Exit(void) {
         _PR_CleanupIO();
         _PR_CleanupLayerCache();
         _PR_CleanupEnv();
-        /* Clean up primorial thread */
-        procExit(primordialThread);
         _PR_Release_Memory();
         _pr_initialized = PR_FALSE;
     }
