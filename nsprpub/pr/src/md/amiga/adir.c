@@ -49,7 +49,11 @@ PRStatus _OpenDir(struct _MDDir *md,const char *name) {
 				md->info->fib_DirEntryType >=0 ) {
 				return PR_SUCCESS;
 			}
+		} else {
+			PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
 		}
+	} else {
+		PR_SetError(PR_FILE_NOT_FOUND_ERROR, 0);
 	}
 
 	if(md->info != NULL)
@@ -72,6 +76,13 @@ char* _ReadDir(struct _MDDir *md, PRIntn flags) {
 			} 
 		}
 		return md->info->fib_FileName;
+	} else {
+		int err = IoErr();
+		if (err == ERROR_NO_MORE_ENTRIES) {
+			PR_SetError(PR_NO_MORE_FILES_ERROR, 0);
+		} else {
+			_MD_MapIOErr(err);
+		}
 	}
 
 	return NULL;
@@ -95,6 +106,12 @@ PRStatus _CloseDir(struct _MDDir *md) {
  */
 PRStatus _MakeDir(const char *name,PRIntn mode) {
 	BPTR lock;
+
+	if ((lock = Lock(name, SHARED_LOCK)) != NULL) {
+		UnLock(lock);
+		PR_SetError(PR_FILE_EXISTS_ERROR, 0);
+		return PR_FAILURE;
+	}
 
 	if((lock = CreateDir(name)) != (BPTR)NULL) {
 		UnLock(lock);
