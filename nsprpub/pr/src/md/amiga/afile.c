@@ -42,18 +42,105 @@
  */
 #include <devices/timer.h>
 #include <sys/ioctl.h>
+#include <sys/syslimits.h>
 #include <errno.h>
 
 #include "primpl.h"
 
 PRInt32 _PR_MD_PIPEAVAILABLE(PRFileDesc *fd) {
     PRInt32 result;
-
+    /* TODO: This isn't right */
     if (ioctl(fd->secret->md.osfd, FIONREAD, &result) < 0) {
         _PR_MD_MAP_SOCKETAVAILABLE_ERROR(errno);
         return -1;
     }
     return result;
+}
+
+/**
+ * Map DOS's IoErr() into an NSPR error
+ */
+static void mapIOErr(LONG err) {
+    PRInt32 nsprErr;
+
+    switch (err) {
+    case ERROR_NO_FREE_STORE:        
+    case ERROR_TASK_TABLE_FULL:
+        nsprErr = PR_OUT_OF_MEMORY_ERROR;
+        break;
+
+    case ERROR_BAD_TEMPLATE:
+    case ERROR_BAD_NUMBER:
+    case ERROR_REQUIRED_ARG_MISSING:
+    case ERROR_KEY_NEEDS_ARG:
+    case ERROR_TOO_MANY_ARGS:
+    case ERROR_UNMATCHED_QUOTES:
+        nsprErr = PR_INVALID_ARGUMENT_ERROR;
+        break;
+
+    case ERROR_LINE_TOO_LONG:
+        nsprErr = PR_NAME_TOO_LONG_ERROR;
+        break;
+
+    case ERROR_FILE_NOT_OBJECT:
+        nsprErr = PR_FILE_NOT_FOUND_ERROR;
+        break;
+
+    case ERROR_INVALID_RESIDENT_LIBRARY:
+        nsprErr = PR_LOAD_LIBRARY_ERROR;
+        break;
+
+    case ERROR_NO_DEFAULT_DIR:
+    case ERROR_OBJECT_IN_USE:
+    case ERROR_OBJECT_EXISTS:
+    case ERROR_DIR_NOT_FOUND:
+    case ERROR_OBJECT_NOT_FOUND:
+        nsprErr = PR_FILE_NOT_FOUND_ERROR;
+        break;
+
+    case ERROR_BAD_STREAM_NAME:
+    case ERROR_OBJECT_TOO_LARGE:
+    case ERROR_ACTION_NOT_KNOWN:
+    case ERROR_INVALID_COMPONENT_NAME:
+    case ERROR_INVALID_LOCK:
+    case ERROR_OBJECT_WRONG_TYPE:
+    case ERROR_COMMENT_TOO_BIG:
+        nsprErr = PR_NAME_TOO_LONG_ERROR;
+        break;
+
+    case ERROR_DISK_FULL:
+    case ERROR_DELETE_PROTECTED:
+    case ERROR_WRITE_PROTECTED:
+    case ERROR_READ_PROTECTED:
+    case ERROR_NOT_A_DOS_DISK:
+    case ERROR_NO_DISK:
+        nsprErr = PR_ILLEGAL_ACCESS_ERROR;
+        break;
+
+    case ERROR_NOT_IMPLEMENTED:
+        nsprErr = PR_NOT_IMPLEMENTED_ERROR;
+        break;
+
+    case ERROR_NO_MORE_ENTRIES:
+    case ERROR_IS_SOFT_LINK:
+    case ERROR_OBJECT_LINKED:
+    case ERROR_BAD_HUNK:
+    case ERROR_RECORD_NOT_LOCKED:
+    case ERROR_LOCK_COLLISION:
+    case ERROR_LOCK_TIMEOUT:
+    case ERROR_DISK_NOT_VALIDATED:
+    case ERROR_DISK_WRITE_PROTECTED:
+    case ERROR_RENAME_ACROSS_DEVICES:
+    case ERROR_DIRECTORY_NOT_EMPTY:
+    case ERROR_TOO_MANY_LEVELS:
+    case ERROR_DEVICE_NOT_MOUNTED:
+    case ERROR_SEEK_ERROR:
+        nsprErr = PR_IO_ERROR;
+        break;
+    default:
+        nsprErr = PR_UNKNOWN_ERROR;
+    }
+    PR_SetError(nsprErr, err);
 }
 
 /* File I/O related */
@@ -95,55 +182,70 @@ PRInt32 _PR_MD_PIPEAVAILABLE(PRFileDesc *fd) {
  * 00001            Execute by others. 
  */
 PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
-	// owner mode is ignored
-	BPTR lock,file = -1;
+	/* owner mode is ignored */
+	BPTR lock = (BPTR)NULL, file = (BPTR)NULL;
+    LONG lockflags = (osflags & PR_WRONLY | osflags & PR_RDWR) ? 
+        EXCLUSIVE_LOCK : SHARED_LOCK;
+    LONG openflags = (osflags & PR_WRONLY | osflags & PR_RDWR) ? 
+        MODE_READWRITE : MODE_NEWFILE;
 
-	// dependent if write access is wanted get exclusive lock
-	if( NULL != ( lock = ( osflags & PR_WRONLY | osflags & PR_RDWR ) ? Lock( name,EXCLUSIVE_LOCK ) : Lock( name,SHARED_LOCK ) ) ) {
-		// open file
-		if( NULL != ( file = OpenFromLock( lock ) ) ) {
-			// lock is now unusable, don't unlock or so, thus lock is set to zero
-			lock = NULL;
+    if (strlen(name) > PATH_MAX) {
+        PR_SetError(PR_NAME_TOO_LONG_ERROR, 0);
+        return -1;
+    }
 
-			if( osflags & PR_TRUNCATE )
-				if( -1 == SetFileSize( file,0,OFFSET_BEGINNING ) ) {
-					// TODO: set error?
-					file = -1;
+	/* dependent if write access is wanted get exclusive lock */
+    lock = Lock(name, lockflags);
+    
+    if (lock != (BPTR)NULL) {
+        if (osflags & PR_EXCL) {
+            PR_SetError(PR_FILE_EXISTS_ERROR, 0);
+            goto error;
+        } 
+
+        file = OpenFromLock(lock);
+        if (file != (BPTR)NULL) {
+			/* lock is now unusable, don't unlock or so, 
+             * thus lock is set to zero
+             */
+			lock = (BPTR)NULL;
+
+			if(osflags & PR_TRUNCATE) {
+				if(SetFileSize(file, 0, OFFSET_BEGINNING) == -1) {
+                    mapIOErr(IoErr());
+                    goto error;
 				}
+            }
 
-			if( osflags & PR_APPEND )
-				Seek( file,OFFSET_END,0 );
+            if(osflags & PR_APPEND)
+                Seek(file, OFFSET_END, 0);
+		} else {
+            mapIOErr(IoErr());
+            goto error;
 		}
-		else {
-			UnLock( lock );
-			// TODO: set error?
-			file = -1;
-		}
-	}
-	else {
-		// file does not exists, check if it should be created
-		if( osflags & PR_CREATE_FILE ) {
-			if( NULL != ( file = ( osflags & PR_RDONLY | osflags & PR_RDWR ) ? Open( name,MODE_READWRITE ) : Open( name,MODE_NEWFILE ) ) ) {
+	} else {
+		/* file does not exists, check if it should be created */
+        if(!(osflags & PR_CREATE_FILE)) {
+            mapIOErr(IoErr());
+            goto error;
+        }
 
-				// if PR_EXCL is set free resource after craetion and return NULL
-				if( osflags & PR_EXCL ) {
-					// we may should check for returned error code?
-					Close( file );
-					file = -1;
-				}
-			}
-			else { 
-				// TODO: set error?
-				file = -1;
-			}
-		}
-		else { 
-			// TODO: set error?
-			file = -1;
-		}
-	}
-
+        file = Open(name, openflags);
+        if(file == (BPTR)NULL) {
+            mapIOErr(IoErr());
+            goto error;
+        }
+    }
+    
 	return file;
+
+error:
+    if (lock != (BPTR)NULL)
+        UnLock(lock);
+
+    if (file != (BPTR)NULL)
+        Close(file);
+    return -1;
 }
 
 /*
@@ -154,9 +256,15 @@ PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
  * name             The pathname of the file to be deleted.
 */
 PRStatus _Delete(const char *name) {
-	if( DOSFALSE == DeleteFile( name ) )
+    if (strlen(name) > PATH_MAX) {
+        PR_SetError(PR_NAME_TOO_LONG_ERROR, 0);
+        return PR_FAILURE;
+    }
+
+	if( DOSFALSE == DeleteFile( name ) ) {
+        mapIOErr(IoErr());
 		return PR_FAILURE;
-	else
+    } else
 		return PR_SUCCESS;
 }
 
@@ -180,7 +288,12 @@ PRStatus _GetFileInfo(const char *fn,PRFileInfo *finfo) {
         return PR_FAILURE;
     }
 
-	if((lock = Lock(fn, SHARED_LOCK)) != NULL) {
+    if (strlen(fn) > PATH_MAX) {
+        PR_SetError(PR_NAME_TOO_LONG_ERROR, 0);
+        return PR_FAILURE;
+    }
+
+	if((lock = Lock(fn, SHARED_LOCK)) != (BPTR)NULL) {
 		if(Examine(lock, info) != DOSFALSE) {
 			finfo->type = (info->fib_DirEntryType < 0) 
                 ? PR_FILE_FILE : PR_FILE_DIRECTORY;
@@ -191,12 +304,13 @@ PRStatus _GetFileInfo(const char *fn,PRFileInfo *finfo) {
             finfo->modifyTime = finfo->creationTime;                
 		}
 	} else {
+        mapIOErr(IoErr());
 		status = PR_FAILURE;
 	}
 
-	if( lock != NULL )
-		UnLock( lock );
-	if( info != NULL )
+	if(lock != (BPTR)NULL)
+		UnLock(lock);
+	if(info != (BPTR)NULL)
        PR_Free(info);
 
 	return status;
@@ -226,9 +340,16 @@ PRStatus _GetFileInfo64(const char *fn,PRFileInfo64 *info) {
  * Renames a file.
  */
 PRStatus _Rename(const char *from, const char *to) {
+    if (strlen(from) > PATH_MAX || strlen(to) > PATH_MAX) {
+        PR_SetError(PR_NAME_TOO_LONG_ERROR, 0);
+        return PR_FAILURE;
+    }
+
+
 	if( DOSFALSE != Rename( from,to ) )
 		return PR_SUCCESS;
 
+    mapIOErr(IoErr());
 	return PR_FAILURE;
 }
 
@@ -236,17 +357,23 @@ PRStatus _Rename(const char *from, const char *to) {
  * Determines the accessibility of a file.
  */
 PRStatus _Access(const char *name, PRAccessHow how) {
-	struct FileInfoBlock *info = PR_NEWZAP(struct FileInfoBlock);
+	struct FileInfoBlock *info;
 	BPTR lock;   
 	PRStatus status = PR_FAILURE;
 
+    if (strlen(name) > PATH_MAX) {
+        PR_SetError(PR_NAME_TOO_LONG_ERROR, 0);
+        return PR_FAILURE;
+    }
+
+    info = PR_NEWZAP(struct FileInfoBlock);
     if (info == NULL) {
         PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
         goto end;
     }
 
 	lock = Lock(name, SHARED_LOCK);
-    if (lock == NULL) {
+    if (lock == (BPTR)NULL) {
         PR_SetError(PR_FILE_NOT_FOUND_ERROR, 0);
         goto end;
     }
@@ -269,13 +396,15 @@ PRStatus _Access(const char *name, PRAccessHow how) {
             }
             break;
         }       
+    } else {
+        mapIOErr(IoErr());
     }
 end:
-    if (lock != NULL) {
+    if (lock != (BPTR)NULL) {
         UnLock(lock);
     }
 
-    if (info != NULL) {
+    if (info != (BPTR)NULL) {
         PR_Free(info);
     }
     return status;
@@ -285,9 +414,9 @@ end:
  * Closes a file descriptor.
  */
 PRStatus _Close(PRInt32 osfd) {
-	// TODO: check for error from Close
-	if( osfd != NULL )
-		Close( (BPTR)osfd );
+	/* TODO: check for error from Close */
+	if(osfd != (PRInt32)NULL)
+		Close((BPTR)osfd);
 
 	return PR_SUCCESS;
 }
@@ -307,7 +436,7 @@ PRInt32 _Read(PRFileDesc *fd, void *buf, PRInt32 amount) {
 	}
 
     if( -1 == ( rv = Read( osfd, buf, amount ) ) ) {
-	    // TODO: set error?
+        mapIOErr(IoErr());
     }
 
     return rv;
@@ -321,7 +450,7 @@ PRInt32 _Write(PRFileDesc *fd, const void *buf, PRInt32 amount) {
     BPTR osfd = fd->secret->md.osfd;
 
     if( amount != ( rv = Write( osfd, buf, amount ) ) ) {
-      fprintf(stderr, "Didn't write amount(%d) bytes, wrote %d\n", amount, rv);
+        mapIOErr(IoErr());
     }
 
     return rv;
@@ -360,6 +489,8 @@ PRInt32 _Seek (PRFileDesc *fd, PRInt32 offset, PRSeekWhence whence) {
 
     if (retval != -1) {
         retval = Seek (osfd, 0, OFFSET_CURRENT);
+    } else {
+        mapIOErr(IoErr());
     }
 
     return retval;
@@ -386,7 +517,7 @@ PRInt64 _Seek64 (PRFileDesc *fd, PRInt64 offset, PRSeekWhence whence) {
  * Synchronizes any buffered data for a file descriptor to its backing device (disk).
  */
 PRStatus _Sync(PRFileDesc *fd) {
-    /* No op */
+    return PR_SUCCESS;
 }
 
 PRInt32 _MD_WRITEV(
@@ -412,8 +543,7 @@ extern PRStatus _MD_UNLOCKFILE(PRInt32 osfd) {
 }
 
 PRInt32 _MD_STAT(const char *name, struct stat *buf) {
-#warning _MD_STAT not implemented
-    assert(0);
+    return stat(name, buf);
 }
 
 /*
