@@ -36,6 +36,7 @@
 #define nspr_amigaos_file_h___
 
 #include <dos/dos.h>
+#include <dos/dosextens.h>
 
 /*
  * Here we define all machine dependent (MD) translation for
@@ -71,7 +72,6 @@ typedef struct {
     int domain;
     int protocol;
     int private_idx;
-    int released;
 } _MDSocket;
 
 struct _MDFileDesc {
