@@ -37,8 +37,37 @@
 
 static PRStatus _InitThread(PRThread *pr);
 
-void _Exit(PRIntn status) {
-    /* TODO - how to signal all the threads to stop!! */
+static void killThread (PRThread *thread, PRBool kill) {
+    printf("Killing thread %lx with kill %d\n", thread, kill);
+    if (kill) {
+	Forbid();
+        thread->state = _PR_DEAD_STATE;
+	Signal((struct Task *)thread->p, 1 << thread->port->mp_SigBit);
+	Permit();
+    } 
+    PR_JoinThread(thread);
+    printf("All done killing %x\n", thread);
+        
+}
+
+static void killThreads(PRBool kill) {
+    PRThread *tmp;
+    PRThread *me = PR_CurrentThread();
+
+    printf("In processexit, next is %lx, prev is %lx\n", me->next, me->prev);
+    for (tmp = me->prev; tmp; tmp = tmp->prev) {
+        killThread(tmp, kill);
+    }
+
+    for (tmp = me->next; tmp; tmp = tmp->next) {
+        killThread(tmp, kill);
+    }
+}
+        
+void PR_ProcessExit(PRIntn status) {
+    /* Let the atexit() call PR_Cleanup() */
+    killThreads(PR_TRUE);
+    exit(status);
 }
 
 static PRThread *primordialThread = NULL;
@@ -121,12 +150,7 @@ static void procExit(void) {
     Forbid();
     RemPort(me->port);
     join = me->join;
-    if (me->prev) {
-        me->prev->next = me->next;
-    }
-    if (me->next) {
-        me->next->prev = me->prev;
-    }
+
     me->state = _PR_DEAD_STATE;
     Permit();
 
@@ -142,7 +166,6 @@ static void procExit(void) {
 
     if (join != NULL) {
         printf("%lx done, signalling parent\n", me);
-        fflush(stdout);
         PR_ASSERT(join->state == _PR_JOIN_WAIT);
         _PR_MD_Signal(join);
     }    
@@ -167,8 +190,9 @@ static void procEntry(void) {
     /* We are done initialization, signal the parent */
     PR_ASSERT(pr->parent->state == _PR_SUSPENDED);
     _PR_MD_Signal(pr->parent);
-    pr->startFunc(pr->arg);
-    //  CloseLibrary(ixemulbase);
+    if (setjmp(pr->jmpbuf) == 0) {
+        pr->startFunc(pr->arg);
+    }
     procExit();
 }
 
@@ -235,6 +259,14 @@ PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
         thread->p->pr_Task.tc_TrapData = me->p->pr_Task.tc_TrapData;
         thread->parent = me;
 
+        /* Add this thread to our list of threads */
+        thread->next = me->next;
+        if (me->next) {
+            me->next->prev = thread;
+        }        
+        me->next = thread;
+        thread->prev = me;
+
         /* Put this before signal just in case */
         me->state = _PR_SUSPENDED;        
         /* Hack because the new thread is waiting for us to do this */
@@ -245,13 +277,6 @@ PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
         _PR_MD_Wait(me, PR_FALSE);
         me->state = _PR_RUNNING;
 
-        /* Add this thread to our list of threads */
-        thread->next = me->next;
-        if (me->next) {
-            me->next->prev = thread;
-        }        
-        me->next = thread;
-        thread->prev = me;
         Permit();
     } else {
         PR_Free(thread);
@@ -355,6 +380,8 @@ PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
 {
     PRThread *me = PR_CurrentThread();
     PR_ASSERT(me == primordialThread);
+    killThreads(PR_FALSE);
+    printf("In PR_Cleanup\n");
     if (_pr_initialized) {
         _PR_CleanupSocket();
         _PR_CleanupMW();
@@ -377,16 +404,15 @@ PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
 }  /* PR_Cleanup */
 
 void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
-    ULONG oldSigs;
     ULONG mySig = 1 << thread->port->mp_SigBit;
     PRBool blocked;
 
-    oldSigs = SetSignal(0L, 0L);
-#if 0
-    if (oldSigs & mySig) {
-        printf("HELP!!! %lx already got signal!!\n", thread);
+    /* See if someone is trying to kill me by setting my state to dead */
+    if (thread->state == _PR_DEAD_STATE) {
+	printf("Thread %x was forceably killed[1]\n");
+        longjmp(thread->jmpbuf, 1);
     }
-#endif
+
     SetSignal(0, mySig);
     if (interruptable == PR_TRUE) {
         ULONG interruptSig =  1 << thread->interruptSignal;
@@ -401,6 +427,12 @@ void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
         Wait(mySig);
     }
     SetSignal(0, mySig);
+
+    /* See if someone is trying to kill me by setting my state to dead */
+    if (thread->state == _PR_DEAD_STATE) {
+	printf("Thread %x was forceably killed[2]\n");
+        longjmp(thread->jmpbuf, 1);
+    }
 }
 
 void _PR_MD_Signal(PRThread *thread) {
@@ -423,17 +455,4 @@ PR_IMPLEMENT(PRInt32) PR_SetThreadAffinityMask(PRThread *thread, PRUint32 mask )
 {
     return 0;  /* not implemented */
 }
-
-#if 0
-/* FOR NOW */
-int putenv(const char *str) {
-}
-
-#include <sys/socket.h>
-#include <netinet/in.h>
-unsigned long inet_addr(const char *cp) {
-    return NULL;
-}
-
-#endif
 
