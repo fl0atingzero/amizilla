@@ -35,25 +35,17 @@
 #include "primpl.h"
 
 /*
- * Amiga specificy includes
- */
-#include <dos/dos.h>
-#include <exec/memory.h>
-//#include <proto/dos.h>
-#include <proto/exec.h>
-
-/*
  * Opens the directory with the specified pathname.
  */
 PRStatus _OpenDir(struct _MDDir *md,const char *name) {
 	md->info = (BPTR) NULL;
 	md->lock = (BPTR) NULL;	
-	// Lock and check for directory
+
 	md->lock = Lock(name, SHARED_LOCK);
-	if((BPTR) NULL != md->lock) {
+	if(md->lock != (BPTR)NULL) {
 		md->info = (struct FileInfoBlock *) PR_NEWZAP(struct FileInfoBlock);
 		if(md->info != NULL) {
-			if( DOSFALSE != Examine(md->lock, md->info) && 
+			if(Examine(md->lock, md->info) != DOSFALSE && 
 				md->info->fib_DirEntryType >=0 ) {
 				return PR_SUCCESS;
 			}
@@ -63,8 +55,8 @@ PRStatus _OpenDir(struct _MDDir *md,const char *name) {
 	if(md->info != NULL)
 		PR_Free(md->info);
 
-	if(md->lock != ((BPTR) NULL))
-		UnLock((BPTR) md->lock);
+	if(md->lock != (BPTR)NULL)
+		UnLock((BPTR)md->lock);
 
 	return PR_FAILURE;
 }
@@ -73,7 +65,7 @@ PRStatus _OpenDir(struct _MDDir *md,const char *name) {
  * Gets a pointer to the next entry in the directory.
  */
 char* _ReadDir(struct _MDDir *md, PRIntn flags) {
-	if( DOSFALSE != ExNext( md->lock,md->info ) ) {
+	if(ExNext(md->lock, md->info) != DOSFALSE) {
 		if (md->info->fib_FileName[0] == '.') {
 			if (flags == PR_SKIP_HIDDEN) {
 				return _ReadDir(md, flags);
@@ -84,15 +76,16 @@ char* _ReadDir(struct _MDDir *md, PRIntn flags) {
 
 	return NULL;
 }
+
 /*
  * Closes the specified directory.
  */
 PRStatus _CloseDir(struct _MDDir *md) {
-	if( md->info != NULL )
+	if (md->info != NULL)
 		PR_Free(md->info);
 
-	if( md->lock != (BPTR) NULL )
-		UnLock( md->lock );
+	if(md->lock != (BPTR)NULL)
+		UnLock(md->lock);
 
 	return PR_SUCCESS;
 }
@@ -103,20 +96,22 @@ PRStatus _CloseDir(struct _MDDir *md) {
 PRStatus _MakeDir(const char *name,PRIntn mode) {
 	BPTR lock;
 
-	if( (BPTR) NULL != ( lock = CreateDir( name ) ) )
-		UnLock( lock );
-	else
+	if((lock = CreateDir(name)) != (BPTR)NULL) {
+		UnLock(lock);
+		return PR_SUCCESS;
+	} else {
+		_MD_MapIOErr(IoErr());
 		return PR_FAILURE;
-
-	return PR_SUCCESS;
+	}
 }
 
 /*
  * Removes a directory with a specified name.
  */
 PRStatus _RemoveDir(const char *name) {
-	if( DOSFALSE != DeleteFile( name ) )
+	if(DeleteFile(name) != DOSFALSE)
 		return PR_SUCCESS;
 
+	_MD_MapIOErr(IoErr());
 	return PR_FAILURE;
 }
