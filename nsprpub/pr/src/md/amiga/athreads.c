@@ -48,6 +48,7 @@ void _MD_Early_Init(void) {
     thread->p = (struct Process *)FindTask(NULL);
     thread->p->pr_Task.tc_UserData = thread;
     _InitThread(thread);
+    atexit(PR_Cleanup);
 }
 
 PR_IMPLEMENT(PRStatus) PR_Interrupt(PRThread *thread) {
@@ -63,9 +64,12 @@ static PRStatus _InitThread(PRThread *pr) {
     sprintf(buf, "NSPRPORT-%lx\n", pr);
     pr->port = CreatePort(buf, 0);
     PR_ASSERT(pr->port);
+    pr->selectPort = CreateMsgPort();
+    PR_ASSERT(pr->selectPort);
     pr->sleepRequest =
-        (struct timerequest *)CreateExtIO(pr->port, sizeof(struct timerequest));
+        (struct timerequest *)CreateExtIO(pr->port, sizeof(struct timerequest));    
     PR_ASSERT(pr->sleepRequest);
+
     if (OpenDevice(TIMERNAME, UNIT_VBLANK, 
                    (struct IORequest *)pr->sleepRequest, 0)) {
         PR_ASSERT(PR_FALSE);
@@ -80,17 +84,23 @@ static PRStatus _InitThread(PRThread *pr) {
  */
 static void procExit(void) {  
     PRThread *me = PR_GetCurrentThread();
-    _PR_DestroyThreadPrivate(me);
+    PRThread *join;
+
+    Forbid();
     RemPort(me->port);
+    join = me->join;
+    Permit();
+    _PR_DestroyThreadPrivate(me);
     PR_Free(me->port->mp_Node.ln_Name);
     DeletePort(me->port);
+    DeleteMsgPort(me->selectPort);
     CloseDevice((struct IORequest *)me->sleepRequest);
     DeleteExtIO((struct IORequest *)me->sleepRequest);
     if (me->AmiTCP_Base != NULL)
         CloseLibrary(me->AmiTCP_Base);
 
-    if (me->join != NULL) {
-        _PR_MD_Signal(me->join);
+    if (join != NULL) {
+        _PR_MD_Signal(join);
     }
     PR_Free(me);
 }
@@ -266,6 +276,10 @@ void _PR_MD_Wait(PRThread *thread) {
 void _PR_MD_Signal(PRThread *thread) {
     thread->state = _PR_RUNNING;
     Signal((struct Task *)thread->p, 1 << thread->port->mp_SigBit);
+}
+
+PR_IMPLEMENT(PRThreadScope) PR_GetThreadScope(const PRThread *thread) {
+    return PR_GLOBAL_THREAD;
 }
 
 #if 0
