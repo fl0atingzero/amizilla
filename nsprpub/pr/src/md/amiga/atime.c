@@ -107,8 +107,7 @@ void _MD_Interval_Init(void) {
 
 PRIntervalTime _MD_Get_Interval(void) {
     PRIntervalTime retval = 0;
-    struct timerequest *tr = 
-        AllocMem(sizeof(struct timerequest), MEMF_CLEAR| MEMF_PUBLIC);
+    struct timerequest *tr = PR_NEWZAP(struct timerequest);
 
     if (!(OpenDevice(TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0))) {
         tr->tr_node.io_Command = TR_GETSYSTIME;
@@ -116,7 +115,7 @@ PRIntervalTime _MD_Get_Interval(void) {
         retval = (tr->tr_time.tv_micro * _MD_INTERVAL_PER_SEC() / 1000000) + tr->tr_time.tv_secs * _MD_INTERVAL_PER_SEC();
         CloseDevice((struct IORequest *)tr);
     }
-    FreeMem(tr, sizeof(struct timerequest));
+    PR_Free(tr);
     return retval;
 }
 
@@ -125,8 +124,7 @@ PR_IMPLEMENT(PRTime)
     PR_Now(void)
 {
     PRTime retval = LL_INIT(0,0);
-    struct timerequest *tr = 
-        AllocMem(sizeof(struct timerequest), MEMF_CLEAR| MEMF_PUBLIC);
+    struct timerequest *tr = PR_NEWZAP(struct timerequest);
     PRInt64 secs, mil;
     
     if (!(OpenDevice(TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0))) {
@@ -142,8 +140,7 @@ PR_IMPLEMENT(PRTime)
         
         CloseDevice((struct IORequest *)tr);
     }
-    FreeMem(tr, sizeof(struct timerequest));
+    PR_Free(tr);
     return retval;
-
 }
 
