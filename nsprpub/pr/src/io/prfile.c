@@ -780,6 +780,37 @@ PR_IMPLEMENT(PRStatus) PR_CreatePipe(
 #endif
     _PR_MD_INIT_FD_INHERITABLE(*writePipe, PR_FALSE);
     return PR_SUCCESS;
+#elif defined(XP_AMIGAOS)
+    static int count = 0;
+    int mine = count++;
+    BPTR file[2];
+    char bufferRead[30];
+    char bufferWrite[30];
+    PRThread *me = PR_GetCurrentThread();
+    sprintf(bufferRead, "FIFO:pipe%lx%d/r", me, mine);
+    sprintf(bufferWrite, "FIFO:pipe%lx%d/wkme", me, mine);
+
+    file[0] = Open(bufferRead, MODE_OLDFILE);
+    file[1] = Open(bufferWrite, MODE_OLDFILE);
+
+    if (file[0] == NULL || file[1] == NULL) {
+      PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
+      return PR_FAILURE;
+    }
+
+    *readPipe = PR_AllocFileDesc(file[0], &_pr_pipeMethods);
+    if (NULL == *readPipe) {
+        Close(file[0]);
+        Close(file[1]);
+        return PR_FAILURE;
+    }
+    *writePipe = PR_AllocFileDesc(file[1], &_pr_pipeMethods);
+    if (NULL == *writePipe) {
+        PR_Close(*readPipe);
+        Close(file[1]);
+        return PR_FAILURE;
+    }
+    return PR_SUCCESS;
 #else
     PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
     return PR_FAILURE;
