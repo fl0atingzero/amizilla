@@ -41,20 +41,13 @@
  * is returned in the global variable h_errno, instead of the usual
  * errno.
  */
-#if defined(XP_UNIX)
+#if defined(XP_UNIX) || defined(XP_AMIGAOS)
 #if defined(_PR_NEED_H_ERRNO)
 extern int h_errno;
 #endif
 #define _MD_GETHOST_ERRNO() h_errno
 #else
 #define _MD_GETHOST_ERRNO() _MD_ERRNO()
-#endif
-
-/* 
- * hostent is defined there on an Amiga
- */
-#if defined (AMIGAOS)
-#include <netdb.h>
 #endif
 
 /*
