@@ -51,7 +51,7 @@
 #define BTOCPTR(ptr) ((void *)((ptr) << 2))
 
 /* DEBUG sockets */
-/*#define DEBUG_ASOCKET */
+/*#define DEBUG_ASOCKET*/
 
 /*
  * Architecture:
@@ -1699,7 +1699,6 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
  * Returns the native handle for a socket
  */
 int _MD_NATIVE_HANDLE(PRFileDesc *fd) {
-    PR_ASSERT(FALSE);
     switch (fd->methods->file_type) {
     case PR_DESC_PIPE:
     case PR_DESC_FILE:
@@ -1893,3 +1892,4 @@ int ami_host_errno() {
     PRThread *me = PR_GetCurrentThread();
     return TCP_Errno();
 }
+
