@@ -185,6 +185,9 @@ ifeq ($(OS_ARCH),HP-UX)
 else
 	$(INSTALL) -m 444 $(SHARED_LIBRARY) $(dist_bindir)
 endif
+ifeq ($(OS_ARCH), AmigaOS)
+	$(INSTALL) -m 444 $(IMPORT_LIBRARY_H) $(dist_includedir)
+endif
 endif
 ifeq ($(MOZ_BITS),16)
 	$(INSTALL) -m 444 $(HEADERS) $(MOZ_INCL)
