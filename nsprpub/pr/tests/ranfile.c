@@ -91,7 +91,12 @@ typedef struct Hammer_s {
 #define DEFAULT_LOOPS		1
 
 static PRInt32 pageSize = 1024;
+#ifdef XP_AMIGAOS
+static const char* baseName = "";
+#else
 static const char* baseName = "./";
+#endif
+
 static const char *programName = "Random File";
 
 #ifdef XP_MAC
