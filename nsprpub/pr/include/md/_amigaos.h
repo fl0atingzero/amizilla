@@ -37,6 +37,7 @@
 
 #include "_amigaos_dir.h"
 #include "_amigaos_file.h"
+#include "_amigaos_threads.h"
 
 #include "prtypes.h"
 #include "prio.h"
@@ -47,30 +48,34 @@
 #define _PR_SI_ARCHITECTURE   "m68k"
 #define _PR_SI_SYSNAME        "Amiga compatible"
 
+
 struct _MDFileMap {
     PRIntn prot;
     PRIntn flags;
-    PRBool isAnonFM; /* when true, PR_CloseFileMap() must close the related fd */
+  PRBool isAnonFM; // when true, PR_CloseFileMap() must close the related fd 
 };
 
-struct _MDProcess {
-    pid_t pid;
-};
 
-#define HAVE_BSD_FLOCK 1
+// #define HAVE_BSD_FLOCK 1
 
 #define HAVE_LONG_LONG
+#define HAVE_CUSTOM_USER_THREADS
+#define HAVE_CVAR_BUILT_ON_SEM
+
+#undef USE_SETJMP
 
 #define PR_DIRECTORY_SEPARATOR          '/'
 #define PR_DIRECTORY_SEPARATOR_STR      "/"
 #define PR_PATH_SEPARATOR               ';'
 #define PR_PATH_SEPARATOR_STR           ";"
 
-#define _PR_STAT_HAS_ONLY_ST_ATIME
-#define _PR_NO_LARGE_FILES
+#define _MD_DEFAULT_STACK_SIZE	65536L  // TODO: check if fits for amigaOS
 
-#define USE_SETJMP
+// #define _PR_STAT_HAS_ONLY_ST_ATIME
+// #define _PR_NO_LARGE_FILES
+#define _PR_GLOBAL_THREADS_ONLY
 
+/*
 typedef struct stat _MDStat64;
 typedef PRInt64 _MDOff64_t;
 
@@ -91,113 +96,9 @@ struct _MD_IOVector
 };
 extern struct _MD_IOVector _md_iovector;
 
-/* Machine-dependent (MD) data structures */
-
-/** may not be suitable for amiga */
-struct _MDThread {
-};
-
-/** may not be suitable for amiga */
-struct _MDThreadStack {
-};
-
-/** may not be suitable for amiga */
-struct _MDLock {
-};
-
-/** may not be suitable for amiga */
-struct _MDSemaphore {
-};
-
-/** may be suitable for amiga */
-struct _MDCVar {
-};
-
-/** may not be suitable for amiga */
-struct _MDSegment {
-};
-
-/** may not be suitable for amiga */
-struct _MDCPU {
-};
+*/
 
 /* CPU Stuff */
-
-// #define _MD_INIT_CPUS _MD_init_cpus
-// #define _MD_WAKEUP_CPUS _MD_wakeup_cpus
-// #define _MD_START_INTERRUPTS _MD_start_interrupts
-// #define _MD_STOP_INTERRUPTS _MD_stop_interrupts
-// #define _MD_DISABLE_CLOCK_INTERRUPTS _MD_disable_clock_interrupts
-// #define _MD_BLOCK_CLOCK_INTERRUPTS _MD_block_clock_interrupts
-// #define _MD_UNBLOCK_CLOCK_INTERRUPTS _MD_unblock_clock_interrupts
-// #define _MD_CLOCK_INTERRUPT _MD_clock_interrupt
-// #define _MD_INIT_STACK _MD_init_stack
-// #define _MD_CLEAR_STACK _MD_clear_stack
-// #define _MD_GET_INTSOFF _MD_get_intsoff
-// #define _MD_SET_INTSOFF _MD_set_intsoff
-#define _MD_CURRENT_CPU _MD_current_cpu
-// #define _MD_SET_CURRENT_CPU _MD_set_current_cpu
-// #define _MD_INIT_RUNNING_CPU _MD_init_running_cpu
-// #define _MD_PAUSE_CPU _MD_pause_cpu
-
-// NSPR_API(void) _MD_init_cpus();
-// NSPR_API(void) _MD_wakeup_cpus();
-// NSPR_API(void) _MD_start_interrupts(void);
-// NSPR_API(void) _MD_stop_interrupts(void);
-// NSPR_API(void) _MD_disable_clock_interrupts(void);
-// NSPR_API(void) _MD_block_clock_interrupts(void);
-// NSPR_API(void) _MD_unblock_clock_interrupts(void);
-// NSPR_API(void) _MD_clock_interrupt(void);
-// NSPR_API(void) _MD_init_stack(PRThreadStack *ts, PRIntn redzone);
-// NSPR_API(void) _MD_clear_stack(PRThreadStack* ts);
-// NSPR_API(PRInt32) _MD_get_intsoff(void);
-// NSPR_API(void) _MD_set_intsoff(PRInt32 _val);
-// NSPR_API(_PRCPU*) _MD_current_cpu(void);
-// NSPR_API(void) _MD_set_current_cpu(_PRCPU *cpu);
-// NSPR_API(void) _MD_init_running_cpu(_PRCPU *cpu);
-// NSPR_API(PRInt32) _MD_pause_cpu(PRIntervalTime timeout);
-
-
-/* Thread stuff */
-
-// linsk to the threads/pcthr.c shiuld be reolaced with amiga solution 
-#define _MD_CURRENT_THREAD() PR_GetCurrentThread()
-// #define _MD_GET_ATTACHED_THREAD _MD_get_attached_thread
-// #define _MD_LAST_THREAD _MD_last_thread
-// #define _MD_SET_CURRENT_THREAD _MD_set_current_THREAD
-// #define _MD_SET_LAST_THREAD _MD_set_last_thread
-// #define _MD_INIT_THREAD _MD_init_thread
-// #define _MD_EXIT_THREAD _MD_exit_thread
-// #define _MD_INIT_ATTACHED_THREAD _MD_init_attached_thread
-
-// #define _MD_SUSPEND_THREAD _MD_suspend_thread
-// #define _MD_RESUME_THREAD _MD_resume_thread
-// #define _MD_SUSPEND_CPU _MD_suspend_cpu
-// #define _MD_RESUME_CPU _MD_resume_cpu
-// #define _MD_BEGIN_SUSPEND_ALL _MD_begin_suspend_all
-// #define _MD_END_SUSPEND_ALL _MD_end_suspend_all
-// #define _MD_BEGIN_RESUME_ALL _MD_begin_resume_all
-// #define _MD_END_RESUME_ALL _MD_end_resume_all
-
-// #define _MD_GET_SP _MD_get_sp
-
-// #define _MD_CLEAN_THREAD _MD_clean_thread
-// #define _MD_CREATE_PRIMORDIAL_USER_THREAD _MD_create_primordial_user_thread
-// #define _MD_CREATE_USER_THREAD _MD_create_user_thread
-// #define _MD_INIT_PRIMORDIAL_THREAD _MD_init_primordial_thread
-// #define _MD_CREATE_THREAD _MD_create_thread
-// #define _MD_YIELD _MD_yield
-// #define _MD_SET_PRIORITY _MD_set_priority
-
-// #define _MD_SUSPENDALL _MD_suspendall
-// #define _MD_RESUMEALL _MD_resumeall
-
-// #define _MD_SWITCH_CONTEXT _MD_switch_context
-// #define _MD_RESTORE_CONTEXT _MD_restore_context
-
-// #define _MD_WAIT _MD_wait
-// #define _MD_WAKEUP_WAITER _MD_wakeup_waiter
-
 // #define _MD_SETTHREADAFFINITYMASK _MD_setthreadaffinitymask
 // #define _MD_GETTHREADAFFINITYMASK _MD_getthreadaffinitymask
 
@@ -213,7 +114,8 @@ struct _MDCPU {
 // #define _MD_MAKE_NONBLOCK _MD_make_nonblock
 // #define _MD_INIT_FD_INHERITABLE _MD_init_fd_inheritable
 // #define _MD_QUERY_FD_INHERITABLE _MD_query_fd_inheritable
-#define _MD_WRITEV _Writev
+
+// #define _MD_WRITEV _Writev
 
 // #define _MD_STAT stat
 // #define _MD_PR_POLL _MD_pr_poll
@@ -224,7 +126,8 @@ struct _MDCPU {
 // NSPR_API(void) _MD_make_nonblock(PRFileDesc *fd);
 // NSPR_API(void) _MD_init_fd_inheritable(PRFileDesc *fd, PRBool imported);
 // NSPR_API(void) _MD_query_fd_inheritable(PRFileDesc *fd);
-NSPR_API(PRInt32) _Writev(PRFileDesc *fd, const PRIOVec *iov, PRInt32 iov_size, PRIntervalTime timeout);
+
+// NSPR_API(PRInt32) _Writev(PRFileDesc *fd, const PRIOVec *iov, PRInt32 iov_size, PRIntervalTime timeout);
 
 // NSPR_API(PRInt32) _MD_stat(const char *name, struct stat *buf);
 // NSPR_API(PRInt32) _MD_pr_poll(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout);
