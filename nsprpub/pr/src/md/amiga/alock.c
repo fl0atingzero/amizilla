@@ -64,7 +64,7 @@ PR_IMPLEMENT(void) PR_Lock(PRLock *lock)
       PR_APPEND_LINK(&me->waitQLinks, &lock->waitQ);
       me->wait.lock = lock;
       me->state = _PR_LOCK_WAIT;
-      _PR_MD_Wait(me, PR_FALSE);
+      _PR_MD_Wait(me, PR_FALSE, PR_TRUE);
       me->state = _PR_RUNNING;
   }
 
@@ -115,4 +115,17 @@ PR_IMPLEMENT(void)PR_DestroyLock(PRLock *lock) {
 }
 
 void _PR_InitLocks(void){
+}
+
+NSPR_API(PRStatus)PRP_TryLock(PRLock *lock) {
+    PRThread *me = PR_GetCurrentThread();
+    PRStatus rv = PR_SUCCESS;
+    Forbid();
+    if (lock->owner != NULL) {
+        rv = PR_FAILURE;
+    }
+    PR_Lock(lock);
+end:
+    Permit();
+    return rv;
 }
