@@ -1586,12 +1586,6 @@ extern void _PR_DestroyThreadPrivate(PRThread*);
 typedef void (PR_CALLBACK *_PRStartFn)(void *);
 
 struct PRThread {
-#ifdef _PR_ATHREADS
-    /* I put this here first so I can get access directly 
-     * to a Amiga-Native object without all of this extra stuff 
-     */
-    struct Process *primordialThread;
-#endif
     volatile PRUint32 state;                 /* thread's creation state */
     PRThreadPriority priority;      /* apparent priority, loosly defined */
 
