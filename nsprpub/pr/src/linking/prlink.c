@@ -62,6 +62,23 @@
 #endif /* XP_MACOSX */
 #endif
 
+#if defined(XP_AMIGAOS)
+#include <proto/exec.h>
+#include <proto/dos.h>
+struct IXLibrary {
+	struct Library ix_Lib;
+	UWORD          ix_Flags;
+	ULONG          ix_Cookie;
+    /* Other stuff here but I don't care */
+};
+
+#define DLD_GetSymbol(lib, func) \
+  LP1(42, void *, DLD_GetSymbol, const char *, func, a2,, lib)
+
+extern void SETVARSINST(struct IXLibrary *lib __asm("a0"), int argc, void (*func)(int));
+
+#endif
+
 #ifdef XP_UNIX
 #ifdef USE_DLFCN
 #include <dlfcn.h>
@@ -213,7 +230,7 @@ struct PRLibrary {
 #endif 
 
 #ifdef XP_AMIGAOS
-    void*                       dlh;
+    struct IXLibrary*             dlh;
 #endif 
 
 #ifdef XP_BEOS
@@ -547,7 +564,7 @@ PR_GetLibraryName(const char *path, const char *lib)
         fullname = PR_smprintf("%s", lib);
     }
 #endif
-#if defined(XP_UNIX) || defined(XP_BEOS)
+#if defined(XP_UNIX) || defined(XP_BEOS) || defined(XP_AMIGAOS)
     if (strstr(lib, PR_DLL_SUFFIX) == NULL)
     {
         if (path) {
@@ -1169,6 +1186,21 @@ pr_LoadLibraryByPathname(const char *name, PRIntn flags)
     }
 #endif
 
+#ifdef XP_AMIGAOS
+    lm->dlh = (struct IXLibrary *)OpenLibrary(name, 0);
+    if (lm->dlh == NULL || lm->dlh->ix_Cookie != 0x4a535300) {
+        if (lm->dlh) {
+            CloseLibrary(lm->dlh);
+        }
+        PR_DELETE(lm);
+        goto unlock;
+    }
+    SETVARSINST(lm->dlh, 1, exit);
+    lm->name = strdup(name);
+    lm->next = pr_loadmap;
+    pr_loadmap = lm;
+#endif
+
     result = lm;    /* success */
     PR_LOG(_pr_linker_lm, PR_LOG_MIN, ("Loaded library %s (load lib)", lm->name));
 
@@ -1387,6 +1419,11 @@ PR_UnloadLibrary(PRLibrary *lib)
 #endif
 #endif
 
+#ifdef XP_AMIGAOS
+    if (lib->dlh)
+      CloseLibrary((struct Library *)lib->dlh);
+#endif
+
     /* unlink from library search list */
     if (pr_loadmap == lib)
         pr_loadmap = pr_loadmap->next;
@@ -1542,6 +1579,15 @@ pr_FindSymbolInLib(PRLibrary *lm, const char *name)
 #endif
 #endif /* HAVE_DLL */
 #endif /* XP_UNIX */
+
+#ifdef XP_AMIGAOS
+    f = DLD_GetSymbol((struct Library *)lm->dlh,name);
+    if (f == NULL) {
+      extern int errno;
+      errno = 15;
+    }
+#endif
+
     if (f == NULL) {
         PR_SetError(PR_FIND_SYMBOL_ERROR, _MD_ERRNO());
         DLLErrorInternal(_MD_ERRNO());
