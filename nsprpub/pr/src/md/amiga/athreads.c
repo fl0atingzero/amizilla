@@ -40,10 +40,10 @@ static PRStatus _InitThread(PRThread *pr);
 static void killThread (PRThread *thread, PRBool kill) {
     printf("Killing thread %lx with kill %d\n", thread, kill);
     if (kill) {
-	Forbid();
-    thread->state = _PR_DEAD_STATE;
-    _PR_MD_Signal(thread);
-	Permit();
+        Forbid();
+        thread->state = _PR_DEAD_STATE;
+        _PR_MD_Signal(thread);
+        Permit();
     } 
     PR_JoinThread(thread);
     printf("All done killing %x\n", thread);
@@ -93,17 +93,15 @@ PR_IMPLEMENT(PRStatus) PR_Interrupt(PRThread *thread) {
     /* See if the thread is still around by trying to 
      * look for its public message port 
      */
+    printf("%lx Interrupting thread %lx with %lx, flags are now %lx\n", me, thread, (1 << thread->interruptSignal), thread->flags);
+
     Forbid();
     port = FindPort(buf);
-    if (port == NULL) {
-        Permit();
-        return PR_SUCCESS;
-    }
-
-    thread->flags |= _PR_INTERRUPT;
-    printf("%lx Interrupting thread %lx, flags are now %lx\n", me, thread, thread->flags);
-    if (me != thread) {
-        Signal((struct Task *)thread->p, 1 << thread->interruptSignal);
+    if (port != NULL) {
+        thread->flags |= _PR_INTERRUPT;
+        if (me != thread) {
+            Signal((struct Task *)thread->p, 1 << thread->interruptSignal);
+        }
     }
     Permit();
         
@@ -137,6 +135,8 @@ static PRStatus _InitThread(PRThread *pr) {
     pr->AmiTCP_Base = OpenLibrary("bsdsocket.library", 0);
 
     PR_INIT_CLIST(&pr->lockList);
+    /* Just in case */
+    PR_INIT_CLIST(&pr->waitQLinks);
     return PR_SUCCESS;
 }
 
@@ -165,7 +165,7 @@ static void procExit(void) {
         CloseLibrary(me->AmiTCP_Base);
 
     if (join != NULL) {
-        printf("%lx done, signalling parent\n", me);
+        printf("%lx done, signalling parent %lx\n", me, join);
         PR_ASSERT(join->state == _PR_JOIN_WAIT);
         _PR_MD_Signal(join);
     }    
@@ -192,6 +192,11 @@ static void procEntry(void) {
     _PR_MD_Signal(pr->parent);
     if (setjmp(pr->jmpbuf) == 0) {
         pr->startFunc(pr->arg);
+    } else {
+        /* Remove anything I was waiting on */
+        Forbid();
+        PR_REMOVE_LINK(&pr->waitQLinks);
+        Permit();
     }
     procExit();
 }
@@ -273,16 +278,17 @@ PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
         Signal((struct Task *)thread->p, SIGBREAKF_CTRL_F); 
         /* Need to wait for the other thread to do some init so there
          * isn't a race condition when we do a PR_CreateThread and do 
-         * a PR_JoinThread before the thread comes up fully */
+         * a PR_JoinThread before the thread comes up fully 
+         */
         _PR_MD_Wait(me, PR_FALSE);
         me->state = _PR_RUNNING;
 
-        Permit();
     } else {
         PR_Free(thread);
         thread = NULL;
-        Permit();
     }
+    Permit();
+
     printf("CreateThread(%lx) created thread %lx\n", me, thread);
     return thread;
 }
@@ -412,7 +418,7 @@ void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
 
     /* See if someone is trying to kill me by setting my state to dead */
     if (thread->state == _PR_DEAD_STATE) {
-	printf("Thread %x was forceably killed[1]\n");
+        printf("Thread %x was forceably killed[1]\n", thread);
         longjmp(thread->jmpbuf, 1);
     }
 
@@ -433,7 +439,7 @@ void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
 
     /* See if someone is trying to kill me by setting my state to dead */
     if (thread->state == _PR_DEAD_STATE) {
-	printf("Thread %x was forceably killed[2]\n");
+        printf("Thread %x was forceably killed[2]\n", thread);
         longjmp(thread->jmpbuf, 1);
     }
 }
