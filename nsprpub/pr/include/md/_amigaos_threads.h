@@ -50,7 +50,7 @@
 /* Threads related */
 #define _MD_CURRENT_THREAD                PR_GetCurrentThread
 
-void _PR_MD_Wait(PRThread *thread);
+void _PR_MD_Wait(PRThread *thread, PRBool interruptable);
 void _PR_MD_Signal(PRThread *thread);
 
 struct _MDProcess {
