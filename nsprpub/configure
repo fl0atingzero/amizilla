@@ -5330,7 +5330,8 @@ EOF
         cat >> confdefs.h <<\EOF
 #define _PR_LOCAL_THREADS_ONLY 1
 EOF
-
+    else
+	PR_MD_ARCH_DIR=amiga
     fi
     ;;
 *-bsdi*)

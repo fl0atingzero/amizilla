@@ -430,7 +430,10 @@ PRInt32 PR_GetSysfdTableMax(void)
     return 16384;
 #elif defined (WIN16)
     return FOPEN_MAX;
-#elif defined (XP_MAC) || defined(XP_BEOS)
+#elif defined (XP_MAC) || defined(XP_BEOS) || defined(AMIGA)
+    PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
+   return -1;
+#elif defined(AMIGA)
     PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
    return -1;
 #else
@@ -471,6 +474,9 @@ PRInt32 PR_SetSysfdTableSize(int table_size)
     return -1;
 #elif defined (XP_MAC)
 #pragma unused (table_size)
+    PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
+   return -1;
+#elif defined (AMIGA)
     PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
    return -1;
 #else

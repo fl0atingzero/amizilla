@@ -74,15 +74,19 @@ static PRLock *_pr_logLock;
     PRThread *_me = _PR_MD_CURRENT_THREAD(); \
     if (!_PR_IS_NATIVE_THREAD(_me)) \
         _PR_INTSOFF(_is); \
-    _PR_LOCK_LOCK(_pr_logLock)
+    _PR_LOCK_LOCK(_pr_logLock);
 
 #define _PR_UNLOCK_LOG() \
     _PR_LOCK_UNLOCK(_pr_logLock); \
     PR_ASSERT(_me == _PR_MD_CURRENT_THREAD()); \
     if (!_PR_IS_NATIVE_THREAD(_me)) \
-        _PR_INTSON(_is); \
+        if ((_is == 0) && ((_PRCPU*)_PR_MD_CURRENT_CPU())->u.bits) \
+            _PR_IntsOn((_PR_MD_CURRENT_CPU())); \
+    _PR_MD_SET_INTSOFF(_is); \
 }
 
+//       _PR_INTSON(_is); \  
+ 
 #endif
 
 #if defined(XP_PC)
@@ -461,6 +465,7 @@ PR_IMPLEMENT(void) PR_LogPrint(const char *fmt, ...)
         logp += nb;
     }
     _PR_UNLOCK_LOG();
+
     PR_LogFlush();
 }
 
