@@ -403,7 +403,7 @@ static PRStatus PR_CALLBACK _pr_PolEvtInit(void)
     return PR_SUCCESS;
 }
 
-#if !defined(XP_UNIX)
+#if !defined(XP_UNIX) && !defined(XP_AMIGAOS)
 #define USE_TCP_SOCKETPAIR
 #endif
 
