@@ -473,6 +473,7 @@ PR_IMPLEMENT(PRInt32) PR_SetThreadAffinityMask(PRThread *thread, PRUint32 mask )
 
 PR_IMPLEMENT(PRThreadState) PR_GetThreadState(const PRThread *thred)
 {
+	printf("athreads.c: PR_GetThreadState called, but not yet implemented\n");
     return PR_JOINABLE_THREAD;  
     /* not yet implemented (o1i)
 	 * return (thred->state & PT_THREAD_DETACHED) ?
@@ -486,6 +487,7 @@ PR_IMPLEMENT(PRThreadState) PR_GetThreadState(const PRThread *thred)
 
 PR_IMPLEMENT(PRInt32) PR_GetMonitorEntryCount(PRMonitor *mon)
 {
+	printf("athreads.c: PR_GetMonitorEntryCount called, but not yet implemented\n");
 	return 0;
 	/* not yet implemented (o1i)
      * pthread_t self = pthread_self();
