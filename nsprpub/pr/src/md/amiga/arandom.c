@@ -36,6 +36,7 @@
 #include <primpl.h>
 #include <devices/inputevent.h>
 #include <devices/input.h>
+#include <exec/interrupts.h>
 
 /* #define DEBUG_ARANDOM */
 
@@ -81,7 +82,7 @@ static void InputEventThread(void *ignored) {
     OpenDevice("input.device", 0, (struct IORequest *)io, 0);
     
     ip.p = me->p;
-    ie->is_Code = InputEventHandler;
+    ie->is_Code = (VOID *)InputEventHandler;
     ie->is_Data = &ip;
     ie->is_Node.ln_Pri = 100;
     ie->is_Node.ln_Name = "NSPR Input/Random handler";
@@ -159,11 +160,11 @@ static void InputEventThread(void *ignored) {
     io->io_Command = IND_REMHANDLER;
     DoIO((struct IORequest *)io);
 
-    if (!CheckIO(io))
-        AbortIO(io);
-    WaitIO(io);
-    CloseDevice(io);
-	DeleteIORequest(io);
+    if (!CheckIO((struct IORequest *) io))
+        AbortIO((struct IORequest *) io);
+    WaitIO((struct IORequest *) io);
+    CloseDevice((struct IORequest *) io);
+	DeleteIORequest((struct IORequest *) io);
 	DeleteMsgPort(mp);
 #ifdef DEBUG_ARANDOM
 	printf("random thread done \n");
