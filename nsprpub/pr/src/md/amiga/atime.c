@@ -36,12 +36,6 @@
 #include <devices/timer.h>
 #include <proto/timer.h>
 
-static PRUint32 ticksPerSec = 1000;
-
-_PRInterruptTable _pr_interruptTable[] = {NULL,};
-
-
-
 _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
 
   PRThread *thread = PR_GetCurrentThread();
@@ -89,34 +83,19 @@ PR_IMPLEMENT(PRStatus) PR_Sleep(PRIntervalTime timeout) {
 }
 
 void _MD_Interval_Init(void) {
-  struct timerequest *tr = 
-    AllocMem(sizeof(struct timerequest), MEMF_CLEAR| MEMF_PUBLIC);
-
-  if (!(OpenDevice(TIMERNAME, UNIT_ECLOCK, (struct IORequest *)tr, 0))) {
-    struct timeval tv;
-    struct EClockVal ec;
-    struct Library *TimerBase = (struct Library *)tr->tr_node.io_Device;
-    ticksPerSec = ReadEClock(&ec);
-    CloseDevice((struct IORequest *)tr);
-  }
-  FreeMem(tr, sizeof(struct timerequest));
 }
 
-PRIntervalTime _MD_Interval_Per_Sec(void) {
-  return ticksPerSec;
-}
+
 
 PRIntervalTime _MD_Get_Interval(void) {
   PRIntervalTime retval = 0;
   struct timerequest *tr = 
     AllocMem(sizeof(struct timerequest), MEMF_CLEAR| MEMF_PUBLIC);
 
-  if (!(OpenDevice(TIMERNAME, UNIT_ECLOCK, (struct IORequest *)tr, 0))) {
-    struct timeval tv;
-    struct EClockVal ec;
-    struct Library *TimerBase = (struct Library *)tr->tr_node.io_Device;
-    ReadEClock(&ec);
-    retval = ec.ev_lo;
+  if (!(OpenDevice(TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0))) {
+    tr->tr_node.io_Command = TR_GETSYSTIME;
+    DoIO((struct IORequest *)tr);
+    retval = tr->tr_time.tv_micro * 10000 + tr->tr_time.tv_secs;
     CloseDevice((struct IORequest *)tr);
   }
   FreeMem(tr, sizeof(struct timerequest));
