@@ -239,6 +239,12 @@ static int local_io_wait(int fd, int type, PRIntervalTime timeout) {
     sel = TCP_WaitSelect(fd + 1, &fd_read, &fd_write, &fd_except,
         (timeout == PR_INTERVAL_NO_TIMEOUT) ? NULL : &tv, &flags);
 
+    /* See if someone is trying to kill me by setting my state to dead */
+    if (me->state == _PR_DEAD_STATE) {
+        printf("Thread %x was forceably killed from WaitSelect\n", me);
+        longjmp(me->jmpbuf, 1);
+    }
+
     printf("WaitSelect(%lx) returned %d, flags is %lx\n", me, sel, me->flags);
     if (sel < 0) {
         _PR_MD_MAP_SELECT_ERROR(TCP_Errno());
@@ -1111,6 +1117,11 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
     int maxfd = -1 ;
     struct StandardPacket sps[npds];
 
+    if (npds == 0) {
+        PR_Sleep(timeout);
+        return 0;
+    }
+
     FD_ZERO(&in);
     FD_ZERO(&out);
     FD_ZERO(&err);
@@ -1120,11 +1131,6 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
     tm.tv_secs = timeout / _PR_MD_INTERVAL_PER_SEC();
     tm.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * 1000000 / _PR_MD_INTERVAL_PER_SEC();
         
-    if (npds == 0) {
-        PR_Sleep(timeout);
-        return 0;
-    }
-
     printf("Poll(%lx) with #fds %d, timeout %d\n", me, npds, timeout);
     ready = 0;
     for (i = 0; i < npds; i++) {
