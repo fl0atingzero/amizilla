@@ -168,3 +168,13 @@ PRInt32 _PR_MD_PIPEAVAILABLE(PRFileDesc *fd) {
 #warning _MD_PIPEAVAILABLE not implemented
     assert(0);
 }
+
+PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout) {
+#warning _MD_PR_POLL not implemented
+    assert(0);
+}
+
+void *_MD_GET_SP(PRThread *thread) {
+#warning _MD_GET_SP not implemented
+    assert(0);
+}

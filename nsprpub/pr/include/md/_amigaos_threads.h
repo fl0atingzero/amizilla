@@ -69,7 +69,7 @@
 /* CPU related */
 // #define _MD_GET_INTSOFF
 // #define _MD_SET_INTSOFF
-#define _MD_CURRENT_CPU()                   _CurrentCpu
+#define _MD_CURRENT_CPU                   _CurrentCpu
 #define _MD_SET_CURRENT_CPU               _SetCurrentCpu
 #define _MD_INIT_RUNNING_CPU              _InitRunningCpu
 
@@ -219,7 +219,7 @@ NSPR_API(PRStatus) _WakeupWaiter(PRThread *thread);
 NSPR_API(void)     _InitStack(PRThreadStack *ts, PRIntn redzone);
 NSPR_API(void)     _ClearStack(PRThreadStack* ts);
 
-extern struct _PRCPU *_CurrentCpu;
+extern struct _PRCPU *_CurrentCpu(void);
 // NSPR_API(_PRCPU*)  _CurrentCpu(void);
 // NSPR_API(void)     _SetCurrentCpu(_PRCPU *cpu);
 // NSPR_API(void)     _InitRunningCpu(_PRCPU *cpu);

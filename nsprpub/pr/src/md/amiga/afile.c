@@ -356,6 +356,17 @@ void _MD_INIT_FD_INHERITABLE(PRFileDesc *fd, PRBool imported) {
     assert(0);
 }
 
+/*
+ * If fd->secret->inheritable is _PR_TRI_UNKNOWN and we need to
+ * know the inheritable attribute of the fd, call this function
+ * to find that out.  This typically requires a system call.
+ */
+void _MD_QUERY_FD_INHERITABLE(PRFileDesc *fd) {
+#warning _MD_QUERY_FD_INHERITABLE not implemented
+    assert(0);
+}
+
+
 int _MD_ERRNO(void) {
 #warning _MD_ERRNO not implemented
     assert(0);

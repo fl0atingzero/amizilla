@@ -42,6 +42,9 @@
 #include <exec/memory.h>
 #include <proto/exec.h>
 
+#warning _pr_interruptTable NULL
+_PRInterruptTable _pr_interruptTable[] = {};
+
 void _InitCpus() {
 }
 
@@ -81,16 +84,22 @@ void _InitStack(PRThreadStack *ts, PRIntn redzone) {
 void _ClearStack(PRThreadStack* ts) {
 }
 
-/*
+
 _PRCPU *_CurrentCpu(void) {
+#warning _CurrentCpu not implemented
+	assert(0);
 }
 
 void _SetCurrentCpu(_PRCPU *cpu) {
+#warning _SetCurrentCpu not implemented
+	assert(0);
 }
 
 void _InitRunningCpu(_PRCPU *cpu) {
+#warning _InitRunningCpu not implemented
+	assert(0);
 }
-*/
+
 
 PRInt32 _PauseCpu(PRIntervalTime timeout) {
 }
@@ -260,3 +269,18 @@ PRStatus _MD_KILL_PROCESS(PRProcess *process) {
 #warning _MD_KILL_PROCESS not implemented
     assert(0);
 }
+
+PRIntervalTime _MD_GET_INTERVAL(void) {
+#warning _MD_GET_INTERVAL not implemented
+    assert(0);
+}
+
+PRIntervalTime _MD_INTERVAL_PER_SEC(void) {
+#warning _MD_INTERVAL_PER_SEC not implemented
+    assert(0);
+}
+
+/*extern void _PR_IntsOn(_PRCPU *cpu) {
+#warning _PR_IntsOn not implemented
+    assert(0);
+}*/

@@ -37,6 +37,7 @@
 # shared library
 
 MDCSRCS =             \
+	amiga.c		\
 	adir.c        \
 	afile.c       \
 	amemory.c     \
