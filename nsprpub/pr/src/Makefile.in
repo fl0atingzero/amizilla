@@ -252,10 +252,13 @@ OBJS = \
     misc/$(OBJDIR)/prolock.$(OBJ_SUFFIX)	 \
     misc/$(OBJDIR)/prrng.$(OBJ_SUFFIX)	 \
     misc/$(OBJDIR)/prsystem.$(OBJ_SUFFIX) \
-    misc/$(OBJDIR)/prthinfo.$(OBJ_SUFFIX) \
     misc/$(OBJDIR)/prtpool.$(OBJ_SUFFIX) \
     misc/$(OBJDIR)/prtrace.$(OBJ_SUFFIX) \
     misc/$(OBJDIR)/prtime.$(OBJ_SUFFIX)
+
+ifneq ($(OS_ARCH), AmigaOS)
+OBJS += misc/$(OBJDIR)/prthinfo.$(OBJ_SUFFIX) 
+endif
 
 # ilib now rejects empty objects
 ifneq ($(MOZ_OS2_TOOLS),VACPP)
@@ -404,12 +407,16 @@ endif
 
 export:: $(TARGETS)
 	$(INSTALL) -m 444 $(TARGETS) $(dist_libdir)
+
 ifdef SHARED_LIBRARY
 ifeq ($(OS_ARCH),HP-UX)
 	$(INSTALL) -m 755 $(SHARED_LIBRARY) $(dist_libdir)
 	$(INSTALL) -m 755 $(SHARED_LIBRARY) $(dist_bindir)
 else
 	$(INSTALL) -m 444 $(SHARED_LIBRARY) $(dist_bindir)
+endif
+ifeq ($(OS_ARCH), AmigaOS)
+	$(INSTALL) -m 444 $(IMPORT_LIBRARY_H) $(dist_includedir)
 endif
 endif
 ifeq ($(MOZ_BITS),16)
