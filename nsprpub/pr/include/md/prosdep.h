@@ -148,9 +148,13 @@ PR_BEGIN_EXTERN_C
 #include "md/_beos.h"
 #include "md/_unix_errors.h"
 
+#elif defined(XP_AMIGAOS)
+
+#include "md/_amigaos.h"
+
 #else
 
-#error "The platform is not BeOS, Unix, Windows, or Mac"
+#error "The platform is not BeOS, Unix, Windows, Mac, or AmigaOS"
 
 #endif
 
