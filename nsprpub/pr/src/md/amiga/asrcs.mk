@@ -37,6 +37,7 @@
 # shared library
 
 MDCSRCS =             \
-	adir.c       \
+	adir.c        \
 	afile.c       \
+	athreads.c    \
 	$(NULL)
