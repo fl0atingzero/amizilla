@@ -39,21 +39,23 @@
 
 /* Code dealing with random numbers */
 
-static PRLock *emptyLock;
-static PRLock *fullLock;
+/* CondVars and locks guarding randomdata/front/back
+static PRLock *listLock;
 static PRCondVar *fullcv;
 static PRCondVar *emptycv;
 static PRThread *eventThread;
 
 #define BUFFERSIZE 100
 static char randomdata[BUFFERSIZE];
+/* Front of the list -- items are added here */
 static int front = 0;
+/* Back of the list -- items are removed here */
 static int back = 0;
 
 /* Architecture 
  * I install a highest priority input handler which just gathers the data
  * and notifies the thread with the data 
- * That thread fills up the queue until its full
+ * That thread fills up the queue until its full then waits
  * The random callers can empty the random data
  */
 
@@ -118,15 +120,17 @@ static void InputEventThread(void *ignored) {
     io->io_Command = IND_ADDHANDLER;
     DoIO((struct IORequest *)io);
 
-	printf("ADded event handler\n");
+	printf("Added event handler\n");
     while (!done) {
         int mynum;
         int mydata[5];
 		int i;
-		ULONG flags = SIGBREAKF_CTRL_C | SIGBREAKF_CTRL_F;
+		ULONG flags = (1 << me->port->mp_SigBit) | SIGBREAKF_CTRL_F;
 
+        me->state = _PR_IO_WAIT;
 		flags = Wait(flags);
-		if (flags & SIGBREAKF_CTRL_C) {
+        me->state = _PR_RUNNING;
+		if (flags & 1 << me->port->mp_SigBit) {
 			printf("event thread got interrupted\n");
 			done = PR_TRUE;
 			break;
@@ -139,29 +143,30 @@ static void InputEventThread(void *ignored) {
         Enable();
 
 		printf("Got %d pieces of random data\n", mynum);
+        PR_Lock(listLock);
 		for (i = 0; i < mynum; i++) {
 			int j;
 			int d = mydata[i];
 			for (j = 0; j < 4; j++) {
-				if ((front - back % BUFFERSIZE) == BUFFERSIZE -1) {
+
+				while ((front - back % BUFFERSIZE) == BUFFERSIZE -1) {
 					printf("Full, waiting\n");
-					PR_Lock(fullLock);
-					if (PR_WaitCondVar(fullcv, PR_INTERVAL_NO_TIMEOUT) == PR_FALSE) {
-						printf("Wait for full interrupted\n");
+					if (PR_WaitCondVar(fullcv, PR_INTERVAL_NO_TIMEOUT) == PR_FAILURE) {
+						printf("Wait for full interrupted %d\n", PR_GetError());
+
 						done = PR_TRUE;
 						break;
 					}
-					PR_Unlock(fullLock);
 				}
 				printf("SEtting databuffer %d to %d\n", front, (int)(d & 0xff));
 				randomdata[front] = d & 0xff;
 				d >>= 8;
 				front = (front + 1) % BUFFERSIZE;
-				PR_Lock(emptyLock);
 				PR_NotifyCondVar(emptycv);
-				PR_Unlock(emptyLock);
+                
 			}
 		}
+        PR_Unlock(listLock);
 	}
 			
     io->io_Data = ie;
@@ -178,29 +183,29 @@ static void InputEventThread(void *ignored) {
 }
 
 void _PR_InitRandom(void) {
-	emptyLock = PR_NewLock();
-	PR_ASSERT(emptyLock);
-	fullLock = PR_NewLock();
-	PR_ASSERT(fullLock);
-	emptycv = PR_NewCondVar(emptyLock);
+    listLock = PR_NewLock();
+    PR_ASSERT(listLock);
+	emptycv = PR_NewCondVar(listLock);
 	PR_ASSERT(emptycv);
-	fullcv = PR_NewCondVar(fullLock);
+	fullcv = PR_NewCondVar(listLock);
 	PR_ASSERT(fullcv);
 	eventThread = PR_CreateThread(PR_SYSTEM_THREAD, InputEventThread, NULL, PR_PRIORITY_HIGH, PR_LOCAL_THREAD, PR_JOINABLE_THREAD, 0);
 	PR_ASSERT(eventThread);
 	eventThread->daemon = PR_TRUE;
+
+    printf("Eventthread %lx, fullcv %lx, emptycv %lx\n", eventThread, fullcv, emptycv);
 }
 
 void _PR_CleanupRandom(void) {
-	Signal(eventThread->p, SIGBREAKF_CTRL_C);
 	printf("Waiting for event thread\n");
+    PR_Interrupt(eventThread);
+	_PR_MD_Signal(eventThread);
+
 	PR_JoinThread(eventThread);
 	printf("Done waiting for event thread\n");
     PR_DestroyCondVar(emptycv);
-    PR_DestroyLock(emptyLock);
 	PR_DestroyCondVar(fullcv);
-	PR_DestroyLock(fullLock);
-
+    PR_DestroyLock(listLock);
 }
 
 /*
@@ -209,21 +214,17 @@ void _PR_CleanupRandom(void) {
  */
 PRSize _PR_MD_GetRandomNoise( void *buf, PRSize size ) {
 	PRSize retval = size;
+    PR_Lock(listLock);
 	while (size) {
-		printf("Size %d\n", size);
-		PR_Lock(emptyLock);
 		while ((front - back) % BUFFERSIZE == 0) {
 			printf("Buffer empty, waiting...\n");
 			PR_WaitCondVar(emptycv, PR_INTERVAL_NO_TIMEOUT);
 		}
-		PR_Unlock(emptyLock);
 		((char *)buf)[size-1] = randomdata[back];
 		back = (back + 1) % BUFFERSIZE;
-		PR_Lock(fullLock);
 		PR_NotifyCondVar(fullcv);
-		PR_Unlock(fullLock);
 		size--;
 	}
-	printf("All done random\n");
+    PR_Unlock(listLock);
 	return retval;
 }
