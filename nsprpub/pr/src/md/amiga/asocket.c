@@ -112,7 +112,6 @@ static void closeOpenSocketDTOR(void *prm) {
     PRThread *me = PR_GetCurrentThread();
     int fd = (int)prm;
     if (fd != 0) {
-        PR_fprintf(PR_STDERR, "DTOR(%lx) closing socket %d\n", me, fd - 1);
         TCP_CloseSocket(fd - 1);
     }
 }
@@ -241,8 +240,13 @@ static void SocketThread(void *notused) {
         switch (msg.type) {
         case MSG_OBTAIN:
             fd = PR_GetThreadPrivate(msg.fd);
-            fd2 = TCP_Dup2Socket(fd, -1);
-            reply.id = TCP_ReleaseSocket(fd2, -1);
+            fd2 = TCP_Dup2Socket(fd - 1, -1);
+            if (fd2 == -1) {
+                reply.errno = TCP_Errno();
+                reply.id = -1;
+            } else {
+                reply.id = TCP_ReleaseSocket(fd2, -1);
+            }
             break;
         case MSG_RECEIVE:
             fd = TCP_ObtainSocket(msg.fd, msg.socket.type, 
@@ -341,7 +345,7 @@ PRInt32 _MD_CONNECT(
     PRNetAddr addrCopy;
     struct sockaddr_in *t = (struct sockaddr_in *)&addrCopy;
     int retval;
-
+    PRBool doneWait = PR_FALSE;
     
     PR_fprintf(PR_STDERR, "connect(%lx), osfd %lx fd %d\n", me, osfd->secret->md.osfd, fd);
     if (fd == -1)
@@ -353,13 +357,22 @@ PRInt32 _MD_CONNECT(
     PR_fprintf(PR_STDERR, "addrlen %d, sin_len %d, sin_family %d, sin_port %d\n", addrlen, t->sin_len, t->sin_family, ntohl(t->sin_port));
     while ((retval = TCP_Connect(fd, (struct sockaddr *)&addrCopy, addrlen)) == -1) {
         int err = TCP_Errno();
-        PR_fprintf(PR_STDERR, "Connect returned %d, errno is %d\n", retval, err);
+        PR_fprintf(PR_STDERR, "Connect(%lx) returned %d, errno is %d\n", me, retval, err);
+        /* All done */
+        if (err == EISCONN) {
+            retval = 0;
+            break;
+        } else if (err == ECONNREFUSED && doneWait) {
+            break;
+        }
+
+        doneWait = PR_TRUE;
         retval = local_io_wait(fd, TYPE_WRITE, timeout);
         if (retval == -1) {
-            return -1;
-        }
-        if (err == EINPROGRESS) {
-            retval = 0;
+            _PR_MD_MAP_CONNECT_ERROR(TCP_Errno());
+            break;
+        } else if (retval == 0) {
+            retval = -1;
             break;
         }
     }
@@ -404,11 +417,10 @@ PRInt32 _MD_ACCEPT(
             continue;
 #endif
         } else {
-            break;
+            goto done;
         }
     }
  
-
     sock = (_MDSocket *)osfd->secret->md.osfd;
     sock2->type = sock->type;
     sock2->domain = sock->domain;
@@ -574,6 +586,7 @@ PRStatus _MD_GETPEERNAME(
 
     PR_fprintf(PR_STDERR, "getpeername(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
     retval = TCP_GetPeerName(fd, (struct sockaddr *)addr, addrlen);
+    PR_fprintf(PR_STDERR, "getpeeername(%lx), retval is %d, errno is %d\n", me, retval, TCP_Errno());
     if (retval == -1) {
         _PR_MD_MAP_GETPEERNAME_ERROR(TCP_Errno());
     }
@@ -581,16 +594,44 @@ PRStatus _MD_GETPEERNAME(
 }
 
 PRStatus _MD_GETSOCKOPT(
-    PRFileDesc *fd, PRInt32 level, PRInt32 optname, char* optval, PRInt32* optlen) {
-#warning _MD_GETSOCKOPT not implemented
-    assert(0);
+    PRFileDesc *osfd, PRInt32 level, PRInt32 optname, char* optval, PRInt32* optlen) {
+    PRThread *me = PR_GetCurrentThread();
+    int fd =_MD_Ensure_Socket(osfd->secret->md.osfd);
+    int retval;
+
+    if (fd == -1)
+        return -1;
+
+    PR_fprintf(PR_STDERR, "getsockopt(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+    retval = TCP_GetSockOpt(fd, level, optname, optval, optlen);
+    if (retval == -1) {
+        _PR_MD_MAP_GETSOCKOPT_ERROR(TCP_Errno());
+    }
+    PR_fprintf(PR_STDERR, "getsockopt(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+    return retval == 0 ? PR_SUCCESS: PR_FAILURE;
+
 }
 
 PRStatus _MD_SETSOCKOPT(
-    PRFileDesc *fd, PRInt32 level, PRInt32 optname,
+    PRFileDesc *osfd, PRInt32 level, PRInt32 optname,
     const char* optval, PRInt32 optlen) {
-#warning _MD_SETSOCKOPT not implemented
-    assert(0);
+    PRThread *me = PR_GetCurrentThread();
+    int fd =_MD_Ensure_Socket(osfd->secret->md.osfd);
+    int retval;
+
+    if (fd == -1)
+        return -1;
+
+    PR_fprintf(PR_STDERR, "setsockopt(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
+    PR_fprintf(PR_STDERR, "setsockopt(%lx), level %d, optname %d, optval %lx, optlen %d\n", me ,level, optname, optval, optlen);
+    retval = TCP_SetSockOpt(fd, level, optname, optval, optlen);
+    if (retval == -1) {
+        _PR_MD_MAP_SETSOCKOPT_ERROR(TCP_Errno());
+    }
+    PR_fprintf(PR_STDERR, "setsockopt(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+    return retval == 0 ? PR_SUCCESS: PR_FAILURE;
+
+
 }
 
 PRInt32 _MD_RECVFROM(
