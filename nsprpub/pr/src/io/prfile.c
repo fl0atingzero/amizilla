@@ -863,6 +863,9 @@ PR_IMPLEMENT(PRFileDesc*) PR_OpenFileUTF16(
 #if !defined(XP_UNIX) /* BugZilla: 4090 */
             fd->secret->appendMode = appendMode;
 #endif
+#ifdef _PR_ATHREADS
+            fd->secret->needToClose = PR_TRUE;
+#endif
             _PR_MD_INIT_FD_INHERITABLE(fd, PR_FALSE);
         }
     }

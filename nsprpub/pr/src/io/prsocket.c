@@ -449,6 +449,10 @@ PRIntervalTime timeout)
 
 	fd2->secret->nonblocking = fd->secret->nonblocking;
 	fd2->secret->inheritable = fd->secret->inheritable;
+#ifdef _PR_ATHREADS
+    fd2->secret->needToClose = PR_TRUE;
+#endif
+
 #ifdef WINNT
 	if (!fd2->secret->nonblocking && fd2->secret->inheritable != _PR_TRI_TRUE) {
 		/*
