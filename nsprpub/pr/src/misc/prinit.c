@@ -172,6 +172,9 @@ static void _PR_InitStuff(void)
 #ifdef _PR_ZONE_ALLOCATOR
     _PR_InitZones();
 #endif
+#ifdef _PR_ATHREADS
+    _PR_Init_Memory();
+#endif
 #ifdef WINNT
     _pr_SetNativeThreadsOnlyMode();
 #endif
