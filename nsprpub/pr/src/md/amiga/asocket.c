@@ -50,6 +50,9 @@
 
 #define BTOCPTR(ptr) ((void *)((ptr) << 2))
 
+/* DEBUG sockets */
+#define DEBUG_ASOCKET
+
 /*
  * Architecture:
  * As you may or may not know, sockets provided AmiTCP library only works on a 
@@ -162,7 +165,9 @@ static void closeOpenSocketDTOR(void *prm) {
     if (me->state != _PR_DEAD_STATE) {
         /* just a precaution */
         struct SharedSocket *ss = (struct SharedSocket *)prm;
+#ifdef DEBUG_ASOCKET
         printf("%lx closing socket(DTOR) %d\n", me, ss->fd);
+#endif
         TCP_CloseSocket(ss->fd);
         PR_Free(ss);
     }
@@ -171,18 +176,27 @@ static void closeOpenSocketDTOR(void *prm) {
 /*
  * Initialize the locks and socket thread
  */
-void _MD_INIT_IO(void) {
+void _PR_InitSocket(void) {
     communicationLock = PR_NewLock();
+    PR_ASSERT(communicationLock);
     msgCondVar = PR_NewCondVar(msgLock = PR_NewLock());
     replyCondVar = PR_NewCondVar(replyLock = PR_NewLock());
+    PR_ASSERT(msgCondVar);
+    PR_ASSERT(replyCondVar);
     PR_Lock(msgLock);
+#ifdef DEBUG_ASOCKET
+    printf("msgLock is %lx, replyLock is %lx, communicationslock is %lx, msgCondVar is %lx, replyCondVar is %lx\n", msgLock, replyLock, communicationLock, msgCondVar, replyCondVar);
+#endif
     sockThread = PR_CreateThread(PR_SYSTEM_THREAD, 
                                  SocketThread, NULL, PR_PRIORITY_NORMAL, 
                                  PR_LOCAL_THREAD, 
                                  PR_JOINABLE_THREAD, 0);
+    PR_ASSERT(sockThread);
     sockThread->daemon = PR_TRUE;
-    printf("msgLock is %lx, replyLock is %lx, communicationslock is %lx, msgCondVar is %lx, replyCOndVar is %lx\n", msgLock, replyLock, communicationLock, msgCondVar, replyCondVar);
+
+#ifdef DEBUG_ASOCKET
     printf("Socket thread is %lx\n", sockThread);
+#endif
     /* Wait until the socket thread wakes up */
     PR_WaitCondVar(msgCondVar, PR_INTERVAL_NO_TIMEOUT);
     PR_Unlock(msgLock);
@@ -232,7 +246,10 @@ static int local_io_wait(int fd, int type, PRIntervalTime timeout) {
         tv.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * (1000000 / _PR_MD_INTERVAL_PER_SEC());
     }
 
+#ifdef DEBUG_ASOCKET
     printf("Local_io_wait(%lx) fd %d, type %d, timeout %d, flags %lx\n", me, fd, type, timeout, me->flags);
+#endif
+
     FD_ZERO(&fd_read);
     FD_ZERO(&fd_write);
     FD_ZERO(&fd_except);
@@ -244,24 +261,33 @@ static int local_io_wait(int fd, int type, PRIntervalTime timeout) {
         FD_SET(fd, &fd_write);
     }
 
+#ifdef DEBUG_ASOCKET
     printf("WaitSelect(%lx) flags are %d\n", me, me->flags);
+#endif
+
     me->state = _PR_IO_WAIT;
     sel = TCP_WaitSelect(fd + 1, &fd_read, &fd_write, &fd_except,
         (timeout == PR_INTERVAL_NO_TIMEOUT) ? NULL : &tv, &flags);
 
     /* See if someone is trying to kill me by setting my state to dead */
     if (me->state == _PR_DEAD_STATE) {
+#ifdef DEBUG_ASOCKET
         printf("Thread %x was forceably killed from WaitSelect\n", me);
+#endif
         longjmp(me->jmpbuf, 1);
     }
 
     me->state = _PR_RUNNING;
+#ifdef DEBUG_ASOCKET
     printf("WaitSelect(%lx) returned %d, flags is %lx\n", me, sel, me->flags);
+#endif
     if (sel < 0) {
         _PR_MD_MAP_SELECT_ERROR(TCP_Errno());
     } else {
         if (flags & (1 << me->interruptSignal)) {
+#ifdef DEBUG_ASOCKET
             printf("WaitSelect(%lx) Interrupted, flags are %lx\n", me, me->flags);
+#endif
             PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
         } else if (sel == 0) {
             PR_SetError(PR_IO_TIMEOUT_ERROR, 0);
@@ -309,8 +335,10 @@ static PRStatus sendSocketToThread(int fd, _MDSocket *sock) {
         }
     }
 
-    if (fd2 < 0) {            
+    if (fd2 < 0) {
+#ifdef DEBUG_ASOCKET
         printf("Dup2Socket returned %d, errno is %d\n", fd2, TCP_Errno());
+#endif
         goto error;
     }
     isInterruptsBlocked = PR_IsInterruptsBlocked();
@@ -329,11 +357,14 @@ static PRStatus sendSocketToThread(int fd, _MDSocket *sock) {
     if (reply.msg.receive.private_idx != -1) {
         sock->private_idx = reply.msg.receive.private_idx;
         ss->sequenceNumber = reply.msg.receive.sequenceNumber;
+#ifdef DEBUG_ASOCKET
         printf("sendSocketToThread(%lx) fd %d, private_idx %d, sequence number is %d\n", me, fd, sock->private_idx, ss->sequenceNumber);
+#endif
         PR_SetThreadPrivate(sock->private_idx, (void *)ss);
     } else {
+#ifdef DEBUG_ASOCKET
         printf("sendSocketToThread(%lx) error %d\n", reply.errno);
-
+#endif
         retval = PR_FAILURE;
         PR_SetError(PR_UNKNOWN_ERROR, reply.errno);
         PR_Lock(msgLock);
@@ -353,7 +384,9 @@ static PRStatus sendSocketToThread(int fd, _MDSocket *sock) {
 
     return retval;
 error:
+#ifdef DEBUG_ASOCKET
     printf("sendsocket failed, closing socket\n");
+#endif
     if (fd2 >= 0) {
         TCP_CloseSocket(fd2);
     }
@@ -380,16 +413,21 @@ static void SocketThread(void *notused) {
     int num;
     struct SharedSocket *ss;
 
-    printf("In socket thread\n");
     /* Max number for the thread private data */
     num = -1;
     PR_Lock(msgLock);
     PR_NotifyCondVar(msgCondVar);
+#ifdef DEBUG_ASOCKET
+    printf("In socket thread\n");
+#endif
+
     while(!done) {
         int retval, fd;
         PR_WaitCondVar(msgCondVar,PR_INTERVAL_NO_TIMEOUT);
         PR_Lock(replyLock);
+#ifdef DEBUG_ASOCKET
         printf("Socket thread got msg %d\n", msg.type);
+#endif
         switch (msg.type) {
         case MSG_OBTAIN:
             reply.msg.obtain.id = -1;
@@ -409,7 +447,9 @@ static void SocketThread(void *notused) {
                 } else {
                     reply.msg.obtain.id = -1;
                     reply.errno = TCP_Errno();
+#ifdef DEBUG_ASOCKET
                     printf("Dup2socket failed: %d\n", reply.errno);
+#endif
                 }
             } else {
                 reply.errno = EBADF;
@@ -430,7 +470,9 @@ static void SocketThread(void *notused) {
             if (!found) {
                 rc = PR_NewThreadPrivateIndex(&idx, closeOpenSocketDTOR);
                 if (rc != PR_SUCCESS) {
+#ifdef DEBUG_ASOCKET
                     printf("NewPrivateIndex failed: %d\n", PR_GetError());
+#endif
                 }
             }
 
@@ -461,7 +503,9 @@ static void SocketThread(void *notused) {
                     reply.errno = TCP_Errno();
                     PR_Free(ss);
                 } else {
+#ifdef DEBUG_ASOCKET
                     printf("Socket thread assigning sequence number %d to private_idx %d\n", sequenceNumber, idx);
+#endif
                     reply.msg.receive.private_idx = idx;
                     reply.msg.receive.sequenceNumber = sequenceNumber++;
                     ss->sequenceNumber = reply.msg.receive.sequenceNumber;
@@ -477,7 +521,9 @@ static void SocketThread(void *notused) {
         case MSG_CLOSE:
             ss = (struct SharedSocket *)
                 PR_GetThreadPrivate(msg.msg.close.private_idx);
+#ifdef DEBUG_ASOCKET
             printf("Socket thread closing private_idx %d, socket %d, sequence number %d\n", msg.msg.close.private_idx, ss->fd, ss->sequenceNumber);
+#endif
             if (msg.msg.close.sequenceNumber == ss->sequenceNumber) {
                 PR_SetThreadPrivate(msg.msg.close.private_idx, NULL);
             }
@@ -486,7 +532,9 @@ static void SocketThread(void *notused) {
         case MSG_CHECK:
             ss = (struct SharedSocket *)
                 PR_GetThreadPrivate(msg.msg.check.private_idx);
+#ifdef DEBUG_ASOCKET
             printf("Socket check private_idx %d, seq %d(%d)\n", msg.msg.check.private_idx, msg.msg.check.sequenceNumber, (ss != NULL) ? ss->sequenceNumber : -1);
+#endif
             reply.msg.check.status = (ss != NULL && ss->sequenceNumber == 
                 msg.msg.check.sequenceNumber) ? PR_SUCCESS : PR_FAILURE;
             break;
@@ -499,7 +547,9 @@ static void SocketThread(void *notused) {
         PR_Unlock(replyLock); 
     }
     PR_Unlock(msgLock);
+#ifdef DEBUG_ASOCKET
     printf("Socket thread all done\n");
+#endif
 }
                 
 /* Obtains the socket from the thread-local variable
@@ -518,7 +568,9 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
     }
 
     ss = (struct SharedSocket *)PR_GetThreadPrivate(sock->private_idx);
+#ifdef DEBUG_ASOCKET
     printf("_MD_Ensure_Socket(%lx), fd from osfd %lx, private_idx %d, is %lx(%d)\n", me, osfd, sock->private_idx, ss, (ss != NULL) ? ss->fd : -1);
+#endif
     if (ss == NULL) {
         PRInt32 id;
 
@@ -548,7 +600,9 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
             }
 
             if (ss->fd == -1) {
+#ifdef DEBUG_ASOCKET
                 printf("Obtained failed[2] %d\n", TCP_Errno());
+#endif
                 PR_SetError(PR_UNKNOWN_ERROR, TCP_Errno());
 
                 PR_Free(ss);
@@ -559,16 +613,22 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
                 fd = ss->fd;
             }
         } else {
+#ifdef DEBUG_ASOCKET
             printf("Obtained failed %d\n", reply.errno);
+#endif
             PR_SetError(PR_UNKNOWN_ERROR, reply.errno);
             PR_Free(ss);
             ss = NULL;
             fd = -1;
         }
         PR_SetThreadPrivate(sock->private_idx, (void *)ss);
+#ifdef DEBUG_ASOCKET
         printf("_MD_Ensure_Socket(%lx), fd is now %lx(%d), sequenceNumber %d\n", me, ss, (ss!= NULL) ? ss->fd : -1, (ss != NULL) ? ss->sequenceNumber : -1);
+#endif
     } else {
+#ifdef DEBUG_ASOCKET
         printf("_MD_Ensure_Socket(%lx), doing socket check for fd %d, private_idx %d, sequenceNumber %d\n", me, ss->fd, sock->private_idx, ss->sequenceNumber);
+#endif
         isInterruptsBlocked = PR_IsInterruptsBlocked();
         PR_BlockInterrupt();
         PR_Lock(communicationLock);
@@ -605,7 +665,9 @@ PRInt32 _MD_CLOSE_SOCKET(PRInt32 osfd) {
     int retval;
     PRBool isInterruptsBlocked;
 
+#ifdef DEBUG_ASOCKET
     printf("Close(%lx) for sock %lx, private_idx %d, sock %lx, fd %d\n", me, osfd, sock->private_idx, ss, (ss != NULL) ? ss->fd : -1 );
+#endif
 
     if (ss == NULL) {
         return -1;
@@ -646,17 +708,25 @@ PRInt32 _MD_CONNECT(
     int retval;
     PRBool doneWait = PR_FALSE;
     
+#ifdef DEBUG_ASOCKET
     printf("connect(%lx), osfd %lx fd %d\n", me, osfd->secret->md.osfd, fd);
+#endif
     if (fd == -1)
         return -1;
 
     addrCopy = *addr;
     ((struct sockaddr *) &addrCopy)->sa_len = addrlen;
     ((struct sockaddr *) &addrCopy)->sa_family = addr->raw.family;
+
+#ifdef DEBUG_ASOCKET
     printf("addrlen %d, sin_len %d, sin_family %d, sin_port %d\n", addrlen, t->sin_len, t->sin_family, ntohl(t->sin_port));
+#endif
+
     while ((retval = TCP_Connect(fd, (struct sockaddr *)&addrCopy, addrlen)) == -1) {
         int err = TCP_Errno();
+#ifdef DEBUG_ASOCKET
         printf("Connect(%lx) returned %d, errno is %d\n", me, retval, err);
+#endif
         /* All done */
         if (osfd->secret->nonblocking) {
             _PR_MD_MAP_CONNECT_ERROR(TCP_Errno());
@@ -677,7 +747,9 @@ PRInt32 _MD_CONNECT(
         doneWait = PR_TRUE;
         retval = local_io_wait(fd, TYPE_WRITE, timeout);
         if (_PR_PENDING_INTERRUPT(me)) {
+#ifdef DEBUG_ASOCKET
             printf("Connect(%lx) got interrupted\n", me);
+#endif
             PR_ClearInterrupt();
             retval = -1;
             break;
@@ -690,7 +762,9 @@ PRInt32 _MD_CONNECT(
             break;
         }
     }
+#ifdef DEBUG_ASOCKET
     printf("Connect returned %d, errno is %d\n", retval, TCP_Errno());
+#endif
     return retval;
     
 }
@@ -711,7 +785,9 @@ PRInt32 _MD_ACCEPT(
     int fd2;
     int retval = -1;
 
+#ifdef DEBUG_ASOCKET
     printf("accept(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
+#endif
 
     if (fd == -1)
         return -1;
@@ -720,11 +796,17 @@ PRInt32 _MD_ACCEPT(
     if (sock2 == NULL) {
         goto error;
     }
+
+#ifdef DEBUG_ASOCKET
     printf("Going to accept %d, %lx, %d\n", fd, addr, *addrlen);
+#endif
+
     while ((retval = TCP_Accept(fd,(struct sockaddr *)addr, addrlen)) < 0) {
         int err = TCP_Errno();
 
+#ifdef DEBUG_ASOCKET
         printf("Accept(%lx) returned %d, errno is %d\n", me, retval, err);
+#endif
         /* All done */
         if (osfd->secret->nonblocking) {
             _PR_MD_MAP_ACCEPT_ERROR(err);
@@ -735,7 +817,9 @@ PRInt32 _MD_ACCEPT(
             int io = local_io_wait(fd, TYPE_READ, timeout);
             if (_PR_PENDING_INTERRUPT(me)) {
                 PR_ClearInterrupt();
+#ifdef DEBUG_ASOCKET
                 printf("accept(%lx) got interrupt\n", me);
+#endif
                 goto error;
             }
             if (io < 0) {
@@ -750,7 +834,9 @@ PRInt32 _MD_ACCEPT(
         }
     }
 
+#ifdef DEBUG_ASOCKET
     printf("Accept2(%lx) returned %d, errno is %d\n", me, retval, TCP_Errno());
+#endif
  
     sock = (_MDSocket *)osfd->secret->md.osfd;
     sock2->type = sock->type;
@@ -759,7 +845,10 @@ PRInt32 _MD_ACCEPT(
     if (sendSocketToThread(retval, sock2) == PR_FAILURE)
         goto error;
 
+#ifdef DEBUG_ASOCKET
     printf("Accept returned %d, len is %d, errno is %d, newsock is %lx, private_idx is %d\n", retval, *addrlen, TCP_Errno(), sock2, sock2->private_idx);
+#endif
+
     /* ignore the sa_len field of struct sockaddr */    
     if (addr) {
         addr->raw.family = AF_INET;
@@ -773,7 +862,9 @@ error:
     }
 
     if (retval >= 0) {
+#ifdef DEBUG_ASOCKET
         printf("Accept error: closing socket %d\n", retval);
+#endif
         TCP_CloseSocket(retval);
     }
     return -1;
@@ -795,14 +886,21 @@ PRInt32 _MD_BIND(PRFileDesc *osfd, const PRNetAddr *addr, PRUint32 addrlen) {
     ((struct sockaddr *) &addrCopy)->sa_len = addrlen;
     ((struct sockaddr *) &addrCopy)->sa_family = addr->raw.family;
 
+#ifdef DEBUG_ASOCKET
     printf("bind(%lx), osfd %lx fd %d, port %d, len %d, size %d\n", me, osfd->secret->md.osfd, fd, ntohl(((struct sockaddr_in *)&addrCopy)->sin_port), addrlen, sizeof(struct sockaddr_in));
+#endif
+
     retval = TCP_Bind(fd,(struct sockaddr *)&addrCopy, addrlen);
     if (retval == -1) {
+#ifdef DEBUG_ASOCKET
         printf("Bind failed %d\n", TCP_Errno());
+#endif
         _PR_MD_MAP_BIND_ERROR(TCP_Errno());
     }
 
+#ifdef DEBUG_ASOCKET
     printf("bind(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+#endif
     return retval;
 }
 
@@ -814,8 +912,10 @@ PRInt32 _MD_LISTEN(PRFileDesc *osfd, PRIntn backlog) {
     int fd = _MD_Ensure_Socket(osfd->secret->md.osfd);
     int retval;
 
+#ifdef DEBUG_ASOCKET
     printf("Listen(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
-   
+#endif
+
     if (fd == -1)
         return -1;
 
@@ -837,7 +937,10 @@ PRInt32 _MD_SHUTDOWN(PRFileDesc *osfd, PRIntn how) {
     if (fd == -1)
         return -1;
 
+#ifdef DEBUG_ASOCKET
     printf("shutdown(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+#endif
+
     retval = TCP_ShutDown(fd, how);
     if (retval == -1) {
         _PR_MD_MAP_SHUTDOWN_ERROR(TCP_Errno());
@@ -857,10 +960,14 @@ PRInt32 _MD_RECV(PRFileDesc *osfd, void *buf, PRInt32 amount,
     if (fd == -1)
         return -1;
 
+#ifdef DEBUG_ASOCKET
     printf("recv(%lx), osfd %lx fd %d, amount %d, timeout %d\n", me, osfd->secret->md.osfd, fd, amount, timeout);
-    /* TODO Should be < 0 */
+#endif
+
     while ((retval = TCP_Recv(fd, buf, amount, flags)) < 0) {
-        printf("recv(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());        
+#ifdef DEBUG_ASOCKET
+        printf("recv(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+#endif
         /* All done */
         if (osfd->secret->nonblocking) {
             _PR_MD_MAP_RECV_ERROR(TCP_Errno());
@@ -869,7 +976,9 @@ PRInt32 _MD_RECV(PRFileDesc *osfd, void *buf, PRInt32 amount,
 
         retval = local_io_wait(fd, TYPE_READ, timeout);
         if (_PR_PENDING_INTERRUPT(me)) {
+#ifdef DEBUG_ASOCKET
             printf("recv(%lx) got interrupted\n", me);
+#endif
             PR_ClearInterrupt();
             retval = -1;
             break;
@@ -882,7 +991,9 @@ PRInt32 _MD_RECV(PRFileDesc *osfd, void *buf, PRInt32 amount,
             break;
         }
     }
+#ifdef DEBUG_ASOCKET
     printf("recv(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+#endif
     return retval;
 }
 
@@ -898,10 +1009,14 @@ PRInt32 _MD_SEND(
     if (fd == -1)
         return -1;
    
-
+#ifdef DEBUG_ASOCKET
     printf("send(%lx), osfd %lx fd %d buf %lx, amount %d, flags %d\n", me, osfd->secret->md.osfd, fd, buf, amount, flags);
+#endif
+
     while ((retval = TCP_Send(fd, buf, amount, flags)) == -1) {
+#ifdef DEBUG_ASOCKET
         printf("Send(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
+#endif
         /* All done */
         if (osfd->secret->nonblocking) {
             _PR_MD_MAP_SEND_ERROR(TCP_Errno());
@@ -910,7 +1025,9 @@ PRInt32 _MD_SEND(
 
         retval = local_io_wait,(fd, TYPE_WRITE, timeout);
         if (_PR_PENDING_INTERRUPT(me)) {
+#ifdef DEBUG_ASOCKET
             printf("send(%lx) got interrupted\n", me);
+#endif
             PR_ClearInterrupt();
             retval = -1;
             break;
@@ -924,7 +1041,9 @@ PRInt32 _MD_SEND(
         }
     }
 
+#ifdef DEBUG_ASOCKET
     printf("send(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
+#endif
     return retval;
 }
 
@@ -939,7 +1058,10 @@ PRStatus _MD_GETSOCKNAME(
     if (fd == -1)
         return -1;
 
+#ifdef DEBUG_ASOCKET
     printf("getsockname(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+#endif
+
     retval = TCP_GetSockName(fd, (struct sockaddr *)addr, addrlen);
     if (retval == 0) {
         /* ignore the sa_len field of struct sockaddr */
@@ -948,7 +1070,10 @@ PRStatus _MD_GETSOCKNAME(
         }
     }
 
+#ifdef DEBUG_ASOCKET
     printf("getsockname(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+#endif
+
     if (retval == -1) {
         _PR_MD_MAP_GETSOCKNAME_ERROR(TCP_Errno());
     }
@@ -967,9 +1092,16 @@ PRStatus _MD_GETPEERNAME(
     if (fd == -1)
         return -1;
 
+#ifdef DEBUG_ASOCKET
     printf("getpeername(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+#endif
+
     retval = TCP_GetPeerName(fd, (struct sockaddr *)addr, addrlen);
+
+#ifdef DEBUG_ASOCKET
     printf("getpeername(%lx), retval is %d, errno is %d\n", me, retval, TCP_Errno());
+#endif
+
     if (retval == -1) {
         _PR_MD_MAP_GETPEERNAME_ERROR(TCP_Errno());
     }
@@ -985,7 +1117,9 @@ PRStatus _MD_GETSOCKOPT(
     int fd =_MD_Ensure_Socket(osfd->secret->md.osfd);
     int retval;
 
+#ifdef DEBUG_ASOCKET
     printf("getsockopt(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+#endif
 
     if (fd == -1)
         return -1;
@@ -994,7 +1128,11 @@ PRStatus _MD_GETSOCKOPT(
     if (retval == -1) {
         _PR_MD_MAP_GETSOCKOPT_ERROR(TCP_Errno());
     }
+
+#ifdef DEBUG_ASOCKET
     printf("getsockopt(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+#endif
+
     return retval == 0 ? PR_SUCCESS: PR_FAILURE;
 
 }
@@ -1009,8 +1147,10 @@ PRStatus _MD_SETSOCKOPT(
     int fd =_MD_Ensure_Socket(osfd->secret->md.osfd);
     int retval;
 
+#ifdef DEBUG_ASOCKET
     printf("setsockopt(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
     printf("setsockopt(%lx), level %d, optname %d, optval %lx, optlen %d\n", me ,level, optname, optval, optlen);
+#endif
 
     if (fd == -1)
         return -1;
@@ -1019,7 +1159,10 @@ PRStatus _MD_SETSOCKOPT(
     if (retval == -1) {
         _PR_MD_MAP_SETSOCKOPT_ERROR(TCP_Errno());
     }
+
+#ifdef DEBUG_ASOCKET
     printf("setsockopt(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+#endif
     return retval == 0 ? PR_SUCCESS: PR_FAILURE;
 
 
@@ -1038,7 +1181,10 @@ PRInt32 _MD_RECVFROM(
     if (fd == -1)
         return -1;
     while ((retval = TCP_RecvFrom(fd, buf, amount, flags, addr, addrlen)) == -1) {
+#ifdef DEBUG_ASOCKET
         printf("RecvFrom(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
+#endif
+
         /* All done */
         if (osfd->secret->nonblocking) {
             _PR_MD_MAP_RECVFROM_ERROR(TCP_Errno());
@@ -1047,7 +1193,9 @@ PRInt32 _MD_RECVFROM(
 
         retval = local_io_wait(fd, TYPE_READ, timeout);
         if (_PR_PENDING_INTERRUPT(me)) {
+#ifdef DEBUG_ASOCKET
             printf("recvfrom(%lx) got interrupted\n", me);
+#endif
             PR_ClearInterrupt();
             retval = -1;
             break;
@@ -1062,7 +1210,9 @@ PRInt32 _MD_RECVFROM(
 
     }
 
+#ifdef DEBUG_ASOCKET
     printf("RecvFrom(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
+#endif
     if (retval != -1) {
         /* ignore the sa_len field of struct sockaddr */
         if (addr) {
@@ -1085,7 +1235,10 @@ PRInt32 _MD_SENDTO(
 
     if (fd == -1)
         return -1;
+
+#ifdef DEBUG_ASOCKET
     printf("sendto(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+#endif
 
     addrCopy = *addr;
     ((struct sockaddr *) &addrCopy)->sa_len = addrlen;
@@ -1100,7 +1253,9 @@ PRInt32 _MD_SENDTO(
 
         retval = local_io_wait(fd, TYPE_WRITE, timeout);
         if (_PR_PENDING_INTERRUPT(me)) {
+#ifdef DEBUG_ASOCKET
             printf("sendto(%lx) got interrupted\n", me);
+#endif
             PR_ClearInterrupt();
             retval = -1;
             break;
@@ -1121,50 +1276,58 @@ PRInt32 _MD_SENDTO(
  * Also sends the socket to the socket thread
  */
 PRInt32 _MD_SOCKET(int type, int domain, int protocol) {
-  int retval;
-  int fd;
-  PRThread *me = PR_GetCurrentThread();
-  _MDSocket *sock;
+    int retval;
+    int fd;
+    PRThread *me = PR_GetCurrentThread();
+    _MDSocket *sock;
 
-  if (me->AmiTCP_Base == NULL) {
-      PR_SetError(PR_PROTOCOL_NOT_SUPPORTED_ERROR, 0);
-      return -1;
-  }
+    if (me->AmiTCP_Base == NULL) {
+        PR_SetError(PR_PROTOCOL_NOT_SUPPORTED_ERROR, 0);
+        return -1;
+    }
 
-  sock = PR_NEWZAP(_MDSocket);
-  if (sock == NULL) 
-      return -1;
-  sock->type = type;
-  sock->domain = domain;
-  sock->protocol = protocol;
+    sock = PR_NEWZAP(_MDSocket);
+    if (sock == NULL) 
+        return -1;
+    sock->type = type;
+    sock->domain = domain;
+    sock->protocol = protocol;
 
-  fd = TCP_Socket(type, domain, protocol);
+    fd = TCP_Socket(type, domain, protocol);
 
-  printf("Socket(%lx) returns %d, errno is %d\n", me, fd, TCP_Errno());
+#ifdef DEBUG_ASOCKET
+    printf("Socket(%lx) returns %d, errno is %d\n", me, fd, TCP_Errno());
+#endif
 
-  if (fd < 0) {
-      _PR_MD_MAP_SOCKET_ERROR(TCP_Errno());
-      PR_Free(sock);
-      return -1;
-  } else {
-      if (sendSocketToThread(fd, sock) == PR_FAILURE)
-          goto error;
-  }
+    if (fd < 0) {
+        _PR_MD_MAP_SOCKET_ERROR(TCP_Errno());
+        PR_Free(sock);
+        return -1;
+    } else {
+        if (sendSocketToThread(fd, sock) == PR_FAILURE)
+            goto error;
+    }
 
-  printf("socket(%lx), newsock is %lx, private_idx is %d, fd is %d\n", me, sock, sock->private_idx, fd);
-  return (PRInt32)sock;
+#ifdef DEBUG_ASOCKET
+    printf("socket(%lx), newsock is %lx, private_idx is %d, fd is %d\n", me, sock, sock->private_idx, fd);
+#endif
+
+    return (PRInt32)sock;
 
 error:
-  if (sock != (_MDSocket *)-1 && sock != NULL) {
-      PR_Free(sock);
-      sock = (_MDSocket *)-1;
-  }
+    if (sock != (_MDSocket *)-1 && sock != NULL) {
+        PR_Free(sock);
+        sock = (_MDSocket *)-1;
+    }
 
-  printf("Socket error, closing socket %d\n", fd);
-  if (fd >= 0)
-      TCP_CloseSocket(fd);
+#ifdef DEBUG_ASOCKET
+    printf("Socket error, closing socket %d\n", fd);
+#endif
 
-  return (PRInt32)sock;
+    if (fd >= 0)
+        TCP_CloseSocket(fd);
+
+    return (PRInt32)sock;
 }
 
 /*
@@ -1178,7 +1341,9 @@ PRInt32 _MD_SOCKETAVAILABLE(PRFileDesc *osfd) {
     if (fd < 0)
         return -1;
 
+#ifdef DEBUG_ASOCKET
     printf("socketavailable(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+#endif
 
     if (TCP_IoctlSocket(fd, FIONREAD, &result) < 0) {
         printf("socketavailable(%lx), returns =1, errno is %d\n", me, TCP_Errno());        
@@ -1186,7 +1351,9 @@ PRInt32 _MD_SOCKETAVAILABLE(PRFileDesc *osfd) {
         return -1;
     }
 
+#ifdef DEBUG_ASOCKET
     printf("socketavailable(%lx), returns %d, errno is %d\n", me, result, TCP_Errno());
+#endif
 
     return result;
 }
@@ -1205,10 +1372,14 @@ PRInt32 _MD_amiga_get_nonblocking_connect_error(int osfd)
     if (fd == -1)
         return EBADF;
     if (TCP_GetSockOpt(fd, SOL_SOCKET, SO_ERROR, (char *) &err, &optlen) == -1) {
+#ifdef DEBUG_ASOCKET
         printf("unix_connect error(%d), returns %lx, errno is %d\n", me, -1, TCP_Errno());
+#endif
         return TCP_Errno();
     } else {
+#ifdef DEBUG_ASOCKET
         printf("unix_connect error(%d), returns %lx, errno is %d\n", me, err, TCP_Errno());
+#endif
         return err;
     }
 }
@@ -1243,7 +1414,9 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
 
     memset(sps, 0, sizeof(sps[0]) * npds);
 
+#ifdef DEBUG_ASOCKET
     printf("Poll(%lx) with #fds %d, timeout %d\n", me, npds, timeout);
+#endif
     ready = 0;
 
     /* Send off a timer request waiting for x seconds */
@@ -1306,12 +1479,16 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                     PR_ASSERT(NULL != bottom);  /* what to do about that? */
                     if ((NULL != bottom)
                         && (_PR_FILEDESC_OPEN == bottom->secret->state)) {
+#ifdef DEBUG_ASOCKET
                         printf("Poll(%lx) Bottom fd %lx, osfd is %lx, type is %lx\n", me, bottom, bottom->secret->md.osfd, bottom->methods->file_type);
+#endif
                         switch (bottom->methods->file_type) {
                         case PR_DESC_PIPE:
                         case PR_DESC_FILE:
                             sp = &sps[i];
+#ifdef DEBUG_ASOCKET
                             printf("Poll(%lx) fd %d(%lx) is a file,pipe\n", me, i, pd->fd);
+#endif
                             sp->sp_Msg.mn_Node.ln_Name = (char *)&sp->sp_Pkt;
                             sp->sp_Pkt.dp_Link = &sp->sp_Msg;
                             sp->sp_Pkt.dp_Res1 = NULL;
@@ -1319,7 +1496,9 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                             sp->sp_Pkt.dp_Port = NULL;
                             sp->sp_Msg.mn_Node.ln_Type = 0;
                             fh = (struct FileHandle *)BTOCPTR(bottom->secret->md.osfd);
+#ifdef DEBUG_ASOCKET
                             printf("Poll(%lx) sel port is %lx, BPTR is %lx, fh is %lx, packet is %lx\n", me, me->selectPort, bottom->secret->md.osfd, fh, sp);
+#endif
                             sp->sp_Pkt.dp_Port = me->selectPort;
                             sp->sp_Pkt.dp_Type = ACTION_WAIT_CHAR;
                             sp->sp_Pkt.dp_Arg1 = 100000;
@@ -1328,7 +1507,9 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                         case PR_DESC_SOCKET_TCP:
                         case PR_DESC_SOCKET_UDP:
                             fd = _MD_Ensure_Socket(bottom->secret->md.osfd);
+#ifdef DEBUG_ASOCKET
                             printf("Poll(%lx) fd %d(%lx) is a socket, fd is %d\n", me, i, pd->fd, fd);
+#endif
                             if (fd < 0) {
                                 pd->out_flags = PR_POLL_NVAL;
                                 continue;
@@ -1361,29 +1542,44 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
 
         me->state = _PR_IO_WAIT;
         flags = 1 << me->selectPort->mp_SigBit | 1 << me->port->mp_SigBit;
+
+#ifdef DEBUG_ASOCKET
         printf("Poll(%lx) Going to waitselect, maxfd is %d, signals are %lx\n", me, maxfd, flags);
+#endif
+
         retval = TCP_WaitSelect(maxfd + 1, &in, &out, &err, NULL, &flags);
         rc = retval;
 
         /* See if someone is trying to kill me by setting my state to dead */
         if (me->state == _PR_DEAD_STATE) {
+#ifdef DEBUG_ASOCKET
             printf("Thread %x was forceably killed from WaitSelect in poll\n", me);
+#endif
             longjmp(me->jmpbuf, 1);
         }
         me->state = _PR_RUNNING;
 
+#ifdef DEBUG_ASOCKET
         printf("Poll(%lx) select returns %d, errno is %d\n", me, retval, TCP_Errno());
+#endif
 
         if (flags & (1 << me->selectPort->mp_SigBit)) {
             struct StandardPacket *sp;
+#ifdef DEBUG_ASOCKET
             printf("File descriptor waiting...\n");
+#endif
 
             while ((sp = (struct StandardPacket *)GetMsg(me->selectPort)) != NULL) {
+#ifdef DEBUG_ASOCKET
                 printf("Got packet %lx\n", sp);
+#endif
                 for (i = 0; i < npds && sp != &sps[i]; i++)
                     ;
 
+#ifdef DEBUG_ASOCKET
                 printf("File descriptor packet %d is waiting, res1 is %d, res2 is %d\n", i, sp->sp_Pkt.dp_Res1, sp->sp_Pkt.dp_Res2);
+#endif
+
                 pds[i].out_flags = 0;
 
 
@@ -1416,7 +1612,9 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
 
         if (flags & (1 << me->port->mp_SigBit)) {
             /* timeout or interrupt */
+#ifdef DEBUG_ASOCKET
             printf("Poll got timeout/interrupt\n");
+#endif
             done = TRUE;
         }
 
@@ -1453,16 +1651,22 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                     fd = _MD_Ensure_Socket(bottom->secret->md.osfd);
                     pds[i].out_flags = 0;
                     if (FD_ISSET(fd, &in)) {
+#ifdef DEBUG_ASOCKET
                         printf("Fd %d is waiting for read\n", fd);
+#endif
                         pds[i].out_flags |= PR_POLL_READ;
                     }
                     if (FD_ISSET(fd, &out)) {
+#ifdef DEBUG_ASOCKET
                         printf("Fd %d is waiting for write\n", fd);
+#endif
                         pds[i].out_flags |= PR_POLL_WRITE;
                     }
 
                     if (FD_ISSET(fd, &err)) {
+#ifdef DEBUG_ASOCKET
                         printf("Fd %d is waiting for except\n", fd);
+#endif
                         pds[i].out_flags |= PR_POLL_EXCEPT;
                     }
                     break;
@@ -1481,8 +1685,10 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
             WaitIO((struct IORequest *)me->sleepRequest);
         }
     }
-            
+          
+#ifdef DEBUG_ASOCKET
     printf("Poll(%lx) returns %d\n", me, retval);
+#endif
     return retval;
 }
 
@@ -1512,7 +1718,9 @@ void _PR_MD_MAKE_NONBLOCK(PRFileDesc *osfd) {
     case PR_DESC_SOCKET_TCP:
     case PR_DESC_SOCKET_UDP:
         fd = _MD_Ensure_Socket(osfd->secret->md.osfd);
+#ifdef DEBUG_ASOCKET
         printf("%lx making socket %lx (%d) nonblocking\n", me, osfd->secret->md.osfd, fd);
+#endif
         TCP_IoctlSocket(fd, FIONBIO, (void *)&arg);
         break;
 
