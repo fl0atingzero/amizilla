@@ -115,11 +115,12 @@ static void TraverseDirectory( unsigned char *dir )
             if ( NULL == fd )  {
                 printf("PR_Open() failed. Error: %ld, OSError: %ld\n", 
                     PR_GetError(), PR_GetOSError());
-            }
-            rc = PR_Close( fd );
-            if ( PR_FAILURE == rc )  {
+            } else {
+              rc = PR_Close( fd );
+              if ( PR_FAILURE == rc )  {
                 printf("PR_Close() failed. Error: %ld, OSError: %ld\n", 
                     PR_GetError(), PR_GetOSError());
+              }
             }
         } else if ( PR_FILE_DIRECTORY == info.type ) {
             sprintf( nextDir, "%s/%s", dir, dirEntry->name );
