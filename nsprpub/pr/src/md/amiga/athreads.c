@@ -39,6 +39,7 @@ static PRStatus _InitThread(PRThread *pr);
 
 
 void _Exit(PRIntn status) {
+    /* TODO - how to signal all the threads to stop!! */
 }
 
 
@@ -47,6 +48,11 @@ void _MD_Early_Init(void) {
     thread->p = (struct Process *)FindTask(NULL);
     thread->p->pr_Task.tc_UserData = thread;
     _InitThread(thread);
+}
+
+PR_IMPLEMENT(PRStatus) PR_Interrupt(PRThread *thread) {
+    Signal(thread->p, 1<< thread->port->mp_SigBit);
+    return PR_SUCCESS;
 }
 
 /**
@@ -108,9 +114,6 @@ static void procEntry(void) {
     procExit();
 }
 
-void _CleanupBeforeExit(void) {
-    (void)procExit();
-}
 
 static int _PR_Map_Priority(PRThreadPriority priority) {
     int retval;
@@ -232,20 +235,24 @@ void _PR_InitStacks(void) {
 
 PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
 {
-    _PR_CleanupSocket();
-    _PR_CleanupMW();
-    _PR_CleanupDtoa();
-    _PR_CleanupCallOnce();
-    _PR_ShutdownLinker();
-    _PR_LogCleanup();
-    _PR_CleanupNet();
-    /* Close all the fd's before calling _PR_CleanupIO */
-    _PR_CleanupIO();
-    _PR_CleanupLayerCache();
-    _PR_CleanupEnv();
-    /* Clean up primorial thread */
-    procExit();
-    _pr_initialized = PR_FALSE;
+    if (_pr_initialized) {
+        /* Clean up primorial thread */
+        procExit();
+        _PR_CleanupSocket();
+        _PR_CleanupMW();
+        _PR_CleanupDtoa();
+        _PR_CleanupCallOnce();
+        _PR_ShutdownLinker();
+
+        _PR_LogCleanup();
+        _PR_CleanupNet();
+        /* Close all the fd's before calling _PR_CleanupIO */
+        _PR_CleanupIO();
+        _PR_CleanupLayerCache();
+        _PR_CleanupEnv();
+
+        _pr_initialized = PR_FALSE;
+    }
     return PR_SUCCESS;
 }  /* PR_Cleanup */
 
