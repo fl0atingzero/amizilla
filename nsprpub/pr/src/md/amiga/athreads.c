@@ -35,13 +35,11 @@
 
 #include <primpl.h>
 
-extern char **environ;
-
 /* DEBUG threads */
-/* #define DEBUG_ATHREADS */
+/* #define DEBUG_ATHREADS*/
 
 static PRStatus _InitThread(PRThread *pr);
-static void _MD_Exit();
+void _MD_Exit();
 
 static void killThread (PRThread *thread, PRBool kill) {
 #ifdef DEBUG_ATHREADS
@@ -68,7 +66,7 @@ static void killThreads(PRBool kill) {
     PRThread *me = PR_CurrentThread();
 
 #ifdef DEBUG_ATHREADS
-    printf("In processexit, next is %lx, prev is %lx\n", me->next, me->prev);
+    printf("In processexit %d, next is %lx, prev is %lx\n", kill, me->next, me->prev);
 #endif
     for (tmp = me->prev; tmp; tmp = tmp->prev) {
         killThread(tmp, kill);
@@ -89,22 +87,25 @@ static PRThread *primordialThread = NULL;
 
 void _MD_Early_Init(void) {
     PRThread *thread;
+    Printf("MD_Early_Init\n");
+    Flush(Output());
     thread = PR_NEWZAP(PRThread);
     primordialThread = thread;
     thread->p = (struct Process *)FindTask(NULL);
+    thread->primordialThread = thread->p;
+    thread->parent = NULL;
     thread->p->pr_Task.tc_UserData = thread;
     _InitThread(thread);
 
 #ifdef DEBUG_ATHREADS
     printf("Primorial Thread %lx\n", thread);
+    fflush(stdout);
 #endif
 
     setvbuf(stdout, NULL, _IONBF, 0);
     atexit(_MD_Exit);
-
     _PR_InitSocket();
     _PR_InitRandom();
-
 }
 
 PR_IMPLEMENT(PRStatus) PR_Interrupt(PRThread *thread) {
@@ -147,10 +148,11 @@ static PRStatus _InitThread(PRThread *pr) {
     pr->selectPort = CreateMsgPort();
     PR_ASSERT(pr->selectPort);
     pr->interruptSignal = AllocSignal(-1);
+    pr->primordialThread = primordialThread->p;
     PR_ASSERT(pr->interruptSignal != -1);
 
     pr->sleepRequest =
-        (struct timerequest *)CreateExtIO(pr->port, sizeof(struct timerequest));    
+        (struct timerequest *)CreateIORequest(pr->port, sizeof(struct timerequest));    
     PR_ASSERT(pr->sleepRequest);
 
     if (OpenDevice(TIMERNAME, UNIT_VBLANK, 
@@ -197,7 +199,7 @@ static void procExit(PRThread *me) {
         WaitIO((struct IORequest *)me->sleepRequest);
     }
     CloseDevice((struct IORequest *)me->sleepRequest);
-    DeleteExtIO((struct IORequest *)me->sleepRequest);
+    DeleteIORequest((struct IORequest *)me->sleepRequest);
     if (me->AmiTCP_Base != NULL)
         CloseLibrary(me->AmiTCP_Base);
 
@@ -221,6 +223,10 @@ static void procEntry(void) {
     PRThread *pr;
     struct Library *ixemulbase;
 
+#ifdef DEBUG_ATHREADS
+    printf("In procEntry\n");
+    fflush(stdout);
+#endif
     /* Hack. I need to wait for the parent to initialize some things for me */
     Wait(SIGBREAKF_CTRL_F);
     pr = PR_GetCurrentThread();
@@ -300,7 +306,9 @@ PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
         /* Hack for ixemul.library to work */
         thread->p->pr_Task.tc_TrapCode = me->p->pr_Task.tc_TrapCode;
         thread->p->pr_Task.tc_TrapData = me->p->pr_Task.tc_TrapData;
+
         thread->parent = me;
+        thread->primordialThread = primordialThread->p;
 
         /* Add this thread to our list of threads */
         thread->next = me->next;
@@ -328,7 +336,8 @@ PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
     Permit();
 
 #ifdef DEBUG_ATHREADS
-    printf("CreateThread(%lx) created thread %lx\n", me, thread);
+    printf("CreateThread(%lx) created thread %lx(%lx)\n", me, thread, thread->p);
+    fflush(stdout);
 #endif
     return thread;
 }
@@ -405,18 +414,12 @@ PR_IMPLEMENT(void) PR_BlockInterrupt(void)
 {
     PRThread *me = PR_CurrentThread();
     _PR_THREAD_BLOCK_INTERRUPT(me);
-#ifdef DEBUG_ATHREADS
-    printf("Blocking interrupt for %lx, flags are %lx\n", me, me->flags);
-#endif
 }  /* PR_BlockInterrupt */
 
 PR_IMPLEMENT(void) PR_UnblockInterrupt(void)
 {
     PRThread *me = PR_CurrentThread();
     _PR_THREAD_UNBLOCK_INTERRUPT(me);
-#ifdef DEBUG_ATHREADS
-    printf("Unblocking interrupt for %lx, flags are %lx\n", me, me->flags);
-#endif
 }  /* PR_UnblockInterrupt */
 
 
@@ -431,7 +434,7 @@ void _PR_InitThreads(PRThreadType type, PRThreadPriority priority,
 void _PR_InitStacks(void) {
 }
 
-static void _MD_Exit(void) {
+void _MD_Exit(void) {
     if (_pr_initialized) {
         /* I need to kill the socket thread before killing off
          * all of the other threads
@@ -789,7 +792,7 @@ PRProcess *_CreateProcess(const char *path, char *const *argv,
     PR_Lock(lock);
 
     retval->md.argv = argv;
-    retval->md.envp = envp != NULL ? envp : environ;
+    retval->md.envp = envp != NULL ? envp : NULL;
     retval->md.attr = attr;
 
     /* Since SystemTags() waits until it is done,
@@ -847,7 +850,5 @@ PR_IMPLEMENT(void) PR_SetThreadRecycleMode(PRUint32 count) {
     /* Does nothing */
 }
 
-
 void _MD_INIT_IO(void) {
 }
-
