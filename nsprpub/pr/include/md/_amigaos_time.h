@@ -37,7 +37,7 @@
 
 #define _MD_INTERVAL_INIT _MD_Interval_Init
 #define _MD_GET_INTERVAL  _MD_Get_Interval
-#define _MD_INTERVAL_PER_SEC _MD_Interval_Per_Sec
+#define _MD_INTERVAL_PER_SEC() (1000)
 
 NSPR_API(void) _MD_Interval_Init(void);
 NSPR_API(PRIntervalTime) _MD_Get_Interval(void);
