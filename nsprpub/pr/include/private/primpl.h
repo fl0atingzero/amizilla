@@ -1639,8 +1639,9 @@ struct PRThread {
     struct MsgPort *port;
     struct MsgPort *selectPort;
     ULONG interruptSignal;
+    PRBool daemon;                  /* Don't need to forcibly kill it */
     struct timerequest *sleepRequest;
-    PRBool sleepRequestUsed;
+    PRBool sleepRequestUsed;        /* Can't AbortIO on the timerrequest if it has never been used */
     struct Process *p;
     PRThread *join;                 /* thread to signal when I'm done for joining */
     PRThread *parent;
