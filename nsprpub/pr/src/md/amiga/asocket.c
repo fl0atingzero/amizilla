@@ -1273,7 +1273,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                         sp->sp_Pkt.dp_Port = me->selectPort;
                         sp->sp_Pkt.dp_Type = ACTION_WAIT_CHAR;
                         sp->sp_Pkt.dp_Arg1 =
-                            (timeout != PR_INTERVAL_NO_TIMEOUT) ? timeout * _PR_MD_INTERVAL_PER_SEC() * 1000 : -1;
+                            (timeout != PR_INTERVAL_NO_TIMEOUT) ? timeout * _PR_MD_INTERVAL_PER_SEC() * 1000 : 100000;
                         PutMsg(fh->fh_Type, (struct Message *)sp);
                         break;       
                     case PR_DESC_SOCKET_TCP:
@@ -1313,6 +1313,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
         printf("Thread %x was forceably killed from WaitSelect in poll\n", me);
         longjmp(me->jmpbuf, 1);
     }
+    me->state = _PR_RUNNING;
 
     printf("Poll(%lx) select returns %d, errno is %d\n", me, retval, TCP_Errno());
 
@@ -1371,10 +1372,10 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                 /* Wait for any packets to return */
                 if (sp->sp_Pkt.dp_Port != NULL) {
                     for (;;) {
-                        if ((tmp = GetMsg(sp->sp_Pkt.dp_Port)) != NULL) {
+                        if ((tmp = GetMsg(me->selectPort)) != NULL) {
                             tmp->sp_Pkt.dp_Port = NULL;
-                            if (tmp == sp);
-                            break;
+                            if (tmp == sp)
+                                break;
                         } else {
                             WaitPort(me->selectPort);
                         }
