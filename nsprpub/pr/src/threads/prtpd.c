@@ -77,7 +77,7 @@
 #pragma warning(disable : 4101)
 #endif
 
-#define _PR_TPD_LIMIT 128               /* arbitary limit on the TPD slots */
+#define _PR_TPD_LIMIT 1024              /* arbitary limit on the TPD slots */
 static PRInt32 _pr_tpd_length = 0;      /* current length of destructor vector */
 static PRInt32 _pr_tpd_highwater = 0;   /* next TPD key to be assigned */
 static PRThreadPrivateDTOR *_pr_tpd_destructors = NULL;
