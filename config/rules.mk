@@ -147,6 +147,13 @@ endif
 
 SHARED_LIBRARY		:= $(DLL_PREFIX)$(LIBRARY_NAME)$(DLL_SUFFIX)
 
+ifeq ($(OS_ARCH), AmigaOS)
+LIBRARY_X			:= $(LIBRARY_NAME).x
+LIBRARY_IX_SHLIB	:= $(LIBRARY_NAME).ix
+LIBRARY_IX			:= $(LIB_PREFIX)$(LIBRARY_NAME)_ixlibrary.a
+LIBRARY_H			:= $(LIBRARY_NAME).h
+endif
+
 ifeq ($(OS_ARCH),OS2)
 DEF_FILE		:= $(SHARED_LIBRARY:.dll=.def)
 endif
@@ -165,6 +172,10 @@ endif
 
 ifeq (,$(BUILD_SHARED_LIBS)$(FORCE_SHARED_LIB))
 SHARED_LIBRARY		:= $(NULL)
+LIBRARY_X	:= $(NULL)
+LIBRARY_IX	:= $(NULL)
+LIBRARY_IX_SHLIB	:= $(NULL)
+LIBRARY_H   := $(NULL)
 DEF_FILE		:= $(NULL)
 IMPORT_LIBRARY		:= $(NULL)
 endif
@@ -172,8 +183,21 @@ endif
 ifdef FORCE_STATIC_LIB
 ifndef FORCE_SHARED_LIB
 SHARED_LIBRARY		:= $(NULL)
+LIBRARY_X	:= $(NULL)
+LIBRARY_IX	:= $(NULL)
+LIBRARY_IX_SHLIB	:= $(NULL)
+LIBRARY_H	:= $(NULL)
 DEF_FILE		:= $(NULL)
 IMPORT_LIBRARY		:= $(NULL)
+ifeq ($(OS_ARCH), AmigaOS)
+ifdef BUILD_SHARED_LIBS
+
+ifneq ($(MODULE), xpcom)
+# HACK. I don't need these when building xpcom!
+EXTRA_DSO_LDOPTS += $(MOZ_COMPONENT_LIBS)
+endif
+endif
+endif
 endif
 endif
 
@@ -261,6 +285,7 @@ ALL_TRASH = \
 	$(HOST_PROGOBJS) $(HOST_OBJS) $(IMPORT_LIBRARY) $(DEF_FILE)\
 	$(EXE_DEF_FILE) so_locations _gen _stubs $(wildcard *.res) $(wildcard *.RES) \
 	$(wildcard *.pdb) $(CODFILE) $(MAPFILE) $(IMPORT_LIBRARY) \
+	$(LIBRARY_X) $(LIBRARY_IX) $(LIBRARY_H) $(LIBRARY_IX_SHLIB) \
 	$(SHARED_LIBRARY:$(DLL_SUFFIX)=.exp) $(wildcard *.ilk) \
 	$(PROGRAM:$(BIN_SUFFIX)=.exp) $(SIMPLE_PROGRAMS:$(BIN_SUFFIX)=.exp) \
 	$(PROGRAM:$(BIN_SUFFIX)=.lib) $(SIMPLE_PROGRAMS:$(BIN_SUFFIX)=.lib) \
@@ -648,7 +673,7 @@ HOST_LIBS_DEPS = $(filter %.$(LIB_SUFFIX), $(HOST_LIBS))
 DSO_LDOPTS_DEPS = $(filter %.$(LIB_SUFFIX), $(EXTRA_DSO_LDOPTS))
 
 ##############################################
-libs:: $(SUBMAKEFILES) $(MAKE_DIRS) $(HOST_LIBRARY) $(LIBRARY) $(SHARED_LIBRARY) $(IMPORT_LIBRARY) $(HOST_PROGRAM) $(PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(SIMPLE_PROGRAMS) $(MAPS)
+libs:: $(SUBMAKEFILES) $(MAKE_DIRS) $(HOST_LIBRARY) $(LIBRARY) $(SHARED_LIBRARY) $(IMPORT_LIBRARY) $(HOST_PROGRAM) $(PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(SIMPLE_PROGRAMS) $(MAPS) $(LIBRARY_IX_SHLIB)
 ifndef NO_DIST_INSTALL
 ifneq (,$(BUILD_STATIC_LIBS)$(FORCE_STATIC_LIB))
 ifdef LIBRARY
@@ -695,11 +720,18 @@ ifdef BEOS_ADDON_WORKAROUND
 endif
 endif
 endif # GRE_MODULE
+ifeq ($(OS_ARCH),AmigaOS)
+	$(INSTALL) $(IFLAGS2) $(LIBRARY_X)	$(DIST)/lib
+	$(INSTALL) $(IFLAGS2) $(LIBRARY_IX) $(DIST)/lib
+	$(INSTALL) $(IFLAGS2) $(LIBRARY_H)  $(DIST)/include
+else
 ifneq (,$(filter OS2 WINNT,$(OS_ARCH)))
 	$(INSTALL) $(IFLAGS2) $(IMPORT_LIBRARY) $(DIST)/lib
 else
 	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(DIST)/lib
 endif
+endif
+
 ifndef _SKIP_OLD_GRE_INSTALL
 	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(DIST)/bin
 ifdef BEOS_ADDON_WORKAROUND
@@ -792,6 +824,16 @@ else
 endif
 endif # SIMPLE_PROGRAMS
 endif # NO_INSTALL
+
+ifdef LIBRARY_IX_SHLIB
+$(SHARED_LIBRARY) : $(LIBRARY_IX_SHLIB)
+
+$(LIBRARY_IX_SHLIB): $(topsrcdir)/config/autoconf.mk
+	MOZILLA_MAJOR_VERSION=`echo $(MOZILLA_VERSION) |cut -d '.' -f 1`; \
+	MOZILLA_MINOR_VERSION=`echo $(MOZILLA_VERSION) |cut -d '.' -f 2`; \
+	echo \#define VERSION $$MOZILLA_MAJOR_VERSION > $(LIBRARY_IX_SHLIB); \
+	echo \#define REVISION $$MOZILLA_MINOR_VERSION >> $(LIBRARY_IX_SHLIB)
+endif
 
 checkout:
 	$(MAKE) -C $(topsrcdir) -f client.mk checkout

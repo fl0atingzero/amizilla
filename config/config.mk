@@ -440,7 +440,10 @@ endif
 #
 #ifeq (,$(PROGRAM)$(SIMPLE_PROGRAMS)$(HOST_PROGRAM)$(HOST_SIMPLE_PROGRAMS))
 ifneq (,$(BUILD_SHARED_LIBS)$(FORCE_SHARED_LIB)$(FORCE_USE_PIC))
+ifeq (, $(FORCE_NO_PIC))
 _ENABLE_PIC=1
+else 
+endif
 endif
 #endif
 

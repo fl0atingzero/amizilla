@@ -594,6 +594,7 @@ if test -n "$CROSS_COMPILE"; then
         linux*)       OS_ARCH=Linux ;;
         solaris*)     OS_ARCH=SunOS OS_RELEASE=5 ;;
         mingw*)       OS_ARCH=WINNT ;;
+        amigaos*)     OS_ARCH=AmigaOS OS_RELEASE=3.1 ;;
     esac
 else
     OS_TARGET=`uname -s`
@@ -1589,7 +1590,10 @@ dnl the qsort routine under solaris is faulty
 *-os2*)
     HOST_NSPR_MDCPUCFG='\"md/_os2.cfg\"'
     ;;
-
+*-amigaos*)
+    LDFLAGS="-noixemul"
+    DLL_SUFFIX=".ixlibrary"
+    ;;
 esac
 
 dnl Only one oddball right now (QNX), but this gives us flexibility
@@ -2006,10 +2010,16 @@ if test ! "$GNU_CXX"; then
 	;;
      esac
 fi
-AC_CHECK_LIB(socket, socket)
 
-XLDFLAGS="$X_LIBS"
-XLIBS="$X_EXTRA_LIBS"
+case "$target" in
+    *-amigaos)
+    ;;
+    *)
+    AC_CHECK_LIB(socket, socket)
+    XLDFLAGS="$X_LIBS"
+    XLIBS="$X_EXTRA_LIBS";
+    ;;
+esac
 
 dnl ========================================================
 dnl Checks for X libraries.
@@ -4967,6 +4977,26 @@ if (test -z "$BUILD_SHARED_LIBS" && test -z "$BUILD_STATIC_LIBS") ||
     AC_MSG_ERROR([Only one of --enable-shared or --enable-static must be specified.])
 fi
 
+case "${target}" in
+    *-amigaos*)
+    if test -n "$BUILD_SHARED_LIBS" ; then
+        MKSHLIB='a2ixlibrary -cpp -32 -dso -o $@'
+        MKCSHLIB='a2ixlibrary -32 -dso -o $@'
+        DSO_CFLAGS="-m68020 -fbaserel32"
+        DSO_PIC_CFLAGS="-malways-restore-a4 -Uerrno"
+        DSO_LDOPTS=""
+        CXX=a2ixg++
+        CXXFLAGS="$CXXFLAGS \$(EXTRA_DSO_LDOPTS)" 
+    else
+        DSO_PIC_CFLAGS=""
+        DSO_CFLAGS=""
+        DSO_LDOPTS=""
+        MKSHLIB=
+        MKCSHLIB=
+    fi
+    ;;
+esac
+
 dnl ========================================================
 dnl static component loader
 dnl ========================================================
@@ -5644,7 +5674,7 @@ elif test "$OS_ARCH" = "Darwin"; then
   AC_DEFINE(UNIX_ASYNC_DNS)
 elif test "$OS_ARCH" = "OpenVMS"; then
   AC_DEFINE(XP_UNIX)
-elif test "$OS_ARCH" = "amigaos" -o "$OS_ARCH" != "AmigaOS"; then
+elif test "$OS_ARCH" = "AmigaOS"; then
   AC_DEFINE(XP_AMIGAOS)
 elif test "$OS_ARCH" != "WINNT" -a "$OS_ARCH" != "OS2"; then
   AC_DEFINE(XP_UNIX)
