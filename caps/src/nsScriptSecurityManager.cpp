@@ -852,7 +852,7 @@ nsScriptSecurityManager::CheckSameOriginPrincipalInternal(nsIPrincipal* aSubject
     nsXPIDLCString origin;
     rv = aObject->GetOrigin(getter_Copies(origin));
     NS_ENSURE_SUCCESS(rv, rv);
-    if (nsCRT::strcasecmp(origin, "about:blank") == 0)
+    if (nsCRT::strcmp(origin, "about:blank") == 0)
         return NS_OK;
 
     /*
@@ -1142,7 +1142,7 @@ nsScriptSecurityManager::GetBaseURIScheme(nsIURI* aURI, char** aScheme)
 
     //-- if uri is an about uri, distinguish 'safe' and 'unsafe' about URIs
     static const char aboutScheme[] = "about";
-    if(nsCRT::strcasecmp(scheme.get(), aboutScheme) == 0)
+    if(nsCRT::strcmp(scheme.get(), aboutScheme) == 0)
     {
         nsCAutoString spec;
         if(NS_FAILED(uri->GetAsciiSpec(spec)))
@@ -1175,9 +1175,9 @@ nsScriptSecurityManager::CheckLoadURI(nsIURI *aSourceURI, nsIURI *aTargetURI,
 
     // Some loads are not allowed from mail/news messages
     if ((aFlags & nsIScriptSecurityManager::DISALLOW_FROM_MAIL) &&
-        (nsCRT::strcasecmp(sourceScheme, "mailbox")  == 0 ||
-         nsCRT::strcasecmp(sourceScheme, "imap")     == 0 ||
-         nsCRT::strcasecmp(sourceScheme, "news")     == 0))
+        (nsCRT::strcmp(sourceScheme, "mailbox")  == 0 ||
+         nsCRT::strcmp(sourceScheme, "imap")     == 0 ||
+         nsCRT::strcmp(sourceScheme, "news")     == 0))
     {
         return NS_ERROR_DOM_BAD_URI;
     }
@@ -1187,7 +1187,7 @@ nsScriptSecurityManager::CheckLoadURI(nsIURI *aSourceURI, nsIURI *aTargetURI,
     rv = GetBaseURIScheme(aTargetURI, getter_Copies(targetScheme));
     if (NS_FAILED(rv)) return rv;
 
-    if (nsCRT::strcasecmp(targetScheme, sourceScheme) == 0)
+    if (nsCRT::strcmp(targetScheme, sourceScheme) == 0)
     {
         // every scheme can access another URI from the same scheme
         return NS_OK;
@@ -1238,7 +1238,7 @@ nsScriptSecurityManager::CheckLoadURI(nsIURI *aSourceURI, nsIURI *aTargetURI,
     NS_NAMED_LITERAL_STRING(errorTag, "CheckLoadURIError");
     for (unsigned i=0; i < sizeof(protocolList)/sizeof(protocolList[0]); i++)
     {
-        if (nsCRT::strcasecmp(targetScheme, protocolList[i].name) == 0)
+        if (nsCRT::strcmp(targetScheme, protocolList[i].name) == 0)
         {
             PRBool doCheck = PR_FALSE;
             switch (protocolList[i].action)
@@ -2536,9 +2536,9 @@ nsScriptSecurityManager::CheckXPCPermissions(nsISupports* aObj,
     //-- If the object implements nsISecurityCheckedComponent, it has a non-default policy.
     if (aObjectSecurityLevel)
     {
-        if (PL_strcasecmp(aObjectSecurityLevel, "AllAccess") == 0)
+        if (PL_strcmp(aObjectSecurityLevel, "AllAccess") == 0)
             return NS_OK;
-        else if (PL_strcasecmp(aObjectSecurityLevel, "NoAccess") != 0)
+        else if (PL_strcmp(aObjectSecurityLevel, "NoAccess") != 0)
         {
             PRBool canAccess = PR_FALSE;
             if (NS_SUCCEEDED(IsCapabilityEnabled(aObjectSecurityLevel, &canAccess)) &&
@@ -2948,11 +2948,11 @@ nsScriptSecurityManager::InitDomainPolicy(JSContext* cx,
             continue;
 
         SecurityLevel secLevel;
-        if (PL_strcasecmp(prefValue, "noAccess") == 0)
+        if (PL_strcmp(prefValue, "noAccess") == 0)
             secLevel.level = SCRIPT_SECURITY_NO_ACCESS;
-        else if (PL_strcasecmp(prefValue, "allAccess") == 0)
+        else if (PL_strcmp(prefValue, "allAccess") == 0)
             secLevel.level = SCRIPT_SECURITY_ALL_ACCESS;
-        else if (PL_strcasecmp(prefValue, "sameOrigin") == 0)
+        else if (PL_strcmp(prefValue, "sameOrigin") == 0)
             secLevel.level = SCRIPT_SECURITY_SAME_ORIGIN_ACCESS;
         else 
         {  //-- pref value is the name of a capability
@@ -3006,7 +3006,7 @@ nsScriptSecurityManager::InitDomainPolicy(JSContext* cx,
         if (end) // The pref specifies an access mode
         {
             start = end + 1;
-            if (PL_strcasecmp(start, "set") == 0)
+            if (PL_strcmp(start, "set") == 0)
                 ppolicy->mSet = secLevel;
             else
                 ppolicy->mGet = secLevel;
@@ -3078,7 +3078,7 @@ nsScriptSecurityManager::InitPrincipals(PRUint32 aPrefCount, const char** aPrefN
     for (PRUint32 c = 0; c < aPrefCount; c++)
     {
         PRInt32 prefNameLen = PL_strlen(aPrefNames[c]) - (sizeof(idSuffix)-1);
-        if (PL_strcasecmp(aPrefNames[c] + prefNameLen, idSuffix) != 0)
+        if (PL_strcmp(aPrefNames[c] + prefNameLen, idSuffix) != 0)
             continue;
 
         nsXPIDLCString id;
