@@ -122,17 +122,6 @@ int main()
         exit(1);
     }
     PR_DestroyProcessAttr(attr);
-    status = PR_Close(out_pipe[0]);
-    if (status == PR_FAILURE) {
-        fprintf(stderr, "PR_Close failed\n");
-        exit(1);
-    }
-    status = PR_Close(in_pipe[1]);
-    if (status == PR_FAILURE) {
-        fprintf(stderr, "PR_Close failed\n");
-        exit(1);
-    }
-
     for (idx = 0; idx < NUM_ITERATIONS; idx++) {
         strcpy(buf, "ping");
         printf("ping process: sending \"%s\"\n", buf);
@@ -177,6 +166,18 @@ int main()
         fprintf(stderr, "PR_WaitProcess failed\n");
         exit(1);
     }
+
+    status = PR_Close(out_pipe[0]);
+    if (status == PR_FAILURE) {
+        fprintf(stderr, "PR_Close failed\n");
+        exit(1);
+    }
+    status = PR_Close(in_pipe[1]);
+    if (status == PR_FAILURE) {
+        fprintf(stderr, "PR_Close failed\n");
+        exit(1);
+    }
+
     if (exitCode == 0) {
         printf("PASS\n");
         return 0;
