@@ -583,8 +583,6 @@ main(int argc, char **argv)
 
     Measure(do_workUK, "server loop user/kernel");
 
-    PR_Cleanup();
-
 	if(failed_already)	
 		return 1;
 	else

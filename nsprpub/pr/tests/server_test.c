@@ -625,7 +625,5 @@ main(int argc, char **argv)
     Measure(do_workKK, "server loop kernel/kernel");
  #endif 
 
-    PR_Cleanup();
-
     return 0;
 }

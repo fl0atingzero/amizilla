@@ -580,8 +580,6 @@ main(int argc, char **argv)
 
     Measure(do_workUU, "server loop user/user");
 
-    PR_Cleanup();
-	
 	if(failed_already)	
 		return 1;
 	else

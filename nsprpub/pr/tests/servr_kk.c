@@ -600,8 +600,6 @@ int main(int argc, char **argv)
 
     Measure(do_workKK, "server loop kernel/kernel");
 
-	PR_Cleanup();
-
 	if(failed_already)	
 		return 1;
 	else
