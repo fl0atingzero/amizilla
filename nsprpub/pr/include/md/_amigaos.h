@@ -77,9 +77,9 @@ struct _MDMemPtr {
 
 #define _PR_ATHREADS
 
-
 #define _MD_GET_ENV getenv
 #define _MD_PUT_ENV putenv
+#define _MD_GETHOSTNAME _MD_gethostname
 
 void *PR_MD_malloc( size_t size );
 void *PR_MD_calloc( size_t n, size_t size );

@@ -1358,3 +1358,17 @@ void _PR_MD_MAKE_NONBLOCK(PRFileDesc *osfd) {
         break;
     }        
 }
+
+
+PRStatus _MD_gethostname(char *name, PRUint32 namelen) {
+    PRThread *me = PR_GetCurrentThread();
+    if (me->AmiTCP_Base == NULL) {
+        strncpy(name, "localhost", namelen-1);
+        if (namelen > 0)
+            name[namelen-1] = '\0';
+        return PR_SUCCESS;
+    } else {
+        LONG error = TCP_GetHostName(name, (LONG)namelen);
+        return (error < 0) ? PR_FAILURE : PR_SUCCESS;
+    }
+}
