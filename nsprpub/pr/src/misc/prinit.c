@@ -484,7 +484,7 @@ PR_IMPLEMENT(PRStatus) PR_Cleanup()
  *------------------------------------------------------------------------
  */
 
-#if defined(_PR_PTHREADS) || defined(_PR_BTHREADS)
+#if defined(_PR_PTHREADS) || defined(_PR_BTHREADS) || defined(_PR_ATHREADS)
     /* see ptthread.c */
 #else
 PR_IMPLEMENT(void) PR_ProcessExit(PRIntn status)
