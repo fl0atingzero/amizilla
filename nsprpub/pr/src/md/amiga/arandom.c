@@ -36,7 +36,8 @@
 #include <primpl.h>
 #include <devices/inputevent.h>
 #include <devices/input.h>
-#include <exec/interrupts.h>
+
+/* #define DEBUG_ARANDOM */
 
 /* Code dealing with random numbers */
 
@@ -60,42 +61,9 @@ static int back = 0;
  * The random callers can empty the random data
  */
 
-volatile int data[5];
-volatile int num = 0;
+struct InputEvent *InputEventHandler(struct InputEvent *ie __asm("a0"), struct Process *p __asm("a1"));
 
-/* Input handler which does gathers the data and signals the 
- * InputEventThread
- * Input - a0 - InputEvent structure
- * Input - a1 - use data (in my case the Process of the InputEventThread)
- * Output - d0 the new InputEvent structure (it is always the same as the input)
- */
-static struct InputEvent *InputEventHandler(void) {
-    register struct InputEvent *ie __asm("a0");
-	struct InputEvent *ie2 = ie;
-    register struct Process *p __asm("a1");
-    register struct InputEvent *retval __asm("d0");
-    int pos = 0;
-    while (ie && pos < 5) {
-		switch (ie->ie_Class) {
-		case IECLASS_RAWKEY:
-			data[pos] = ie->ie_Code | (int)ie->ie_position.ie_addr;
-		default:				
-			data[pos] = (int)ie->ie_position.ie_addr;
-		}
-        ie = ie->ie_NextEvent;
-		if (data[pos])
-			pos++;
-    }
-
-	if (pos) {
-		num = pos;
-		Signal((struct Task *)p, SIGBREAKF_CTRL_F);
-	}
-	retval = ie2;
-	return retval;
-}
-        
-
+static struct InputData ip;
 /*
  * NSPR Input Event thread
  * Gets the data from InputEventHandler and just stores it
@@ -106,14 +74,15 @@ static void InputEventThread(void *ignored) {
     PRBool done = PR_FALSE;
     struct MsgPort *mp = CreateMsgPort();
     struct IOStdReq *io = (struct IOStdReq *)
-        CreateExtIO(mp, sizeof(struct IOStdReq));
+        CreateIORequest(mp, sizeof(struct IOStdReq));
     struct Interrupt *ie = PR_NEWZAP(struct Interrupt);
 	PRThread *me = PR_CurrentThread();
 
     OpenDevice("input.device", 0, (struct IORequest *)io, 0);
     
+    ip.p = me->p;
     ie->is_Code = InputEventHandler;
-    ie->is_Data = me->p;
+    ie->is_Data = &ip;
     ie->is_Node.ln_Pri = 100;
     ie->is_Node.ln_Name = "NSPR Input/Random handler";
 
@@ -121,7 +90,9 @@ static void InputEventThread(void *ignored) {
     io->io_Command = IND_ADDHANDLER;
     DoIO((struct IORequest *)io);
 
+#ifdef DEBUG_ARANDOM
 	printf("Added event handler\n");
+#endif
     while (!done) {
         int mynum;
         int mydata[5];
@@ -132,34 +103,48 @@ static void InputEventThread(void *ignored) {
 		flags = Wait(flags);
         me->state = _PR_RUNNING;
 		if (flags & 1 << me->port->mp_SigBit) {
+#ifdef DEBUG_ARANDOM
 			printf("event thread got interrupted\n");
+#endif
 			done = PR_TRUE;
 			break;
 		}
         Disable();
 		SetSignal(0, flags);
         /* Make a copy of the data to be safe */
-        mynum = num;
-        memcpy(mydata, data, sizeof(mydata));
+        mynum = ip.num;
+        memcpy(mydata, ip.data, sizeof(mydata));
         Enable();
 
+#ifdef DEBUG_ARANDOM
 		printf("Got %d pieces of random data\n", mynum);
+        fflush(stdout);
+#endif
         PR_Lock(listLock);
 		for (i = 0; i < mynum; i++) {
 			int j;
 			int d = mydata[i];
+            int previous;
 			for (j = 0; j < 4; j++) {
 
 				while ((front - back % BUFFERSIZE) == BUFFERSIZE -1) {
+#ifdef DEBUG_ARANDOM
 					printf("Full, waiting\n");
+#endif
 					if (PR_WaitCondVar(fullcv, PR_INTERVAL_NO_TIMEOUT) == PR_FAILURE) {
+#ifdef DEBUG_ARANDOM
 						printf("Wait for full interrupted %d\n", PR_GetError());
+#endif
 
 						done = PR_TRUE;
 						break;
 					}
 				}
-				printf("SEtting databuffer %d to %d\n", front, (int)(d & 0xff));
+#ifdef DEBUG_ARANDOM
+				printf("Setting databuffer %d to %d\n", front, (int)(d & 0xff));
+#endif
+                d = d ^ previous;
+                previous = d;
 				randomdata[front] = d & 0xff;
 				d >>= 8;
 				front = (front + 1) % BUFFERSIZE;
@@ -178,9 +163,11 @@ static void InputEventThread(void *ignored) {
         AbortIO(io);
     WaitIO(io);
     CloseDevice(io);
-	DeleteExtIO(io);
+	DeleteIORequest(io);
 	DeleteMsgPort(mp);
+#ifdef DEBUG_ARANDOM
 	printf("random thread done \n");
+#endif
 }
 
 void _PR_InitRandom(void) {
@@ -194,16 +181,22 @@ void _PR_InitRandom(void) {
 	PR_ASSERT(eventThread);
 	eventThread->daemon = PR_TRUE;
 
+#ifdef DEBUG_ARANDOM
     printf("Eventthread %lx, fullcv %lx, emptycv %lx\n", eventThread, fullcv, emptycv);
+#endif
 }
 
 void _PR_CleanupRandom(void) {
+#ifdef DEBUG_ARANDOM
 	printf("Waiting for event thread\n");
+#endif
     PR_Interrupt(eventThread);
 	_PR_MD_Signal(eventThread);
 
 	PR_JoinThread(eventThread);
+#ifdef DEBUG_ARANDOM
 	printf("Done waiting for event thread\n");
+#endif
     PR_DestroyCondVar(emptycv);
 	PR_DestroyCondVar(fullcv);
     PR_DestroyLock(listLock);
@@ -215,10 +208,16 @@ void _PR_CleanupRandom(void) {
  */
 PRSize _PR_MD_GetRandomNoise( void *buf, PRSize size ) {
 	PRSize retval = size;
+
+#ifdef DEBUG_ARANDOM
+    printf("Getting %ld bytes of random noise\n");
+    fflush(stdout);
+#endif
     PR_Lock(listLock);
 	while (size) {
 		while ((front - back) % BUFFERSIZE == 0) {
 			printf("Buffer empty, waiting...\n");
+            fflush(stdout);
 			PR_WaitCondVar(emptycv, PR_INTERVAL_NO_TIMEOUT);
 		}
 		((char *)buf)[size-1] = randomdata[back];
