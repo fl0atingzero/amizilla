@@ -281,7 +281,7 @@ PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
     thread->startFunc = start;
     thread->arg = arg;
     thread->priority = priority;
-    thread->state = state;
+    thread->threadState = state;
 
     if (stackSize < 32768) stackSize = 32768;
     Forbid();
@@ -343,6 +343,9 @@ PR_IMPLEMENT(PRStatus) PR_JoinThread(PRThread *thread) {
     char buf[50];
     struct MsgPort *port;
   
+    if (thread->threadState == PR_UNJOINABLE_THREAD)
+        return PR_FAILURE;
+
     sprintf(buf, "NSPRPORT-%lx\n", thread);
     /* See if the thread is still around by trying to 
      * look for its public message port 
@@ -518,8 +521,7 @@ PR_IMPLEMENT(PRInt32) PR_SetThreadAffinityMask(PRThread *thread, PRUint32 mask )
 
 PR_IMPLEMENT(PRThreadState) PR_GetThreadState(const PRThread *thred)
 {
-    /* We are always joinable threads */
-    return PR_JOINABLE_THREAD;
+    return thred->threadState;
 }  /* PR_GetThreadState */
 
 

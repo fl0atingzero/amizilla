@@ -1638,6 +1638,7 @@ struct PRThread {
     volatile PRBool io_pending;
     struct MsgPort *port;
     struct MsgPort *selectPort;
+    PRThreadState threadState;
     ULONG interruptSignal;
     PRBool daemon;                  /* Don't need to forcibly kill it */
     struct timerequest *sleepRequest;
