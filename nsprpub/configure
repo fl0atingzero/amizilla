@@ -2967,7 +2967,11 @@ EOF
     PR_MD_CSRCS=aix.c
     RESOLVE_LINK_SYMBOLS=1
     ;;
-        
+    
+*-amigaos*)
+    MDCPUCFG_H=_amigaos.cfg
+    ;;
+    
 *-beos*)
     cat >> confdefs.h <<\EOF
 #define XP_BEOS 1
