@@ -89,7 +89,12 @@ PRIntn main(PRIntn argc, char *argv[])
 	    PL_DestroyOptState(opt);
     } /* end block "Get command line options" */
 /* ---------------------------------------------------------------------- */
+#ifdef XP_AMIGAOS
+    fd = PR_Open( "t:nsprAppend", (PR_APPEND | PR_CREATE_FILE | PR_TRUNCATE | PR_WRONLY), 0666 );
+#else
     fd = PR_Open( "/tmp/nsprAppend", (PR_APPEND | PR_CREATE_FILE | PR_TRUNCATE | PR_WRONLY), 0666 );
+#endif
+
     if ( NULL == fd )  {
         if (debug) printf("PR_Open() failed for writing: %d\n", PR_GetError());
         failedAlready = PR_TRUE;
@@ -117,7 +122,11 @@ PRIntn main(PRIntn argc, char *argv[])
         goto Finished;
     }
 /* ---------------------------------------------------------------------- */
+#ifdef XP_AMIGAOS
+    fd = PR_Open( "t:nsprAppend", PR_RDONLY, 0 );
+#else
     fd = PR_Open( "/tmp/nsprAppend", PR_RDONLY, 0 );
+#endif
     if ( NULL == fd )  {
         if (debug) printf("PR_Open() failed for reading: %d\n", PR_GetError());
         failedAlready = PR_TRUE;
@@ -125,6 +134,7 @@ PRIntn main(PRIntn argc, char *argv[])
     }
 
     for ( i = 0; i < addedBytes ; i++ ) {
+        inBuf = 0;
         rv = PR_Read( fd, &inBuf, sizeof(inBuf));
         if ( sizeof(inBuf) != rv)  {
             if (debug) printf("PR_Write() failed: %d\n", PR_GetError());

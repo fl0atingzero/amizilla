@@ -37,9 +37,15 @@
 
 #include <stdio.h>
 
+#ifdef XP_AMIGAOS
+#define SHM_NAME "t:counter"
+#define SEM_NAME1 "t:foo.sem"
+#define SEM_NAME2 "t:bar.sem"
+#else
 #define SHM_NAME "/tmp/counter"
 #define SEM_NAME1 "/tmp/foo.sem"
 #define SEM_NAME2 "/tmp/bar.sem"
+#endif
 #define ITERATIONS 1000
 
 static PRBool debug_mode = PR_FALSE;

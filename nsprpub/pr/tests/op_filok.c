@@ -72,6 +72,8 @@
 #define EXISTING_FILENAME "c:/config.sys"
 #elif defined(BEOS)
 #define EXISTING_FILENAME "/boot/beos/bin/sh"
+#elif defined(XP_AMIGAOS)
+#define EXISTING_FILENAME "s:startup-sequence"
 #else
 #error "Unknown OS"
 #endif

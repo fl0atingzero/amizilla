@@ -101,8 +101,14 @@
 #include <string.h>
 #include <private/primpl.h>
 
+#ifdef XP_AMIGAOS
+#define SEM_NAME1 "t:nameshmSEM1"
+#define SEM_NAME2 "t:nameshmSEM2"
+#else
 #define SEM_NAME1 "/tmp/nameshmSEM1"
 #define SEM_NAME2 "/tmp/nameshmSEM2"
+#endif
+
 #define SEM_MODE  0666
 #define SHM_MODE  0666
 
@@ -126,7 +132,11 @@ PRUint32    optDelete = 1;
 PRInt32     optPing = 1000;
 PRUint32    optSize = (10 * 1024 );
 PRInt32     optClientIterations = 3;
+#ifdef XP_AMIGAOS
+char        optName[NameSize] = "t:xxxNSPRshm";
+#else
 char        optName[NameSize] = "/tmp/xxxNSPRshm";
+#endif
 
 char buf[1024] = "";
 
@@ -157,6 +167,7 @@ static void BasicTest( void )
         failed_already = 1;
         return;
     }
+
     PR_LOG( lm, msgLevel,
              ( "nameshm1: RW Create: success: %p", shm ));
 
