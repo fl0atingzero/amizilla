@@ -43,7 +43,7 @@
 #define _PR_SI_SYSNAME        "Amiga compatible"
 
 typedef enum { FAILURE = -1, SUCCESS = 0, TIMEDOUT = 1, INTERRUPTED = 2} _PR_MD_Timeout;
-_PR_MD_Timeout _PR_Sleep(PRIntervalTime);
+_PR_MD_Timeout _PR_MD_Sleep(PRIntervalTime);
 
 struct _MDFileMap {
     PRIntn prot;
