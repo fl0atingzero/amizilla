@@ -143,7 +143,7 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
     PR_SetThreadPriority(me, priority);    
     Permit();
 
-#ifdef DEBUG_ASOCKET
+#ifdef DEBUG_AVAR
     printf("%lx woke up from condvar sleep on %lx, flags are %lx\n", me, cvar, me->flags);
 #endif
 
