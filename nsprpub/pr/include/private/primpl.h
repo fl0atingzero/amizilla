@@ -1538,6 +1538,7 @@ struct PRSem {
     HANDLE sem;
 #elif defined(_PR_ATHREADS)
     struct PRSemaphore *sem;
+    struct Task *owner;
 #else
     PRInt8 notused;
 #endif
@@ -2050,7 +2051,7 @@ struct PRSharedMemory
 #elif defined(PR_HAVE_WIN32_NAMED_SHARED_MEMORY)
     HANDLE      handle;
 #elif defined(PR_HAVE_AMIGA_NAMED_SHARED_MEMORY)
-    PRUint32    handle;
+    struct _MDSharedMemory *handle;
 #else
     PRUint32    nothing; /* placeholder, nothing behind here */
 #endif
