@@ -1634,7 +1634,8 @@ struct PRThread {
     PRInt32 io_fd;
     PRBool io_suspended;
     struct MsgPort *port;
-    struct TimerRequest *sleepRequest;
+    struct MsgPort *selectPort;
+    struct timerequest *sleepRequest;
     struct Process *p;
     PRThread *join;                 /* thread to signal when I'm done for joining */
     PRThread *parent;
