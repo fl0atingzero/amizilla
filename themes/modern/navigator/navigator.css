@@ -448,11 +448,11 @@ toolbox {
 
 /* ::::: autocomplete ::::: */
 
-.autocomplete-treebody:-moz-tree-cell-text(value) {
+.autocomplete-treebody::-moz-tree-cell-text(value) {
   padding-left: 15px;
 }
 
-.autocomplete-treebody:-moz-tree-cell-text(comment) {
+.autocomplete-treebody::-moz-tree-cell-text(comment) {
   color: #555566;
 }
 
@@ -524,6 +524,7 @@ toolbox {
   border-top: 1px solid #CED6DD;
   border-right: 1px solid #95A0AD;
   border-bottom: 1px solid #95A0AD;
+  border-left: 1px solid #DAE3ED;
 }
 
 #PersonalToolbar > toolbargrippy:hover:active {
@@ -555,6 +556,7 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
 
 #status-bar {
   border-top: none;
+  min-width: 1px;
 }
 
 #security-button {
@@ -571,6 +573,10 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
 
 #security-button[level="broken"] {
   list-style-image: url("chrome://communicator/skin/icons/lock-broken.gif");
+}
+
+#privacy-button {
+  list-style-image: url("chrome://communicator/skin/cookie/taskbar-cookie.gif");
 }
 
 #popupIcon {

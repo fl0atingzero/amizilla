@@ -46,7 +46,6 @@
 #include "plarena.h"
 
 #include "nsICSSStyleSheet.h"
-#include "nsIArena.h"
 #include "nsCRT.h"
 #include "nsIAtom.h"
 #include "nsIURL.h"
@@ -60,9 +59,8 @@
 #include "nsICSSNameSpaceRule.h"
 #include "nsICSSMediaRule.h"
 #include "nsIMediaList.h"
-#include "nsIHTMLContent.h"
+#include "nsIStyledContent.h"
 #include "nsIDocument.h"
-#include "nsIHTMLContentContainer.h"
 #include "nsIPresContext.h"
 #include "nsIEventStateManager.h"
 #include "nsHTMLAtoms.h"
@@ -80,7 +78,7 @@
 #include "nsIDOMHTMLOptionElement.h"
 #include "nsIDOMStyleSheetList.h"
 #include "nsIDOMCSSStyleSheet.h"
-#include "nsIDOMCSSStyleRule.h"
+#include "nsIDOMCSSRule.h"
 #include "nsIDOMCSSImportRule.h"
 #include "nsIDOMCSSRuleList.h"
 #include "nsIDOMMediaList.h"
@@ -97,12 +95,12 @@
 #include "nsITextContent.h"
 #include "prlog.h"
 #include "nsCOMPtr.h"
-#include "nsIStyleSet.h"
 #include "nsStyleUtil.h"
 #include "nsQuickSort.h"
 #include "nsContentUtils.h"
 #include "nsIJSContextStack.h"
 #include "nsIScriptSecurityManager.h"
+#include "nsAttrValue.h"
 
 struct RuleValue {
   /**
@@ -346,7 +344,7 @@ public:
   ~RuleHash();
   void PrependRule(RuleValue *aRuleInfo);
   void EnumerateAllRules(PRInt32 aNameSpace, nsIAtom* aTag, nsIAtom* aID,
-                         const nsVoidArray& aClassList,
+                         const nsAttrValue* aClassList,
                          RuleEnumFunc aFunc, void* aData);
   void EnumerateTagRules(nsIAtom* aTag,
                          RuleEnumFunc aFunc, void* aData);
@@ -534,10 +532,11 @@ void RuleHash::PrependRule(RuleValue *aRuleInfo)
 #endif
 
 void RuleHash::EnumerateAllRules(PRInt32 aNameSpace, nsIAtom* aTag,
-                                 nsIAtom* aID, const nsVoidArray& aClassList,
+                                 nsIAtom* aID, const nsAttrValue* aClassList,
                                  RuleEnumFunc aFunc, void* aData)
 {
-  PRInt32 classCount = aClassList.Count();
+  PRInt32 classCount = aClassList ? aClassList->GetAtomCount() : 0;
+
   // assume 1 universal, tag, id, and namespace, rather than wasting
   // time counting
   PRInt32 testCount = classCount + 4;
@@ -589,9 +588,9 @@ void RuleHash::EnumerateAllRules(PRInt32 aNameSpace, nsIAtom* aTag,
   }
   { // extra scope to work around compiler bugs with |for| scoping.
     for (PRInt32 index = 0; index < classCount; ++index) {
-      nsIAtom* classAtom = (nsIAtom*)aClassList.ElementAt(index);
       RuleHashTableEntry *entry = NS_STATIC_CAST(RuleHashTableEntry*,
-          PL_DHashTableOperate(&mClassTable, classAtom, PL_DHASH_LOOKUP));
+        PL_DHashTableOperate(&mClassTable, aClassList->AtomAt(index),
+                             PL_DHASH_LOOKUP));
       if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
         RuleValue *value = entry->mRules;
         mEnumList[valueCount++] = value;
@@ -745,11 +744,11 @@ public:
 
   NS_IMETHOD HasStateDependentStyle(StateRuleProcessorData* aData,
                                     nsIAtom* aMedium,
-                                    PRBool* aResult);
+                                    nsReStyleHint* aResult);
 
   NS_IMETHOD HasAttributeDependentStyle(AttributeRuleProcessorData* aData,
                                         nsIAtom* aMedium,
-                                        PRBool* aResult);
+                                        nsReStyleHint* aResult);
 
 protected:
   RuleCascadeData* GetRuleCascade(nsIPresContext* aPresContext, nsIAtom* aMedium);
@@ -779,12 +778,11 @@ public:
 
   nsAutoVoidArray       mSheets;
 
-  nsIURI*               mURL;
+  nsCOMPtr<nsIURI>      mURL;
 
   nsISupportsArray*     mOrderedRules;
 
   nsCOMPtr<nsINameSpace> mNameSpace;
-  PRInt32               mDefaultNameSpaceID;
   PRPackedBool          mComplete;
 };
 
@@ -807,7 +805,7 @@ public:
   NS_DECL_ISUPPORTS
 
   // basic style sheet data
-  NS_IMETHOD Init(nsIURI* aURL);
+  NS_IMETHOD SetURL(nsIURI* aURL);
   NS_IMETHOD GetURL(nsIURI*& aURL) const;
   NS_IMETHOD GetTitle(nsString& aTitle) const;
   NS_IMETHOD SetTitle(const nsAString& aTitle);
@@ -817,6 +815,7 @@ public:
   NS_IMETHOD_(PRBool) UseForMedium(nsIAtom* aMedium) const;
   NS_IMETHOD AppendMedium(nsIAtom* aMedium);
   NS_IMETHOD ClearMedia(void);
+  NS_IMETHOD_(PRBool) HasRules() const;
   NS_IMETHOD DeleteRuleFromGroup(nsICSSGroupRule* aGroup, PRUint32 aIndex);
   NS_IMETHOD InsertRuleIntoGroup(const nsAString& aRule, nsICSSGroupRule* aGroup, PRUint32 aIndex, PRUint32* _retval);
   NS_IMETHOD ReplaceRuleInGroup(nsICSSGroupRule* aGroup, nsICSSRule* aOld, nsICSSRule* aNew);
@@ -834,6 +833,7 @@ public:
   NS_IMETHOD SetOwningDocument(nsIDocument* aDocument);
   NS_IMETHOD SetOwningNode(nsIDOMNode* aOwningNode);
   NS_IMETHOD SetOwnerRule(nsICSSImportRule* aOwnerRule);
+  NS_IMETHOD GetOwnerRule(nsICSSImportRule** aOwnerRule);
 
   NS_IMETHOD GetStyleRuleProcessor(nsIStyleRuleProcessor*& aProcessor,
                                    nsIStyleRuleProcessor* aPrevProcessor);
@@ -857,7 +857,6 @@ public:
   NS_IMETHOD  GetStyleSheetAt(PRInt32 aIndex, nsICSSStyleSheet*& aSheet) const;
 
   NS_IMETHOD  GetNameSpace(nsINameSpace*& aNameSpace) const;
-  NS_IMETHOD  SetDefaultNameSpaceID(PRInt32 aDefaultNameSpaceID);
 
   NS_IMETHOD Clone(nsICSSStyleSheet* aCloneParent,
                    nsICSSImportRule* aCloneOwnerRule,
@@ -969,8 +968,8 @@ NS_INTERFACE_MAP_BEGIN(CSSRuleListImpl)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_ADDREF(CSSRuleListImpl);
-NS_IMPL_RELEASE(CSSRuleListImpl);
+NS_IMPL_ADDREF(CSSRuleListImpl)
+NS_IMPL_RELEASE(CSSRuleListImpl)
 
 
 NS_IMETHODIMP    
@@ -1001,7 +1000,7 @@ CSSRuleListImpl::Item(PRUint32 aIndex, nsIDOMCSSRule** aReturn)
 
       result = mStyleSheet->GetStyleRuleAt(aIndex, *getter_AddRefs(rule));
       if (rule) {
-        result = CallQueryInterface(rule, aReturn);
+        result = rule->GetDOMRule(aReturn);
         mRulesAccessed = PR_TRUE; // signal to never share rules again
       } else if (result == NS_ERROR_ILLEGAL_VALUE) {
         result = NS_OK; // per spec: "Return Value ... null if ... not a valid index."
@@ -1038,8 +1037,6 @@ class DOMMediaListImpl : public nsIDOMMediaList,
   virtual ~DOMMediaListImpl();
 
 private:
-  nsresult BeginMediaChange(void);
-  nsresult EndMediaChange(void);
   nsresult Delete(const nsAString & aOldMedium);
   nsresult Append(const nsAString & aOldMedium);
 
@@ -1061,8 +1058,8 @@ NS_INTERFACE_MAP_BEGIN(DOMMediaListImpl)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_ADDREF(DOMMediaListImpl);
-NS_IMPL_RELEASE(DOMMediaListImpl);
+NS_IMPL_ADDREF(DOMMediaListImpl)
+NS_IMPL_RELEASE(DOMMediaListImpl)
 
 
 DOMMediaListImpl::DOMMediaListImpl(nsISupportsArray *aArray,
@@ -1078,33 +1075,9 @@ DOMMediaListImpl::~DOMMediaListImpl()
 }
 
 nsresult
-NS_NewMediaList(nsIMediaList** aInstancePtrResult) {
-  return NS_NewMediaList(NS_LITERAL_STRING(""), aInstancePtrResult);
-}
-
-nsresult
-NS_NewMediaList(const nsAString& aMediaText, nsIMediaList** aInstancePtrResult) {
-  nsresult rv;
-  NS_ASSERTION(aInstancePtrResult, "Null out param.");
-
-  nsCOMPtr<nsISupportsArray> array;
-  rv = NS_NewISupportsArray(getter_AddRefs(array));
-  if (NS_FAILED(rv)) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  DOMMediaListImpl* medialist = new DOMMediaListImpl(array, nsnull);
-  *aInstancePtrResult = medialist;
-  NS_ENSURE_TRUE(medialist, NS_ERROR_OUT_OF_MEMORY);
-  NS_ADDREF(*aInstancePtrResult);
-  rv = medialist->SetMediaText(aMediaText);
-  if (NS_FAILED(rv)) {
-    NS_RELEASE(*aInstancePtrResult);
-    *aInstancePtrResult = nsnull;
-  }
-  return rv;
-}
-
-nsresult NS_NewMediaList(nsISupportsArray* aArray, nsICSSStyleSheet* aSheet, nsIMediaList** aInstancePtrResult)
+NS_NewMediaList(nsISupportsArray* aArray,
+                nsICSSStyleSheet* aSheet,
+                nsIMediaList** aInstancePtrResult)
 {
   NS_ASSERTION(aInstancePtrResult, "Null out param.");
   DOMMediaListImpl* medialist = new DOMMediaListImpl(aArray, NS_STATIC_CAST(CSSStyleSheetImpl*, aSheet));
@@ -1141,6 +1114,8 @@ DOMMediaListImpl::GetText(nsAString& aMediaText)
   return NS_OK;
 }
 
+// XXXbz this is so ill-defined in the spec, it's not clear quite what
+// it should be doing....
 NS_IMETHODIMP
 DOMMediaListImpl::SetText(const nsAString& aMediaText)
 {
@@ -1208,19 +1183,43 @@ DOMMediaListImpl::GetMediaText(nsAString& aMediaText)
   return GetText(aMediaText);
 }
 
+// "sheet" should be an CSSStyleSheetImpl and "doc" should be an
+// nsCOMPtr<nsIDocument>
+#define BEGIN_MEDIA_CHANGE(sheet, doc)                         \
+  if (sheet) {                                                 \
+    rv = sheet->GetOwningDocument(*getter_AddRefs(doc));       \
+    NS_ENSURE_SUCCESS(rv, rv);                                 \
+  }                                                            \
+  mozAutoDocUpdate updateBatch(doc, UPDATE_STYLE, PR_TRUE);    \
+  if (sheet) {                                                 \
+    rv = sheet->WillDirty();                                   \
+    NS_ENSURE_SUCCESS(rv, rv);                                 \
+  }
+
+#define END_MEDIA_CHANGE(sheet, doc)                           \
+  if (sheet) {                                                 \
+    sheet->DidDirty();                                         \
+  }                                                            \
+  /* XXXldb Pass something meaningful? */                      \
+  if (doc) {                                                   \
+    doc->StyleRuleChanged(sheet, nsnull, nsnull);              \
+  }
+
+
 NS_IMETHODIMP
 DOMMediaListImpl::SetMediaText(const nsAString& aMediaText)
 {
-  nsresult rv;
-  rv = BeginMediaChange();
-  if (NS_FAILED(rv))
-    return rv;
-  
+  nsresult rv = NS_OK;
+  nsCOMPtr<nsIDocument> doc;
+
+  BEGIN_MEDIA_CHANGE(mStyleSheet, doc)
+
   rv = SetText(aMediaText);
   if (NS_FAILED(rv))
     return rv;
   
-  rv = EndMediaChange();
+  END_MEDIA_CHANGE(mStyleSheet, doc)
+
   return rv;
 }
                                
@@ -1261,32 +1260,34 @@ DOMMediaListImpl::Item(PRUint32 aIndex, nsAString& aReturn)
 NS_IMETHODIMP
 DOMMediaListImpl::DeleteMedium(const nsAString& aOldMedium)
 {
-  nsresult rv;
-  rv = BeginMediaChange();
-  if (NS_FAILED(rv))
-    return rv;
+  nsresult rv = NS_OK;
+  nsCOMPtr<nsIDocument> doc;
+
+  BEGIN_MEDIA_CHANGE(mStyleSheet, doc)
   
   rv = Delete(aOldMedium);
   if (NS_FAILED(rv))
     return rv;
 
-  rv = EndMediaChange();
+  END_MEDIA_CHANGE(mStyleSheet, doc)
+  
   return rv;
 }
 
 NS_IMETHODIMP
 DOMMediaListImpl::AppendMedium(const nsAString& aNewMedium)
 {
-  nsresult rv;
-  rv = BeginMediaChange();
-  if (NS_FAILED(rv))
-    return rv;
+  nsresult rv = NS_OK;
+  nsCOMPtr<nsIDocument> doc;
+
+  BEGIN_MEDIA_CHANGE(mStyleSheet, doc)
   
   rv = Append(aNewMedium);
   if (NS_FAILED(rv))
     return rv;
 
-  rv = EndMediaChange();
+  END_MEDIA_CHANGE(mStyleSheet, doc)
+  
   return rv;
 }
 
@@ -1327,41 +1328,6 @@ DOMMediaListImpl::Append(const nsAString& aNewMedium)
 
   AppendElement(media);
 
-  return NS_OK;
-}
-
-nsresult
-DOMMediaListImpl::BeginMediaChange(void)
-{
-  nsresult rv;
-  nsCOMPtr<nsIDocument> doc;
-
-  if (mStyleSheet) {
-    rv = mStyleSheet->GetOwningDocument(*getter_AddRefs(doc));
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = doc->BeginUpdate();
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = mStyleSheet->WillDirty();
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-  return NS_OK;
-}
-
-nsresult
-DOMMediaListImpl::EndMediaChange(void)
-{
-  nsresult rv;
-  nsCOMPtr<nsIDocument> doc;
-  if (mStyleSheet) {
-    mStyleSheet->DidDirty();
-    rv = mStyleSheet->GetOwningDocument(*getter_AddRefs(doc));
-    NS_ENSURE_SUCCESS(rv, rv);
-    // XXXldb Pass something meaningful?
-    rv = doc->StyleRuleChanged(mStyleSheet, nsnull, nsnull);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = doc->EndUpdate();
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
   return NS_OK;
 }
 
@@ -1407,8 +1373,8 @@ NS_INTERFACE_MAP_BEGIN(CSSImportsCollectionImpl)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_ADDREF(CSSImportsCollectionImpl);
-NS_IMPL_RELEASE(CSSImportsCollectionImpl);
+NS_IMPL_ADDREF(CSSImportsCollectionImpl)
+NS_IMPL_RELEASE(CSSImportsCollectionImpl)
 
 
 NS_IMETHODIMP
@@ -1462,10 +1428,8 @@ static PRBool SetStyleSheetReference(nsISupports* aElement, void* aSheet)
 
 CSSStyleSheetInner::CSSStyleSheetInner(nsICSSStyleSheet* aParentSheet)
   : mSheets(),
-    mURL(nsnull),
     mOrderedRules(nsnull),
     mNameSpace(nsnull),
-    mDefaultNameSpaceID(kNameSpaceID_None),
     mComplete(PR_FALSE)
 {
   MOZ_COUNT_CTOR(CSSStyleSheetInner);
@@ -1491,12 +1455,10 @@ CSSStyleSheetInner::CSSStyleSheetInner(CSSStyleSheetInner& aCopy,
   : mSheets(),
     mURL(aCopy.mURL),
     mNameSpace(nsnull),
-    mDefaultNameSpaceID(aCopy.mDefaultNameSpaceID),
     mComplete(aCopy.mComplete)
 {
   MOZ_COUNT_CTOR(CSSStyleSheetInner);
   mSheets.AppendElement(aParentSheet);
-  NS_IF_ADDREF(mURL);
   if (aCopy.mOrderedRules) {
     NS_NewISupportsArray(&mOrderedRules);
     if (mOrderedRules) {
@@ -1513,7 +1475,6 @@ CSSStyleSheetInner::CSSStyleSheetInner(CSSStyleSheetInner& aCopy,
 CSSStyleSheetInner::~CSSStyleSheetInner(void)
 {
   MOZ_COUNT_DTOR(CSSStyleSheetInner);
-  NS_IF_RELEASE(mURL);
   if (mOrderedRules) {
     mOrderedRules->EnumerateForwards(SetStyleSheetReference, nsnull);
     NS_RELEASE(mOrderedRules);
@@ -1588,14 +1549,7 @@ CSSStyleSheetInner::RebuildNameSpaces(void)
 {
   nsContentUtils::GetNSManagerWeakRef()->
       CreateRootNameSpace(getter_AddRefs(mNameSpace));
-  if (kNameSpaceID_Unknown != mDefaultNameSpaceID) {
-    nsCOMPtr<nsINameSpace> defaultNameSpace;
-    mNameSpace->CreateChildNameSpace(nsnull, mDefaultNameSpaceID,
-                                     getter_AddRefs(defaultNameSpace));
-    if (defaultNameSpace) {
-      mNameSpace = defaultNameSpace;
-    }
-  }
+
   if (mOrderedRules) {
     mOrderedRules->EnumerateForwards(CreateNameSpace, address_of(mNameSpace));
   }
@@ -1793,7 +1747,7 @@ CSSStyleSheetImpl::DropRuleProcessorReference(nsICSSStyleRuleProcessor* aProcess
 
 
 NS_IMETHODIMP
-CSSStyleSheetImpl::Init(nsIURI* aURL)
+CSSStyleSheetImpl::SetURL(nsIURI* aURL)
 {
   NS_PRECONDITION(aURL, "null ptr");
   if (! aURL)
@@ -1803,30 +1757,17 @@ CSSStyleSheetImpl::Init(nsIURI* aURL)
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  NS_ASSERTION(! mInner->mURL, "already initialized");
-  if (mInner->mURL)
-    return NS_ERROR_ALREADY_INITIALIZED;
+  NS_ASSERTION(!mInner->mOrderedRules && !mInner->mComplete,
+               "Can't call SetURL on sheets that are complete or have rules");
 
-  if (mInner->mURL) {
-#ifdef DEBUG
-    PRBool eq;
-    nsresult rv = mInner->mURL->Equals(aURL, &eq);
-    NS_ASSERTION(NS_SUCCEEDED(rv) && eq, "bad inner");
-#endif
-  }
-  else {
-    mInner->mURL = aURL;
-    NS_ADDREF(mInner->mURL);
-  }
+  mInner->mURL = aURL;
   return NS_OK;
 }
 
 NS_IMETHODIMP
 CSSStyleSheetImpl::GetURL(nsIURI*& aURL) const
 {
-  const nsIURI* url = ((mInner) ? mInner->mURL : nsnull);
-  aURL = (nsIURI*)url;
-  NS_IF_ADDREF(aURL);
+  NS_IF_ADDREF(aURL = (mInner ? mInner->mURL.get() : nsnull));
   return NS_OK;
 }
 
@@ -1916,6 +1857,13 @@ CSSStyleSheetImpl::ClearMedia(void)
   return NS_OK;
 }
 
+NS_IMETHODIMP_(PRBool)
+CSSStyleSheetImpl::HasRules() const
+{
+  PRInt32 count;
+  StyleRuleCount(count);
+  return count != 0;
+}
 
 NS_IMETHODIMP
 CSSStyleSheetImpl::GetApplicable(PRBool& aApplicable) const
@@ -1927,14 +1875,7 @@ CSSStyleSheetImpl::GetApplicable(PRBool& aApplicable) const
 NS_IMETHODIMP
 CSSStyleSheetImpl::SetEnabled(PRBool aEnabled)
 {
-  PRBool oldDisabled = mDisabled;
-  mDisabled = !aEnabled;
-
-  if (mDocument && mInner && mInner->mComplete && oldDisabled != mDisabled) {
-    mDocument->SetStyleSheetApplicableState(this, !mDisabled);
-  }
-
-  return NS_OK;
+  return CSSStyleSheetImpl::SetDisabled(!aEnabled);
 }
 
 NS_IMETHODIMP
@@ -1953,7 +1894,9 @@ CSSStyleSheetImpl::SetComplete()
   mInner->mComplete = PR_TRUE;
   if (mDocument && !mDisabled) {
     // Let the document know
+    mDocument->BeginUpdate(UPDATE_STYLE);
     mDocument->SetStyleSheetApplicableState(this, PR_TRUE);
+    mDocument->EndUpdate(UPDATE_STYLE);
   }
   return NS_OK;
 }
@@ -2000,10 +1943,27 @@ CSSStyleSheetImpl::SetOwnerRule(nsICSSImportRule* aOwnerRule)
 }
 
 NS_IMETHODIMP
+CSSStyleSheetImpl::GetOwnerRule(nsICSSImportRule** aOwnerRule)
+{
+  *aOwnerRule = mOwnerRule;
+  NS_IF_ADDREF(*aOwnerRule);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 CSSStyleSheetImpl::ContainsStyleSheet(nsIURI* aURL, PRBool& aContains, nsIStyleSheet** aTheChild /*=nsnull*/)
 {
   NS_PRECONDITION(nsnull != aURL, "null arg");
 
+  if (!mInner || !mInner->mURL) {
+    // We're not yet far enough along in our load to know what our URL is (we
+    // may still get redirected and such).  Assert (caller should really not be
+    // calling this on us at this stage) and return.
+    NS_ERROR("ContainsStyleSheet called on a sheet that's still loading");
+    aContains = PR_FALSE;
+    return NS_OK;
+  }
+  
   // first check ourself out
   nsresult rv = mInner->mURL->Equals(aURL, &aContains);
   if (NS_FAILED(rv)) aContains = PR_FALSE;
@@ -2232,17 +2192,6 @@ CSSStyleSheetImpl::GetNameSpace(nsINameSpace*& aNameSpace) const
   }
   return NS_OK;
 }
-
-NS_IMETHODIMP
-CSSStyleSheetImpl::SetDefaultNameSpaceID(PRInt32 aDefaultNameSpaceID)
-{
-  if (mInner) {
-    mInner->mDefaultNameSpaceID = aDefaultNameSpaceID;
-    mInner->RebuildNameSpaces();
-  }
-  return NS_OK;
-}
-
 
 NS_IMETHODIMP
 CSSStyleSheetImpl::StyleSheetCount(PRInt32& aCount) const
@@ -2488,7 +2437,11 @@ CSSStyleSheetImpl::SetDisabled(PRBool aDisabled)
   mDisabled = aDisabled;
 
   if (mDocument && mInner && mInner->mComplete && oldDisabled != mDisabled) {
+    ClearRuleCascades();
+
+    mDocument->BeginUpdate(UPDATE_STYLE);
     mDocument->SetStyleSheetApplicableState(this, !mDisabled);
+    mDocument->EndUpdate(UPDATE_STYLE);
   }
 
   return NS_OK;
@@ -2572,7 +2525,7 @@ NS_IMETHODIMP
 CSSStyleSheetImpl::GetOwnerRule(nsIDOMCSSRule** aOwnerRule)
 {
   if (mOwnerRule) {
-    return CallQueryInterface(mOwnerRule, aOwnerRule);
+    return mOwnerRule->GetDOMRule(aOwnerRule);
   }
 
   *aOwnerRule = nsnull;
@@ -2606,12 +2559,8 @@ CSSStyleSheetImpl::GetCssRules(nsIDOMCSSRuleList** aCssRules)
     return NS_ERROR_FAILURE;
 
   // Get the security manager and do the same-origin check
-  nsCOMPtr<nsIScriptSecurityManager> secMan = 
-    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = secMan->CheckSameOrigin(cx, mInner->mURL);
-
+  rv = nsContentUtils::GetSecurityManager()->CheckSameOrigin(cx,
+                                                             mInner->mURL);
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -2660,13 +2609,15 @@ CSSStyleSheetImpl::InsertRule(const nsAString& aRule,
   if (aIndex > count)
     return NS_ERROR_DOM_INDEX_SIZE_ERR;
   
+  // Hold strong ref to the CSSLoader in case the document update
+  // kills the document
   nsCOMPtr<nsICSSLoader> loader;
-  nsCOMPtr<nsICSSParser> css;
-  nsCOMPtr<nsIHTMLContentContainer> htmlContainer(do_QueryInterface(mDocument));
-  if (htmlContainer) {
-    htmlContainer->GetCSSLoader(*getter_AddRefs(loader));
+  if (mDocument) {
+    loader = mDocument->GetCSSLoader();
+    NS_ASSERTION(loader, "Document with no CSS loader!");
   }
-  NS_ASSERTION(loader || !mDocument, "Document with no CSS loader!");
+  
+  nsCOMPtr<nsICSSParser> css;
   if (loader) {
     result = loader->GetParserFor(this, getter_AddRefs(css));
   }
@@ -2679,11 +2630,7 @@ CSSStyleSheetImpl::InsertRule(const nsAString& aRule,
   if (NS_FAILED(result))
     return result;
 
-  if (mDocument) {
-    result = mDocument->BeginUpdate();
-    if (NS_FAILED(result))
-      return result;
-  }
+  mozAutoDocUpdate updateBatch(mDocument, UPDATE_STYLE, PR_TRUE);
 
   nsCOMPtr<nsISupportsArray> rules;
   result = css->ParseRule(aRule, mInner->mURL, getter_AddRefs(rules));
@@ -2801,16 +2748,10 @@ CSSStyleSheetImpl::InsertRule(const nsAString& aRule,
       }
     }
     if (mDocument && notify) {
-      result = mDocument->StyleRuleAdded(this, cssRule);
-      NS_ENSURE_SUCCESS(result, result);
+      mDocument->StyleRuleAdded(this, cssRule);
     }
   }
   
-  if (mDocument) {
-    result = mDocument->EndUpdate();
-    NS_ENSURE_SUCCESS(result, result);
-  }
-
   if (loader) {
     loader->RecycleParser(css);
   }
@@ -2832,11 +2773,8 @@ CSSStyleSheetImpl::DeleteRule(PRUint32 aIndex)
 
   // XXX TBI: handle @rule types
   if (mInner && mInner->mOrderedRules) {
-    if (mDocument) {
-      result = mDocument->BeginUpdate();
-      if (NS_FAILED(result))
-        return result;
-    }
+    mozAutoDocUpdate updateBatch(mDocument, UPDATE_STYLE, PR_TRUE);
+    
     result = WillDirty();
 
     if (NS_SUCCEEDED(result)) {
@@ -2853,11 +2791,7 @@ CSSStyleSheetImpl::DeleteRule(PRUint32 aIndex)
         DidDirty();
 
         if (mDocument) {
-          result = mDocument->StyleRuleRemoved(this, rule);
-          NS_ENSURE_SUCCESS(result, result);
-          
-          result = mDocument->EndUpdate();
-          NS_ENSURE_SUCCESS(result, result);
+          mDocument->StyleRuleRemoved(this, rule);
         }
       }
     }
@@ -2878,22 +2812,14 @@ CSSStyleSheetImpl::DeleteRuleFromGroup(nsICSSGroupRule* aGroup, PRUint32 aIndex)
   NS_ENSURE_SUCCESS(result, result);
   
   // check that the rule actually belongs to this sheet!
-  nsCOMPtr<nsIDOMCSSRule> domRule(do_QueryInterface(rule));
-  nsCOMPtr<nsIDOMCSSStyleSheet> ruleSheet;
-  result = domRule->GetParentStyleSheet(getter_AddRefs(ruleSheet));
-  NS_ENSURE_SUCCESS(result, result);  
-  nsCOMPtr<nsIDOMCSSStyleSheet> thisSheet;
-  this->QueryInterface(NS_GET_IID(nsIDOMCSSStyleSheet), getter_AddRefs(thisSheet));
-
-  if (thisSheet != ruleSheet) {
+  nsCOMPtr<nsIStyleSheet> ruleSheet;
+  rule->GetStyleSheet(*getter_AddRefs(ruleSheet));
+  if (this != ruleSheet) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  if (mDocument) {
-    result = mDocument->BeginUpdate();
-    NS_ENSURE_SUCCESS(result, result);
-  }
-
+  mozAutoDocUpdate updateBatch(mDocument, UPDATE_STYLE, PR_TRUE);
+  
   result = WillDirty();
   NS_ENSURE_SUCCESS(result, result);
 
@@ -2905,11 +2831,7 @@ CSSStyleSheetImpl::DeleteRuleFromGroup(nsICSSGroupRule* aGroup, PRUint32 aIndex)
   DidDirty();
 
   if (mDocument) {
-    result = mDocument->StyleRuleRemoved(this, rule);
-    NS_ENSURE_SUCCESS(result, result);
-    
-    result = mDocument->EndUpdate();
-    NS_ENSURE_SUCCESS(result, result);
+    mDocument->StyleRuleRemoved(this, rule);
   }
 
   return NS_OK;
@@ -2922,26 +2844,21 @@ CSSStyleSheetImpl::InsertRuleIntoGroup(const nsAString & aRule, nsICSSGroupRule*
   NS_ASSERTION(mInner && mInner->mComplete,
                "No inserting into an incomplete sheet!");
   // check that the group actually belongs to this sheet!
-  nsCOMPtr<nsIDOMCSSRule> domGroup(do_QueryInterface(aGroup));
-  nsCOMPtr<nsIDOMCSSStyleSheet> groupSheet;
-  result = domGroup->GetParentStyleSheet(getter_AddRefs(groupSheet));
-  NS_ENSURE_SUCCESS(result, result);  
-  nsCOMPtr<nsIDOMCSSStyleSheet> thisSheet;
-  this->QueryInterface(NS_GET_IID(nsIDOMCSSStyleSheet), getter_AddRefs(thisSheet));
-
-  if (thisSheet != groupSheet) {
+  nsCOMPtr<nsIStyleSheet> groupSheet;
+  aGroup->GetStyleSheet(*getter_AddRefs(groupSheet));
+  if (this != groupSheet) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  // get the css parser
+  // Hold strong ref to the CSSLoader in case the document update
+  // kills the document
   nsCOMPtr<nsICSSLoader> loader;
-  nsCOMPtr<nsICSSParser> css;
-  nsCOMPtr<nsIHTMLContentContainer> htmlContainer(do_QueryInterface(mDocument));
-  if (htmlContainer) {
-    htmlContainer->GetCSSLoader(*getter_AddRefs(loader));
+  if (mDocument) {
+    loader = mDocument->GetCSSLoader();
+    NS_ASSERTION(loader, "Document with no CSS loader!");
   }
-  NS_ASSERTION(loader || !mDocument, "Document with no CSS loader!");
 
+  nsCOMPtr<nsICSSParser> css;
   if (loader) {
     result = loader->GetParserFor(this, getter_AddRefs(css));
   }
@@ -2953,11 +2870,8 @@ CSSStyleSheetImpl::InsertRuleIntoGroup(const nsAString & aRule, nsICSSGroupRule*
   }
   NS_ENSURE_SUCCESS(result, result);
 
-  // parse and grab the rule 
-  if (mDocument) {
-    result = mDocument->BeginUpdate();
-    NS_ENSURE_SUCCESS(result, result);
-  }
+  // parse and grab the rule
+  mozAutoDocUpdate updateBatch(mDocument, UPDATE_STYLE, PR_TRUE);
 
   result = WillDirty();
   NS_ENSURE_SUCCESS(result, result);
@@ -2991,14 +2905,8 @@ CSSStyleSheetImpl::InsertRuleIntoGroup(const nsAString & aRule, nsICSSGroupRule*
     rule = dont_AddRef((nsICSSRule*)rules->ElementAt(counter));
   
     if (mDocument) {
-      result = mDocument->StyleRuleAdded(this, rule);
-      NS_ENSURE_SUCCESS(result, result);
+      mDocument->StyleRuleAdded(this, rule);
     }
-  }
-
-  if (mDocument) {
-    result = mDocument->EndUpdate();
-    NS_ENSURE_SUCCESS(result, result);
   }
 
   if (loader) {
@@ -3018,9 +2926,8 @@ CSSStyleSheetImpl::ReplaceRuleInGroup(nsICSSGroupRule* aGroup,
                   "No replacing in an incomplete sheet!");
 #ifdef DEBUG
   {
-    nsCOMPtr<nsIDOMCSSRule> domGroup(do_QueryInterface(aGroup));
-    nsCOMPtr<nsIDOMCSSStyleSheet> groupSheet;
-    domGroup->GetParentStyleSheet(getter_AddRefs(groupSheet));
+    nsCOMPtr<nsIStyleSheet> groupSheet;
+    aGroup->GetStyleSheet(*getter_AddRefs(groupSheet));
     NS_ASSERTION(this == groupSheet, "group doesn't belong to this sheet");
   }
 #endif
@@ -3047,23 +2954,16 @@ CSSStyleSheetImpl::StyleSheetLoaded(nsICSSStyleSheet*aSheet, PRBool aNotify)
 #endif
   
   if (mDocument && aNotify) {
-    nsCOMPtr<nsIDOMCSSStyleSheet> domSheet(do_QueryInterface(aSheet));
-    NS_ENSURE_TRUE(domSheet, NS_ERROR_UNEXPECTED);
-
-    nsCOMPtr<nsIDOMCSSRule> ownerRule;
-    domSheet->GetOwnerRule(getter_AddRefs(ownerRule));
-    NS_ENSURE_TRUE(ownerRule, NS_ERROR_UNEXPECTED);
+    nsCOMPtr<nsICSSImportRule> ownerRule;
+    aSheet->GetOwnerRule(getter_AddRefs(ownerRule));
     
-    nsresult rv = mDocument->BeginUpdate();
-    NS_ENSURE_SUCCESS(rv, rv);
+    mozAutoDocUpdate updateBatch(mDocument, UPDATE_STYLE, PR_TRUE);
 
+    // XXXldb @import rules shouldn't even implement nsIStyleRule (but
+    // they do)!
     nsCOMPtr<nsIStyleRule> styleRule(do_QueryInterface(ownerRule));
     
-    rv = mDocument->StyleRuleAdded(this, styleRule);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = mDocument->EndUpdate();
-    NS_ENSURE_SUCCESS(rv, rv);
+    mDocument->StyleRuleAdded(this, styleRule);
   }
 
   return NS_OK;
@@ -3078,7 +2978,7 @@ NS_NewCSSStyleSheet(nsICSSStyleSheet** aInstancePtrResult, nsIURI* aURL)
   if (NS_FAILED(rv = NS_NewCSSStyleSheet(&sheet)))
     return rv;
 
-  if (NS_FAILED(rv = sheet->Init(aURL))) {
+  if (NS_FAILED(rv = sheet->SetURL(aURL))) {
     NS_RELEASE(sheet);
     return rv;
   }
@@ -3134,8 +3034,8 @@ CSSRuleProcessor::~CSSRuleProcessor(void)
   ClearRuleCascades();
 }
 
-NS_IMPL_ADDREF(CSSRuleProcessor);
-NS_IMPL_RELEASE(CSSRuleProcessor);
+NS_IMPL_ADDREF(CSSRuleProcessor)
+NS_IMPL_RELEASE(CSSRuleProcessor)
 
 nsresult 
 CSSRuleProcessor::QueryInterface(REFNSIID aIID, void** aInstancePtrResult)
@@ -3212,7 +3112,7 @@ RuleProcessorData::RuleProcessorData(nsIPresContext* aPresContext,
 
   // get the compat. mode (unless it is provided)
   if(!aCompat) {
-    mPresContext->GetCompatibilityMode(&mCompatMode);
+    mCompatMode = mPresContext->CompatibilityMode();
   } else {
     mCompatMode = *aCompat;
   }
@@ -3226,16 +3126,11 @@ RuleProcessorData::RuleProcessorData(nsIPresContext* aPresContext,
     aContent->GetNameSpaceID(&mNameSpaceID);
 
     // get the tag and parent
-    aContent->GetTag(&mContentTag);
-    aContent->GetParent(&mParentContent);
+    mContentTag = aContent->Tag();
+    mParentContent = aContent->GetParent();
 
     // get the event state
-    nsIEventStateManager* eventStateManager = nsnull;
-    mPresContext->GetEventStateManager(&eventStateManager);
-    if(eventStateManager) {
-      eventStateManager->GetContentState(aContent, mEventState);
-      NS_RELEASE(eventStateManager);
-    }
+    mPresContext->EventStateManager()->GetContentState(aContent, mEventState);
 
     // get the styledcontent interface and the ID
     if (NS_SUCCEEDED(aContent->QueryInterface(NS_GET_IID(nsIStyledContent), (void**)&mStyledContent))) {
@@ -3244,9 +3139,7 @@ RuleProcessorData::RuleProcessorData(nsIPresContext* aPresContext,
     }
 
     // see if there are attributes for the content
-    PRInt32 attrCount = 0;
-    aContent->GetAttrCount(attrCount);
-    mHasAttributes = PRBool(attrCount > 0);
+    mHasAttributes = aContent->GetAttrCount() > 0;
 
     // check for HTMLContent and Link status
     if (aContent->IsContentOfType(nsIContent::eHTML)) 
@@ -3293,8 +3186,6 @@ RuleProcessorData::~RuleProcessorData()
   if (mParentData)
     mParentData->Destroy(mPresContext);
 
-  NS_IF_RELEASE(mParentContent);
-  NS_IF_RELEASE(mContentTag);
   NS_IF_RELEASE(mContentID);
   NS_IF_RELEASE(mStyledContent);
 
@@ -3307,11 +3198,9 @@ const nsString* RuleProcessorData::GetLang(void)
     mLanguage = new nsAutoString();
     if (!mLanguage)
       return nsnull;
-    nsCOMPtr<nsIContent> content = mContent;
-    while (content) {
-      PRInt32 attrCount = 0;
-      content->GetAttrCount(attrCount);
-      if (attrCount > 0) {
+    for (nsIContent* content = mContent; content;
+         content = content->GetParent()) {
+      if (content->GetAttrCount() > 0) {
         // xml:lang has precedence over lang on HTML elements (see
         // XHTML1 section C.7).
         nsAutoString value;
@@ -3327,10 +3216,6 @@ const nsString* RuleProcessorData::GetLang(void)
           break;
         }
       }
-
-      nsCOMPtr<nsIContent> parent;
-      content->GetParent(getter_AddRefs(parent));
-      content = parent;
     }
   }
   return mLanguage;
@@ -3344,8 +3229,8 @@ static PRBool ValueIncludes(const nsString& aValueList, const nsString& aValue, 
 
   valueList.Append(kNullCh);  // put an extra null at the end
 
-  PRUnichar* value = (PRUnichar*)(const PRUnichar*)aValue.get();
-  PRUnichar* start = (PRUnichar*)(const PRUnichar*)valueList.get();
+  const PRUnichar* value = aValue.get();
+  PRUnichar* start = valueList.BeginWriting();
   PRUnichar* end   = start;
 
   while (kNullCh != *start) {
@@ -3412,8 +3297,7 @@ inline PRBool IsQuirkEventSensitive(nsIAtom *aContentTag)
 
 static PRBool IsSignificantChild(nsIContent* aChild, PRBool aAcceptNonWhitespaceText)
 {
-  nsCOMPtr<nsIAtom> tag;
-  aChild->GetTag(getter_AddRefs(tag)); // skip text & comments
+  nsIAtom *tag = aChild->Tag(); // skip text, comments, and PIs
   if ((tag != nsLayoutAtoms::textTagName) && 
       (tag != nsLayoutAtoms::commentTagName) &&
       (tag != nsLayoutAtoms::processingInstructionTagName)) {
@@ -3459,16 +3343,65 @@ DashMatchCompare(const nsAString& aAttributeValue,
       result = PR_FALSE;
     }
     else {
-      const nsAString& attributeSubstring =
-        Substring(aAttributeValue, 0, selectorLen);
       if (aCaseSensitive)
-        result = attributeSubstring.Equals(aSelectorValue);
+        result = StringBeginsWith(aAttributeValue, aSelectorValue);
       else
-        result = attributeSubstring.Equals(aSelectorValue,
-                                          nsCaseInsensitiveStringComparator());
+        result = StringBeginsWith(aAttributeValue, aSelectorValue,
+                                  nsCaseInsensitiveStringComparator());
     }
   }
   return result;
+}
+
+// This function is to be called once we have fetched a value for an attribute
+// whose namespace and name match those of aAttrSelector.  This function
+// performs comparisons on the value only, based on aAttrSelector->mFunction.
+static PRBool AttrMatchesValue(const nsAttrSelector* aAttrSelector,
+                               const nsString& aValue)
+{
+  NS_PRECONDITION(aAttrSelector, "Must have an attribute selector");
+  const PRBool isCaseSensitive = aAttrSelector->mCaseSensitive;
+  switch (aAttrSelector->mFunction) {
+    case NS_ATTR_FUNC_EQUALS: 
+      if (isCaseSensitive) {
+        return aValue.Equals(aAttrSelector->mValue);
+      }
+      else {
+        return aValue.Equals(aAttrSelector->mValue,
+                             nsCaseInsensitiveStringComparator());
+      }
+    case NS_ATTR_FUNC_INCLUDES: 
+      return ValueIncludes(aValue, aAttrSelector->mValue, isCaseSensitive);
+    case NS_ATTR_FUNC_DASHMATCH: 
+      return DashMatchCompare(aValue, aAttrSelector->mValue, isCaseSensitive);
+    case NS_ATTR_FUNC_ENDSMATCH:
+      if (isCaseSensitive) {
+        return StringEndsWith(aValue, aAttrSelector->mValue);
+      }
+      else {
+        return StringEndsWith(aValue, aAttrSelector->mValue,
+                              nsCaseInsensitiveStringComparator());
+      }
+    case NS_ATTR_FUNC_BEGINSMATCH:
+      if (isCaseSensitive) {
+        return StringBeginsWith(aValue, aAttrSelector->mValue);
+      }
+      else {
+        return StringBeginsWith(aValue, aAttrSelector->mValue,
+                                nsCaseInsensitiveStringComparator());
+      }
+    case NS_ATTR_FUNC_CONTAINSMATCH:
+      if (isCaseSensitive) {
+        return FindInReadable(aAttrSelector->mValue, aValue);
+      }
+      else {
+        return FindInReadable(aAttrSelector->mValue, aValue,
+                              nsCaseInsensitiveStringComparator());
+      }
+    default:
+      NS_NOTREACHED("Shouldn't be ending up here");
+      return PR_FALSE;
+  }
 }
 
 // NOTE:  The |aStateMask| code isn't going to work correctly anymore if
@@ -3484,9 +3417,9 @@ static PRBool SelectorMatches(RuleProcessorData &data,
 
 {
   // if we are dealing with negations, reverse the values of PR_TRUE and PR_FALSE
-  PRBool  localFalse = PRBool(0 < aNegationIndex);
-  PRBool  localTrue = PRBool(0 == aNegationIndex);
-  PRBool  result = localTrue;
+  PRBool localFalse = 0 < aNegationIndex;
+  PRBool localTrue = 0 == aNegationIndex;
+  PRBool result = localTrue;
 
   // Do not perform the test if aNegationIndex==1
   // because it then contains only negated IDs, classes, attributes and pseudo-
@@ -3510,197 +3443,185 @@ static PRBool SelectorMatches(RuleProcessorData &data,
 
   result = PR_TRUE;
 
-  if (nsnull != aSelector->mPseudoClassList) {  // test for pseudo class match
-    // first-child, root, lang, active, focus, hover, link, visited...
-    // XXX disabled, enabled, selected, selection
-    nsAtomStringList* pseudoClass = aSelector->mPseudoClassList;
-
-    while (result && (nsnull != pseudoClass)) {
-      if ((nsCSSPseudoClasses::firstChild == pseudoClass->mAtom) ||
-          (nsCSSPseudoClasses::firstNode == pseudoClass->mAtom) ) {
-        nsCOMPtr<nsIContent> firstChild;
-        nsCOMPtr<nsIContent> parent = data.mParentContent;
-        if (parent) {
-          PRInt32 index = -1;
-          do {
-            parent->ChildAt(++index, getter_AddRefs(firstChild));
-            if (firstChild) { // stop at first non-comment and non-whitespace node (and non-text node for firstChild)
-              if (IsSignificantChild(firstChild, (nsCSSPseudoClasses::firstNode == pseudoClass->mAtom))) {
-                break;
-              }
-            }
-            else {
-              break;
-            }
-          } while (1 == 1);
-        }
-        result = PRBool(localTrue == (data.mContent == firstChild));
-      }
-      else if ((nsCSSPseudoClasses::lastChild == pseudoClass->mAtom) ||
-               (nsCSSPseudoClasses::lastNode == pseudoClass->mAtom)) {
-        nsCOMPtr<nsIContent> lastChild;
-        nsCOMPtr<nsIContent> parent = data.mParentContent;
-        if (parent) {
-          PRInt32 index;
-          parent->ChildCount(index);
-          do {
-            parent->ChildAt(--index, getter_AddRefs(lastChild));
-            if (lastChild) { // stop at first non-comment and non-whitespace node (and non-text node for lastChild)
-              if (IsSignificantChild(lastChild, (nsCSSPseudoClasses::lastNode == pseudoClass->mAtom))) {
-                break;
-              }
-            }
-            else {
-              break;
-            }
-          } while (1 == 1);
-        }
-        result = PRBool(localTrue == (data.mContent == lastChild));
-      }
-      else if (nsCSSPseudoClasses::empty == pseudoClass->mAtom) {
-        nsCOMPtr<nsIContent> child;
-        nsCOMPtr<nsIContent> element = data.mContent;
+  // test for pseudo class match
+  // first-child, root, lang, active, focus, hover, link, visited...
+  // XXX disabled, enabled, selected, selection
+  for (nsAtomStringList* pseudoClass = aSelector->mPseudoClassList;
+       pseudoClass && result; pseudoClass = pseudoClass->mNext) {
+    if ((nsCSSPseudoClasses::firstChild == pseudoClass->mAtom) ||
+        (nsCSSPseudoClasses::firstNode == pseudoClass->mAtom) ) {
+      nsIContent *firstChild = nsnull;
+      nsIContent *parent = data.mParentContent;
+      if (parent) {
+        PRBool acceptNonWhitespace =
+          nsCSSPseudoClasses::firstNode == pseudoClass->mAtom;
         PRInt32 index = -1;
         do {
-          element->ChildAt(++index, getter_AddRefs(child));
-          if (child) { // stop at first non-comment and non-whitespace node
-            if (IsSignificantChild(child, PR_TRUE)) {
-              break;
-            }
-          }
-          else {
-            break;
-          }
-        } while (1 == 1);
-        result = PRBool(localTrue == (child == nsnull));
+          firstChild = parent->GetChildAt(++index);
+          // stop at first non-comment and non-whitespace node (and
+          // non-text node for firstChild)
+        } while (firstChild &&
+                 !IsSignificantChild(firstChild, acceptNonWhitespace));
       }
-      else if (nsCSSPseudoClasses::root == pseudoClass->mAtom) {
-        if (data.mParentContent) {
-          result = localFalse;
-        }
-        else {
-          result = localTrue;
-        }
+      result = localTrue == (data.mContent == firstChild);
+    }
+    else if ((nsCSSPseudoClasses::lastChild == pseudoClass->mAtom) ||
+             (nsCSSPseudoClasses::lastNode == pseudoClass->mAtom)) {
+      nsIContent *lastChild = nsnull;
+      nsIContent *parent = data.mParentContent;
+      if (parent) {
+        PRBool acceptNonWhitespace =
+          nsCSSPseudoClasses::lastNode == pseudoClass->mAtom;
+        PRUint32 index = parent->GetChildCount();
+        do {
+          lastChild = parent->GetChildAt(--index);
+          // stop at first non-comment and non-whitespace node (and
+          // non-text node for lastChild)
+        } while (lastChild &&
+                 !IsSignificantChild(lastChild, acceptNonWhitespace));
       }
-      else if (nsCSSPseudoClasses::mozBoundElement == pseudoClass->mAtom) {
-        result = (data.mScopedRoot && data.mScopedRoot == data.mContent)
-                   ? localTrue : localFalse;
-      }
-      else if (nsCSSPseudoClasses::lang == pseudoClass->mAtom) {
-        NS_ASSERTION(nsnull != pseudoClass->mString, "null lang parameter");
+      result = localTrue == (data.mContent == lastChild);
+    }
+    else if (nsCSSPseudoClasses::empty == pseudoClass->mAtom) {
+      nsIContent *child = nsnull;
+      nsIContent *element = data.mContent;
+      PRInt32 index = -1;
+      do {
+        child = element->GetChildAt(++index);
+        // stop at first non-comment and non-whitespace node
+      } while (child && !IsSignificantChild(child, PR_TRUE));
+      result = localTrue == (child == nsnull);
+    }
+    else if (nsCSSPseudoClasses::root == pseudoClass->mAtom) {
+      if (data.mParentContent) {
         result = localFalse;
-        if (pseudoClass->mString && *pseudoClass->mString) {
-          // We have to determine the language of the current element.  Since
-          // this is currently no property and since the language is inherited
-          // from the parent we have to be prepared to look at all parent
-          // nodes.  The language itself is encoded in the LANG attribute.
-          const nsString* lang = data.GetLang();
-          if (lang && !lang->IsEmpty()) { // null check for out-of-memory
-            result = localTrue == DashMatchCompare(*lang,
-                            nsDependentString(pseudoClass->mString), PR_FALSE);
-          }
-          else {
-            nsCOMPtr<nsIDocument> doc;
-            data.mContent->GetDocument(getter_AddRefs(doc));
-            if (doc) {
-              // Try to get the language from the HTTP header or if this
-              // is missing as well from the preferences.
-              // The content language can be a comma-separated list of
-              // language codes.
-              nsAutoString language;
-              if (NS_SUCCEEDED(doc->GetContentLanguage(language))) {
-                nsDependentString langString(pseudoClass->mString);
-                language.StripWhitespace();
-                PRInt32 begin = 0;
-                PRInt32 len = language.Length();
-                while (begin < len) {
-                  PRInt32 end = language.FindChar(PRUnichar(','), begin);
-                  if (end == kNotFound) {
-                    end = len;
-                  }
-                  if (DashMatchCompare(Substring(language, begin, end-begin),
-                                       langString,
-                                       PR_FALSE)) {
-                    result = localTrue;
-                    break;
-                  }
-                  begin = end + 1;
-                }
-              }
-            }
-          }
-        }
-      }
-      else if (IsEventPseudo(pseudoClass->mAtom)) {
-        // check if the element is event-sensitive
-        if (data.mCompatMode == eCompatibility_NavQuirks &&
-            // global selector (but don't check .class):
-            !aSelector->mTag && !aSelector->mIDList && !aSelector->mAttrList &&
-            // :hover or :active
-            (nsCSSPseudoClasses::active == pseudoClass->mAtom ||
-             nsCSSPseudoClasses::hover == pseudoClass->mAtom) &&
-            // important for |IsQuirkEventSensitive|:
-            data.mIsHTMLContent && !data.mIsHTMLLink &&
-            !IsQuirkEventSensitive(data.mContentTag)) {
-          // In quirks mode, only make certain elements sensitive to
-          // selectors ":hover" and ":active".
-          // XXX Once we make ":active" work correctly (bug 65917) this
-          // quirk should apply only to ":hover" (if to anything at all).
-          result = localFalse;
-        } else {
-          if (nsCSSPseudoClasses::active == pseudoClass->mAtom) {
-            result = (aStateMask & NS_EVENT_STATE_ACTIVE) ||
-                     (localTrue == (0 != (data.mEventState & NS_EVENT_STATE_ACTIVE)));
-          }
-          else if (nsCSSPseudoClasses::focus == pseudoClass->mAtom) {
-            result = (aStateMask & NS_EVENT_STATE_FOCUS) ||
-                     (localTrue == (0 != (data.mEventState & NS_EVENT_STATE_FOCUS)));
-          }
-          else if (nsCSSPseudoClasses::hover == pseudoClass->mAtom) {
-            result = (aStateMask & NS_EVENT_STATE_HOVER) ||
-                     (localTrue == (0 != (data.mEventState & NS_EVENT_STATE_HOVER)));
-          }
-          else if (nsCSSPseudoClasses::mozDragOver == pseudoClass->mAtom) {
-            result = (aStateMask & NS_EVENT_STATE_DRAGOVER) ||
-                     (localTrue == (0 != (data.mEventState & NS_EVENT_STATE_DRAGOVER)));
-          }
-          else if (nsCSSPseudoClasses::target == pseudoClass->mAtom) {
-            result = (aStateMask & NS_EVENT_STATE_URLTARGET) ||
-                     (localTrue == (0 != (data.mEventState & NS_EVENT_STATE_URLTARGET)));
-          }
-        } 
-      }
-      else if (IsLinkPseudo(pseudoClass->mAtom)) {
-        if (data.mIsHTMLLink || data.mIsSimpleXLink) {
-          if (result) {
-            if (nsCSSPseudoClasses::mozAnyLink == pseudoClass->mAtom) {
-              result = localTrue;
-            }
-            else if (nsCSSPseudoClasses::link == pseudoClass->mAtom) {
-              result = PRBool(localTrue == (eLinkState_Unvisited == data.mLinkState));
-            }
-            else if (nsCSSPseudoClasses::visited == pseudoClass->mAtom) {
-              result = PRBool(localTrue == (eLinkState_Visited == data.mLinkState));
-            }
-          }
-        }
-        else {
-          result = localFalse;  // not a link
-        }
-      }
-      else if (nsCSSPseudoClasses::checked == pseudoClass->mAtom) {
-        // This pseudoclass matches the selected state on the following elements:
-        //  <option>
-        //  <input type=checkbox>
-        //  <input type=radio>
-        if (!(aStateMask & NS_EVENT_STATE_CHECKED))
-          result = data.mIsChecked ? localTrue : localFalse;
       }
       else {
-        NS_ERROR("CSS parser parsed a pseudo-class that we do not handle");
-        result = PR_FALSE;  // unknown pseudo class
+        result = localTrue;
       }
-      pseudoClass = pseudoClass->mNext;
+    }
+    else if (nsCSSPseudoClasses::mozBoundElement == pseudoClass->mAtom) {
+      // XXXldb How do we know where the selector came from?  And what
+      // if there are multiple bindings, and we should be matching the
+      // outer one?
+      result = (data.mScopedRoot && data.mScopedRoot == data.mContent)
+                 ? localTrue : localFalse;
+    }
+    else if (nsCSSPseudoClasses::lang == pseudoClass->mAtom) {
+      NS_ASSERTION(nsnull != pseudoClass->mString, "null lang parameter");
+      result = localFalse;
+      if (pseudoClass->mString && *pseudoClass->mString) {
+        // We have to determine the language of the current element.  Since
+        // this is currently no property and since the language is inherited
+        // from the parent we have to be prepared to look at all parent
+        // nodes.  The language itself is encoded in the LANG attribute.
+        const nsString* lang = data.GetLang();
+        if (lang && !lang->IsEmpty()) { // null check for out-of-memory
+          result = localTrue == DashMatchCompare(*lang,
+                          nsDependentString(pseudoClass->mString), PR_FALSE);
+        }
+        else {
+          nsIDocument* doc = data.mContent->GetDocument();
+          if (doc) {
+            // Try to get the language from the HTTP header or if this
+            // is missing as well from the preferences.
+            // The content language can be a comma-separated list of
+            // language codes.
+            nsAutoString language;
+            doc->GetContentLanguage(language);
+
+            nsDependentString langString(pseudoClass->mString);
+            language.StripWhitespace();
+            PRInt32 begin = 0;
+            PRInt32 len = language.Length();
+            while (begin < len) {
+              PRInt32 end = language.FindChar(PRUnichar(','), begin);
+              if (end == kNotFound) {
+                end = len;
+              }
+              if (DashMatchCompare(Substring(language, begin, end-begin),
+                                   langString,
+                                   PR_FALSE)) {
+                result = localTrue;
+                break;
+              }
+              begin = end + 1;
+            }
+          }
+        }
+      }
+    }
+    else if (IsEventPseudo(pseudoClass->mAtom)) {
+      // check if the element is event-sensitive
+      if (data.mCompatMode == eCompatibility_NavQuirks &&
+          // global selector (but don't check .class):
+          !aSelector->mTag && !aSelector->mIDList && !aSelector->mAttrList &&
+          // This (or the other way around) both make :not() asymmetric
+          // in quirks mode (and it's hard to work around since we're
+          // testing the current mNegations, not the first
+          // (unnegated)). This at least makes it closer to the spec.
+          aNegationIndex == 0 &&
+          // :hover or :active
+          (nsCSSPseudoClasses::active == pseudoClass->mAtom ||
+           nsCSSPseudoClasses::hover == pseudoClass->mAtom) &&
+          // important for |IsQuirkEventSensitive|:
+          data.mIsHTMLContent && !data.mIsHTMLLink &&
+          !IsQuirkEventSensitive(data.mContentTag)) {
+        // In quirks mode, only make certain elements sensitive to
+        // selectors ":hover" and ":active".
+        // XXX Once we make ":active" work correctly (bug 65917) this
+        // quirk should apply only to ":hover" (if to anything at all).
+        result = localFalse;
+      } else {
+        if (nsCSSPseudoClasses::active == pseudoClass->mAtom) {
+          result = (aStateMask & NS_EVENT_STATE_ACTIVE) ||
+                   (localTrue == (0 != (data.mEventState & NS_EVENT_STATE_ACTIVE)));
+        }
+        else if (nsCSSPseudoClasses::focus == pseudoClass->mAtom) {
+          result = (aStateMask & NS_EVENT_STATE_FOCUS) ||
+                   (localTrue == (0 != (data.mEventState & NS_EVENT_STATE_FOCUS)));
+        }
+        else if (nsCSSPseudoClasses::hover == pseudoClass->mAtom) {
+          result = (aStateMask & NS_EVENT_STATE_HOVER) ||
+                   (localTrue == (0 != (data.mEventState & NS_EVENT_STATE_HOVER)));
+        }
+        else if (nsCSSPseudoClasses::mozDragOver == pseudoClass->mAtom) {
+          result = (aStateMask & NS_EVENT_STATE_DRAGOVER) ||
+                   (localTrue == (0 != (data.mEventState & NS_EVENT_STATE_DRAGOVER)));
+        }
+        else if (nsCSSPseudoClasses::target == pseudoClass->mAtom) {
+          result = (aStateMask & NS_EVENT_STATE_URLTARGET) ||
+                   (localTrue == (0 != (data.mEventState & NS_EVENT_STATE_URLTARGET)));
+        }
+      } 
+    }
+    else if (IsLinkPseudo(pseudoClass->mAtom)) {
+      if (data.mIsHTMLLink || data.mIsSimpleXLink) {
+        if (nsCSSPseudoClasses::mozAnyLink == pseudoClass->mAtom) {
+          result = localTrue;
+        }
+        else if (nsCSSPseudoClasses::link == pseudoClass->mAtom) {
+          result = localTrue == (eLinkState_Unvisited == data.mLinkState);
+        }
+        else if (nsCSSPseudoClasses::visited == pseudoClass->mAtom) {
+          result = localTrue == (eLinkState_Visited == data.mLinkState);
+        }
+      }
+      else {
+        result = localFalse;  // not a link
+      }
+    }
+    else if (nsCSSPseudoClasses::checked == pseudoClass->mAtom) {
+      // This pseudoclass matches the selected state on the following elements:
+      //  <option>
+      //  <input type=checkbox>
+      //  <input type=radio>
+      if (!(aStateMask & NS_EVENT_STATE_CHECKED))
+        result = data.mIsChecked ? localTrue : localFalse;
+    }
+    else {
+      NS_ERROR("CSS parser parsed a pseudo-class that we do not handle");
+      result = PR_FALSE;  // unknown pseudo class
     }
   }
 
@@ -3716,7 +3637,62 @@ static PRBool SelectorMatches(RuleProcessorData &data,
       nsAttrSelector* attr = aSelector->mAttrList;
       do {
         if (attr->mAttr == aAttribute) {
+          // XXX we should really have a namespace, not just an attr
+          // name, in HasAttributeDependentStyle!
           result = PR_TRUE;
+        }
+        else if (attr->mNameSpace == kNameSpaceID_Unknown) {
+          // Attr selector with a wildcard namespace.  We have to examine all
+          // the attributes on our content node....  This sort of selector is
+          // essentially a boolean OR, over all namespaces, of equivalent attr
+          // selectors with those namespaces.  So to evaluate whether it
+          // matches, evaluate for each namespace (the only namespaces that
+          // have a chance at matching, of course, are ones that the element
+          // actually has attributes in), short-circuiting if we ever match.
+          // Then deal with the localFalse/localTrue stuff.
+          PRUint32 attrCount = data.mContent->GetAttrCount();
+          PRInt32 nameSpaceID;
+          nsCOMPtr<nsIAtom> name;
+          nsCOMPtr<nsIAtom> prefix;
+          PRBool attrSelectorMatched = PR_FALSE;
+          for (PRUint32 i = 0; i < attrCount; ++i) {
+#ifdef DEBUG
+            nsresult attrState =
+#endif
+              data.mContent->GetAttrNameAt(i, &nameSpaceID,
+                                           getter_AddRefs(name),
+                                           getter_AddRefs(prefix));
+            NS_ASSERTION(NS_SUCCEEDED(attrState),
+                         "GetAttrCount lied or GetAttrNameAt failed");
+            if (name != attr->mAttr) {
+              continue;
+            }
+            if (attr->mFunction == NS_ATTR_FUNC_SET) {
+              attrSelectorMatched = PR_TRUE;
+            } else {
+              nsAutoString value;
+#ifdef DEBUG
+              attrState =
+#endif
+                data.mContent->GetAttr(nameSpaceID, name, value);
+              NS_ASSERTION(NS_SUCCEEDED(attrState) &&
+                           NS_CONTENT_ATTR_NOT_THERE != attrState,
+                           "GetAttrNameAt lied or GetAttr failed");
+              attrSelectorMatched = AttrMatchesValue(attr, value);
+            }
+
+            // At this point |attrSelectorMatched| has been set by us
+            // explicitly in this loop.  If it's PR_FALSE, we may still match
+            // -- the content may have another attribute with the same name but
+            // in a different namespace.  But if it's PR_TRUE, we are done (we
+            // can short-circuit the boolean OR described above).
+            if (attrSelectorMatched) {
+              break;
+            }
+          }
+          
+          // Now adjust for a possible negation
+          result = localTrue == attrSelectorMatched;
         }
         else if (!data.mContent->HasAttr(attr->mNameSpace, attr->mAttr)) {
           result = localFalse;
@@ -3730,57 +3706,11 @@ static PRBool SelectorMatches(RuleProcessorData &data,
           NS_ASSERTION(NS_SUCCEEDED(attrState) &&
                        NS_CONTENT_ATTR_NOT_THERE != attrState,
                        "HasAttr lied or GetAttr failed");
-          PRBool isCaseSensitive = attr->mCaseSensitive;
-          switch (attr->mFunction) {
-            case NS_ATTR_FUNC_EQUALS: 
-              if (isCaseSensitive) {
-                result = localTrue == value.Equals(attr->mValue);
-              }
-              else {
-                result = localTrue == value.Equals(attr->mValue, nsCaseInsensitiveStringComparator());
-              }
-              break;
-            case NS_ATTR_FUNC_INCLUDES: 
-              result = localTrue == ValueIncludes(value, attr->mValue, isCaseSensitive);
-              break;
-            case NS_ATTR_FUNC_DASHMATCH: 
-              result = localTrue == DashMatchCompare(value, attr->mValue, isCaseSensitive);
-              break;
-            case NS_ATTR_FUNC_ENDSMATCH:
-              {
-                PRUint32 selLen = attr->mValue.Length();
-                PRUint32 valLen = value.Length();
-                if (selLen > valLen) {
-                  result = localFalse;
-                } else {
-                  if (isCaseSensitive)
-                    result = localTrue == Substring(value, valLen - selLen, selLen).Equals(attr->mValue, nsDefaultStringComparator());
-                  else
-                    result = localTrue == Substring(value, valLen - selLen, selLen).Equals(attr->mValue, nsCaseInsensitiveStringComparator());
-                }
-              }
-              break;
-            case NS_ATTR_FUNC_BEGINSMATCH:
-              {
-                PRUint32 selLen = attr->mValue.Length();
-                PRUint32 valLen = value.Length();
-                if (selLen > valLen) {
-                  result = localFalse;
-                } else {
-                  if (isCaseSensitive)
-                    result = localTrue == Substring(value, 0, selLen).Equals(attr->mValue, nsDefaultStringComparator());
-                  else
-                    result = localTrue == Substring(value, 0, selLen).Equals(attr->mValue, nsCaseInsensitiveStringComparator());
-                }
-              }
-              break;
-            case NS_ATTR_FUNC_CONTAINSMATCH:
-              result = localTrue == (FindInReadable(attr->mValue, value, nsCaseInsensitiveStringComparator()));
-              break;
-          }
+          result = localTrue == AttrMatchesValue(attr, value);
         }
+        
         attr = attr->mNext;
-      } while (result && (nsnull != attr));
+      } while (attr && result);
     }
   }
   if (result && (aSelector->mIDList || aSelector->mClassList)) {
@@ -3790,7 +3720,8 @@ static PRBool SelectorMatches(RuleProcessorData &data,
       // case sensitivity: bug 93371
       PRBool isCaseSensitive = data.mCompatMode != eCompatibility_NavQuirks;
       nsAtomList* IDList = aSelector->mIDList;
-      if (nsnull == IDList || aAttribute == nsHTMLAtoms::id) {
+      if (nsnull == IDList ||
+          (aAttribute && aAttribute == data.mContent->GetIDAttributeName())) {
         result = PR_TRUE;
       }
       else if (nsnull != data.mContentID) {
@@ -3821,7 +3752,8 @@ static PRBool SelectorMatches(RuleProcessorData &data,
         }
       }
       
-      if (result && aAttribute != nsHTMLAtoms::kClass) {
+      if (result &&
+          (!aAttribute || aAttribute != data.mContent->GetClassAttributeName())) {
         nsAtomList* classList = aSelector->mClassList;
         while (nsnull != classList) {
           if (localTrue == (!data.mStyledContent->HasClass(classList->mAtom, isCaseSensitive))) {
@@ -3842,110 +3774,95 @@ static PRBool SelectorMatches(RuleProcessorData &data,
   return result;
 }
 
-static PRBool SelectorMatchesTree(RuleProcessorData &data,
+// Right now, there are four operators:
+//   PRUnichar(0), the descendent combinator, is greedy
+//   '~', the indirect adjacent sibling combinator, is greedy
+//   '+' and '>', the direct adjacent sibling and child combinators, are not
+#define NS_IS_GREEDY_OPERATOR(ch) (ch == PRUnichar(0) || ch == PRUnichar('~'))
+
+static PRBool SelectorMatchesTree(RuleProcessorData& aPrevData,
                                   nsCSSSelector* aSelector) 
 {
   nsCSSSelector* selector = aSelector;
+  RuleProcessorData* prevdata = &aPrevData;
+  while (selector) { // check compound selectors
+    // If we don't already have a RuleProcessorData for the next
+    // appropriate content (whether parent or previous sibling), create
+    // one.
 
-  if (selector) {
-    nsIContent* content = nsnull;
-    nsIContent* lastContent = data.mContent;
-    NS_ADDREF(lastContent);
-    RuleProcessorData* curdata = &data;
-    while (nsnull != selector) { // check compound selectors
-      // Find the appropriate content (whether parent or previous sibling)
-      // to check next, and if we don't already have a RuleProcessorData
-      // for it, create one.
-
-      // for adjacent sibling combinators, the content to test against the
-      // selector is the previous sibling
-      nsCompatibility compat = curdata->mCompatMode;
-      RuleProcessorData* newdata;
-      if (PRUnichar('+') == selector->mOperator) {
-        newdata = curdata->mPreviousSiblingData;
-        if (!newdata) {
-          nsCOMPtr<nsIContent> parent;
-          PRInt32 index;
-          lastContent->GetParent(getter_AddRefs(parent));
-          if (parent) {
-            parent->IndexOf(lastContent, index);
-            while (0 <= --index) {  // skip text & comment nodes
-              parent->ChildAt(index, &content);
-              nsCOMPtr<nsIAtom> tag;
-              content->GetTag(getter_AddRefs(tag));
-              if ((tag != nsLayoutAtoms::textTagName) && 
-                  (tag != nsLayoutAtoms::commentTagName)) {
-                newdata =
-                    new (curdata->mPresContext) RuleProcessorData(curdata->mPresContext, content,
-                                                                    curdata->mRuleWalker, &compat);
-                curdata->mPreviousSiblingData = newdata;    
-                break;
-              }
-              NS_RELEASE(content);
+    // for adjacent sibling combinators, the content to test against the
+    // selector is the previous sibling *element*
+    RuleProcessorData* data;
+    if (PRUnichar('+') == selector->mOperator ||
+        PRUnichar('~') == selector->mOperator) {
+      data = prevdata->mPreviousSiblingData;
+      if (!data) {
+        nsIContent* content = prevdata->mContent;
+        nsIContent* parent = content->GetParent();
+        if (parent) {
+          PRInt32 index = parent->IndexOf(content);
+          while (0 <= --index) {
+            content = parent->GetChildAt(index);
+            if (content->IsContentOfType(nsIContent::eELEMENT)) {
+              data = new (prevdata->mPresContext)
+                          RuleProcessorData(prevdata->mPresContext, content,
+                                            prevdata->mRuleWalker,
+                                            &prevdata->mCompatMode);
+              prevdata->mPreviousSiblingData = data;    
+              break;
             }
           }
-        } else {
-          content = newdata->mContent;
-          NS_ADDREF(content);
         }
       }
-      // for descendant combinators and child combinators, the content
-      // to test against is the parent
-      else {
-        newdata = curdata->mParentData;
-        if (!newdata) {
-          lastContent->GetParent(&content);
-          if (content) {
-            newdata = new (curdata->mPresContext) RuleProcessorData(curdata->mPresContext, content,
-                                                                      curdata->mRuleWalker, &compat);
-            curdata->mParentData = newdata;    
-          }
-        } else {
-          content = newdata->mContent;
-          NS_ADDREF(content);
-        }
-      }
-      if (! newdata) {
-        NS_ASSERTION(!content, "content must be null");
-        break;
-      }
-      if (SelectorMatches(*newdata, selector, 0, nsnull, 0)) {
-        // to avoid greedy matching, we need to recurse if this is a
-        // descendant combinator and the next combinator is not
-        if ((NS_IS_GREEDY_OPERATOR(selector->mOperator)) &&
-            (selector->mNext) &&
-            (!NS_IS_GREEDY_OPERATOR(selector->mNext->mOperator))) {
-
-          // pretend the selector didn't match, and step through content
-          // while testing the same selector
-
-          // This approach is slightly strange is that when it recurses
-          // it tests from the top of the content tree, down.  This
-          // doesn't matter much for performance since most selectors
-          // don't match.  (If most did, it might be faster...)
-          if (SelectorMatchesTree(*newdata, selector)) {
-            selector = nsnull; // indicate success
-            break;
-          }
-        }
-        selector = selector->mNext;
-      }
-      else {
-        // for adjacent sibling and child combinators, if we didn't find
-        // a match, we're done
-        if (!NS_IS_GREEDY_OPERATOR(selector->mOperator)) {
-          NS_RELEASE(content);
-          break;  // parent was required to match
-        }
-      }
-      NS_IF_RELEASE(lastContent);
-      lastContent = content;  // take refcount
-      content = nsnull;
-      curdata = newdata;
     }
-    NS_IF_RELEASE(lastContent);
+    // for descendant combinators and child combinators, the content
+    // to test against is the parent
+    else {
+      data = prevdata->mParentData;
+      if (!data) {
+        nsIContent *content = prevdata->mContent->GetParent();
+        if (content) {
+          data = new (prevdata->mPresContext)
+                      RuleProcessorData(prevdata->mPresContext, content,
+                                        prevdata->mRuleWalker,
+                                        &prevdata->mCompatMode);
+          prevdata->mParentData = data;    
+        }
+      }
+    }
+    if (! data) {
+      return PR_FALSE;
+    }
+    if (SelectorMatches(*data, selector, 0, nsnull, 0)) {
+      // to avoid greedy matching, we need to recur if this is a
+      // descendant combinator and the next combinator is not
+      if ((NS_IS_GREEDY_OPERATOR(selector->mOperator)) &&
+          (selector->mNext) &&
+          (!NS_IS_GREEDY_OPERATOR(selector->mNext->mOperator))) {
+
+        // pretend the selector didn't match, and step through content
+        // while testing the same selector
+
+        // This approach is slightly strange in that when it recurs
+        // it tests from the top of the content tree, down.  This
+        // doesn't matter much for performance since most selectors
+        // don't match.  (If most did, it might be faster...)
+        if (SelectorMatchesTree(*data, selector)) {
+          return PR_TRUE;
+        }
+      }
+      selector = selector->mNext;
+    }
+    else {
+      // for adjacent sibling and child combinators, if we didn't find
+      // a match, we're done
+      if (!NS_IS_GREEDY_OPERATOR(selector->mOperator)) {
+        return PR_FALSE;  // parent was required to match
+      }
+    }
+    prevdata = data;
   }
-  return PRBool(nsnull == selector);  // matches if ran out of selectors
+  return PR_TRUE; // all the selectors matched.
 }
 
 static void ContentEnumFunc(nsICSSStyleRule* aRule, nsCSSSelector* aSelector,
@@ -3980,13 +3897,17 @@ CSSRuleProcessor::RulesMatching(ElementRuleProcessorData *aData,
   RuleCascadeData* cascade = GetRuleCascade(aData->mPresContext, aMedium);
 
   if (cascade) {
-    nsAutoVoidArray classArray;
-
     nsIStyledContent* styledContent = aData->mStyledContent;
+    const nsAttrValue* classes = nsnull;
     if (styledContent)
-      styledContent->GetClasses(classArray);
-
-    cascade->mRuleHash.EnumerateAllRules(aData->mNameSpaceID, aData->mContentTag, aData->mContentID, classArray, ContentEnumFunc, aData);
+      classes = styledContent->GetClasses();
+    
+    cascade->mRuleHash.EnumerateAllRules(aData->mNameSpaceID,
+                                         aData->mContentTag,
+                                         aData->mContentID,
+                                         classes,
+                                         ContentEnumFunc,
+                                         aData);
   }
   return NS_OK;
 }
@@ -4053,23 +3974,41 @@ CSSRuleProcessor::RulesMatching(PseudoRuleProcessorData* aData,
   return NS_OK;
 }
 
+inline PRBool
+IsSiblingOperator(PRUnichar oper)
+{
+  return oper == PRUnichar('+') || oper == PRUnichar('~');
+}
+
+struct StateEnumData {
+  StateEnumData(StateRuleProcessorData *aData)
+    : data(aData), change(nsReStyleHint(0)) {}
+
+  StateRuleProcessorData *data;
+  nsReStyleHint change;
+};
 
 PR_STATIC_CALLBACK(PRBool) StateEnumFunc(void* aSelector, void* aData)
 {
-  StateRuleProcessorData* data =
-      NS_STATIC_CAST(StateRuleProcessorData*, aData);
+  StateEnumData *enumData = NS_STATIC_CAST(StateEnumData*, aData);
+  StateRuleProcessorData *data = enumData->data;
   nsCSSSelector* selector = NS_STATIC_CAST(nsCSSSelector*, aSelector);
 
-  // Return whether we want to halt the enumeration, which is the
-  // negation of whether we find a match (ignoring the event state mask).
-  return !( SelectorMatches(*data, selector, data->mStateMask, nsnull, 0) &&
-            SelectorMatchesTree(*data, selector->mNext) );
+  if (SelectorMatches(*data, selector, data->mStateMask, nsnull, 0) &&
+      SelectorMatchesTree(*data, selector->mNext)) {
+    if (IsSiblingOperator(selector->mOperator))
+      enumData->change = nsReStyleHint(enumData->change | eReStyle_LaterSiblings);
+    else
+      enumData->change = nsReStyleHint(enumData->change | eReStyle_Self);
+  }
+
+  return PR_TRUE;
 }
 
 NS_IMETHODIMP
 CSSRuleProcessor::HasStateDependentStyle(StateRuleProcessorData* aData,
                                          nsIAtom* aMedium,
-                                         PRBool* aResult)
+                                         nsReStyleHint* aResult)
 {
   NS_PRECONDITION(aData->mContent->IsContentOfType(nsIContent::eELEMENT),
                   "content must be element");
@@ -4084,34 +4023,48 @@ CSSRuleProcessor::HasStateDependentStyle(StateRuleProcessorData* aData,
   // "body > p:hover" will be in |cascade->mStateSelectors|).  Note that
   // |IsStateSelector| below determines which selectors are in
   // |cascade->mStateSelectors|.
-  // The enumeration function signals the presence of state by stopping
-  // the enumeration, which is reflected in the return value from
-  // |EnumerateForwards|.
-  *aResult = cascade &&
-             !cascade->mStateSelectors.EnumerateForwards(StateEnumFunc, aData);
-
+  StateEnumData data(aData);
+  if (cascade)
+    cascade->mStateSelectors.EnumerateForwards(StateEnumFunc, &data);
+  *aResult = data.change;
   return NS_OK;
 }
 
+struct AttributeEnumData {
+  AttributeEnumData(AttributeRuleProcessorData *aData)
+    : data(aData), change(nsReStyleHint(0)) {}
+
+  AttributeRuleProcessorData *data;
+  nsReStyleHint change;
+};
+
+
 PR_STATIC_CALLBACK(PRBool) AttributeEnumFunc(void* aSelector, void* aData)
 {
-  AttributeRuleProcessorData* data =
-      NS_STATIC_CAST(AttributeRuleProcessorData*, aData);
+  AttributeEnumData *enumData = NS_STATIC_CAST(AttributeEnumData*, aData);
+  AttributeRuleProcessorData *data = enumData->data;
   nsCSSSelector* selector = NS_STATIC_CAST(nsCSSSelector*, aSelector);
 
-  // Return whether we want to halt the enumeration, which is the
-  // negation of whether we find a match (ignoring the event state mask).
-  return !( SelectorMatches(*data, selector, 0, data->mAttribute, 0) &&
-            SelectorMatchesTree(*data, selector->mNext) );
+  if (SelectorMatches(*data, selector, 0, data->mAttribute, 0) &&
+      SelectorMatchesTree(*data, selector->mNext)) {
+    if (IsSiblingOperator(selector->mOperator))
+      enumData->change = nsReStyleHint(enumData->change | eReStyle_LaterSiblings);
+    else
+      enumData->change = nsReStyleHint(enumData->change | eReStyle_Self);
+  }
+
+  return PR_TRUE;
 }
 
 NS_IMETHODIMP
 CSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData,
                                              nsIAtom* aMedium,
-                                             PRBool* aResult)
+                                             nsReStyleHint* aResult)
 {
   NS_PRECONDITION(aData->mContent->IsContentOfType(nsIContent::eELEMENT),
                   "content must be element");
+
+  AttributeEnumData data(aData);
 
   // Since we always have :-moz-any-link (and almost always have :link
   // and :visited rules from prefs), rather than hacking AddRule below
@@ -4121,8 +4074,7 @@ CSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData,
       (aData->mContentTag == nsHTMLAtoms::a ||
        aData->mContentTag == nsHTMLAtoms::area ||
        aData->mContentTag == nsHTMLAtoms::link)) {
-    *aResult = PR_TRUE;
-    return NS_OK;
+    data.change = nsReStyleHint(data.change | eReStyle_Self);
   }
   // XXX What about XLinks?
 
@@ -4132,17 +4084,16 @@ CSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData,
   // (see HasStateDependentStyle), except that instead of one big list
   // we have a hashtable with a per-attribute list.
 
-  *aResult = PR_FALSE;
   if (cascade) {
     AttributeSelectorEntry *entry = NS_STATIC_CAST(AttributeSelectorEntry*,
         PL_DHashTableOperate(&cascade->mAttributeSelectors, aData->mAttribute,
                              PL_DHASH_LOOKUP));
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
-      *aResult =
-        !entry->mSelectors->EnumerateForwards(AttributeEnumFunc, aData);
+      entry->mSelectors->EnumerateForwards(AttributeEnumFunc, &data);
     }
   }
 
+  *aResult = data.change;
   return NS_OK;
 }
 
@@ -4165,8 +4116,8 @@ CSSRuleProcessor::ClearRuleCascades(void)
 inline
 PRBool IsStateSelector(nsCSSSelector& aSelector)
 {
-  nsAtomStringList* pseudoClass = aSelector.mPseudoClassList;
-  while (pseudoClass) {
+  for (nsAtomStringList* pseudoClass = aSelector.mPseudoClassList;
+       pseudoClass; pseudoClass = pseudoClass->mNext) {
     if ((pseudoClass->mAtom == nsCSSPseudoClasses::active) ||
         (pseudoClass->mAtom == nsCSSPseudoClasses::checked) ||
         (pseudoClass->mAtom == nsCSSPseudoClasses::mozDragOver) || 
@@ -4175,7 +4126,6 @@ PRBool IsStateSelector(nsCSSSelector& aSelector)
         (pseudoClass->mAtom == nsCSSPseudoClasses::target)) {
       return PR_TRUE;
     }
-    pseudoClass = pseudoClass->mNext;
   }
   return PR_FALSE;
 }
@@ -4192,28 +4142,40 @@ AddRule(void* aRuleInfo, void* aCascade)
   nsVoidArray* stateArray = &cascade->mStateSelectors;
   for (nsCSSSelector* selector = ruleInfo->mSelector;
            selector; selector = selector->mNext) {
-    // Build mStateSelectors.
-    if (IsStateSelector(*selector))
-      stateArray->AppendElement(selector);
+    // It's worth noting that this loop over negations isn't quite
+    // optimal for two reasons.  One, we could add something to one of
+    // these lists twice, which means we'll check it twice, but I don't
+    // think that's worth worrying about.   (We do the same for multiple
+    // attribute selectors on the same attribute.)  Two, we don't really
+    // need to check negations past the first in the current
+    // implementation (and they're rare as well), but that might change
+    // in the future if :not() is extended. 
+    for (nsCSSSelector* negation = selector; negation;
+         negation = negation->mNegations) {
+      // Build mStateSelectors.
+      if (IsStateSelector(*negation))
+        stateArray->AppendElement(selector);
 
-    // Build mAttributeSelectors.
-    if (selector->mIDList) {
-      nsVoidArray *array = cascade->AttributeListFor(nsHTMLAtoms::id);
-      if (!array)
-        return PR_FALSE;
-      array->AppendElement(selector);
-    }
-    if (selector->mClassList) {
-      nsVoidArray *array = cascade->AttributeListFor(nsHTMLAtoms::kClass);
-      if (!array)
-        return PR_FALSE;
-      array->AppendElement(selector);
-    }
-    for (nsAttrSelector *attr = selector->mAttrList; attr; attr = attr->mNext) {
-      nsVoidArray *array = cascade->AttributeListFor(attr->mAttr);
-      if (!array)
-        return PR_FALSE;
-      array->AppendElement(selector);
+      // Build mAttributeSelectors.
+      if (negation->mIDList) {
+        nsVoidArray *array = cascade->AttributeListFor(nsHTMLAtoms::id);
+        if (!array)
+          return PR_FALSE;
+        array->AppendElement(selector);
+      }
+      if (negation->mClassList) {
+        nsVoidArray *array = cascade->AttributeListFor(nsHTMLAtoms::kClass);
+        if (!array)
+          return PR_FALSE;
+        array->AppendElement(selector);
+      }
+      for (nsAttrSelector *attr = negation->mAttrList; attr;
+           attr = attr->mNext) {
+        nsVoidArray *array = cascade->AttributeListFor(attr->mAttr);
+        if (!array)
+          return PR_FALSE;
+        array->AppendElement(selector);
+      }
     }
   }
 
@@ -4370,11 +4332,8 @@ CSSRuleProcessor::GetRuleCascade(nsIPresContext* aPresContext, nsIAtom* aMedium)
   }
 
   if (mSheets) {
-    nsCompatibility quirkMode;
-    aPresContext->GetCompatibilityMode(&quirkMode);
-
     cascade = new RuleCascadeData(aMedium,
-                                  eCompatibility_NavQuirks == quirkMode);
+                                  eCompatibility_NavQuirks == aPresContext->CompatibilityMode());
     if (cascade) {
       CascadeEnumData data(aMedium, cascade->mRuleHash.Arena());
       mSheets->EnumerateForwards(CascadeSheetRulesInto, &data);

@@ -70,10 +70,10 @@
 #endif
 
 // define default product directory
-#if defined(XP_WIN) || defined(XP_MAC) || defined(XP_MACOSX) || defined(XP_OS2) || defined(XP_BEOS)
+#ifdef XP_MAC
 #define DEFAULT_PRODUCT_DIR NS_LITERAL_CSTRING("Mozilla")
-#elif defined (XP_UNIX)
-#define DEFAULT_PRODUCT_DIR NS_LITERAL_CSTRING(".mozilla")
+#else
+#define DEFAULT_PRODUCT_DIR NS_LITERAL_CSTRING(MOZ_USER_DIR)
 #endif
 
 // Locally defined keys used by nsAppDirectoryEnumerator
@@ -109,10 +109,6 @@
 //*****************************************************************************
 
 nsAppFileLocationProvider::nsAppFileLocationProvider()
-{
-}
-
-nsAppFileLocationProvider::~nsAppFileLocationProvider()
 {
 }
 
@@ -389,7 +385,7 @@ NS_METHOD nsAppFileLocationProvider::GetProductDirectory(nsILocalFile **aLocalFi
     if (NS_FAILED(rv)) return rv;
     rv = localDir->Exists(&exists);
     if (NS_SUCCEEDED(rv) && !exists)
-        rv = localDir->Create(nsIFile::DIRECTORY_TYPE, 0775);
+        rv = localDir->Create(nsIFile::DIRECTORY_TYPE, 0700);
     if (NS_FAILED(rv)) return rv;
 
     *aLocalFile = localDir;
@@ -486,6 +482,9 @@ class nsAppDirectoryEnumerator : public nsISimpleEnumerator
         
         return *result ? NS_OK : NS_ERROR_FAILURE;
     }
+
+    // Virtual destructor since subclass nsPathsDirectoryEnumerator
+    // does not re-implement Release()
 
     virtual ~nsAppDirectoryEnumerator()
     {

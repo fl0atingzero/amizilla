@@ -84,7 +84,7 @@ var gDefaultAccount;
 var gCurrentAccountData;
 
 // default picker mode for copies and folders
-gDefaultSpecialFolderPickerMode = "0";
+const gDefaultSpecialFolderPickerMode = "0";
 
 // event handlers
 function onAccountWizardLoad() {
@@ -268,11 +268,13 @@ function AccountDataToPageData(accountData, pageData)
         
         if (server.type == "nntp") {
             setPageData(pageData, "accounttype", "newsaccount", true);
+            setPageData(pageData, "accounttype", "mailaccount", false);
             setPageData(pageData, "newsserver", "hostname", server.hostName);
         }
         
         else {
             setPageData(pageData, "accounttype", "mailaccount", true);
+            setPageData(pageData, "accounttype", "newsaccount", false);
             setPageData(pageData, "server", "servertype", server.type);
             setPageData(pageData, "server", "hostname", server.hostName);
         }
@@ -301,8 +303,8 @@ function AccountDataToPageData(accountData, pageData)
     
     if (accountData.smtp) {
         smtp = accountData.smtp;
-        setPageData(pageData, "server", "smtphostname",
-                    smtp.hostname);
+        setPageData(pageData, "server", "smtphostname", smtp.hostname);
+        setPageData(pageData, "login", "smtpusername", smtp.username);
     }
 }
 
@@ -339,6 +341,8 @@ function PageDataToAccountData(pageData, accountData)
                 server.password = pageData.login.password.value;
             if (pageData.login.rememberPassword)
                 server.rememberPassword = pageData.login.rememberPassword.value;
+            if (pageData.login.smtpusername)
+                smtp.username = pageData.login.smtpusername.value;
         }
 
         dump("pageData.server = " + pageData.server + "\n");
@@ -732,7 +736,7 @@ function getPreConfigDataForAccount(account)
 
   try {
     var skipPanelsPrefStr = "mail.identity." + identity.key + ".wizardSkipPanels";
-    accountData.wizardSkipPanels = gPrefs.getBoolPref(skipPanelsPrefStr);
+    accountData.wizardSkipPanels = gPrefs.getCharPref(skipPanelsPrefStr);
 
     if (identity.smtpServerKey) {
       var smtpServer = smtpService.getServerByKey(identity.smtpServerKey);
@@ -884,7 +888,7 @@ function FixupAccountDataForIsp(accountData)
         accountData.smtpRequiresUsername) {
       // fix for bug #107953
       // if incoming hostname is same as smtp hostname
-      // use the server username (insetad of the email username)
+      // use the server username (instead of the email username)
       if (accountData.smtp.hostname == accountData.incomingServer.hostName)
         accountData.smtp.username = accountData.incomingServer.username;
       else

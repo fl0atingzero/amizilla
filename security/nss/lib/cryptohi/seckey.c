@@ -37,7 +37,6 @@
  */
 #include "cryptohi.h"
 #include "keyhi.h"
-#include "secrng.h"
 #include "secoid.h"
 #include "secitem.h"
 #include "secder.h"
@@ -431,7 +430,7 @@ done:
  *      formats.  The public key extraction code will deal with the different
  *      formats at the time of extraction.  */
 
-SECStatus
+static SECStatus
 seckey_UpdateCertPQGChain(CERTCertificate * subjectCert, int count)
 {
     SECStatus rv, rvCompare;
@@ -485,16 +484,16 @@ seckey_UpdateCertPQGChain(CERTCertificate * subjectCert, int count)
     /* check if the cert is self-signed */
     rvCompare = (SECStatus)SECITEM_CompareItem(&subjectCert->derSubject,
 				    &subjectCert->derIssuer);
-	if (rvCompare == SECEqual) {
-	  /* fail since cert is self-signed and has no pqg params. */
-            return SECFailure;     
-	}
+    if (rvCompare == SECEqual) {
+      /* fail since cert is self-signed and has no pqg params. */
+	return SECFailure;     
+    }
      
     /* get issuer cert */
     issuerCert = CERT_FindCertIssuer(subjectCert, PR_Now(), certUsageAnyCA);
-	if ( ! issuerCert ) {
-            return SECFailure;
-	}
+    if ( ! issuerCert ) {
+	return SECFailure;
+    }
 
     /* if parent is not DSA or fortezza, return failure since
        we don't allow this case. */
@@ -515,10 +514,12 @@ seckey_UpdateCertPQGChain(CERTCertificate * subjectCert, int count)
              (tag != SEC_OID_BOGUS_DSA_SIGNATURE_WITH_SHA1_DIGEST) &&
              (tag != SEC_OID_SDN702_DSA_SIGNATURE) &&
              (tag != SEC_OID_ANSIX962_EC_PUBLIC_KEY) ) {            
-            return SECFailure;
+            rv = SECFailure;
+            goto loser;
         }
     } else {
-        return SECFailure;  /* return failure if oid is NULL */  
+        rv = SECFailure;  /* return failure if oid is NULL */  
+        goto loser;
     }
 
 
@@ -527,7 +528,10 @@ seckey_UpdateCertPQGChain(CERTCertificate * subjectCert, int count)
      * pqg parameters with a recursive call to this same function. */
 
     rv = seckey_UpdateCertPQGChain(issuerCert, count);
-    if (rv != SECSuccess) return rv;
+    if (rv != SECSuccess) {
+        rv = SECFailure;
+        goto loser;
+    }
 
     /* ensure issuer has pqg parameters */
 
@@ -545,6 +549,10 @@ seckey_UpdateCertPQGChain(CERTCertificate * subjectCert, int count)
 	   		      &issuerSpki->algorithm.parameters);
     }
 
+loser:
+    if (issuerCert) {
+        CERT_DestroyCertificate(issuerCert);
+    }
     return rv;
 
 }
@@ -553,7 +561,11 @@ seckey_UpdateCertPQGChain(CERTCertificate * subjectCert, int count)
 SECStatus
 SECKEY_UpdateCertPQG(CERTCertificate * subjectCert)
 {
-    return(seckey_UpdateCertPQGChain(subjectCert,0));
+    if (!subjectCert) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+	return SECFailure;
+    }
+    return seckey_UpdateCertPQGChain(subjectCert,0);
 }
    
 
@@ -923,44 +935,6 @@ CERT_GetCertKeyType (CERTSubjectPublicKeyInfo *spki) {
     return keyType;
 }
 
-#ifdef NSS_ENABLE_ECC
-static int
-seckey_supportedECParams(SECItem *encodedParams)
-{
-    SECOidTag tag;
-    SECItem oid = { siBuffer, NULL, 0};
-
-    /* We do not currently support explicit DER encoding of curve
-     * parameters. Make sure the encoding takes the form of
-     * an object identifier (this is how named curves are encoded).
-     */
-    if (encodedParams->data[0] != SEC_ASN1_OBJECT_ID) return 0;
-
-    /* The encodedParams data contains 0x06 (SEC_ASN1_OBJECT_ID),
-     * followed by the length of the curve oid and the curve oid.
-     */
-    oid.len = encodedParams->data[1];
-    oid.data = encodedParams->data + 2;
-    tag = SECOID_FindOIDTag(&oid);
-
-    return (((tag >= SEC_OID_ANSIX962_EC_PRIME192V1) &&
-	     (tag <= SEC_OID_ANSIX962_EC_PRIME256V1)) ||
-	    ((tag >= SEC_OID_SECG_EC_SECP112R1) &&
-	     (tag <= SEC_OID_SECG_EC_SECP521R1)) ||
-	    ((tag >= SEC_OID_ANSIX962_EC_C2PNB163V1) &&
-	     (tag <= SEC_OID_ANSIX962_EC_C2TNB431R1)) ||
-	    ((tag >= SEC_OID_SECG_EC_SECT113R1) &&
-	     (tag <= SEC_OID_SECG_EC_SECT571R1)));
-}
-
-static int
-seckey_supportedECPointForm(SECItem *ecPoint)
-{
-    /* For now, we only support uncompressed points */
-    return (ecPoint->data[0] == EC_POINT_FORM_UNCOMPRESSED);
-}
-#endif /* NSS_ENABLE_ECC */
-
 static SECKEYPublicKey *
 seckey_ExtractPublicKey(CERTSubjectPublicKeyInfo *spki)
 {
@@ -1090,30 +1064,6 @@ seckey_ExtractPublicKey(CERTSubjectPublicKeyInfo *spki)
       case SEC_OID_ANSIX962_EC_PUBLIC_KEY:
 	pubk->keyType = ecKey;
 	pubk->u.ec.size = 0;
-#if 0
-	/* If we uncomment these checks, ssl3con.c produces an "SSL
-	 * was unable to extract the public key from the peer's
-	 * certificate" error upon encountering an EC certificate with
-	 * an unsupported curve or point form.  It isn't clear that we
-	 * should be triggering this error because the EC key was
-	 * *successfully extracted* even though we can't use
-	 * it. Commenting these checks delays detection of unsupported
-	 * curves to a later point in the handshake (e.g. when a
-	 * client attempts to generate a key pair before sending the
-	 * ClientKeyExchange message). 
-	 */
-	if (!seckey_supportedECParams(&spki->algorithm.parameters)) {
-	    PORT_SetError(SEC_ERROR_UNSUPPORTED_ELLIPTIC_CURVE);
-	    rv = SECFailure;
-	    break;
-	}
-
-	if (!seckey_supportedECPointForm(&newOs)) {
-	    PORT_SetError(SEC_ERROR_UNSUPPORTED_EC_POINT_FORM);
-	    rv = SECFailure;
-	    break;
-	}
-#endif
 
 	/* Since PKCS#11 directly takes the DER encoding of EC params
 	 * and public value, we don't need any decoding here.
@@ -1149,6 +1099,10 @@ CERT_ExtractPublicKey(CERTCertificate *cert)
 {
     SECStatus rv;
 
+    if (!cert) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+	return NULL;
+    }
     rv = SECKEY_UpdateCertPQG(cert);
     if (rv != SECSuccess) return NULL;
 
@@ -1167,9 +1121,8 @@ CERT_KMIDPublicKey(CERTCertificate *cert)
     return seckey_ExtractPublicKey(&cert->subjectPublicKeyInfo);
 }
 
-#ifdef NSS_ENABLE_ECC
-static int
-seckey_ECParams2KeySize(SECItem *encodedParams)
+int
+SECKEY_ECParamsToKeySize(const SECItem *encodedParams)
 {
     SECOidTag tag;
     SECItem oid = { siBuffer, NULL, 0};
@@ -1295,7 +1248,6 @@ seckey_ECParams2KeySize(SECItem *encodedParams)
 	    return 0;
     }
 }
-#endif /* NSS_ENABLE_ECC */
 
 /* returns key strength in bytes (not bits) */
 unsigned
@@ -1325,7 +1277,7 @@ SECKEY_PublicKeyStrength(SECKEYPublicKey *pubk)
 	/* Get the key size in bits and adjust */
 	if (pubk->u.ec.size == 0) {
 	    pubk->u.ec.size = 
-		seckey_ECParams2KeySize(&pubk->u.ec.DEREncodedParams);
+		SECKEY_ECParamsToKeySize(&pubk->u.ec.DEREncodedParams);
 	} 
 	return (pubk->u.ec.size + 7)/8;
 #endif /* NSS_ENABLE_ECC */
@@ -1349,7 +1301,7 @@ SECKEY_PublicKeyStrengthInBits(SECKEYPublicKey *pubk)
     case ecKey:
 	if (pubk->u.ec.size == 0) {
 	    pubk->u.ec.size = 
-		seckey_ECParams2KeySize(&pubk->u.ec.DEREncodedParams);
+		SECKEY_ECParamsToKeySize(&pubk->u.ec.DEREncodedParams);
 	} 
 	return pubk->u.ec.size;
 #endif /* NSS_ENABLE_ECC */
@@ -1675,6 +1627,33 @@ SECKEY_CreateSubjectPublicKeyInfo(SECKEYPublicKey *pubk)
 	    }
 	    SECITEM_FreeItem(&params, PR_FALSE);
 	    break;
+#ifdef NSS_ENABLE_ECC
+	  case ecKey:
+	    rv = SECITEM_CopyItem(arena, &params, 
+				  &pubk->u.ec.DEREncodedParams);
+	    if (rv != SECSuccess) break;
+
+	    rv = SECOID_SetAlgorithmID(arena, &spki->algorithm,
+				       SEC_OID_ANSIX962_EC_PUBLIC_KEY,
+				       &params);
+	    if (rv != SECSuccess) break;
+
+	    rv = SECITEM_CopyItem(arena, &spki->subjectPublicKey,
+				  &pubk->u.ec.publicValue);
+
+	    if (rv == SECSuccess) {
+	        /*
+		 * The stored value is supposed to be a BIT_STRING,
+		 * so convert the length.
+		 */
+	        spki->subjectPublicKey.len <<= 3;
+		/*
+		 * We got a good one; return it.
+		 */
+		return spki;
+	    }
+	    break;
+#endif /* NSS_ENABLE_ECC */
 	  case keaKey:
 	  case dhKey: /* later... */
 

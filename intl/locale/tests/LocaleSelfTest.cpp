@@ -37,7 +37,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
  
-#include <iostream.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include "nsISupports.h"
 #include "nsIComponentManager.h"
@@ -80,7 +80,6 @@
 // Collation
 //
 static NS_DEFINE_CID(kCollationFactoryCID, NS_COLLATIONFACTORY_CID);
-static NS_DEFINE_CID(kCollationCID, NS_COLLATION_CID);
 // Date and Time
 //
 static NS_DEFINE_CID(kDateTimeFormatCID, NS_DATETIMEFORMAT_CID);
@@ -116,22 +115,22 @@ static nsresult CreateCollationKey(nsICollation *t, nsCollationStrength strength
   // create a raw collation key
   res = t->GetSortKeyLen(strength, stringIn, keyLength);
   if(NS_FAILED(res)) {
-    cout << "\tFailed!! return value != NS_OK\n";
+    printf("\tFailed!! return value != NS_OK\n");
   }
   *aKey = (PRUint8 *) new PRUint8[*keyLength];
   if (NULL == *aKey) {
-    cout << "\tFailed!! memory allocation failed.\n";
+    printf("\tFailed!! memory allocation failed.\n");
   }
   res = t->CreateRawSortKey(strength, stringIn, *aKey, keyLength);
   if(NS_FAILED(res)) {
-    cout << "\tFailed!! return value != NS_OK\n";
+    printf("\tFailed!! return value != NS_OK\n");
   }
 
   // create a key in nsString
   nsString aKeyString;
   res = t->CreateSortKey(strength, stringIn, aKeyString);
   if(NS_FAILED(res)) {
-    cout << "\tFailed!! return value != NS_OK\n";
+    printf("\tFailed!! return value != NS_OK\n");
   }
 
   // compare the generated key
@@ -142,14 +141,14 @@ static nsresult CreateCollationKey(nsICollation *t, nsCollationStrength strength
   return res;
 }
 
-static void DebugDump(nsString& aString, ostream& aStream) {
+static void DebugDump(nsString& aString) {
 #ifdef WIN32
   char s[512];
   int len = WideCharToMultiByte(GetACP(), 0,
                                 (LPCWSTR ) aString.get(),  aString.Length(),
                                 s, 512, NULL,  NULL);
   s[len] = '\0';
-  aStream.flush();
+  fflush(stdout);
   printf("%s\n", s);
 #elif defined(XP_MAC) || defined(XP_MACOSX)
 	// Use TEC (Text Encoding Conversion Manager)
@@ -166,13 +165,13 @@ static void DebugDump(nsString& aString, ostream& aStream) {
   err = TECDisposeConverter(anEncodingConverter);
   
   oOutputStr[oOutputLen] = '\0';
-  aStream.flush();
+  fflush(NULL);
   printf("%s\n", oOutputStr);
 #else
   for (int i = 0; i < aString.Length(); i++) {
-    aStream << (char) aString[i];
+    putchar((char) aString[i]);
   }
-  aStream << "\n";
+  printf("\n");
 #endif
 }
 
@@ -185,18 +184,18 @@ static void TestCollation(nsILocale *locale)
    nsICollation *t = NULL;
    nsresult res;
 
-   cout << "==============================\n";
-   cout << "Start nsICollation Test \n";
-   cout << "==============================\n";
+   printf("==============================\n");
+   printf("Start nsICollation Test \n");
+   printf("==============================\n");
    
    res = nsComponentManager::CreateInstance(kCollationFactoryCID,
                                             NULL,
                                             NS_GET_IID(nsICollationFactory),
                                             (void**) &f);
            
-   cout << "Test 1 - CreateInstance():\n";
+   printf("Test 1 - CreateInstance():\n");
    if(NS_FAILED(res) || ( f == NULL ) ) {
-     cout << "\t1st CreateInstance failed\n";
+     printf("\t1st CreateInstance failed\n");
    } else {
      f->Release();
    }
@@ -206,13 +205,13 @@ static void TestCollation(nsILocale *locale)
                                             NS_GET_IID(nsICollationFactory),
                                             (void**) &f);
    if(NS_FAILED(res) || ( f == NULL ) ) {
-     cout << "\t2nd CreateInstance failed\n";
+     printf("\t2nd CreateInstance failed\n");
    }
 
    res = f->CreateCollation(locale, &t);
            
    if(NS_FAILED(res) || ( t == NULL ) ) {
-     cout << "\tCreateCollation failed\n";
+     printf("\tCreateCollation failed\n");
    } else {
      nsString string1("abcde");
      nsString string2("ABCDE");
@@ -223,93 +222,93 @@ static void TestCollation(nsILocale *locale)
      PRUint32 i;
      PRInt32 result;
 
-      cout << "String data used:\n";
-      cout << "string1: ";
-      DebugDump(string1, cout);
-      cout << "string2: ";
-      DebugDump(string2, cout);
-      cout << "string3: ";
-      DebugDump(string3, cout);
-      cout << "string4: ";
-      DebugDump(string4, cout);
+      printf("String data used:\n");
+      printf("string1: ");
+      DebugDump(string1);
+      printf("string2: ");
+      DebugDump(string2);
+      printf("string3: ");
+      DebugDump(string3);
+      printf("string4: ");
+      DebugDump(string4);
 
-      cout << "Test 2 - CompareString():\n";
+      printf("Test 2 - CompareString():\n");
       res = t->CompareString(kCollationCaseInSensitive, string1, string2, &result);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
-      cout << "case insensitive comparison (string1 vs string2): " << result << "\n";
+      printf("case insensitive comparison (string1 vs string2): %d\n", result);
 
       res = t->CompareString(kCollationCaseSensitive, string1, string2, &result);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
-      cout << "case sensitive comparison (string1 vs string2): " << result << "\n";
+      printf("case sensitive comparison (string1 vs string2): %d\n", result);
 
-      cout << "Test 3 - GetSortKeyLen():\n";
+      printf("Test 3 - GetSortKeyLen():\n");
       res = t->GetSortKeyLen(kCollationCaseSensitive, string2, &keyLength1);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
-      cout << "keyLength: " << keyLength1 << "\n";
+      printf("keyLength: %d\n", keyLength1);
 
-      cout << "Test 4 - CreateRawSortKey():\n";
+      printf("Test 4 - CreateRawSortKey():\n");
       aKey1 = (PRUint8 *) new PRUint8[keyLength1];
       if (NULL == aKey1) {
-        cout << "\tFailed!! memory allocation failed.\n";
+        printf("\tFailed!! memory allocation failed.\n");
       }
       res = t->CreateRawSortKey(kCollationCaseSensitive, string2, aKey1, &keyLength1);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
-      cout << "case sensitive key creation:\n";
-      cout << "keyLength: " << keyLength1 << "\n";
-      DebugDump(string2, cout);
+      printf("case sensitive key creation:\n");
+      printf("keyLength: %d\n", keyLength1);
+      DebugDump(string2);
 
-      cout.flush();
+      fflush(NULL);
       for (i = 0; i < keyLength1; i++) {
         printf("%.2x ", aKey1[i]);
-        //cout << "key[" << i << "]: " << aKey1[i] << " ";
+        //printf("key[" << i << "]: " << aKey1[i] << " ");
       }
-      cout << "\n";
+      printf("\n");
 
       res = CreateCollationKey(t, kCollationCaseInSensitive, string2, &aKey2, &keyLength2);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
-      cout << "case insensitive key creation:\n";
-      cout << "keyLength: " << keyLength2 << "\n";
-      DebugDump(string2, cout);
+      printf("case insensitive key creation:\n");
+      printf("keyLength: %d\n", keyLength2);
+      DebugDump(string2);
 
-      cout.flush();
+      fflush(NULL);
       for (i = 0; i < keyLength2; i++) {
        printf("%.2x ", aKey2[i]);
-       //cout << "key[" << i << "]: " << aKey2[i] << " ";
+       //printf("key[" << i << "]: " << aKey2[i] << " ");
       }
-      cout << "\n";
+      printf("\n");
 
-      cout << "Test 5 - CompareRawSortKey():\n";
+      printf("Test 5 - CompareRawSortKey():\n");
       res = CreateCollationKey(t, kCollationCaseSensitive, string1, &aKey3, &keyLength3);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
 
       res = t->CompareRawSortKey(aKey1, keyLength1, aKey3, keyLength3, &result);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
-      cout << "case sensitive comparison (string1 vs string2): " << result << "\n";
+      printf("case sensitive comparison (string1 vs string2): %d\n", result);
       res = t->CompareRawSortKey(aKey3, keyLength3, aKey1, keyLength1, &result);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
-      cout << "case sensitive comparison (string2 vs string1): " << result << "\n";
+      printf("case sensitive comparison (string2 vs string1): %d\n", result);
 
       res = t->CompareRawSortKey(aKey2, keyLength2, aKey3, keyLength3, &result);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
-      cout << "case insensitive comparison (string1 vs string2): " << result << "\n";
+      printf("case insensitive comparison (string1 vs string2): %d\n", result);
 
       if (NULL != aKey1)
         delete[] aKey1; 
@@ -320,26 +319,26 @@ static void TestCollation(nsILocale *locale)
 
       res = CreateCollationKey(t, kCollationCaseSensitive, string1, &aKey1, &keyLength1);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
       res = CreateCollationKey(t, kCollationCaseSensitive, string3, &aKey2, &keyLength2);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
       res = CreateCollationKey(t, kCollationCaseSensitive, string4, &aKey3, &keyLength3);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
       res = t->CompareRawSortKey(aKey1, keyLength1, aKey2, keyLength2, &result);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
-      cout << "case sensitive comparison (string1 vs string3): " << result << "\n";
+      printf("case sensitive comparison (string1 vs string3): %d\n", result);
       res = t->CompareRawSortKey(aKey1, keyLength1, aKey3, keyLength3, &result);
       if(NS_FAILED(res)) {
-        cout << "\tFailed!! return value != NS_OK\n";
+        printf("\tFailed!! return value != NS_OK\n");
       }
-      cout << "case sensitive comparison (string1 vs string4): " << result << "\n";
+      printf("case sensitive comparison (string1 vs string4): %d\n", result);
 
       if (NULL != aKey1)
         delete[] aKey1; 
@@ -352,9 +351,9 @@ static void TestCollation(nsILocale *locale)
 
      res = f->Release();
    }
-   cout << "==============================\n";
-   cout << "Finish nsICollation Test \n";
-   cout << "==============================\n";
+   printf("==============================\n");
+   printf("Finish nsICollation Test \n");
+   printf("==============================\n");
 
 }
 
@@ -369,9 +368,9 @@ static void TestSortPrint1(nsString *string_array, int len)
 {
   for (int i = 0; i < len; i++) {
     //string_array[i].DebugDump(cout);
-    DebugDump(string_array[i], cout);
+    DebugDump(string_array[i]);
   }
-  cout << "\n";
+  printf("\n");
 }
 
 static void TestSortPrintToFile(nsString *string_array, int len)
@@ -421,20 +420,20 @@ static void DebugPrintCompResult(const nsString& string1, const nsString& string
   printf(" %s\n", s);
 #else
     // Warning: casting to char*
-    cout << NS_LossyConvertUCS2toASCII(string1).get() << ' ';
+    printf(NS_LossyConvertUCS2toASCII(string1).get() << ' ');
 
     switch ((int)result) {
     case 0:
-      cout << "==";
+      printf("==");
       break;
     case 1:
-      cout << '>';
+      printf('>');
       break;
     case -1:
-      cout << '<';
+      printf('<');
       break;
     }
-    cout << ' ' << NS_LossyConvertUCS2toASCII(string2).get() << '\n';
+    printf(' ' << NS_LossyConvertUCS2toASCII(string2).get() << '\n');
 #endif
 }
 
@@ -502,7 +501,7 @@ static void TestSortPrint2(collation_rec *key_array, int len)
   PRUint32 aLength;
   PRUint8 *aKey;
 
-  cout.flush();
+  fflush(NULL);
   for (int i = 0; i < len; i++) {
     aLength = key_array[i].aLength;
     aKey = key_array[i].aKey;
@@ -545,13 +544,13 @@ static void SortTestFile(nsICollation* collationInst, FILE* fp)
 #endif
     i++;
   }  
-  cout << "print string before sort\n";
+  printf("print string before sort\n");
   TestSortPrint1(string_array, i);
 
   g_collationInst = collationInst;
   qsort( (void *)string_array, i, sizeof(nsString), compare1 );
 
-  cout << "print string after sort\n";
+  printf("print string after sort\n");
   (g_outfp == NULL) ? TestSortPrint1(string_array, i) : TestSortPrintToFile(string_array, i);
 }
 
@@ -574,21 +573,21 @@ static void TestSort(nsILocale *locale, nsCollationStrength collationStrength, F
   nsString string5("AAC");
   nsString string_array[5];
 
-  cout << "==============================\n";
-  cout << "Start sort Test \n";
-  cout << "==============================\n";
+  printf("==============================\n");
+  printf("Start sort Test \n");
+  printf("==============================\n");
 
   res = nsComponentManager::CreateInstance(kCollationFactoryCID,
                                            NULL,
                                            NS_GET_IID(nsICollationFactory),
                                            (void**) &factoryInst);
   if(NS_FAILED(res)) {
-    cout << "\tFailed!! return value != NS_OK\n";
+    printf("\tFailed!! return value != NS_OK\n");
   }
 
   res = factoryInst->CreateCollation(locale, &collationInst);
   if(NS_FAILED(res)) {
-    cout << "\tFailed!! return value != NS_OK\n";
+    printf("\tFailed!! return value != NS_OK\n");
   }
 
   // set collation strength
@@ -602,16 +601,16 @@ static void TestSort(nsILocale *locale, nsCollationStrength collationStrength, F
     return;
   }
 
-  cout << "==============================\n";
-  cout << "Sort Test by comparestring.\n";
-  cout << "==============================\n";
+  printf("==============================\n");
+  printf("Sort Test by comparestring.\n");
+  printf("==============================\n");
   string_array[0] = string1;
   string_array[1] = string2;
   string_array[2] = string3;
   string_array[3] = string4;
   string_array[4] = string5;
 
-  cout << "print string before sort\n";
+  printf("print string before sort\n");
   TestSortPrint1(string_array, 5);
 
   g_collationInst = collationInst;
@@ -619,50 +618,50 @@ static void TestSort(nsILocale *locale, nsCollationStrength collationStrength, F
   qsort( (void *)string_array, 5, sizeof(nsString), compare1 );
   res = collationInst->Release();
 
-  cout << "print string after sort\n";
+  printf("print string after sort\n");
   TestSortPrint1(string_array, 5);
 
-  cout << "==============================\n";
-  cout << "Sort Test by collation key.\n";
-  cout << "==============================\n";
+  printf("==============================\n");
+  printf("Sort Test by collation key.\n");
+  printf("==============================\n");
 
 
   res = CreateCollationKey(collationInst, strength, string1, &aKey, &aLength);
   if(NS_FAILED(res)) {
-    cout << "\tFailed!! return value != NS_OK\n";
+    printf("\tFailed!! return value != NS_OK\n");
   }
   key_array[0].aKey = aKey;
   key_array[0].aLength = aLength;
 
   res = CreateCollationKey(collationInst, strength, string2, &aKey, &aLength);
   if(NS_FAILED(res)) {
-    cout << "\tFailed!! return value != NS_OK\n";
+    printf("\tFailed!! return value != NS_OK\n");
   }
   key_array[1].aKey = aKey;
   key_array[1].aLength = aLength;
 
   res = CreateCollationKey(collationInst, strength, string3, &aKey, &aLength);
   if(NS_FAILED(res)) {
-    cout << "\tFailed!! return value != NS_OK\n";
+    printf("\tFailed!! return value != NS_OK\n");
   }
   key_array[2].aKey = aKey;
   key_array[2].aLength = aLength;
 
   res = CreateCollationKey(collationInst, strength, string4, &aKey, &aLength);
   if(NS_FAILED(res)) {
-    cout << "\tFailed!! return value != NS_OK\n";
+    printf("\tFailed!! return value != NS_OK\n");
   }
   key_array[3].aKey = aKey;
   key_array[3].aLength = aLength;
 
   res = CreateCollationKey(collationInst, strength, string5, &aKey, &aLength);
   if(NS_FAILED(res)) {
-    cout << "\tFailed!! return value != NS_OK\n";
+    printf("\tFailed!! return value != NS_OK\n");
   }
   key_array[4].aKey = aKey;
   key_array[4].aLength = aLength;
 
-  cout << "print key before sort\n";
+  printf("print key before sort\n");
   TestSortPrint2(key_array, 5);
 
   g_collationInst = collationInst;
@@ -670,7 +669,7 @@ static void TestSort(nsILocale *locale, nsCollationStrength collationStrength, F
   qsort( (void *)key_array, 5, sizeof(collation_rec), compare2 );
   res = collationInst->Release();
 
-  cout << "print key after sort\n";
+  printf("print key after sort\n");
   TestSortPrint2(key_array, 5);
 
 
@@ -682,9 +681,9 @@ static void TestSort(nsILocale *locale, nsCollationStrength collationStrength, F
     delete [] key_array[i].aKey;
   }
 
-  cout << "==============================\n";
-  cout << "Finish sort Test \n";
-  cout << "==============================\n";
+  printf("==============================\n");
+  printf("Finish sort Test \n");
+  printf("==============================\n");
 }
 
 // Test all functions in nsIDateTimeFormat.
@@ -693,9 +692,9 @@ static void TestDateTimeFormat(nsILocale *locale)
 {
   nsresult res;
 
-  cout << "==============================\n";
-  cout << "Start nsIScriptableDateFormat Test \n";
-  cout << "==============================\n";
+  printf("==============================\n");
+  printf("Start nsIScriptableDateFormat Test \n");
+  printf("==============================\n");
 
   nsIScriptableDateFormat *aScriptableDateFormat;
   res = nsComponentManager::CreateInstance(kDateTimeFormatCID,
@@ -703,7 +702,7 @@ static void TestDateTimeFormat(nsILocale *locale)
                                            NS_GET_IID(nsIScriptableDateFormat),
                                            (void**) &aScriptableDateFormat);
   if(NS_FAILED(res) || ( aScriptableDateFormat == NULL ) ) {
-    cout << "\tnsIScriptableDateFormat CreateInstance failed\n";
+    printf("\tnsIScriptableDateFormat CreateInstance failed\n");
   }
 
   PRUnichar *aUnichar;
@@ -719,7 +718,7 @@ static void TestDateTimeFormat(nsILocale *locale)
                         58,
                         &aUnichar);
   aString.SetString(aUnichar);
-  DebugDump(aString, cout);
+  DebugDump(aString);
 
   res = aScriptableDateFormat->FormatDate(aLocaleUnichar, kDateFormatLong,
                         1970, 
@@ -727,7 +726,7 @@ static void TestDateTimeFormat(nsILocale *locale)
                         20, 
                         &aUnichar);
   aString.SetString(aUnichar);
-  DebugDump(aString, cout);
+  DebugDump(aString);
 
   res = aScriptableDateFormat->FormatTime(aLocaleUnichar, kTimeFormatSecondsForce24Hour,
                         13, 
@@ -735,13 +734,13 @@ static void TestDateTimeFormat(nsILocale *locale)
                         31,
                         &aUnichar);
   aString.SetString(aUnichar);
-  DebugDump(aString, cout);
+  DebugDump(aString);
 
   aScriptableDateFormat->Release();
 
-  cout << "==============================\n";
-  cout << "Start nsIDateTimeFormat Test \n";
-  cout << "==============================\n";
+  printf("==============================\n");
+  printf("Start nsIDateTimeFormat Test \n");
+  printf("==============================\n");
 
   nsIDateTimeFormat *t = NULL;
   res = nsComponentManager::CreateInstance(kDateTimeFormatCID,
@@ -749,9 +748,9 @@ static void TestDateTimeFormat(nsILocale *locale)
                                            NS_GET_IID(nsIDateTimeFormat),
                                            (void**) &t);
        
-  cout << "Test 1 - CreateInstance():\n";
+  printf("Test 1 - CreateInstance():\n");
   if(NS_FAILED(res) || ( t == NULL ) ) {
-    cout << "\t1st CreateInstance failed\n";
+    printf("\t1st CreateInstance failed\n");
   } else {
     t->Release();
   }
@@ -762,7 +761,7 @@ static void TestDateTimeFormat(nsILocale *locale)
                                            (void**) &t);
        
   if(NS_FAILED(res) || ( t == NULL ) ) {
-    cout << "\t2nd CreateInstance failed\n";
+    printf("\t2nd CreateInstance failed\n");
   } else {
   }
 
@@ -772,87 +771,85 @@ static void TestDateTimeFormat(nsILocale *locale)
   time_t  timetTime;
 
 
-  cout << "Test 2 - FormatTime():\n";
+  printf("Test 2 - FormatTime():\n");
   time( &timetTime );
   res = t->FormatTime(locale, kDateFormatShort, kTimeFormatSeconds, timetTime, dateString);
-  DebugDump(dateString, cout);
+  DebugDump(dateString);
 
-  cout << "Test 3 - FormatTMTime():\n";
+  printf("Test 3 - FormatTMTime():\n");
   time_t ltime;
   time( &ltime );
 
   // try (almost) all format combination
   res = t->FormatTMTime(locale, kDateFormatNone, kTimeFormatNone, localtime( &ltime ), dateString);
-  cout << "kDateFormatNone, kTimeFormatNone:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatNone, kTimeFormatNone:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatNone, kTimeFormatSeconds, localtime( &ltime ), dateString);
-  cout << "kDateFormatNone, kTimeFormatSeconds:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatNone, kTimeFormatSeconds:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatNone, kTimeFormatNoSeconds, localtime( &ltime ), dateString);
-  cout << "kDateFormatNone, kTimeFormatNoSeconds:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatNone, kTimeFormatNoSeconds:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatLong, kTimeFormatNone, localtime( &ltime ), dateString);
-  cout << "kDateFormatLong, kTimeFormatNone:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatLong, kTimeFormatNone:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatLong, kTimeFormatSeconds, localtime( &ltime ), dateString);
-  cout << "kDateFormatLong, kTimeFormatSeconds:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatLong, kTimeFormatSeconds:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatLong, kTimeFormatNoSeconds, localtime( &ltime ), dateString);
-  cout << "kDateFormatLong, kTimeFormatNoSeconds:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatLong, kTimeFormatNoSeconds:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatShort, kTimeFormatNone, localtime( &ltime ), dateString);
-  cout << "kDateFormatShort, kTimeFormatNone:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatShort, kTimeFormatNone:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatShort, kTimeFormatSeconds, localtime( &ltime ), dateString);
-  cout << "kDateFormatShort, kTimeFormatSeconds:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatShort, kTimeFormatSeconds:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatShort, kTimeFormatNoSeconds, localtime( &ltime ), dateString);
-  cout << "kDateFormatShort, kTimeFormatNoSeconds:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatShort, kTimeFormatNoSeconds:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatYearMonth, kTimeFormatNone, localtime( &ltime ), dateString);
-  cout << "kDateFormatYearMonth, kTimeFormatNone:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatYearMonth, kTimeFormatNone:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatYearMonth, kTimeFormatSeconds, localtime( &ltime ), dateString);
-  cout << "kDateFormatYearMonth, kTimeFormatSeconds:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatYearMonth, kTimeFormatSeconds:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatYearMonth, kTimeFormatNoSeconds, localtime( &ltime ), dateString);
-  cout << "kDateFormatYearMonth, kTimeFormatNoSeconds:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatYearMonth, kTimeFormatNoSeconds:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatWeekday, kTimeFormatNone, localtime( &ltime ), dateString);
-  cout << "kDateFormatWeekday, kTimeFormatNone:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatWeekday, kTimeFormatNone:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatWeekday, kTimeFormatSeconds, localtime( &ltime ), dateString);
-  cout << "kDateFormatWeekday, kTimeFormatSeconds:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatWeekday, kTimeFormatSeconds:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatWeekday, kTimeFormatNoSeconds, localtime( &ltime ), dateString);
-  cout << "kDateFormatWeekday, kTimeFormatNoSeconds:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatWeekday, kTimeFormatNoSeconds:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatWeekday, kTimeFormatSecondsForce24Hour, localtime( &ltime ), dateString);
-  cout << "kDateFormatWeekday, kTimeFormatSecondsForce24Hour:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatWeekday, kTimeFormatSecondsForce24Hour:\n");
+  DebugDump(dateString);
   res = t->FormatTMTime(locale, kDateFormatWeekday, kTimeFormatNoSecondsForce24Hour, localtime( &ltime ), dateString);
-  cout << "kDateFormatWeekday, kTimeFormatNoSecondsForce24Hour:\n";
-  DebugDump(dateString, cout);
+  printf("kDateFormatWeekday, kTimeFormatNoSecondsForce24Hour:\n");
+  DebugDump(dateString);
 
   res = t->Release();
   
-  cout << "==============================\n";
-  cout << "Finish nsIDateTimeFormat Test \n";
-  cout << "==============================\n";
+  printf("==============================\n");
+  printf("Finish nsIDateTimeFormat Test \n");
+  printf("==============================\n");
 }
 
 static nsresult NewLocale(const nsString* localeName, nsILocale** locale)
 {
-	nsILocaleFactory*	localeFactory;
+  nsCOMPtr<nsILocaleFactory>	localeFactory;
   nsresult res;
 
-	res = nsComponentManager::FindFactory(kLocaleFactoryCID, (nsIFactory**)&localeFactory); 
-  if (NS_FAILED(res) || localeFactory == nsnull) cout << "FindFactory nsILocaleFactory failed\n";
+  res = nsComponentManager::FindFactory(kLocaleFactoryCID, getter_AddRefs(localeFactory)); 
+  if (NS_FAILED(res) || localeFactory == nsnull) printf("FindFactory nsILocaleFactory failed\n");
 
   res = localeFactory->NewLocale(localeName, locale);
-  if (NS_FAILED(res) || locale == nsnull) cout << "NewLocale failed\n";
-
-	localeFactory->Release();
+  if (NS_FAILED(res) || locale == nsnull) printf("NewLocale failed\n");
 
   return res;
 }
@@ -860,107 +857,99 @@ static nsresult NewLocale(const nsString* localeName, nsILocale** locale)
 static void Test_nsLocale()
 {
 #if defined(XP_MAC) || defined(XP_MACOSX)
-  nsString localeName;
-  nsIMacLocale* macLocale;
+  nsAutoString localeName;
+  nsCOMPtr<nsIMacLocale> macLocale;
   short script, lang;
   nsresult res;
 
-  if (NS_SUCCEEDED(res = nsComponentManager::CreateInstance(
-                         kMacLocaleFactoryCID, NULL, kIMacLocaleIID, (void**)&macLocale))) {
-    
-    localeName.SetString("en-US");
-    res = macLocale->GetPlatformLocale(&localeName, &script, &lang);
+  nsCOMPtr<nsIMacLocale> win32Locale = do_CreateInstance(kMacLocaleFactoryCID);
+  if (macLocale) {
+    localeName = NS_LITERAL_STRING("en-US");
+    res = macLocale->GetPlatformLocale(localeName, &script, &lang);
     printf("script for en-US is 0\n");
     printf("result: script = %d lang = %d\n", script, lang);
 
-    localeName.SetString("en-GB");
-    res = macLocale->GetPlatformLocale(&localeName, &script, &lang);
+    localeName = NS_LITERAL_STRING("en-GB");
+    res = macLocale->GetPlatformLocale(localeName, &script, &lang);
     printf("script for en-GB is 0\n");
     printf("result: script = %d lang = %d\n", script, lang);
 
-    localeName.SetString("fr-FR");
-    res = macLocale->GetPlatformLocale(&localeName, &script, &lang);
+    localeName = NS_LITERAL_STRING("fr-FR");
+    res = macLocale->GetPlatformLocale(localeName, &script, &lang);
     printf("script for fr-FR is 0\n");
     printf("result: script = %d lang = %d\n", script, lang);
 
-    localeName.SetString("de-DE");
-    res = macLocale->GetPlatformLocale(&localeName, &script, &lang);
+    localeName = NS_LITERAL_STRING("de-DE");
+    res = macLocale->GetPlatformLocale(localeName, &script, &lang);
     printf("script for de-DE is 0\n");
     printf("result: script = %d lang = %d\n", script, lang);
 
-    localeName.SetString("ja-JP");
-    res = macLocale->GetPlatformLocale(&localeName, &script, &lang);
+    localeName = NS_LITERAL_STRING("ja-JP");
+    res = macLocale->GetPlatformLocale(localeName, &script, &lang);
     printf("script for ja-JP is 1\n");
     printf("result: script = %d lang = %d\n", script, lang);
-
-    macLocale->Release();
   }
 #elif defined(XP_WIN) || defined(XP_OS2)
-  nsString localeName;
-  nsIWin32Locale* win32Locale;
+  nsAutoString localeName;
   LCID lcid;
   nsresult res;
 
-  if (NS_SUCCEEDED(res = nsComponentManager::CreateInstance(
-                         kWin32LocaleFactoryCID, NULL, kIWin32LocaleIID, (void**)&win32Locale))) {
-    
-    localeName.SetString("en-US");
-    res = win32Locale->GetPlatformLocale(&localeName, &lcid);
+  nsCOMPtr<nsIWin32Locale> win32Locale = do_CreateInstance(kWin32LocaleFactoryCID);
+  if (win32Locale) {
+    localeName = NS_LITERAL_STRING("en-US");
+    res = win32Locale->GetPlatformLocale(localeName, &lcid);
     printf("LCID for en-US is 1033\n");
     printf("result: locale = %s LCID = 0x%0.4x %d\n", NS_LossyConvertUCS2toASCII(localeName).get(), lcid, lcid);
 
-    localeName.SetString("en-GB");
-    res = win32Locale->GetPlatformLocale(&localeName, &lcid);
+    localeName = NS_LITERAL_STRING("en-GB");
+    res = win32Locale->GetPlatformLocale(localeName, &lcid);
     printf("LCID for en-GB is 2057\n");
     printf("result: locale = %s LCID = 0x%0.4x %d\n", NS_LossyConvertUCS2toASCII(localeName).get(), lcid, lcid);
 
-    localeName.SetString("fr-FR");
-    res = win32Locale->GetPlatformLocale(&localeName, &lcid);
+    localeName = NS_LITERAL_STRING("fr-FR");
+    res = win32Locale->GetPlatformLocale(localeName, &lcid);
     printf("LCID for fr-FR is 1036\n");
     printf("result: locale = %s LCID = 0x%0.4x %d\n", NS_LossyConvertUCS2toASCII(localeName).get(), lcid, lcid);
 
-    localeName.SetString("de-DE");
-    res = win32Locale->GetPlatformLocale(&localeName, &lcid);
+    localeName = NS_LITERAL_STRING("de-DE");
+    res = win32Locale->GetPlatformLocale(localeName, &lcid);
     printf("LCID for de-DE is 1031\n");
     printf("result: locale = %s LCID = 0x%0.4x %d\n", NS_LossyConvertUCS2toASCII(localeName).get(), lcid, lcid);
 
-    localeName.SetString("ja-JP");
-    res = win32Locale->GetPlatformLocale(&localeName, &lcid);
+    localeName = NS_LITERAL_STRING("ja-JP");
+    res = win32Locale->GetPlatformLocale(localeName, &lcid);
     printf("LCID for ja-JP is 1041\n");
     printf("result: locale = %s LCID = 0x%0.4x %d\n", NS_LossyConvertUCS2toASCII(localeName).get(), lcid, lcid);
 
-    win32Locale->Release();
   }
 #else
-  nsString localeName;
+  nsAutoString localeName;
   char locale[32];
   size_t length = 32;
-  nsIPosixLocale* posixLocale;
   nsresult res;
 
-  if (NS_SUCCEEDED(res = nsComponentManager::CreateInstance(
-                         kPosixLocaleFactoryCID, NULL, kIPosixLocaleIID, (void**)&posixLocale))) {
-    localeName.SetString("en-US");
-    res = posixLocale->GetPlatformLocale(&localeName, locale, length);
+  nsCOMPtr<nsIPosixLocale> posixLocale = do_CreateInstance(kPosixLocaleFactoryCID);
+  if (posixLocale) {
+    localeName = NS_LITERAL_STRING("en-US");
+    res = posixLocale->GetPlatformLocale(localeName, locale, length);
     printf("result: locale = %s POSIX = %s\n", NS_LossyConvertUCS2toASCII(localeName).get(), locale);
 
-    localeName.SetString("en-GB");
-    res = posixLocale->GetPlatformLocale(&localeName, locale, length);
+    localeName = NS_LITERAL_STRING("en-GB");
+    res = posixLocale->GetPlatformLocale(localeName, locale, length);
     printf("result: locale = %s POSIX = %s\n", NS_LossyConvertUCS2toASCII(localeName).get(), locale);
 
-    localeName.SetString("fr-FR");
-    res = posixLocale->GetPlatformLocale(&localeName, locale, length);
+    localeName = NS_LITERAL_STRING("fr-FR");
+    res = posixLocale->GetPlatformLocale(localeName, locale, length);
     printf("result: locale = %s POSIX = %s\n", NS_LossyConvertUCS2toASCII(localeName).get(), locale);
 
-    localeName.SetString("de-DE");
-    res = posixLocale->GetPlatformLocale(&localeName, locale, length);
+    localeName = NS_LITERAL_STRING("de-DE");
+    res = posixLocale->GetPlatformLocale(localeName, locale, length);
     printf("result: locale = %s POSIX = %s\n", NS_LossyConvertUCS2toASCII(localeName).get(), locale);
 
-    localeName.SetString("ja-JP");
-    res = posixLocale->GetPlatformLocale(&localeName, locale, length);
+    localeName = NS_LITERAL_STRING("ja-JP");
+    res = posixLocale->GetPlatformLocale(localeName, locale, length);
     printf("result: locale = %s POSIX = %s\n", NS_LossyConvertUCS2toASCII(localeName).get(), locale);
 
-    posixLocale->Release();
   }
   else {
     printf("Fail: CreateInstance PosixLocale\n");
@@ -1028,17 +1017,16 @@ int main(int argc, char** argv) {
   argc = make_args(mac_argv);
   argv = mac_argv;
 #endif//XP_MAC
-  nsILocale *locale = NULL;
+  nsCOMPtr<nsILocale> locale;
   nsresult res; 
 
-	nsILocaleFactory*	localeFactory = nsnull;
+	nsCOMPtr<nsILocaleFactory>	localeFactory;
 
-	res = nsComponentManager::FindFactory(kLocaleFactoryCID, (nsIFactory**)&localeFactory); 
-  if (NS_FAILED(res) || localeFactory == nsnull) cout << "FindFactory nsILocaleFactory failed\n";
+	res = nsComponentManager::FindFactory(kLocaleFactoryCID, getter_AddRefs(localeFactory)); 
+  if (NS_FAILED(res) || localeFactory == nsnull) printf("FindFactory nsILocaleFactory failed\n");
 
-  res = localeFactory->GetApplicationLocale(&locale);
-  if (NS_FAILED(res) || locale == nsnull) cout << "GetApplicationLocale failed\n";
-	localeFactory->Release();
+  res = localeFactory->GetApplicationLocale(getter_AddRefs(locale));
+  if (NS_FAILED(res) || locale == nsnull) printf("GetApplicationLocale failed\n");
   
   // --------------------------------------------
     nsCollationStrength strength = kCollationCaseInSensitive;
@@ -1053,7 +1041,7 @@ int main(int argc, char** argv) {
     char *s;
     s = find_option(argc, argv, "-h");
     if (s) {
-      cout << argv[0] << g_usage;
+      printf(argv[0] << g_usage);
       return 0;
     }
     s = find_option(argc, argv, "-v");
@@ -1077,22 +1065,17 @@ int main(int argc, char** argv) {
     s = get_option(argc, argv, "-locale");
     if (s) {
       nsString localeName(s);
-      NS_IF_RELEASE(locale);
-      res = NewLocale(&localeName, &locale);  // reset the locale
+      res = NewLocale(localeName, getter_AddRefs(locale));  // reset the locale
     }
 
     // print locale string
-    PRUnichar *localeUnichar;
-    nsString aLocaleString, aCategory("NSILOCALE_COLLATE");
-    locale->GetCategory(aCategory.get(), &localeUnichar);
-    aLocaleString.SetString(localeUnichar);
-    cout << "locale setting for collation is ";
-    DebugDump(aLocaleString, cout);
-    aCategory.SetString("NSILOCALE_TIME");
-    locale->GetCategory(aCategory.get(), &localeUnichar);
-    aLocaleString.SetString(localeUnichar);
-    cout << "locale setting for time is ";
-    DebugDump(aLocaleString, cout);
+    nsAutoString localeStr;
+    locale->GetCategory(NS_LITERAL_STRING("NSILOCALE_COLLATE"), localeStr);
+    printf("locale setting for collation is ");
+    DebugDump(localeStr);
+    locale->GetCategory(NS_LITERAL_STRING("NSILOCALE_TIME"), localeStr);
+    printf("locale setting for time is ");
+    DebugDump(localeStr);
 
     while (argc--) {
       if (!strcmp(argv[argc], "-col"))
@@ -1109,17 +1092,16 @@ int main(int argc, char** argv) {
       fclose(g_outfp);
     }
   }
-  NS_IF_RELEASE(locale);
 
   // --------------------------------------------
 
-  cout << "Finish All The Test Cases\n";
+  printf("Finish All The Test Cases\n");
 
   res = nsComponentManager::FreeLibraries();
   if(NS_FAILED(res))
-    cout << "nsComponentManager failed\n";
+    printf("nsComponentManager failed\n");
   else
-    cout << "nsComponentManager FreeLibraries Done\n";
+    printf("nsComponentManager FreeLibraries Done\n");
   
   return 0;
 }

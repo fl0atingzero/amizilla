@@ -162,15 +162,11 @@ getTextCB(AtkText *aText, gint aStartOffset, gint aEndOffset)
                             getter_AddRefs(accText));
     NS_ENSURE_TRUE(accText, nsnull);
 
-    // currently nsIAccessibleText does not know the meaning of -1
-    // after fixing that, remove this
-    if (aEndOffset < 0 )
-        aEndOffset = 1024;
     nsAutoString autoStr;
     nsresult rv = accText->GetText(aStartOffset, aEndOffset, autoStr);
     NS_ENSURE_SUCCESS(rv, nsnull);
 
-    nsCAutoString cautoStr = NS_ConvertUCS2toUTF8(autoStr);
+    NS_ConvertUTF16toUTF8 cautoStr(autoStr);
 
     //copy and return, libspi will free it.
     return (cautoStr.get()) ? g_strdup(cautoStr.get()) : nsnull;
@@ -199,7 +195,7 @@ getTextAfterOffsetCB(AtkText *aText, gint aOffset,
 
     NS_ENSURE_SUCCESS(rv, nsnull);
 
-    nsCAutoString cautoStr = NS_ConvertUCS2toUTF8(autoStr);
+    NS_ConvertUTF16toUTF8 cautoStr(autoStr);
     return (cautoStr.get()) ? g_strdup(cautoStr.get()) : nsnull;
 }
 
@@ -226,7 +222,7 @@ getTextAtOffsetCB(AtkText *aText, gint aOffset,
 
     NS_ENSURE_SUCCESS(rv, nsnull);
 
-    nsCAutoString cautoStr = NS_ConvertUCS2toUTF8(autoStr);
+    NS_ConvertUTF16toUTF8 cautoStr(autoStr);
     return (cautoStr.get()) ? g_strdup(cautoStr.get()) : nsnull;
 }
 
@@ -272,7 +268,7 @@ getTextBeforeOffsetCB(AtkText *aText, gint aOffset,
 
     NS_ENSURE_SUCCESS(rv, nsnull);
 
-    nsCAutoString cautoStr = NS_ConvertUCS2toUTF8(autoStr);
+    NS_ConvertUTF16toUTF8 cautoStr(autoStr);
     return (cautoStr.get()) ? g_strdup(cautoStr.get()) : nsnull;
 }
 

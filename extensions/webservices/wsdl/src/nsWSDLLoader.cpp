@@ -40,7 +40,7 @@
 // XPConnect includes
 #include "nsIXPConnect.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsICodebasePrincipal.h"
+#include "nsIPrincipal.h"
 
 // XPCOM includes
 #include "nsIServiceManager.h"
@@ -51,7 +51,6 @@
 
 // pref. includes
 #include "nsIPrefService.h"
-#include "nsIPrefBranchInternal.h"
 
 #define SCHEMA_2001_NAMESPACE "http://www.w3.org/2001/XMLSchema"
 #define SCHEMA_1999_NAMESPACE "http://www.w3.org/1999/XMLSchema"
@@ -218,10 +217,7 @@ nsWSDLLoader::GetResolvedURI(const nsAString& aWSDLURI, const char* aMethod,
     nsCOMPtr<nsIPrincipal> principal;
     rv = secMan->GetSubjectPrincipal(getter_AddRefs(principal));
     if (NS_SUCCEEDED(rv)) {
-      nsCOMPtr<nsICodebasePrincipal> codebase = do_QueryInterface(principal);
-      if (codebase) {
-        codebase->GetURI(getter_AddRefs(baseURI));
-      }
+      principal->GetURI(getter_AddRefs(baseURI));
     }
 
     rv = NS_NewURI(aURI, aWSDLURI, nsnull, baseURI);
@@ -346,14 +342,16 @@ nsWSDLLoadRequest::LoadDefinition(const nsAString& aURI)
     return rv;
   }
 
-  rv = mRequest->OpenRequest("GET", NS_ConvertUCS2toUTF8(aURI).get(), !mIsSync,
-                             nsnull, nsnull);
+  const nsAString& empty = EmptyString();
+  rv = mRequest->OpenRequest(NS_LITERAL_CSTRING("GET"),
+                             NS_ConvertUTF16toUTF8(aURI), !mIsSync, empty,
+                             empty);
   if (NS_FAILED(rv)) {
     return rv;
   }
 
   // Force the mimetype of the returned stream to be xml.
-  rv = mRequest->OverrideMimeType("text/xml");
+  rv = mRequest->OverrideMimeType(NS_LITERAL_CSTRING("text/xml"));
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -902,8 +900,6 @@ nsWSDLLoadRequest::ProcessTypesElement(nsIDOMElement* aElement)
 
       nsStringKey key(targetNamespace);
       mTypes.Put(&key, schema);
-
-      break;
     }
   }
 

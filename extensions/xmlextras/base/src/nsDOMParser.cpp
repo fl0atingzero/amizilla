@@ -302,6 +302,12 @@ nsDOMParser::Load(nsIDOMEvent* aEvent)
 }
 
 nsresult
+nsDOMParser::BeforeUnload(nsIDOMEvent* aEvent)
+{
+  return NS_OK;
+}
+
+nsresult
 nsDOMParser::Unload(nsIDOMEvent* aEvent)
 {
   return NS_OK;
@@ -469,23 +475,18 @@ nsDOMParser::ParseFromStream(nsIInputStream *stream,
     rv = cc->GetJSContext(&cx);
     if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
 
-    nsISupports *supports =
-      (::JS_GetOptions(cx) & JSOPTION_PRIVATE_IS_NSISUPPORTS)
-      ? NS_STATIC_CAST(nsISupports*, ::JS_GetContextPrivate(cx))
-      : nsnull;
-    nsCOMPtr<nsIScriptContext> scriptContext = do_QueryInterface(supports);
+    nsIScriptContext *scriptContext = GetScriptContextFromJSContext(cx);
     if (scriptContext) {
-      nsCOMPtr<nsIScriptGlobalObject> globalObject;
-      scriptContext->GetGlobalObject(getter_AddRefs(globalObject));
+      nsCOMPtr<nsIDOMWindow> window =
+        do_QueryInterface(scriptContext->GetGlobalObject());
 
-      nsCOMPtr<nsIDOMWindow> window = do_QueryInterface(globalObject);
       if (window) {
         nsCOMPtr<nsIDOMDocument> domdoc;
         window->GetDocument(getter_AddRefs(domdoc));
 
         nsCOMPtr<nsIDocument> doc = do_QueryInterface(domdoc);
         if (doc) {
-          doc->GetBaseURL(getter_AddRefs(baseURI));
+          baseURI = doc->GetBaseURI();
         }
       }
     }
@@ -527,7 +528,7 @@ nsDOMParser::ParseFromStream(nsIInputStream *stream,
   // Register as a load listener on the document
   nsCOMPtr<nsIDOMEventReceiver> target(do_QueryInterface(domDocument));
   if (target) {
-    nsWeakPtr requestWeak(getter_AddRefs(NS_GetWeakReference(NS_STATIC_CAST(nsIDOMParser*, this))));
+    nsWeakPtr requestWeak(do_GetWeakReference(NS_STATIC_CAST(nsIDOMParser*, this)));
     nsLoadListenerProxy* proxy = new nsLoadListenerProxy(requestWeak);
     if (!proxy) return NS_ERROR_OUT_OF_MEMORY;
 

@@ -16,7 +16,6 @@
   </popupset>
 
   <script type="application/x-javascript" src="chrome://global/content/nsUserSettings.js"/>
-  <script type="application/x-javascript" src="chrome://global/content/nsJSComponentManager.js"/>
   <script type="application/x-javascript" src="chrome://communicator/content/search/internetresults.js"/>
   <script type="application/x-javascript" src="chrome://communicator/content/search/shared.js"/>
 
@@ -49,8 +48,8 @@
   
   <tree id="resultsList" flex="1" class="plain"
            datasources="rdf:internetsearch" context="contextual"
-           onselect="listSelect(event);"
-           onclick="listClick(event);">
+           onselect="return listSelect(event);"
+           onclick ="return listClick (event);">
 
     <treecols onclick="doSort(event.target.id, 'http://home.netscape.com/NC-rdf#PageRank');">
       <treecol id="NameColumn" primary="true" label="&name.column.label;"

@@ -186,6 +186,39 @@ private:
 };
 
 /**
+ * hashkey wrapper using void* KeyType
+ *
+ * @see nsTHashtable::EntryType for specification
+ */
+class NS_COM nsVoidPtrHashKey : public PLDHashEntryHdr
+{
+public:
+  typedef const void* KeyType;
+  typedef const void* KeyTypePointer;
+
+  nsVoidPtrHashKey(const void* key) :
+    mKey(key) { }
+  nsVoidPtrHashKey(const nsVoidPtrHashKey& toCopy) :
+    mKey(toCopy.mKey) { }
+  ~nsVoidPtrHashKey() { }
+
+  KeyType GetKey() const { return mKey; }
+  KeyTypePointer GetKeyPointer() const { return mKey; }
+  
+  PRBool KeyEquals(KeyTypePointer aKey) const { return aKey == mKey; }
+
+  static KeyTypePointer KeyToPointer(KeyType aKey) { return aKey; }
+  static PLDHashNumber HashKey(KeyTypePointer aKey)
+  {
+    return NS_PTR_TO_INT32(aKey) >>2;
+  }
+  enum { ALLOW_MEMMOVE = PR_TRUE };
+
+private:
+  const void* mKey;
+};
+
+/**
  * hashkey wrapper using nsID KeyType
  *
  * @see nsTHashtable::EntryType for specification
@@ -211,7 +244,6 @@ public:
 private:
   const nsID mID;
 };
-
 
 /**
  * hashkey wrapper for "dependent" const char*; this class does not "own"
@@ -242,6 +274,37 @@ public:
 
   static const char* KeyToPointer(const char* aKey) { return aKey; }
   static PLDHashNumber HashKey(const char* aKey) { return nsCRT::HashCode(aKey); }
+  enum { ALLOW_MEMMOVE = PR_TRUE };
+
+private:
+  const char* mKey;
+};
+
+/**
+ * hashkey wrapper for const char*; at construction, this class duplicates
+ * a string pointed to by the pointer so that it doesn't matter whether or not
+ * the string lives longer than the hash table.
+ */
+class NS_COM nsCharPtrHashKey : public PLDHashEntryHdr
+{
+public:
+  typedef const char* KeyType;
+  typedef const char* KeyTypePointer;
+
+  nsCharPtrHashKey(const char* aKey) : mKey(strdup(aKey)) { }
+  nsCharPtrHashKey(const nsCharPtrHashKey& toCopy) : mKey(strdup(toCopy.mKey)) { }
+  ~nsCharPtrHashKey() { if (mKey) free(NS_CONST_CAST(char *, mKey)); }
+
+  const char* GetKey() const { return mKey; }
+  const char* GetKeyPointer() const { return mKey; }
+  PRBool KeyEquals(KeyTypePointer aKey) const
+  {
+    return !strcmp(mKey, aKey);
+  }
+
+  static KeyTypePointer KeyToPointer(KeyType aKey) { return aKey; }
+  static PLDHashNumber HashKey(KeyTypePointer aKey) { return nsCRT::HashCode(aKey); }
+
   enum { ALLOW_MEMMOVE = PR_TRUE };
 
 private:

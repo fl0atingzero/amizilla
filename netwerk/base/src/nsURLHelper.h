@@ -43,6 +43,24 @@
 class nsIFile;
 class nsIURLParser;
 
+enum netCoalesceFlags
+{
+  NET_COALESCE_NORMAL = 0,
+
+  /**
+   * retains /../ that reach above dir root (useful for FTP
+   * servers in which the root of the FTP URL is not necessarily
+   * the root of the FTP filesystem).
+   */
+  NET_COALESCE_ALLOW_RELATIVE_ROOT = 1<<0,
+
+  /**
+   * recognizes /%2F and // as markers for the root directory
+   * and handles them properly.
+   */
+  NET_COALESCE_DOUBLE_SLASH_IS_ROOT = 1<<1
+};
+
 //----------------------------------------------------------------------------
 // This module contains some private helper functions related to URL parsing.
 //----------------------------------------------------------------------------
@@ -65,11 +83,8 @@ nsresult net_ParseFileURL(const nsACString &inURL,
                           nsACString &outFileBaseName,
                           nsACString &outFileExtension);
 
-/* handle .. in dirs while resolving relative URLs */
-void net_CoalesceDirsRel(char* io_Path);
-
-/* handle .. in dirs while resolving absolute URLs */
-void net_CoalesceDirsAbs(char* io_Path);
+/* handle .. in dirs while resolving URLs */
+void net_CoalesceDirs(netCoalesceFlags flags, char* path);
 
 /**
  * Resolves a relative path string containing "." and ".."
@@ -108,6 +123,23 @@ inline PRBool net_IsValidScheme(const nsAFlatCString &scheme)
 {
     return net_IsValidScheme(scheme.get(), scheme.Length());
 }
+
+/**
+ * Filter out whitespace from a URI string.  The input is the |str|
+ * pointer. |result| is written to if and only if there is whitespace that has
+ * to be filtered out.  The return value is true if and only if |result| is
+ * written to.
+ *
+ * This function strips out all whitespace at the beginning and end of the URL
+ * and strips out \r, \n, \t from the middle of the URL.  This makes it safe to
+ * call on things like javascript: urls or data: urls, where we may in fact run
+ * into whitespace that is not properly encoded.
+ *
+ * @param str the pointer to the string to filter.  Must be non-null.
+ * @param result the out param to write to if filtering happens
+ * @return whether result was written to
+ */
+PRBool net_FilterURIString(const char *str, nsACString& result);
 
 /*****************************************************************************
  * generic string routines follow (XXX move to someplace more generic).

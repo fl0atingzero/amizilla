@@ -20,8 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Adam Lock <adamlock@netscape.com>
  *
+ *   Adam Lock <adamlock@eircom.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -101,7 +101,7 @@ HRESULT CIEHtmlNode::SetDOMNode(nsIDOMNode *pIDOMNode)
     {
         if (g_NodeLookupTable == NULL)
         {
-            g_NodeLookupTable = PL_NewHashTable(123, HashFunction, HashComparator, NULL, NULL, NULL);
+            g_NodeLookupTable = PL_NewHashTable(123, HashFunction, HashComparator, HashComparator, NULL, NULL);
         }
 
         mDOMNode = pIDOMNode;

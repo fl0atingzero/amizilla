@@ -144,9 +144,7 @@ nsBoxObject::SetDocument(nsIDocument* aDocument)
 {
   mPresState = nsnull;
   if (aDocument) {
-    nsCOMPtr<nsIPresShell> shell;
-    aDocument->GetShellAt(0, getter_AddRefs(shell));
-    mPresShell = shell;
+    mPresShell = aDocument->GetShellAt(0);
   }
   else {
     mPresShell = nsnull;
@@ -174,18 +172,18 @@ nsBoxObject::GetFrame()
 nsresult 
 nsBoxObject::GetOffsetRect(nsRect& aRect)
 {
-  nsresult res = NS_OK;
-
   aRect.x = aRect.y = 0;
   aRect.Empty();
  
-  nsCOMPtr<nsIDocument> doc;
-  mContent->GetDocument(getter_AddRefs(doc));
+  if (!mContent)
+    return NS_ERROR_NOT_INITIALIZED;
+
+  nsresult res = NS_OK;
+  nsCOMPtr<nsIDocument> doc = mContent->GetDocument();
 
   if (doc) {
     // Get Presentation shell 0
-    nsCOMPtr<nsIPresShell> presShell;
-    doc->GetShellAt(0, getter_AddRefs(presShell));
+    nsIPresShell *presShell = doc->GetShellAt(0);
 
     if(presShell) {
       // Flush all pending notifications so that our frames are uptodate
@@ -196,43 +194,32 @@ nsBoxObject::GetOffsetRect(nsRect& aRect)
       presShell->GetPrimaryFrameFor(mContent, &frame);
       if(frame != nsnull) {
         // Get its origin
-        nsPoint origin;
-        frame->GetOrigin(origin);
+        nsPoint origin = frame->GetPosition();
 
         // Get the union of all rectangles in this and continuation frames
         nsRect rcFrame;
         nsIFrame* next = frame;
         do {
-          nsRect rect;
-          next->GetRect(rect);
-          rcFrame.UnionRect(rcFrame, rect);
+          rcFrame.UnionRect(rcFrame, next->GetRect());
           next->GetNextInFlow(&next);
         } while (nsnull != next);
         
 
         // Find the frame parent whose content's tagName either matches 
         // the tagName passed in or is the document element.
-        nsCOMPtr<nsIContent> docElement;
-        doc->GetRootContent(getter_AddRefs(docElement));
-        nsIFrame* parent = frame;
-        nsCOMPtr<nsIContent> parentContent;
-        frame->GetParent(&parent);
+        nsIContent *docElement = doc->GetRootContent();
+        nsIFrame* parent = frame->GetParent();
         while (parent) {
-          parent->GetContent(getter_AddRefs(parentContent));
-          if (parentContent) {
-            // If we've hit the document element, break here
-            if (parentContent.get() == docElement.get()) {
-              break;
-            }
+          // If we've hit the document element, break here
+          if (parent->GetContent() == docElement) {
+            break;
           }
 
           // Add the parent's origin to our own to get to the
           // right coordinate system
-          nsPoint parentOrigin;
-          parent->GetOrigin(parentOrigin);
-          origin += parentOrigin;
+          origin += parent->GetPosition();
 
-          parent->GetParent(&parent);
+          parent = parent->GetParent();
         }
   
         // For the origin, add in the border for the frame
@@ -263,7 +250,7 @@ nsBoxObject::GetOffsetRect(nsRect& aRect)
         if(context) {
           // Get the scale from that Presentation Context
           float scale;
-          context->GetTwipsToPixels(&scale);
+          scale = context->TwipsToPixels();
               
           // Convert to pixels using that scale
           aRect.x = NSTwipsToIntPixels(origin.x, scale);
@@ -284,14 +271,15 @@ nsBoxObject::GetScreenRect(nsRect& aRect)
   aRect.x = aRect.y = 0;
   aRect.Empty();
  
-  nsCOMPtr<nsIDocument> doc;
-  mContent->GetDocument(getter_AddRefs(doc));
+  if (!mContent)
+    return NS_ERROR_NOT_INITIALIZED;
+
+  nsCOMPtr<nsIDocument> doc = mContent->GetDocument();
 
   if (doc) {
     // Get Presentation shell 0
-    nsCOMPtr<nsIPresShell> presShell;
-    doc->GetShellAt(0, getter_AddRefs(presShell));
-    
+    nsIPresShell *presShell = doc->GetShellAt(0);
+
     if (presShell) {
       // Flush all pending notifications so that our frames are uptodate
       presShell->FlushPendingNotifications(PR_FALSE);
@@ -301,33 +289,32 @@ nsBoxObject::GetScreenRect(nsRect& aRect)
       
       if (presContext) {
         nsIFrame* frame;
-        nsresult rv = presShell->GetPrimaryFrameFor(mContent, &frame);
+        presShell->GetPrimaryFrameFor(mContent, &frame);
         
         PRInt32 offsetX = 0;
         PRInt32 offsetY = 0;
-        nsCOMPtr<nsIWidget> widget;
+        nsIWidget* widget = nsnull;
         
         while (frame) {
           // Look for a widget so we can get screen coordinates
           if (frame->HasView()) {
-            frame->GetView(presContext)->GetWidget(*getter_AddRefs(widget));
+            widget = frame->GetView()->GetWidget();
             if (widget)
               break;
           }
           
           // No widget yet, so count up the coordinates of the frame 
-          nsPoint origin;
-          frame->GetOrigin(origin);
+          nsPoint origin = frame->GetPosition();
           offsetX += origin.x;
           offsetY += origin.y;
       
-          frame->GetParent(&frame);
+          frame = frame->GetParent();
         }
         
         if (widget) {
           // Get the scale from that Presentation Context
           float scale;
-          presContext->GetTwipsToPixels(&scale);
+          scale = presContext->TwipsToPixels();
           
           // Convert to pixels using that scale
           offsetX = NSTwipsToIntPixels(offsetX, scale);
@@ -509,13 +496,10 @@ nsBoxObject::GetParentBox(nsIDOMElement * *aParentBox)
 {
   nsIFrame* frame = GetFrame();
   if (!frame) return NS_OK;
-  nsIFrame* parent;
-  frame->GetParent(&parent);
+  nsIFrame* parent = frame->GetParent();
   if (!parent) return NS_OK;
 
-  nsCOMPtr<nsIContent> content;
-  parent->GetContent(getter_AddRefs(content));
-  nsCOMPtr<nsIDOMElement> el = do_QueryInterface(content);
+  nsCOMPtr<nsIDOMElement> el = do_QueryInterface(parent->GetContent());
   *aParentBox = el;
   NS_IF_ADDREF(*aParentBox);
   return NS_OK;
@@ -524,6 +508,10 @@ nsBoxObject::GetParentBox(nsIDOMElement * *aParentBox)
 NS_IMETHODIMP 
 nsBoxObject::GetFirstChild(nsIDOMElement * *aFirstVisibleChild)
 {
+  if (!mContent) {
+    *aFirstVisibleChild = nsnull;
+    return NS_ERROR_NOT_INITIALIZED;
+  }
   *aFirstVisibleChild = GetChildByOrdinalAt(0);
   NS_IF_ADDREF(*aFirstVisibleChild);
   return NS_OK;
@@ -532,10 +520,19 @@ nsBoxObject::GetFirstChild(nsIDOMElement * *aFirstVisibleChild)
 NS_IMETHODIMP
 nsBoxObject::GetLastChild(nsIDOMElement * *aLastVisibleChild)
 {
-  PRInt32 count;
-  mContent->ChildCount(count);
-  *aLastVisibleChild = GetChildByOrdinalAt(count-1);
-  NS_IF_ADDREF(*aLastVisibleChild);
+  if (!mContent) {
+    *aLastVisibleChild = nsnull;
+    return NS_ERROR_NOT_INITIALIZED;
+  }
+
+  PRUint32 count = mContent->GetChildCount();
+
+  if (count > 0) {
+    NS_IF_ADDREF(*aLastVisibleChild = GetChildByOrdinalAt(count-1));
+  } else {
+    *aLastVisibleChild = nsnull;
+  }
+
   return NS_OK;
 }
 
@@ -544,13 +541,10 @@ nsBoxObject::GetNextSibling(nsIDOMElement **aNextOrdinalSibling)
 {
   nsIFrame* frame = GetFrame();
   if (!frame) return NS_OK;
-  nsIFrame* nextFrame;
-  frame->GetNextSibling(&nextFrame);
+  nsIFrame* nextFrame = frame->GetNextSibling();
   if (!nextFrame) return NS_OK;
   // get the content for the box and query to a dom element
-  nsCOMPtr<nsIContent> nextContent;
-  nextFrame->GetContent(getter_AddRefs(nextContent));
-  nsCOMPtr<nsIDOMElement> el = do_QueryInterface(nextContent);
+  nsCOMPtr<nsIDOMElement> el = do_QueryInterface(nextFrame->GetContent());
   *aNextOrdinalSibling = el;
   NS_IF_ADDREF(*aNextOrdinalSibling);
 
@@ -562,28 +556,21 @@ nsBoxObject::GetPreviousSibling(nsIDOMElement **aPreviousOrdinalSibling)
 {
   nsIFrame* frame = GetFrame();
   if (!frame) return NS_OK;
-  nsIFrame* parentFrame;
-  frame->GetParent(&parentFrame);
+  nsIFrame* parentFrame = frame->GetParent();
   if (!parentFrame) return NS_OK;
   
-  nsCOMPtr<nsIPresContext> presContext;
-  mPresShell->GetPresContext(getter_AddRefs(presContext));
-
-  nsIFrame* nextFrame;
-  parentFrame->FirstChild(presContext, nsnull, &nextFrame);
+  nsIFrame* nextFrame = parentFrame->GetFirstChild(nsnull);
   nsIFrame* prevFrame = nsnull;
   while (nextFrame) {
     if (nextFrame == frame)
       break;
     prevFrame = nextFrame;
-    nextFrame->GetNextSibling(&nextFrame);
+    nextFrame = nextFrame->GetNextSibling();
   }
    
   if (!prevFrame) return NS_OK;
   // get the content for the box and query to a dom element
-  nsCOMPtr<nsIContent> nextContent;
-  prevFrame->GetContent(getter_AddRefs(nextContent));
-  nsCOMPtr<nsIDOMElement> el = do_QueryInterface(nextContent);
+  nsCOMPtr<nsIDOMElement> el = do_QueryInterface(prevFrame->GetContent());
   *aPreviousOrdinalSibling = el;
   NS_IF_ADDREF(*aPreviousOrdinalSibling);
 
@@ -597,25 +584,19 @@ nsBoxObject::GetChildByOrdinalAt(PRUint32 aIndex)
   nsIFrame* frame = GetFrame();
   if (!frame) return nsnull;
   
-  nsCOMPtr<nsIPresContext> presContext;
-  mPresShell->GetPresContext(getter_AddRefs(presContext));
-
   // get the first child box
-  nsIFrame* childFrame;
-  frame->FirstChild(presContext, nsnull, &childFrame);
+  nsIFrame* childFrame = frame->GetFirstChild(nsnull);
   
   PRUint32 i = 0;
   while (childFrame && i < aIndex) {
-    childFrame->GetNextSibling(&childFrame);
+    childFrame = childFrame->GetNextSibling();
     ++i;
   }
 
   if (!childFrame) return nsnull;
 
   // get the content for the box and query to a dom element
-  nsCOMPtr<nsIContent> content;
-  childFrame->GetContent(getter_AddRefs(content));
-  nsCOMPtr<nsIDOMElement> el = do_QueryInterface(content);
+  nsCOMPtr<nsIDOMElement> el = do_QueryInterface(childFrame->GetContent());
   
   return el;
 }
@@ -646,17 +627,16 @@ nsBoxObject::GetDocShell(nsIDocShell** aResult)
   // No nsIFrameFrame available for mContent, try if there's a mapping
   // between mContent's document to mContent's subdocument.
 
-  nsCOMPtr<nsIDocument> doc, sub_doc;
+  nsCOMPtr<nsIDocument> doc;
   mPresShell->GetDocument(getter_AddRefs(doc));
 
-  doc->GetSubDocumentFor(mContent, getter_AddRefs(sub_doc));
+  nsIDocument *sub_doc = doc->GetSubDocumentFor(mContent);
 
   if (!sub_doc) {
     return NS_OK;
   }
 
-  nsCOMPtr<nsISupports> container;
-  sub_doc->GetContainer(getter_AddRefs(container));
+  nsCOMPtr<nsISupports> container = sub_doc->GetContainer();
 
   if (!container) {
     return NS_OK;

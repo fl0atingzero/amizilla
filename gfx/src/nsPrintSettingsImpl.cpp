@@ -129,7 +129,7 @@ NS_IMETHODIMP nsPrintSettings::SetPrintSession(nsIPrintSession *aPrintSession)
   // use a weak ref so that it doesn't have to be cleared.
   NS_ENSURE_ARG(aPrintSession);
   
-  mSession = getter_AddRefs(NS_GetWeakReference(aPrintSession));
+  mSession = do_GetWeakReference(aPrintSession);
   if (!mSession) {
     // This may happen if the implementation of this object does
     // not support weak references - programmer error.
@@ -711,6 +711,27 @@ NS_IMETHODIMP nsPrintSettings::SetPaperName(const PRUnichar * aPaperName)
   return NS_OK;
 }
 
+/* attribute wstring plexName; */
+NS_IMETHODIMP nsPrintSettings::GetPlexName(PRUnichar * *aPlexName)
+{
+  NS_ENSURE_ARG_POINTER(aPlexName);
+  if (!mPlexName.IsEmpty()) {
+    *aPlexName = ToNewUnicode(mPlexName);
+  } else {
+    *aPlexName = nsnull;
+  }
+  return NS_OK;
+}
+NS_IMETHODIMP nsPrintSettings::SetPlexName(const PRUnichar * aPlexName)
+{
+  if (aPlexName) {
+    mPlexName = aPlexName;
+  } else {
+    mPlexName.SetLength(0);
+  }
+  return NS_OK;
+}
+
 /* attribute boolean howToEnableFrameUI; */
 NS_IMETHODIMP nsPrintSettings::GetHowToEnableFrameUI(PRInt16 *aHowToEnableFrameUI)
 {
@@ -898,6 +919,7 @@ nsPrintSettings& nsPrintSettings::operator=(const nsPrintSettings& rhs)
   mShrinkToFit         = rhs.mShrinkToFit;
   mShowPrintProgress   = rhs.mShowPrintProgress;
   mPaperName           = rhs.mPaperName;
+  mPlexName            = rhs.mPlexName;
   mPaperSizeType       = rhs.mPaperSizeType;
   mPaperData           = rhs.mPaperData;
   mPaperWidth          = rhs.mPaperWidth;

@@ -43,6 +43,8 @@
 #include "nsIDOMDocument.h"
 #include "nsIDOMNodeFilter.h"
 #include "nsIDOMNodeList.h"
+#include "nsIServiceManagerUtils.h"
+#include "inIDOMUtils.h"
 
 /*****************************************************************************
  * This implementation does not currently operaate according to the W3C spec.
@@ -52,25 +54,35 @@
 
 ////////////////////////////////////////////////////
 
-inDeepTreeWalker::inDeepTreeWalker() 
+MOZ_DECL_CTOR_COUNTER(DeepTreeStackItem)
+
+struct DeepTreeStackItem 
 {
-  mShowAnonymousContent = PR_FALSE;
-  mShowSubDocuments = PR_FALSE;
-  mWhatToShow = nsIDOMNodeFilter::SHOW_ALL;
+  DeepTreeStackItem()  { MOZ_COUNT_CTOR(DeepTreeStackItem); }
+  ~DeepTreeStackItem() { MOZ_COUNT_DTOR(DeepTreeStackItem); }
+
+  nsCOMPtr<nsIDOMNode> node;
+  nsCOMPtr<nsIDOMNodeList> kids;
+  PRUint32 lastIndex;
+};
+
+////////////////////////////////////////////////////
+
+inDeepTreeWalker::inDeepTreeWalker() 
+  : mShowAnonymousContent(PR_FALSE),
+    mShowSubDocuments(PR_FALSE),
+    mWhatToShow(nsIDOMNodeFilter::SHOW_ALL)
+{
 }
 
 inDeepTreeWalker::~inDeepTreeWalker() 
 { 
+  for (PRInt32 i = mStack.Count() - 1; i >= 0; --i) {
+    delete NS_STATIC_CAST(DeepTreeStackItem*, mStack[i]);
+  }
 }
 
-NS_IMPL_ISUPPORTS1(inDeepTreeWalker, inIDeepTreeWalker);
-
-typedef struct _DeepTreeStackItem 
-{
-  nsCOMPtr<nsIDOMNode> node;
-  nsCOMPtr<nsIDOMNodeList> kids;
-  PRUint32 lastIndex;
-} DeepTreeStackItem;
+NS_IMPL_ISUPPORTS1(inDeepTreeWalker, inIDeepTreeWalker)
 
 ////////////////////////////////////////////////////
 // inIDeepTreeWalker
@@ -163,39 +175,20 @@ inDeepTreeWalker::SetCurrentNode(nsIDOMNode* aCurrentNode)
 NS_IMETHODIMP
 inDeepTreeWalker::ParentNode(nsIDOMNode** _retval)
 {
+  *_retval = nsnull;
   if (!mCurrentNode) return NS_OK;
 
-  if (mShowSubDocuments && inLayoutUtils::IsDocumentElement(mCurrentNode)) {
-    nsCOMPtr<nsIDOMDocument> doc;
-    mCurrentNode->GetOwnerDocument(getter_AddRefs(doc));
-    nsCOMPtr<nsIDOMNode> node = inLayoutUtils::GetContainerFor(doc);
-    if (node)
-      *_retval = node;
-  }
-
-  if (mShowAnonymousContent && !*_retval) {
-    nsCOMPtr<nsIContent> content = do_QueryInterface(mCurrentNode);
-    nsCOMPtr<nsIContent> bparent;
-    nsCOMPtr<nsIBindingManager> bindingManager = inLayoutUtils::GetBindingManagerFor(mCurrentNode);
-    if (bindingManager)
-      bindingManager->GetInsertionParent(content, getter_AddRefs(bparent));
-      
-    if (bparent) {
-      nsCOMPtr<nsIDOMNode> parent = do_QueryInterface(bparent);
-      *_retval = parent;
+  if (!mDOMUtils) {
+    mDOMUtils = do_GetService("@mozilla.org/inspector/dom-utils;1");
+    if (!mDOMUtils) {
+      return NS_ERROR_OUT_OF_MEMORY;
     }
   }
-  
-  if (!*_retval) {
-    nsCOMPtr<nsIDOMNode> node;
-    mCurrentNode->GetParentNode(getter_AddRefs(node));
-    *_retval = node;
-  }
 
+  nsresult rv = mDOMUtils->GetParentForNode(mCurrentNode, mShowAnonymousContent,
+					    _retval);
   mCurrentNode = *_retval;
-  NS_IF_ADDREF(*_retval);
-
-  return NS_OK;
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -343,8 +336,7 @@ inDeepTreeWalker::NextNode(nsIDOMNode **_retval)
 char* getURL(nsIDOMDocument* aDoc)
 {
   nsCOMPtr<nsIDocument> doc = do_QueryInterface(aDoc);
-  nsCOMPtr<nsIURI> uri;
-  doc->GetDocumentURL(getter_AddRefs(uri));
+  nsIURI *uri = doc->GetDocumentURI();
   char* s;
   uri->GetSpec(&s);
   return s;

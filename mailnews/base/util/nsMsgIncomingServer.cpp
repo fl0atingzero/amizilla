@@ -38,7 +38,6 @@
 
 #include "nsMsgIncomingServer.h"
 #include "nscore.h"
-#include "nsCom.h"
 #include "plstr.h"
 #include "prmem.h"
 #include "prprf.h"
@@ -83,6 +82,8 @@
 
 #define PORT_NOT_SET -1
 
+#define REL_FILE_PREF_SUFFIX NS_LITERAL_CSTRING("-rel")
+
 MOZ_DECL_CTOR_COUNTER(nsMsgIncomingServer)
 
 nsMsgIncomingServer::nsMsgIncomingServer():
@@ -102,8 +103,8 @@ nsMsgIncomingServer::~nsMsgIncomingServer()
 }
 
 
-NS_IMPL_THREADSAFE_ADDREF(nsMsgIncomingServer);
-NS_IMPL_THREADSAFE_RELEASE(nsMsgIncomingServer);
+NS_IMPL_THREADSAFE_ADDREF(nsMsgIncomingServer)
+NS_IMPL_THREADSAFE_RELEASE(nsMsgIncomingServer)
 NS_INTERFACE_MAP_BEGIN(nsMsgIncomingServer)
     NS_INTERFACE_MAP_ENTRY(nsIMsgIncomingServer)
     NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
@@ -126,26 +127,26 @@ nsMsgIncomingServer::SetKey(const char * serverKey)
 }
     
 NS_IMETHODIMP
-nsMsgIncomingServer::SetRootFolder(nsIFolder * aRootFolder)
+nsMsgIncomingServer::SetRootFolder(nsIMsgFolder * aRootFolder)
 {
 	m_rootFolder = aRootFolder;
 	return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMsgIncomingServer::GetRootFolder(nsIFolder * *aRootFolder)
+nsMsgIncomingServer::GetRootFolder(nsIMsgFolder * *aRootFolder)
 {
-  if (!aRootFolder)
-    return NS_ERROR_NULL_POINTER;
-  if (m_rootFolder) {
+  NS_ENSURE_ARG_POINTER(aRootFolder);
+  if (m_rootFolder)
+  {
     *aRootFolder = m_rootFolder;
     NS_ADDREF(*aRootFolder);
-  } else {
+  } 
+  else 
+  {
     nsresult rv = CreateRootFolder();
-    if (NS_FAILED(rv)) return rv;
-    
-    *aRootFolder = m_rootFolder;
-    NS_IF_ADDREF(*aRootFolder);
+    NS_ENSURE_SUCCESS(rv, rv);
+    NS_IF_ADDREF(*aRootFolder = m_rootFolder);
   }
   return NS_OK;
 }
@@ -154,12 +155,16 @@ NS_IMETHODIMP
 nsMsgIncomingServer::GetRootMsgFolder(nsIMsgFolder **aRootMsgFolder)
 {
   NS_ENSURE_ARG_POINTER(aRootMsgFolder);
-  nsCOMPtr <nsIFolder> rootFolder;
-  nsresult rv = GetRootFolder(getter_AddRefs(rootFolder));
-  if (NS_SUCCEEDED(rv) && rootFolder)
-    rv = rootFolder->QueryInterface(NS_GET_IID(nsIMsgFolder), (void **) aRootMsgFolder);
 
-  return rv;
+  if (!m_rootFolder)
+  {
+    nsresult rv = CreateRootFolder();
+    if (NS_FAILED(rv))
+      return rv;
+  }
+
+  NS_IF_ADDREF(*aRootMsgFolder = m_rootFolder);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -194,7 +199,7 @@ NS_IMETHODIMP nsMsgIncomingServer::SetPerformingBiff(PRBool aPerformingBiff)
   return NS_OK;
 }
 
-NS_IMPL_GETSET(nsMsgIncomingServer, BiffState, PRUint32, m_biffState);
+NS_IMPL_GETSET(nsMsgIncomingServer, BiffState, PRUint32, m_biffState)
 
 NS_IMETHODIMP nsMsgIncomingServer::WriteToFolderCache(nsIMsgFolderCache *folderCache)
 {
@@ -468,11 +473,21 @@ nsMsgIncomingServer::GetFileValue(const char* prefname,
   nsCAutoString fullPrefName;
   getPrefName(m_serverKey.get(), prefname, fullPrefName);
   
+  nsCAutoString fullRelPrefName(fullPrefName);
+  fullRelPrefName.Append(REL_FILE_PREF_SUFFIX);
   nsCOMPtr<nsILocalFile> prefLocal;
   
-  nsresult rv = m_prefBranch->GetComplexValue(fullPrefName.get(),
-                                              NS_GET_IID(nsILocalFile),
-                                              getter_AddRefs(prefLocal));
+  PRBool gotRelPref;
+  nsresult rv = NS_GetPersistentFile(fullRelPrefName.get(), fullPrefName.get(),
+                                     nsnull, gotRelPref, getter_AddRefs(prefLocal));
+  if (NS_FAILED(rv)) return rv;
+
+  if (NS_SUCCEEDED(rv) && !gotRelPref) 
+  {
+    rv = NS_SetPersistentFile(fullRelPrefName.get(), fullPrefName.get(), prefLocal);
+    NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to update file pref.");
+  }
+  
   if (NS_FAILED(rv)) return rv;
 
   nsCOMPtr<nsIFileSpec> outSpec;
@@ -491,21 +506,19 @@ nsMsgIncomingServer::SetFileValue(const char* prefname,
 {
   nsCAutoString fullPrefName;
   getPrefName(m_serverKey.get(), prefname, fullPrefName);
+  nsCAutoString fullRelPrefName(fullPrefName);
+  fullRelPrefName.Append(REL_FILE_PREF_SUFFIX);
   
   nsresult rv;
   nsFileSpec tempSpec;
   rv = spec->GetFileSpec(&tempSpec);
   if (NS_FAILED(rv)) return rv;
 
-  nsCOMPtr<nsILocalFile> prefLocal;
-  rv = NS_FileSpecToIFile(&tempSpec, getter_AddRefs(prefLocal));
-  if (NS_FAILED(rv)) return rv;
-
-  rv = m_prefBranch->SetComplexValue(fullPrefName.get(), NS_GET_IID(nsILocalFile),
-                                     prefLocal);
-  if (NS_FAILED(rv)) return rv;
-
-  return NS_OK;
+  nsCOMPtr<nsILocalFile> localFile;
+  NS_FileSpecToIFile(&tempSpec, getter_AddRefs(localFile));
+  if (!localFile) 
+    return NS_ERROR_FAILURE;
+  return NS_SetPersistentFile(fullRelPrefName.get(), fullPrefName.get(), localFile);
 }
 
 nsresult
@@ -689,7 +702,7 @@ nsMsgIncomingServer::SetPrettyName(const PRUnichar *value)
 {
     SetUnicharValue("name", value);
     
-    nsCOMPtr<nsIFolder> rootFolder;
+    nsCOMPtr<nsIMsgFolder> rootFolder;
     GetRootFolder(getter_AddRefs(rootFolder));
 
     if (rootFolder)
@@ -739,20 +752,28 @@ nsMsgIncomingServer::ToString(PRUnichar** aResult) {
 
 NS_IMETHODIMP nsMsgIncomingServer::SetPassword(const char * aPassword)
 {
-	m_password = aPassword;
-	
-	nsresult rv;
-	PRBool rememberPassword = PR_FALSE;
-	
-	rv = GetRememberPassword(&rememberPassword);
-	if (NS_FAILED(rv)) return rv;
+  m_password = aPassword;
+  
+  nsresult rv;
+  PRBool rememberPassword = PR_FALSE;
+  
+  if (aPassword)
+  {
+    nsCOMPtr<nsIMsgAccountManager> accountManager = do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID);
+    if (accountManager)
+      accountManager->SetUserNeedsToAuthenticate(PR_FALSE);
+  }
 
-	if (rememberPassword) {
-		rv = StorePassword();
-		if (NS_FAILED(rv)) return rv;
-	}
-
-	return NS_OK;
+  rv = GetRememberPassword(&rememberPassword);
+  if (NS_FAILED(rv)) return rv;
+  
+  if (rememberPassword) 
+  {
+    rv = StorePassword();
+    if (NS_FAILED(rv)) return rv;
+  }
+  
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgIncomingServer::GetPassword(char ** aPassword)
@@ -765,8 +786,8 @@ NS_IMETHODIMP nsMsgIncomingServer::GetPassword(char ** aPassword)
 NS_IMETHODIMP nsMsgIncomingServer::GetServerRequiresPasswordForBiff(PRBool *aServerRequiresPasswordForBiff)
 {
   NS_ENSURE_ARG_POINTER(aServerRequiresPasswordForBiff);
-	*aServerRequiresPasswordForBiff = PR_TRUE;
-	return NS_OK;
+  *aServerRequiresPasswordForBiff = PR_TRUE;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -776,66 +797,108 @@ nsMsgIncomingServer::GetPasswordWithUI(const PRUnichar * aPromptMessage, const
                                        PRBool *okayValue,
                                        char **aPassword) 
 {
-    nsresult rv = NS_OK;
+  nsresult rv = NS_OK;
+  
+  NS_ENSURE_ARG_POINTER(aPassword);
+  NS_ENSURE_ARG_POINTER(okayValue);
+  
+  if (m_password.IsEmpty()) 
+  {
+    // let's see if we have the password in the password manager and  
+    // can avoid this prompting thing. This makes it easier to get embedders
+    // to get up and running w/o a password prompting UI. We already depend on
+    // nsIPasswordManagerInternal so this doesn't introduce a new dependency.
+    nsCOMPtr <nsIPasswordManagerInternal> passwordMgrInt = do_GetService(NS_PASSWORDMANAGER_CONTRACTID, &rv);
+    if(passwordMgrInt) 
+    {
 
-    NS_ENSURE_ARG_POINTER(aPassword);
-    NS_ENSURE_ARG_POINTER(okayValue);
+      // Get the current server URI
+      nsXPIDLCString currServerUri;
+      rv = GetServerURI(getter_Copies(currServerUri));
+      NS_ENSURE_SUCCESS(rv, rv);
 
-    if (m_password.IsEmpty()) {
-        nsCOMPtr<nsIAuthPrompt> dialog;
-        // aMsgWindow is required if we need to prompt
-        if (aMsgWindow)
-        {
-            // prompt the user for the password
-            nsCOMPtr<nsIDocShell> docShell;
-            rv = aMsgWindow->GetRootDocShell(getter_AddRefs(docShell));
-            if (NS_FAILED(rv)) return rv;
+      nsCAutoString hostFound;
+      nsAutoString userNameFound;
+      nsAutoString passwordFound;
 
-            nsCOMPtr<nsIWebShell> webShell(do_QueryInterface(docShell, &rv));
-            if (NS_FAILED(rv)) return rv;
-            dialog = do_GetInterface(webShell, &rv);
-			if (NS_FAILED(rv)) return rv;
-        }
-        else
-        {
-          nsCOMPtr<nsIWindowWatcher> wwatch(do_GetService(NS_WINDOWWATCHER_CONTRACTID));
-          if (wwatch)
-            wwatch->GetNewAuthPrompter(0, getter_AddRefs(dialog));
-          if (!dialog) return NS_ERROR_FAILURE;
-        }
-		if (NS_SUCCEEDED(rv) && dialog)
-		{
-            nsXPIDLString uniPassword;
-			nsXPIDLCString serverUri;
-			rv = GetServerURI(getter_Copies(serverUri));
-			if (NS_FAILED(rv)) return rv;
-			rv = dialog->PromptPassword(aPromptTitle, aPromptMessage, 
-                                        NS_ConvertASCIItoUCS2(serverUri).get(), nsIAuthPrompt::SAVE_PASSWORD_PERMANENTLY,
-                                        getter_Copies(uniPassword), okayValue);
-            if (NS_FAILED(rv)) return rv;
-				
-			if (!*okayValue) // if the user pressed cancel, just return NULL;
-			{
-				*aPassword = nsnull;
-				return NS_MSG_PASSWORD_PROMPT_CANCELLED;
-			}
+      const nsAFlatString& empty = EmptyString();
 
-			// we got a password back...so remember it
-			nsCString aCStr; aCStr.AssignWithConversion(uniPassword); 
+      // Get password entry corresponding to the host URI we are passing in.
+      if (NS_SUCCEEDED(passwordMgrInt->FindPasswordEntry(currServerUri, empty, empty,
+                                             hostFound, userNameFound, passwordFound)))
+      {
+        m_password.AssignWithConversion(passwordFound);
+        *okayValue = PR_TRUE;
+      }
+    }
+  }
+  if (m_password.IsEmpty())
+  {
+    nsCOMPtr<nsIAuthPrompt> dialog;
 
-			rv = SetPassword(aCStr.get());
-            if (NS_FAILED(rv)) return rv;
-		} // if we got a prompt dialog
-	} // if the password is empty
+    // aMsgWindow is required if we need to prompt
+    if (aMsgWindow)
+    {
+      // prompt the user for the password
+      nsCOMPtr<nsIDocShell> docShell;
+      rv = aMsgWindow->GetRootDocShell(getter_AddRefs(docShell));
+      if (NS_FAILED(rv)) return rv;
+      
+      nsCOMPtr<nsIWebShell> webShell(do_QueryInterface(docShell, &rv));
+      if (NS_FAILED(rv)) return rv;
+      dialog = do_GetInterface(webShell, &rv);
+      if (NS_FAILED(rv)) return rv;
+    }
+    else
+    {
+      nsCOMPtr<nsIWindowWatcher> wwatch(do_GetService(NS_WINDOWWATCHER_CONTRACTID));
+      if (wwatch)
+        wwatch->GetNewAuthPrompter(0, getter_AddRefs(dialog));
+      if (!dialog) return NS_ERROR_FAILURE;
+    }
+    if (dialog)
+    {
+      nsXPIDLString uniPassword;
+      nsXPIDLCString serverUri;
+      rv = GetServerURI(getter_Copies(serverUri));
+      if (NS_FAILED(rv)) return rv;
+      PRBool passwordProtectLocalCache = PR_FALSE;
 
-    rv = GetPassword(aPassword);
-	return rv;
+      (void) m_prefBranch->GetBoolPref( "mail.password_protect_local_cache", &passwordProtectLocalCache);
+
+      PRUint32 savePasswordType = (passwordProtectLocalCache) ? nsIAuthPrompt::SAVE_PASSWORD_FOR_SESSION : nsIAuthPrompt::SAVE_PASSWORD_PERMANENTLY;
+      rv = dialog->PromptPassword(aPromptTitle, aPromptMessage, 
+        NS_ConvertASCIItoUCS2(serverUri).get(), savePasswordType,
+        getter_Copies(uniPassword), okayValue);
+      if (NS_FAILED(rv)) return rv;
+      
+      if (!*okayValue) // if the user pressed cancel, just return NULL;
+      {
+        *aPassword = nsnull;
+        return NS_MSG_PASSWORD_PROMPT_CANCELLED;
+      }
+      
+      // we got a password back...so remember it
+      nsCString aCStr; aCStr.AssignWithConversion(uniPassword); 
+      
+      rv = SetPassword(aCStr.get());
+      if (NS_FAILED(rv)) return rv;
+    } // if we got a prompt dialog
+  } // if the password is empty
+  
+  return GetPassword(aPassword);
 }
 
-nsresult
+NS_IMETHODIMP
 nsMsgIncomingServer::StorePassword()
 {
     nsresult rv;
+
+    // we only need to store this if we're password protecting the local cache.
+    // Otherwise, the password manager handles storing the password if the user 
+    // checks the "remember password" box.
+    if (!PasswordProtectLocalCache())
+      return NS_OK;
 
     nsXPIDLCString pwd;
     rv = GetPassword(getter_Copies(pwd));
@@ -848,6 +911,10 @@ nsMsgIncomingServer::StorePassword()
     rv = GetServerURI(getter_Copies(serverSpec));
     if (NS_FAILED(rv)) return rv;
 
+    // We're password protecting the local cache, we're going to munge the uri in the password mgr to 
+    // start with 'x', so that we can remember the password in order to challenge the user, w/o having the
+    // password mgr automatically use the password.
+    serverSpec.Insert('x', 0);
     nsCOMPtr<nsIURI> uri;
     NS_NewURI(getter_AddRefs(uri), serverSpec);
 
@@ -949,33 +1016,41 @@ nsMsgIncomingServer::GetLocalPath(nsIFileSpec **aLocalPath)
 NS_IMETHODIMP
 nsMsgIncomingServer::SetLocalPath(nsIFileSpec *spec)
 {
-    if (spec) {
-        spec->CreateDir();
-        return SetFileValue("directory", spec);
-    }
-    else {
-        return NS_ERROR_NULL_POINTER;
-    }
+  if (spec)
+  {
+    spec->CreateDir();
+    return SetFileValue("directory", spec);
+  }
+  else 
+  {
+    return NS_ERROR_NULL_POINTER;
+  }
 }
 
 NS_IMETHODIMP
 nsMsgIncomingServer::SetRememberPassword(PRBool value)
 {
-    if (!value) {
+    if (!value)
         ForgetPassword();
-    }
-    else {
+    else 
         StorePassword();
-    }
     return SetBoolValue("remember_password", value);
 }
 
-NS_IMETHODIMP
-nsMsgIncomingServer::GetRememberPassword(PRBool* value)
+PRBool nsMsgIncomingServer::PasswordProtectLocalCache()
 {
-    NS_ENSURE_ARG_POINTER(value);
+    PRBool passwordProtectLocalCache;
 
-    return GetBoolValue("remember_password", value);
+    nsresult rv = m_prefBranch->GetBoolPref( "mail.password_protect_local_cache", &passwordProtectLocalCache);
+    NS_ENSURE_SUCCESS(rv, PR_FALSE);
+    return passwordProtectLocalCache;
+}
+
+NS_IMETHODIMP
+nsMsgIncomingServer::GetRememberPassword(PRBool* aValue)
+{
+    NS_ENSURE_ARG_POINTER(aValue);
+    return GetBoolValue("remember_password", aValue);
 }
 
 NS_IMETHODIMP
@@ -1029,9 +1104,8 @@ nsMsgIncomingServer::ClearAllValues()
     nsresult rv = m_prefBranch->GetChildList(rootPref.get(), &childCount, &childArray);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    for (PRUint32 i = 0; i < childCount; ++i) {
+    for (PRUint32 i = 0; i < childCount; ++i) 
         m_prefBranch->ClearUserPref(childArray[i]);
-    }
 
     NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(childCount, childArray);
 
@@ -1085,7 +1159,8 @@ nsMsgIncomingServer::SetFilterList(nsIMsgFilterList *aFilterList)
 NS_IMETHODIMP
 nsMsgIncomingServer::GetFilterList(nsIMsgWindow *aMsgWindow, nsIMsgFilterList **aResult)
 {
-  if (!mFilterList) {
+  if (!mFilterList) 
+  {
       nsCOMPtr<nsIMsgFolder> msgFolder;
       nsresult rv = GetRootMsgFolder(getter_AddRefs(msgFolder));
       NS_ENSURE_SUCCESS(rv, rv);
@@ -1152,26 +1227,26 @@ nsMsgIncomingServer::GetFilterList(nsIMsgWindow *aMsgWindow, nsIMsgFilterList **
 nsresult
 nsMsgIncomingServer::InternalSetHostName(const char *aHostname, const char *prefName)
 {
-    nsresult rv;
+  nsresult rv;
   if (PL_strchr(aHostname, ':'))
   {
-	nsCAutoString newHostname(aHostname);
-	PRInt32 colonPos = newHostname.FindChar(':');
-
-        nsCAutoString portString;
-        newHostname.Right(portString, newHostname.Length() - colonPos);
-
-        newHostname.Truncate(colonPos);
-        
-	PRInt32 err;
-        PRInt32 port = portString.ToInteger(&err);
-        if (!err) SetPort(port);
-
+    nsCAutoString newHostname(aHostname);
+    PRInt32 colonPos = newHostname.FindChar(':');
+    
+    nsCAutoString portString;
+    newHostname.Right(portString, newHostname.Length() - colonPos);
+    
+    newHostname.Truncate(colonPos);
+    
+    PRInt32 err;
+    PRInt32 port = portString.ToInteger(&err);
+    if (!err) SetPort(port);
+    
     rv = SetCharValue(prefName, newHostname.get());
-    }
+  }
   else
     rv = SetCharValue(prefName, aHostname);
-    return rv;
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -1236,7 +1311,8 @@ nsMsgIncomingServer::GetHostName(char **aResult)
 {
     nsresult rv;
     rv = GetCharValue("hostname", aResult);
-    if (PL_strchr(*aResult, ':')) {
+    if (PL_strchr(*aResult, ':')) 
+    {
 	// gack, we need to reformat the hostname - SetHostName will do that
         SetHostName(*aResult);
         rv = GetCharValue("hostname", aResult);
@@ -1364,9 +1440,10 @@ nsMsgIncomingServer::SetPort(PRInt32 aPort)
     NS_ENSURE_SUCCESS(rv, rv);
 
     PRInt32 defaultPort;
-    // First param is set to FALSE so that the non-secure
-    // default port is returned
-    rv = protocolInfo->GetDefaultServerPort(PR_FALSE, &defaultPort);
+    PRBool isSecure = PR_FALSE;
+    // Try this, and if it fails, fall back to the non-secure port
+    GetIsSecure(&isSecure);
+    rv = protocolInfo->GetDefaultServerPort(isSecure, &defaultPort);
     if (NS_SUCCEEDED(rv) && aPort == defaultPort)
         // clear it out by setting it to the default
         rv = SetIntValue("port", PORT_NOT_SET);
@@ -1607,33 +1684,33 @@ nsMsgIncomingServer::GetSearchScope(nsMsgSearchScopeValue *searchScope)
 }
 
 // use the convenience macros to implement the accessors
-NS_IMPL_SERVERPREF_STR(nsMsgIncomingServer, Username, "userName");
-NS_IMPL_SERVERPREF_STR(nsMsgIncomingServer, PrefPassword, "password");
-NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, IsSecure, "isSecure");
-NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, UseSecAuth, "useSecAuth");
-NS_IMPL_SERVERPREF_INT(nsMsgIncomingServer, BiffMinutes, "check_time");
-NS_IMPL_SERVERPREF_STR(nsMsgIncomingServer, Type, "type");
+NS_IMPL_SERVERPREF_STR(nsMsgIncomingServer, Username, "userName")
+NS_IMPL_SERVERPREF_STR(nsMsgIncomingServer, PrefPassword, "password")
+NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, IsSecure, "isSecure")
+NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, UseSecAuth, "useSecAuth")
+NS_IMPL_SERVERPREF_INT(nsMsgIncomingServer, BiffMinutes, "check_time")
+NS_IMPL_SERVERPREF_STR(nsMsgIncomingServer, Type, "type")
 // in 4.x, this was "mail.pop3_gets_new_mail" for pop and 
 // "mail.imap.new_mail_get_headers" for imap (it was global)
 // in 5.0, this will be per server, and it will be "download_on_biff"
-NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, DownloadOnBiff, "download_on_biff");
-NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, Valid, "valid");
-NS_IMPL_SERVERPREF_STR(nsMsgIncomingServer, RedirectorType,  "redirector_type");
+NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, DownloadOnBiff, "download_on_biff")
+NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, Valid, "valid")
+NS_IMPL_SERVERPREF_STR(nsMsgIncomingServer, RedirectorType,  "redirector_type")
 NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, EmptyTrashOnExit,
-                        "empty_trash_on_exit");
-NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, CanDelete, "canDelete");
-NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, LoginAtStartUp, "login_at_startup");
+                        "empty_trash_on_exit")
+NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, CanDelete, "canDelete")
+NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, LoginAtStartUp, "login_at_startup")
 NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, 
                         DefaultCopiesAndFoldersPrefsToServer, 
-                        "allows_specialfolders_usage");
+                        "allows_specialfolders_usage")
 
 NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, 
                         CanCreateFoldersOnServer, 
-                        "canCreateFolders");
+                        "canCreateFolders")
 
 NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, 
                         CanFileMessagesOnServer, 
-                        "canFileMessages");
+                        "canFileMessages")
 
 NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer,
       LimitOfflineMessageSize,
@@ -1684,12 +1761,12 @@ NS_IMETHODIMP nsMsgIncomingServer::GetIntAttribute(const char *aName, PRInt32 *v
 // Check if the password is available and return a boolean indicating whether 
 // it is being authenticated or not.
 NS_IMETHODIMP 
-nsMsgIncomingServer::GetIsAuthenticated(PRBool *isAuthenticated)
+nsMsgIncomingServer::GetPasswordPromptRequired(PRBool *aPasswordIsRequired)
 {
   nsresult rv = NS_OK;
-  NS_ENSURE_ARG_POINTER(isAuthenticated);
+  NS_ENSURE_ARG_POINTER(aPasswordIsRequired);
 
-  *isAuthenticated = PR_FALSE;
+  *aPasswordIsRequired = PR_TRUE;
   // If the password is empty, check to see if it is stored and to be retrieved
   if (m_password.IsEmpty()) {
     nsCOMPtr <nsIPasswordManagerInternal> passwordMgrInt = do_GetService(NS_PASSWORDMANAGER_CONTRACTID, &rv);
@@ -1710,20 +1787,31 @@ nsMsgIncomingServer::GetIsAuthenticated(PRBool *isAuthenticated)
       // Get password entry corresponding to the host URI we are passing in.
       rv = passwordMgrInt->FindPasswordEntry(currServerUri, nsString(), nsString(),
                                              hostFound, userNameFound, passwordFound);
-      if (NS_FAILED(rv)) {
-        *isAuthenticated = PR_FALSE;
+      if (NS_FAILED(rv)) 
+      {
+        *aPasswordIsRequired = PR_TRUE;
         return NS_OK;
       }
 
       // If a match is found, password element is filled in. Convert the
       // obtained password and store it for the session.
-      if (!passwordFound.IsEmpty()) {
-        rv = SetPassword(NS_ConvertUCS2toUTF8(passwordFound).get());
-        NS_ENSURE_SUCCESS(rv, rv);
+      if (!passwordFound.IsEmpty()) 
+      {
+        if (PasswordProtectLocalCache()) // hmm, shouldn't be in here, so remove it.
+        {
+          ForgetPassword();
+        }
+        else
+        {
+          nsCAutoString cStrPassword;
+          cStrPassword.AssignWithConversion(passwordFound);
+          rv = SetPassword(cStrPassword.get());
+          NS_ENSURE_SUCCESS(rv, rv);
+        }
       }
     }
   }
-  *isAuthenticated = !m_password.IsEmpty();
+  *aPasswordIsRequired = m_password.IsEmpty();
   return rv;
 }
 
@@ -1739,6 +1827,7 @@ nsMsgIncomingServer::ConfigureTemporaryReturnReceiptsFilter(nsIMsgFilterList *fi
   nsCOMPtr<nsIMsgIdentity> identity;
   rv = accountMgr->GetFirstIdentityForServer(this, getter_AddRefs(identity));
   NS_ENSURE_SUCCESS(rv, rv);
+  // this can return success and a null identity...
   
   PRBool useCustomPrefs = PR_FALSE;
   PRInt32 incorp = nsIMsgMdnGenerator::eIncorporateInbox;
@@ -1855,9 +1944,8 @@ nsMsgIncomingServer::GetMsgFolderFromURI(nsIMsgFolder *aFolderResource, const ch
 
   nsCOMPtr <nsIMsgFolder> msgFolder;
   rv = rootMsgFolder->GetChildWithURI(aURI, PR_TRUE, PR_TRUE /*caseInsensitive*/, getter_AddRefs(msgFolder));
-  if (NS_FAILED(rv) || !msgFolder) {
+  if (NS_FAILED(rv) || !msgFolder) 
     msgFolder = aFolderResource;
-  }
   
   NS_IF_ADDREF(*aFolder = msgFolder);
   return NS_OK;

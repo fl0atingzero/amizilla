@@ -48,7 +48,7 @@
 #include "nsIChannel.h"
 #include "nsIComponentManager.h"
 #include "nsIEnumerator.h"
-#include <iostream.h>  //BAD DOG -- no biscuit!
+#include <stdio.h>
 #include "nsReadableUtils.h"
 
 
@@ -56,7 +56,6 @@
 static NS_DEFINE_CID(kPersistentPropertiesCID, NS_IPERSISTENTPROPERTIES_CID);
 
 static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID);
-static NS_DEFINE_CID(kEventQueueCID, NS_EVENTQUEUE_CID);
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 
 /***************************************************************************/
@@ -117,7 +116,7 @@ main(int argc, char* argv[])
     }
     char* value = ToNewCString(v);
     if (value) {
-      cout << "\"" << i << "\"=\"" << value << "\"" << endl;
+      printf("\"%d\"=\"%s\"\n", i, value);
       delete[] value;
     }
     else {
@@ -135,8 +134,8 @@ main(int argc, char* argv[])
   }
   
 
-  cout << endl << "Key" << "\t" << "Value" << endl;
-  cout <<		  "---" << "\t" << "-----" << endl;
+  printf("\nKey\tValue\n");
+  printf(  "---\t-----\n");
   
   PRBool hasMore;
   while (NS_SUCCEEDED(propEnum->HasMoreElements(&hasMore)) &&
@@ -164,7 +163,7 @@ main(int argc, char* argv[])
 		  return 1;
 	  }
 
-    cout << key.get() << "\t" << value.get() << endl;
+    printf("%s\t%s\n", key.get(), value.get());
   }
   return 0;
 }

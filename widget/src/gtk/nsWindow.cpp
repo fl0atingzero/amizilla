@@ -123,8 +123,6 @@ static PRBool gRaiseWindows         = PR_TRUE;
 /* cursors cache */
 GdkCursor *nsWindow::gsGtkCursorCache[eCursorCount];
 
-#define ARRAY_LENGTH(a) (sizeof(a)/sizeof(a[0]))
-
 /* window icon cache */
 struct IconEntry : public PLDHashEntryHdr {
   const char* string;
@@ -139,7 +137,7 @@ static PLDHashTableOps iconHashOps = {
   PL_DHashFreeTable,
   PL_DHashGetKeyStub,
   PL_DHashStringKey,
-  nsWindow::IconEntryMatches,
+  PL_DHashMatchStringKey,
   PL_DHashMoveEntryStub,
   nsWindow::ClearIconEntry,
   PL_DHashFinalizeStub,
@@ -184,8 +182,7 @@ PRBool gJustGotActivate   = PR_FALSE;
 
 #ifdef USE_XIM
 
-struct nsXICLookupEntry {
-  PLDHashEntryHdr mKeyHash;
+struct nsXICLookupEntry : public PLDHashEntryHdr {
   nsWindow*   mShellWindow;
   nsIMEGtkIC* mXIC;
 };
@@ -206,6 +203,9 @@ static void printDepth(int depth) {
   }
 }
 #endif
+
+static int is_parent_ungrab_enter(GdkEventCrossing *aEvent);
+static int is_parent_grab_leave(GdkEventCrossing *aEvent);
 
 
 // This function will check if a button event falls inside of a
@@ -387,7 +387,7 @@ nsWindow::ReleaseGlobals()
     gdk_font_unref(gStatusFontset);
     gStatusFontset = nsnull;
   }
-  for (int i = 0; i < ARRAY_LENGTH(gsGtkCursorCache); ++i) {
+  for (int i = 0, n = NS_ARRAY_LENGTH(gsGtkCursorCache); i < n; ++i) {
     if (gsGtkCursorCache[i]) {
       gdk_cursor_destroy(gsGtkCursorCache[i]);
       gsGtkCursorCache[i] = nsnull;
@@ -803,20 +803,6 @@ nsWindow::DoPaint (nsIRegion *aClipRegion)
   if (!mEventCallback)
     return;
 
-  nsPaintEvent event;
- 
-  event.message = NS_PAINT;
-  event.widget = (nsWidget *)this;
-  event.eventStructType = NS_PAINT_EVENT;
-  event.point.x = 0;
-  event.point.y = 0; 
-  event.time = GDK_CURRENT_TIME; // No time in EXPOSE events
-
-  nsRect boundsRect;
-  aClipRegion->GetBoundingBox(&boundsRect.x, &boundsRect.y, &boundsRect.width, &boundsRect.height);
-  event.rect = &boundsRect;
-  event.region = nsnull; // aClipRegion;
-  
   // Don't paint anything if our window isn't visible.
   if (!mSuperWin)
     return;
@@ -832,10 +818,31 @@ nsWindow::DoPaint (nsIRegion *aClipRegion)
       return;
   }
 
-  event.renderingContext = GetRenderingContext();
-  if (!event.renderingContext)
+  nsCOMPtr<nsIRenderingContext> rc = getter_AddRefs(GetRenderingContext());
+  if (!rc)
     return;
 
+// defining NS_PAINT_SEPARATELY is useful for debugging invalidation
+// problems since it limits repainting to the rects that were actually
+// invalidated.
+#undef  NS_PAINT_SEPARATELY
+
+#ifdef NS_PAINT_SEPARATELY
+  nsRegionRectSet *regionRectSet = nsnull;
+  aClipRegion->GetRects(&regionRectSet);
+  for (nsRegionRect *r = regionRectSet->mRects,
+                *r_end = r + regionRectSet->mNumRects; r < r_end; ++r) {
+  nsRect boundsRect(r->x, r->y, r->width, r->height);
+#else
+  nsRect boundsRect;
+  aClipRegion->GetBoundingBox(&boundsRect.x, &boundsRect.y, &boundsRect.width, &boundsRect.height);
+#endif
+
+  nsPaintEvent event(NS_PAINT, this);
+  event.renderingContext = rc;
+  event.time = GDK_CURRENT_TIME; // No time in EXPOSE events
+  event.rect = &boundsRect;
+  
 #ifdef DEBUG
   GdkWindow *gw = GetRenderWindow(GTK_OBJECT(mSuperWin));
   if (WANT_PAINT_FLASHING && gw)
@@ -852,9 +859,11 @@ nsWindow::DoPaint (nsIRegion *aClipRegion)
                          debug_GetName(GTK_OBJECT(mSuperWin)),
                          (PRInt32) debug_GetRenderXID(GTK_OBJECT(mSuperWin)));
 #endif // DEBUG
-      
+
   DispatchWindowEvent(&event);
-  NS_RELEASE(event.renderingContext);
+#ifdef NS_PAINT_SEPARATELY
+  }
+#endif
 }
 
 static NS_DEFINE_CID(kRegionCID, NS_REGION_CID);
@@ -936,7 +945,7 @@ NS_IMETHODIMP nsWindow::CaptureRollupEvents(nsIRollupListener * aListener,
     }
 
     gRollupListener = aListener;
-    gRollupWidget = getter_AddRefs(NS_GetWeakReference(NS_STATIC_CAST(nsIWidget*,this)));
+    gRollupWidget = do_GetWeakReference(NS_STATIC_CAST(nsIWidget*,this));
   } else {
     // make sure that the grab window is marked as released
     if (sGrabWindow == this) {
@@ -1021,7 +1030,7 @@ NS_IMETHODIMP nsWindow::Invalidate(PRBool aIsSynchronous)
   if (!mSuperWin)
     return NS_OK;
   
-  mUpdateArea->SetTo(mBounds.x, mBounds.y, mBounds.width, mBounds.height);
+  mUpdateArea->SetTo(0, 0, mBounds.width, mBounds.height);
   
   if (aIsSynchronous)
     Update();
@@ -1311,7 +1320,7 @@ nsWindow::SetFocus(PRBool aRaise)
   // toplevel window has focus
   if (gRaiseWindows && aRaise && toplevel && top_mozarea &&
       (!GTK_WIDGET_HAS_FOCUS(top_mozarea) && !GTK_WIDGET_HAS_FOCUS(toplevel)))
-    GetAttention();
+    GetAttention(-1);
 
 #ifdef DEBUG_FOCUS
   printf("top moz area is %p\n", NS_STATIC_CAST(void *, top_mozarea));
@@ -1399,15 +1408,7 @@ void nsWindow::DispatchSetFocusEvent(void)
   printf("nsWindow::DispatchSetFocusEvent %p\n", NS_STATIC_CAST(void *, this));
 #endif /* DEBUG_FOCUS */
 
-  nsGUIEvent event;
-  event.message = NS_GOTFOCUS;
-  event.widget  = this;
-
-  event.eventStructType = NS_GUI_EVENT;
-
-  event.time = 0;
-  event.point.x = 0;
-  event.point.y = 0;
+  nsGUIEvent event(NS_GOTFOCUS, this);
 
   NS_ADDREF_THIS();
   DispatchFocus(event);
@@ -1427,15 +1428,7 @@ void nsWindow::DispatchLostFocusEvent(void)
   printf("nsWindow::DispatchLostFocusEvent %p\n", NS_STATIC_CAST(void *, this));
 #endif /* DEBUG_FOCUS */
 
-  nsGUIEvent event;
-  event.message = NS_LOSTFOCUS;
-  event.widget  = this;
-
-  event.eventStructType = NS_GUI_EVENT;
-
-  event.time = 0;
-  event.point.x = 0;
-  event.point.y = 0;
+  nsGUIEvent event(NS_LOSTFOCUS, this);
 
   NS_ADDREF_THIS();
   
@@ -1456,15 +1449,7 @@ void nsWindow::DispatchActivateEvent(void)
 
   gJustGotDeactivate = PR_FALSE;
 
-  nsGUIEvent event;
-  event.message = NS_ACTIVATE;
-  event.widget  = this;
-
-  event.eventStructType = NS_GUI_EVENT;
-
-  event.time = 0;
-  event.point.x = 0;
-  event.point.y = 0;
+  nsGUIEvent event(NS_ACTIVATE, this);
 
   NS_ADDREF_THIS();  
   DispatchFocus(event);
@@ -1485,15 +1470,7 @@ void nsWindow::DispatchDeactivateEvent(void)
   IMEBeingActivate(PR_TRUE);
 #endif // USE_XIM
 
-  nsGUIEvent event;
-  event.message = NS_DEACTIVATE;
-  event.widget  = this;
-
-  event.eventStructType = NS_GUI_EVENT;
-
-  event.time = 0;
-  event.point.x = 0;
-  event.point.y = 0;
+  nsGUIEvent event(NS_DEACTIVATE, this);
 
   NS_ADDREF_THIS();
   DispatchFocus(event);
@@ -1686,20 +1663,13 @@ nsWindow::OnFocusInSignal(GdkEventFocus * aGdkFocusEvent)
   
   GTK_WIDGET_SET_FLAGS(mMozArea, GTK_HAS_FOCUS);
 
-  nsGUIEvent event;
+  nsFocusEvent event(NS_GOTFOCUS, this);
 #ifdef DEBUG  
   printf("send NS_GOTFOCUS from nsWindow::OnFocusInSignal\n");
 #endif
-  event.message = NS_GOTFOCUS;
-  event.widget  = this;
-
-  event.eventStructType = NS_GUI_EVENT;
 
 //  event.time = aGdkFocusEvent->time;;
 //  event.time = PR_Now();
-  event.time = 0;
-  event.point.x = 0;
-  event.point.y = 0;
 
   AddRef();
   
@@ -1714,18 +1684,10 @@ nsWindow::OnFocusOutSignal(GdkEventFocus * aGdkFocusEvent)
 
   GTK_WIDGET_UNSET_FLAGS(mMozArea, GTK_HAS_FOCUS);
 
-  nsGUIEvent event;
+  nsFocusEvent event(NS_LOSTFOCUS, this);
   
-  event.message = NS_LOSTFOCUS;
-  event.widget  = this;
-
-  event.eventStructType = NS_GUI_EVENT;
-
 //  event.time = aGdkFocusEvent->time;;
 //  event.time = PR_Now();
-  event.time = 0;
-  event.point.x = 0;
-  event.point.y = 0;
 
   AddRef();
   
@@ -1755,6 +1717,7 @@ nsWindow::InstallFocusOutSignal(GtkWidget * aWidget)
 				GTK_SIGNAL_FUNC(nsWindow::FocusOutSignal));
 }
 
+
 void 
 nsWindow::HandleGDKEvent(GdkEvent *event)
 {
@@ -1778,9 +1741,15 @@ nsWindow::HandleGDKEvent(GdkEvent *event)
     OnButtonReleaseSignal (&event->button);
     break;
   case GDK_ENTER_NOTIFY:
+    if(is_parent_ungrab_enter(&event->crossing))
+      return;
+
     OnEnterNotifySignal (&event->crossing);
     break;
   case GDK_LEAVE_NOTIFY:
+    if(is_parent_grab_leave(&event->crossing))
+      return;
+
     OnLeaveNotifySignal (&event->crossing);
     break;
 
@@ -1810,17 +1779,9 @@ gint handle_delete_event(GtkWidget *w, GdkEventAny *e, nsWindow *win)
   NS_ADDREF(win);
 
   // dispatch an "onclose" event. to delete immediately, call win->Destroy()
-  nsGUIEvent event;
+  nsGUIEvent event(NS_XUL_CLOSE, win);
   nsEventStatus status;
   
-  event.message = NS_XUL_CLOSE;
-  event.widget  = win;
-  event.eventStructType = NS_GUI_EVENT;
-
-  event.time = 0;
-  event.point.x = 0;
-  event.point.y = 0;
- 
   win->DispatchEvent(&event, status);
 
   NS_RELEASE(win);
@@ -1966,6 +1927,7 @@ NS_METHOD nsWindow::CreateNative(GtkObject *parentWidget)
     break;
 
   case eWindowType_toplevel:
+  case eWindowType_invisible:
     mIsToplevel = PR_TRUE;
     mShell = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     //    gtk_widget_set_app_paintable(mShell, PR_TRUE);
@@ -2350,6 +2312,9 @@ NS_IMETHODIMP nsWindow::SetTitle(const nsString& aTitle)
   nsCOMPtr<nsICharsetConverterManager> ccm = 
            do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);  
   rv = ccm->GetUnicodeEncoderRaw(platformCharset.get(), getter_AddRefs(encoder));
+  NS_ASSERTION(NS_SUCCEEDED(rv), "GetUnicodeEncoderRaw failed.");
+  if (NS_FAILED(rv))
+    return NS_ERROR_FAILURE;
 
   // Estimate out length and allocate the buffer based on a worst-case estimate, then do
   // the conversion.
@@ -2385,12 +2350,20 @@ nsWindow::SetIcon(const nsAString& aIcon)
   // Note that icon specs must be UTF8.
   NS_ConvertUCS2toUTF8 iconKey(aIcon);
   IconEntry* entry = NS_STATIC_CAST(IconEntry*,
-                                    PL_DHashTableOperate(sIconCache, iconKey.get(), PL_DHASH_LOOKUP));
-  if (!entry || PL_DHASH_ENTRY_IS_FREE(entry)) {
+                                    PL_DHashTableOperate(sIconCache,
+                                                         iconKey.get(),
+                                                         PL_DHASH_ADD));
+  if (!entry)
+      return NS_ERROR_OUT_OF_MEMORY;
+
+  if (!entry->string) {
     // We'll need to create the pixmaps.
+#ifdef NS_DEBUG
+    PRUint32 generation = sIconCache->generation;
+#endif
 
     // Have necko resolve this to a file for us.
-    nsCOMPtr<nsIIOService> ioService = do_GetService(NS_IOSERVICE_CONTRACTID);
+    nsCOMPtr<nsIIOService> ioService = do_GetIOService();
     nsCOMPtr<nsIURI> iconURI;
     NS_NewURI(getter_AddRefs(iconURI), aIcon);
     nsCAutoString scheme;
@@ -2456,11 +2429,7 @@ nsWindow::SetIcon(const nsAString& aIcon)
 #endif
     }
 
-    entry = NS_STATIC_CAST(IconEntry*, PL_DHashTableOperate(sIconCache, iconKey.get(),
-                                                            PL_DHASH_ADD));
-    if (!entry)
-      return NS_ERROR_OUT_OF_MEMORY;
-
+    NS_ASSERTION(sIconCache->generation == generation, "sIconCache changed!");
     entry->string = strdup(iconKey.get());
     entry->w_pixmap = w_pixmap;
     entry->w_mask = w_mask;
@@ -2580,7 +2549,7 @@ void nsWindow::SetInternalVisibility(PRBool aVisible)
     // later.
     // So, we delay setting the mask until the last moment: when the window
     // is shown.
-    if (mTransparencyBitmap) {
+    if (mIsTranslucent) {
       ApplyTransparencyBitmap();
     }
 
@@ -2754,14 +2723,10 @@ NS_IMETHODIMP nsWindow::Resize(PRInt32 aWidth, PRInt32 aHeight, PRBool aRepaint)
   mBounds.height = aHeight;
 
   ResetInternalVisibility();
-  PRUint32 childCount, index;
-  if (NS_SUCCEEDED(mChildren->Count(&childCount))) {
-    for (index = 0; index < childCount; index++) {
-      nsCOMPtr<nsIWidget> childWidget;
-      if (NS_SUCCEEDED(mChildren->QueryElementAt(index, NS_GET_IID(nsIWidget), (void**)getter_AddRefs(childWidget)))) {
-        NS_STATIC_CAST(nsWidget*, NS_STATIC_CAST(nsIWidget*, childWidget.get()))->ResetInternalVisibility();
-      }
-    }
+  PRInt32 childCount = mChildren.Count();
+  PRInt32 index;
+  for (index = 0; index < childCount; index++) {
+    NS_STATIC_CAST(nsWidget*, mChildren[index])->ResetInternalVisibility();
   }
 
   // code to keep the window from showing before it has been moved or resized
@@ -2832,17 +2797,11 @@ NS_IMETHODIMP nsWindow::Resize(PRInt32 aWidth, PRInt32 aHeight, PRBool aRepaint)
   }
   if (mIsToplevel || mListenForResizes) {
     //g_print("sending resize event\n");
-    nsSizeEvent sevent;
-    sevent.message = NS_SIZE;
-    sevent.widget = this;
-    sevent.eventStructType = NS_SIZE_EVENT;
+    nsSizeEvent sevent(NS_SIZE, this);
     sevent.windowSize = new nsRect (0, 0, sizeWidth, sizeHeight);
-    sevent.point.x = 0;
-    sevent.point.y = 0;
     sevent.mWinWidth = sizeWidth;
     sevent.mWinHeight = sizeHeight;
-    // XXX fix this
-    sevent.time = 0;
+    // XXX fix sevent.time
     AddRef();
     OnResize(&sevent);
     Release();
@@ -2871,7 +2830,7 @@ NS_IMETHODIMP nsWindow::Resize(PRInt32 aX, PRInt32 aY, PRInt32 aWidth,
   return NS_OK;
 }
 
-NS_IMETHODIMP nsWindow::GetAttention(void)
+NS_IMETHODIMP nsWindow::GetAttention(PRInt32 aCycleCount)
 {
   // get the next up moz area
   GtkWidget *top_mozarea = GetOwningWidget();
@@ -3022,18 +2981,14 @@ nsWindow::HandleXlibConfigureNotifyEvent(XEvent *event)
 #endif
 
   if (mIsToplevel) {
-    nsSizeEvent sevent;
-    sevent.message = NS_SIZE;
-    sevent.widget = this;
-    sevent.eventStructType = NS_SIZE_EVENT;
+    nsSizeEvent sevent(NS_SIZE, this);
     sevent.windowSize = new nsRect (event->xconfigure.x, event->xconfigure.y,
                                     event->xconfigure.width, event->xconfigure.height);
     sevent.point.x = event->xconfigure.x;
     sevent.point.y = event->xconfigure.y;
     sevent.mWinWidth = event->xconfigure.width;
     sevent.mWinHeight = event->xconfigure.height;
-    // XXX fix this
-    sevent.time = 0;
+    // XXX fix sevent.time
     AddRef();
     OnResize(&sevent);
     Release();
@@ -3175,8 +3130,6 @@ GtkWindow *nsWindow::GetTopLevelWindow(void)
 void
 nsWindow::InitDragEvent (nsMouseEvent &aEvent)
 {
-  // set everything to zero
-  memset(&aEvent, 0, sizeof(nsMouseEvent));
   // set the keyboard modifiers
   gint x, y;
   GdkModifierType state = (GdkModifierType)0;
@@ -3301,17 +3254,12 @@ gint nsWindow::OnDragMotionSignal      (GtkWidget *      aWidget,
   // notify the drag service that we are starting a drag motion.
   dragSessionGTK->TargetStartDragMotion();
 
-  nsMouseEvent event;
+  nsMouseEvent event(NS_DRAGDROP_OVER, innerMostWidget);
 
   InitDragEvent(event);
 
   // now that we have initialized the event update our drag status
   UpdateDragStatus(event, aDragContext, dragService);
-
-  event.message = NS_DRAGDROP_OVER;
-  event.eventStructType = NS_DRAGDROP_EVENT;
-
-  event.widget = innerMostWidget;
 
   event.point.x = retx;
   event.point.y = rety;
@@ -3447,16 +3395,13 @@ nsWindow::OnDragDropSignal        (GtkWidget        *aWidget,
 
   innerMostWidget->AddRef();
 
-  nsMouseEvent event;
+  nsMouseEvent event(NS_DRAGDROP_OVER, innerMostWidget);
 
   InitDragEvent(event);
 
   // now that we have initialized the event update our drag status
   UpdateDragStatus(event, aDragContext, dragService);
 
-  event.message = NS_DRAGDROP_OVER;
-  event.eventStructType = NS_DRAGDROP_EVENT;
-  event.widget = innerMostWidget;
   event.point.x = retx;
   event.point.y = rety;
 
@@ -3465,7 +3410,6 @@ nsWindow::OnDragDropSignal        (GtkWidget        *aWidget,
   InitDragEvent(event);
 
   event.message = NS_DRAGDROP_DROP;
-  event.eventStructType = NS_DRAGDROP_EVENT;
   event.widget = innerMostWidget;
   event.point.x = retx;
   event.point.y = rety;
@@ -3541,15 +3485,7 @@ nsWindow::OnDragLeave(void)
   g_print("nsWindow::OnDragLeave\n");
 #endif /* DEBUG_DND_EVENTS */
 
-  nsMouseEvent event;
-
-  event.message = NS_DRAGDROP_EXIT;
-  event.eventStructType = NS_DRAGDROP_EVENT;
-
-  event.widget = this;
-
-  event.point.x = 0;
-  event.point.y = 0;
+  nsMouseEvent event(NS_DRAGDROP_EXIT, this);
 
   AddRef();
 
@@ -3565,12 +3501,7 @@ nsWindow::OnDragEnter(nscoord aX, nscoord aY)
   g_print("nsWindow::OnDragEnter\n");
 #endif /* DEBUG_DND_EVENTS */
   
-  nsMouseEvent event;
-
-  event.message = NS_DRAGDROP_ENTER;
-  event.eventStructType = NS_DRAGDROP_EVENT;
-
-  event.widget = this;
+  nsMouseEvent event(NS_DRAGDROP_ENTER, this);
 
   event.point.x = aX;
   event.point.y = aY;
@@ -3787,54 +3718,47 @@ void nsWindow::ICSpotCallback(nsITimer * aTimer, void * aClosure)
 
 nsresult nsWindow::UpdateICSpot(nsIMEGtkIC *aXIC)
 {
-   // set spot location
-   nsCompositionEvent compEvent;
-   compEvent.widget = NS_STATIC_CAST(nsWidget *, this);
-   compEvent.point.x = 0;
-   compEvent.point.y = 0;
-   compEvent.time = 0;
-   compEvent.message = NS_COMPOSITION_QUERY;
-   compEvent.eventStructType = NS_COMPOSITION_QUERY;
-   compEvent.compositionMessage = NS_COMPOSITION_QUERY;
-   static gint oldx =0;
-   static gint oldy =0;
-   static gint oldw =0;
-   static gint oldh =0;
-   compEvent.theReply.mCursorPosition.x=-1;
-   compEvent.theReply.mCursorPosition.y=-1;
-   this->OnComposition(compEvent);
-   // set SpotLocation
-   if((compEvent.theReply.mCursorPosition.x < 0) &&
-      (compEvent.theReply.mCursorPosition.y < 0))
-     return NS_ERROR_FAILURE;
+  // set spot location
+  nsCompositionEvent compEvent(NS_COMPOSITION_QUERY, this);
+  static gint oldx =0;
+  static gint oldy =0;
+  static gint oldw =0;
+  static gint oldh =0;
+  compEvent.theReply.mCursorPosition.x=-1;
+  compEvent.theReply.mCursorPosition.y=-1;
+  this->OnComposition(compEvent);
+  // set SpotLocation
+  if((compEvent.theReply.mCursorPosition.x < 0) &&
+     (compEvent.theReply.mCursorPosition.y < 0))
+    return NS_ERROR_FAILURE;
 
-   // In over-the-spot style, pre-edit can not be drawn properly when
-   // IMESetFocusWindow() is called at height=1 and width=1
-   // After resizing, we need to call SetPreeditArea() again
-   if((oldw != mBounds.width) || (oldh != mBounds.height)) {
-     GdkWindow *gdkWindow = (GdkWindow*)this->GetNativeData(NS_NATIVE_WINDOW);
-     if (gdkWindow) {
-       aXIC->SetPreeditArea(0, 0,
-          (int)((GdkWindowPrivate*)gdkWindow)->width,
-          (int)((GdkWindowPrivate*)gdkWindow)->height);
-     }
-     oldw = mBounds.width;
-     oldh = mBounds.height;
-   }
+  // In over-the-spot style, pre-edit can not be drawn properly when
+  // IMESetFocusWindow() is called at height=1 and width=1
+  // After resizing, we need to call SetPreeditArea() again
+  if((oldw != mBounds.width) || (oldh != mBounds.height)) {
+    GdkWindow *gdkWindow = (GdkWindow*)this->GetNativeData(NS_NATIVE_WINDOW);
+    if (gdkWindow) {
+      aXIC->SetPreeditArea(0, 0,
+                           (int)((GdkWindowPrivate*)gdkWindow)->width,
+                           (int)((GdkWindowPrivate*)gdkWindow)->height);
+    }
+    oldw = mBounds.width;
+    oldh = mBounds.height;
+  }
 
-   if((compEvent.theReply.mCursorPosition.x != oldx)||
-      (compEvent.theReply.mCursorPosition.y != oldy))
-   {
-       nsPoint spot;
-       spot.x = compEvent.theReply.mCursorPosition.x;
-       spot.y = compEvent.theReply.mCursorPosition.y + 
-                compEvent.theReply.mCursorPosition.height;
-       SetXICBaseFontSize(aXIC, compEvent.theReply.mCursorPosition.height - 1);
-       SetXICSpotLocation(aXIC, spot);
-       oldx = compEvent.theReply.mCursorPosition.x;
-       oldy = compEvent.theReply.mCursorPosition.y;
-   } 
-   return NS_OK;
+  if((compEvent.theReply.mCursorPosition.x != oldx)||
+     (compEvent.theReply.mCursorPosition.y != oldy))
+  {
+    nsPoint spot;
+    spot.x = compEvent.theReply.mCursorPosition.x;
+    spot.y = compEvent.theReply.mCursorPosition.y + 
+      compEvent.theReply.mCursorPosition.height;
+    SetXICBaseFontSize(aXIC, compEvent.theReply.mCursorPosition.height - 1);
+    SetXICSpotLocation(aXIC, spot);
+    oldx = compEvent.theReply.mCursorPosition.x;
+    oldy = compEvent.theReply.mCursorPosition.y;
+  } 
+  return NS_OK;
 }
 
 void
@@ -3870,7 +3794,6 @@ nsWindow::SetXICSpotLocation(nsIMEGtkIC* aXIC, nsPoint aPoint)
 
 void
 nsWindow::ime_preedit_start() {
-  IMEComposeStart(nsnull);
 }
 
 void
@@ -3888,6 +3811,10 @@ nsWindow::ime_preedit_draw(nsIMEGtkIC *aXIC) {
 
 void
 nsWindow::ime_preedit_done() {
+#ifdef _AIX
+  IMEComposeStart(nsnull);
+  IMEComposeText(nsnull, nsnull, 0, nsnull);
+#endif
   IMEComposeEnd(nsnull);
 }
 
@@ -3946,52 +3873,54 @@ nsWindow::IMEGetShellWindow(void)
 nsIMEGtkIC*
 nsWindow::IMEGetInputContext(PRBool aCreate)
 {
-  PLDHashEntryHdr* hash_entry;
-  nsXICLookupEntry* entry;
-
   if (!mIMEShellWindow) {
     return nsnull;
   }
 
-  hash_entry = PL_DHashTableOperate(&gXICLookupTable, mIMEShellWindow, PL_DHASH_LOOKUP);
+  nsXICLookupEntry* entry =
+    NS_STATIC_CAST(nsXICLookupEntry *,
+                   PL_DHashTableOperate(&gXICLookupTable, mIMEShellWindow,
+                                        aCreate ? PL_DHASH_ADD
+                                                : PL_DHASH_LOOKUP));
 
-  if (hash_entry) {
-    entry = NS_REINTERPRET_CAST(nsXICLookupEntry *, hash_entry);
-    if (entry->mXIC) {
-      return entry->mXIC;
-    }
+  if (!entry) {
+    return nsnull;
+  }
+  if (PL_DHASH_ENTRY_IS_BUSY(entry) && entry->mXIC) {
+    return entry->mXIC;
   }
 
   // create new XIC
   if (aCreate) {
     // create XLFD, needs 3 arguments of height, see XIC_FONTSET definition
-    char *xlfdbase = PR_smprintf(XIC_FONTSET, mXICFontSize, mXICFontSize, mXICFontSize);
-    if (gPreeditFontset == nsnull) {
-      gPreeditFontset = gdk_fontset_load(xlfdbase);
-    }
-    if (gStatusFontset == nsnull) {
-      gStatusFontset = gdk_fontset_load(xlfdbase);
-    }
-    PR_smprintf_free(xlfdbase);
-    if (!gPreeditFontset || !gStatusFontset) {
-      return nsnull;
-    }
-    nsIMEGtkIC *xic = nsIMEGtkIC::GetXIC(mIMEShellWindow, gPreeditFontset,
-                                                           gStatusFontset);
-    if (xic) {
-      xic->SetPreeditSpotLocation(0, 14);
-      hash_entry = PL_DHashTableOperate(&gXICLookupTable,
-                                                      mIMEShellWindow,
-                                                      PL_DHASH_ADD);
-      if (hash_entry) {
-        entry = NS_REINTERPRET_CAST(nsXICLookupEntry *, hash_entry);
-        entry->mShellWindow = mIMEShellWindow;
-        entry->mXIC = xic;
+    char *xlfdbase = PR_smprintf(XIC_FONTSET, mXICFontSize, mXICFontSize,
+                                 mXICFontSize);
+    if (xlfdbase) {
+      if (gPreeditFontset == nsnull) {
+        gPreeditFontset = gdk_fontset_load(xlfdbase);
       }
-      mIMEShellWindow->mIMEShellWindow = mIMEShellWindow;
-      return xic;
+      if (gStatusFontset == nsnull) {
+        gStatusFontset = gdk_fontset_load(xlfdbase);
+      }
+      PR_smprintf_free(xlfdbase);
+      nsIMEGtkIC *xic = nsnull;
+      if (gPreeditFontset && gStatusFontset) {
+        xic = nsIMEGtkIC::GetXIC(mIMEShellWindow, gPreeditFontset,
+                                 gStatusFontset);
+        if (xic) {
+          xic->SetPreeditSpotLocation(0, 14);
+          entry->mShellWindow = mIMEShellWindow;
+          entry->mXIC = xic;
+          mIMEShellWindow->mIMEShellWindow = mIMEShellWindow;
+          return xic;
+        }
+      }
     }
+
+    // ran out of memory somewhere in this block...
+    PL_DHashTableRawRemove(&gXICLookupTable, entry);
   }
+
   return nsnull;
 }
 
@@ -4053,12 +3982,8 @@ nsWindow::IMEComposeStart(guint aTime)
     return;
   }
 #endif // USE_XIM 
-  nsCompositionEvent compEvent;
-  compEvent.widget = NS_STATIC_CAST(nsWidget *, this);
-  compEvent.point.x = compEvent.point.y = 0;
+  nsCompositionEvent compEvent(NS_COMPOSITION_START, this);
   compEvent.time = aTime;
-  compEvent.message = compEvent.eventStructType
-    = compEvent.compositionMessage = NS_COMPOSITION_START;
 
   OnComposition(compEvent);
 
@@ -4130,7 +4055,7 @@ void
 nsWindow::IMEComposeText(GdkEventKey *aEvent,
                          const PRUnichar *aText, const PRInt32 aLen,
                          const char *aFeedback) {
-  nsTextEvent textEvent;
+  nsTextEvent textEvent(NS_TEXT_TEXT, this);
   if (aEvent) {
     textEvent.isShift = (aEvent->state & GDK_SHIFT_MASK) ? PR_TRUE : PR_FALSE;
     textEvent.isControl = (aEvent->state & GDK_CONTROL_MASK) ? PR_TRUE : PR_FALSE;
@@ -4138,23 +4063,10 @@ nsWindow::IMEComposeText(GdkEventKey *aEvent,
     // XXX
     textEvent.isMeta = PR_FALSE; //(aEvent->state & GDK_MOD2_MASK) ? PR_TRUE : PR_FALSE;
     textEvent.time = aEvent->time;
-  } else {
-    textEvent.time = 0;
-    textEvent.isShift = textEvent.isControl =
-      textEvent.isAlt = textEvent.isMeta = PR_FALSE;
   }
-  textEvent.message = textEvent.eventStructType = NS_TEXT_EVENT;
-  textEvent.widget = NS_STATIC_CAST(nsWidget *, this);
-  textEvent.point.x = textEvent.point.y = 0;
 
-  if (aLen == 0) {
-    textEvent.theText = nsnull;
-    textEvent.rangeCount = 0;
-    textEvent.rangeArray = nsnull;
-  } else {
+  if (aLen != 0) {
     textEvent.theText = (PRUnichar*)aText;
-    textEvent.rangeCount = 0;
-    textEvent.rangeArray = nsnull;
 #ifdef USE_XIM
     if (aFeedback) {
       nsIMEPreedit::IMSetTextRange(aLen,
@@ -4181,12 +4093,8 @@ nsWindow::IMEComposeEnd(guint aTime)
   }
 #endif // USE_XIM 
 
-  nsCompositionEvent compEvent;
-  compEvent.widget = NS_STATIC_CAST(nsWidget*, this);
-  compEvent.point.x = compEvent.point.y = 0;
+  nsCompositionEvent compEvent(NS_COMPOSITION_END, this);
   compEvent.time = aTime;
-  compEvent.message = compEvent.eventStructType
-    = compEvent.compositionMessage = NS_COMPOSITION_END;
   OnComposition(compEvent);
 
 #ifdef USE_XIM
@@ -4275,6 +4183,7 @@ gdk_wmspec_change_state (gboolean   add,
 }
 
 #ifndef MOZ_XUL
+void nsWindow::ApplyTransparencyBitmap() {}
 void nsWindow::ResizeTransparencyBitmap(PRInt32 aNewWidth, PRInt32 aNewHeight) {
 }
 #else
@@ -4312,19 +4221,25 @@ NS_IMETHODIMP nsWindow::GetWindowTranslucency(PRBool& aTranslucent) {
   return NS_OK;
 }
 
+static gchar* CreateDefaultTransparencyBitmap(PRInt32 aWidth, PRInt32 aHeight) {
+  PRInt32 size = ((aWidth+7)/8)*aHeight;
+  gchar* bits = new gchar[size];
+  if (bits) {
+    memset(bits, 255, size);
+  }
+  return bits;
+}
+
 void nsWindow::ResizeTransparencyBitmap(PRInt32 aNewWidth, PRInt32 aNewHeight) {
   if (!mTransparencyBitmap)
     return;
 
-  PRInt32 newSize = ((aNewWidth+7)/8)*aNewHeight;
-  gchar* newBits = new gchar[newSize];
+  gchar* newBits = CreateDefaultTransparencyBitmap(aNewWidth, aNewHeight);
   if (!newBits) {
     delete[] mTransparencyBitmap;
     mTransparencyBitmap = nsnull;
     return;
   }
-  // fill new mask with "opaque", first
-  memset(newBits, 255, newSize);
 
   // Now copy the intersection of the old and new areas into the new mask
   PRInt32 copyWidth = PR_MIN(aNewWidth, mBounds.width);
@@ -4387,6 +4302,12 @@ static void UpdateMaskBits(gchar* aMaskBits, PRInt32 aMaskWidth, PRInt32 aMaskHe
 }
 
 void nsWindow::ApplyTransparencyBitmap() {
+  if (!mTransparencyBitmap) {
+    mTransparencyBitmap = CreateDefaultTransparencyBitmap(mBounds.width, mBounds.height);
+    if (!mTransparencyBitmap)
+      return;
+  }
+
   gtk_widget_reset_shapes(mShell);
   GdkBitmap* maskBitmap = gdk_bitmap_create_from_data(mShell->window,
                                                       mTransparencyBitmap,
@@ -4406,12 +4327,10 @@ NS_IMETHODIMP nsWindow::UpdateTranslucentWindowAlpha(const nsRect& aRect,
 
   NS_ASSERTION(mIsTranslucent, "Window is not transparent");
 
-  if (mTransparencyBitmap == nsnull) {
-    PRInt32 size = ((mBounds.width+7)/8)*mBounds.height;
-    mTransparencyBitmap = new gchar[size];
-    if (mTransparencyBitmap == nsnull)
+  if (!mTransparencyBitmap) {
+    mTransparencyBitmap = CreateDefaultTransparencyBitmap(mBounds.width, mBounds.height);
+    if (!mTransparencyBitmap)
       return NS_ERROR_FAILURE;
-    memset(mTransparencyBitmap, 255, size);
   }
 
   NS_ASSERTION(aRect.x >= 0 && aRect.y >= 0
@@ -4491,17 +4410,6 @@ nsWindow::MakeFullScreen(PRBool aFullScreen)
 }
 #endif
 
-PRBool PR_CALLBACK
-nsWindow::IconEntryMatches(PLDHashTable* aTable,
-                           const PLDHashEntryHdr* aHdr,
-                           const void* aKey)
-{
-  const IconEntry* entry = NS_STATIC_CAST(const IconEntry*, aHdr);
-  const char* string = NS_REINTERPRET_CAST(const char*, aKey);
-
-  return strcmp(entry->string, string) == 0;
-}
-
 void PR_CALLBACK
 nsWindow::ClearIconEntry(PLDHashTable* aTable, PLDHashEntryHdr* aHdr)
 {
@@ -4517,4 +4425,22 @@ nsWindow::ClearIconEntry(PLDHashTable* aTable, PLDHashEntryHdr* aHdr)
   if (entry->string)
     free((void*) entry->string);
   PL_DHashClearEntryStub(aTable, aHdr);
+}
+
+/* static */
+int
+is_parent_ungrab_enter(GdkEventCrossing *event)
+{
+  return (GDK_CROSSING_UNGRAB == event->mode) &&
+    ((GDK_NOTIFY_ANCESTOR == event->detail) ||
+     (GDK_NOTIFY_VIRTUAL == event->detail));
+}
+
+/* static */
+int
+is_parent_grab_leave(GdkEventCrossing *event)
+{
+  return (GDK_CROSSING_GRAB == event->mode) &&
+    ((GDK_NOTIFY_ANCESTOR == event->detail) ||
+     (GDK_NOTIFY_VIRTUAL == event->detail));
 }

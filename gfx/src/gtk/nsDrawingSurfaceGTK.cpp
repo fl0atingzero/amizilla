@@ -174,7 +174,10 @@ NS_IMETHODIMP nsDrawingSurfaceGTK :: Lock(PRInt32 aX, PRInt32 aY,
 
   *aBits = GDK_IMAGE_XIMAGE(mImage)->data;
 
-  *aWidthBytes = aWidth*(mImage->bpp >> 3);
+  // Use GDK_IMAGE_XIMAGE(mImage)->bits_per_pixel instead of mImage->bpp
+  // since, although bpp is documented as *bytes* per pixel, GDK1 sometimes
+  // set it as *bits* per pixel.
+  *aWidthBytes = aWidth * ((GDK_IMAGE_XIMAGE(mImage)->bits_per_pixel + 7) / 8);
   *aStride = GDK_IMAGE_XIMAGE(mImage)->bytes_per_line;
 
 #ifdef CHEAP_PERFORMANCE_MEASUREMENT
@@ -314,6 +317,9 @@ nsresult nsDrawingSurfaceGTK :: Init(GdkGC *aGC, PRUint32 aWidth,
   mIsOffscreen = PR_TRUE;
 
   mPixmap = ::gdk_pixmap_new(nsnull, mWidth, mHeight, mDepth);
+#ifdef MOZ_WIDGET_GTK2
+  gdk_drawable_set_colormap(GDK_DRAWABLE(mPixmap), gdk_rgb_get_colormap());
+#endif
 
   if (mImage)
     gdk_image_destroy(mImage);

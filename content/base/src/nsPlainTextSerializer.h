@@ -70,7 +70,7 @@ public:
                         PRInt32 aEndOffset, nsAString& aStr);
   NS_IMETHOD AppendCDATASection(nsIDOMCDATASection* aCDATASection,
                                 PRInt32 aStartOffset, PRInt32 aEndOffset,
-                                nsAString& aStr) { return NS_OK; }
+                                nsAString& aStr);
   NS_IMETHOD AppendProcessingInstruction(nsIDOMProcessingInstruction* aPI,
                                          PRInt32 aStartOffset,
                                          PRInt32 aEndOffset,
@@ -91,7 +91,7 @@ public:
 
   // nsIContentSink
   NS_IMETHOD WillBuildModel(void) { return NS_OK; }
-  NS_IMETHOD DidBuildModel(PRInt32 aQualityLevel) { return NS_OK; }
+  NS_IMETHOD DidBuildModel(void) { return NS_OK; }
   NS_IMETHOD WillInterrupt(void) { return NS_OK; }
   NS_IMETHOD WillResume(void) { return NS_OK; }
   NS_IMETHOD SetParser(nsIParser* aParser) { return NS_OK; }
@@ -148,7 +148,7 @@ protected:
   PRBool IsInPre();
   PRBool IsInOL();
   PRBool IsCurrentNodeConverted(const nsIParserNode* aNode);
-  nsresult GetIdForContent(nsIContent* aContent, PRInt32* aID);
+  static PRInt32 GetIdForContent(nsIContent* aContent);
   nsresult DoOpenContainer(const nsIParserNode* aNode, PRInt32 aTag);
   nsresult DoCloseContainer(PRInt32 aTag);
   nsresult DoAddLeaf(const nsIParserNode* aNode,

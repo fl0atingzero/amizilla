@@ -176,7 +176,7 @@ PRUnichar nsCompressedMap::Lookup(
 
 nsrefcnt nsCaseConversionImp2::gInit      = 0;
 
-NS_IMPL_ISUPPORTS1(nsCaseConversionImp2, nsICaseConversion);
+NS_IMPL_ISUPPORTS1(nsCaseConversionImp2, nsICaseConversion)
 
 static nsCompressedMap *gUpperMap = nsnull;
 static nsCompressedMap *gLowerMap = nsnull;
@@ -336,96 +336,6 @@ nsresult nsCaseConversionImp2::ToTitle(
     }
 
     bLastIsSpace = IS_ASCII_SPACE(aReturn[i]);
-  }
-  return NS_OK;
-}
-
-#define k_ss         0x00df
-#define kDot_I       0x0130
-#define kDot_i       PRUnichar('i')
-#define kDotLess_I   PRUnichar('I')
-#define kDotLess_i   0x0131
-
-NS_IMETHODIMP nsCaseConversionImp2::ToUpper
-  (const PRUnichar* anIn, PRUint32 aLen, nsString& anOut, const PRUnichar* aLocale) 
-{
-  anOut.Assign(anIn,aLen);
-
-  // Special casing - Turkish dotless I
-  if((nsnull != aLocale ) && (PRUnichar('t')==aLocale[0]) && (PRUnichar('r') == aLocale[1]))
-  {
-     for(PRUnichar* s=(PRUnichar*)anOut.get(); *s ; s++)
-     {
-        if(kDot_i == *s)
-             *s = kDot_I;
-     }
-  }
-
-  ToUpper(anOut.get(), (PRUnichar*)anOut.get(), anOut.Length());
-
-  // Special casing - SS
-  PRInt32 idx=0;
-  for(PRUnichar* s=(PRUnichar*)anOut.get(); *s ; s++,idx++)
-  {
-     if(k_ss == *s) {
-        *s = PRUnichar('S') ; 
-        anOut.Insert(PRUnichar('S'),idx);
-        // Insert may cause reallocate, so we need to get() again
-        s = (PRUnichar*)anOut.get() + idx;
-        idx++;
-     }
-  }
-  return NS_OK;
-}
-NS_IMETHODIMP nsCaseConversionImp2::ToLower
-  (const PRUnichar* anIn, PRUint32 aLen, nsString& anOut, const PRUnichar* aLocale) 
-{
-  anOut.Assign(anIn,aLen);
-
-  // Special casing - Turkish dotless I
-  if((nsnull != aLocale ) && (PRUnichar('t')==aLocale[0]) && (PRUnichar('r') == aLocale[1]))
-  {
-     for(PRUnichar* s=(PRUnichar*)anOut.get(); *s ; s++)
-     {
-        if(kDot_I == *s)
-             *s = kDot_I;
-     }
-  }
-
-  ToLower(anOut.get(), (PRUnichar*)anOut.get(), anOut.Length());
-
-  return NS_OK;
-}
-NS_IMETHODIMP nsCaseConversionImp2::ToTitle
-  (const PRUnichar* anIn, PRUint32 aLen, nsString& anOut, const PRUnichar* aLocale,
-              PRBool aStartInWordBoundary)
-{
-  anOut.Assign(anIn,aLen);
-
-  // Special casing - Turkish dotless I
-  if((nsnull != aLocale ) && (PRUnichar('t')==aLocale[0]) && (PRUnichar('r') == aLocale[1]))
-  {
-     for(PRUnichar* s=(PRUnichar*)anOut.get(); *s ; s++)
-     {
-        if(kDot_i == *s)
-             *s = kDot_I;
-     }
-  }
-
-  ToTitle(anOut.get(), (PRUnichar*)anOut.get(), anOut.Length(),
-              aStartInWordBoundary);
-
-  // Special casing - SS
-  PRInt32 idx=0;
-  for(PRUnichar* s=(PRUnichar*)anOut.get(); *s ; s++,idx++)
-  {
-     if(k_ss == *s) {
-        *s = PRUnichar('S') ; 
-        anOut.Insert(PRUnichar('S'),idx);
-        // Insert may cause reallocate, so we need to get() again
-        s = (PRUnichar*)anOut.get() + idx;
-        idx++;
-     }
   }
   return NS_OK;
 }

@@ -76,7 +76,7 @@ nsSampleImpl::~nsSampleImpl()
  * The _CI variant adds support for nsIClassInfo, which permits introspection
  * and interface flattening.
  */
-NS_IMPL_ISUPPORTS1_CI(nsSampleImpl, nsISample);
+NS_IMPL_ISUPPORTS1_CI(nsSampleImpl, nsISample)
 
 /**
  * Notice that in the protoype for this function, the NS_IMETHOD macro was
@@ -144,7 +144,7 @@ nsSampleImpl::Poke(const char* aValue)
 
 static void GetStringValue(nsACString& aValue)
 {
-  aValue.Assign("GetValue");
+    NS_CStringSetData(aValue, "GetValue");
 }
 
 NS_IMETHODIMP

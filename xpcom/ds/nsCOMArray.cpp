@@ -37,6 +37,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMArray.h"
+#include "nsCOMPtr.h"
 
 PR_STATIC_CALLBACK(PRBool) ReleaseObjects(void* aElement, void*);
 
@@ -96,7 +97,7 @@ nsCOMArray_base::InsertObjectsAt(const nsCOMArray_base& aObjects, PRInt32 aIndex
         // need to addref all these
         PRInt32 count = aObjects.Count();
         for (PRInt32 i = 0; i < count; ++i) {
-            NS_IF_ADDREF(NS_STATIC_CAST(nsISupports*, aObjects.mArray[i]));
+            NS_IF_ADDREF(aObjects.ObjectAt(i));
         }
     }
     return result;
@@ -114,8 +115,9 @@ nsCOMArray_base::ReplaceObjectAt(nsISupports* aObject, PRInt32 aIndex)
     // ReplaceElementAt could fail, such as if the array grows
     // so only release the existing object if the replacement succeeded
     if (result) {
-        NS_IF_RELEASE(oldObject);
+        // Make sure to addref first, in case aObject == oldObject
         NS_IF_ADDREF(aObject);
+        NS_IF_RELEASE(oldObject);
     }
     return result;
 }

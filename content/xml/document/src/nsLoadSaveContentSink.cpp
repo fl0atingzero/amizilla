@@ -98,9 +98,9 @@ nsLoadSaveContentSink::WillBuildModel(void)
 }
 
 NS_IMETHODIMP
-nsLoadSaveContentSink::DidBuildModel(PRInt32 aQualityLevel)
+nsLoadSaveContentSink::DidBuildModel(void)
 {
-  return mBaseSink->DidBuildModel(aQualityLevel);
+  return mBaseSink->DidBuildModel();
 }
 
 NS_IMETHODIMP
@@ -139,7 +139,7 @@ NS_IMETHODIMP
 nsLoadSaveContentSink::HandleStartElement(const PRUnichar *aName, 
                                           const PRUnichar **aAtts, 
                                           PRUint32 aAttsCount, 
-                                          PRUint32 aIndex, 
+                                          PRInt32 aIndex, 
                                           PRUint32 aLineNumber)
 {
   return mExpatSink->HandleStartElement(aName, aAtts, aAttsCount, aIndex,

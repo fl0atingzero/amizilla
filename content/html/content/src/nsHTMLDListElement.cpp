@@ -42,10 +42,9 @@
 #include "nsHTMLAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsIPresContext.h"
-#include "nsHTMLAttributes.h"
 
 
-class nsHTMLDListElement : public nsGenericHTMLContainerElement,
+class nsHTMLDListElement : public nsGenericHTMLElement,
                            public nsIDOMHTMLDListElement
 {
 public:
@@ -56,29 +55,22 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLElement::)
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLDListElement
   NS_IMETHOD GetCompact(PRBool* aCompact);
   NS_IMETHOD SetCompact(PRBool aCompact);
-
-  NS_IMETHOD StringToAttribute(nsIAtom* aAttribute,
-                               const nsAString& aValue,
-                               nsHTMLValue& aResult);
-  NS_IMETHOD GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                      nsChangeHint& aHint) const;
-  NS_IMETHOD GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const;
 };
 
 nsresult
 NS_NewHTMLDListElement(nsIHTMLContent** aInstancePtrResult,
-                       nsINodeInfo *aNodeInfo)
+                       nsINodeInfo *aNodeInfo, PRBool aFromParser)
 {
   NS_ENSURE_ARG_POINTER(aInstancePtrResult);
 
@@ -112,13 +104,12 @@ nsHTMLDListElement::~nsHTMLDListElement()
 }
 
 
-NS_IMPL_ADDREF(nsHTMLDListElement);
-NS_IMPL_RELEASE(nsHTMLDListElement);
+NS_IMPL_ADDREF(nsHTMLDListElement)
+NS_IMPL_RELEASE(nsHTMLDListElement)
 
 
 // QueryInterface implementation for nsHTMLDListElement
-NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLDListElement,
-                                    nsGenericHTMLContainerElement)
+NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLDListElement, nsGenericHTMLElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLDListElement)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLDListElement)
 NS_HTML_CONTENT_INTERFACE_MAP_END
@@ -143,7 +134,7 @@ nsHTMLDListElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   if (NS_FAILED(rv))
     return rv;
 
-  CopyInnerTo(this, it, aDeep);
+  CopyInnerTo(it, aDeep);
 
   *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
 
@@ -154,48 +145,3 @@ nsHTMLDListElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
 
 
 NS_IMPL_BOOL_ATTR(nsHTMLDListElement, Compact, compact)
-
-
-NS_IMETHODIMP
-nsHTMLDListElement::StringToAttribute(nsIAtom* aAttribute,
-                                      const nsAString& aValue,
-                                      nsHTMLValue& aResult)
-{
-  if (aAttribute == nsHTMLAtoms::compact) {
-    aResult.SetEmptyValue();
-    return NS_CONTENT_ATTR_NO_VALUE;
-  }
-  return NS_CONTENT_ATTR_NOT_THERE;
-}
-
-static void
-MapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes, nsRuleData* aData)
-{
-  nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aData);
-}
-
-NS_IMETHODIMP
-nsHTMLDListElement::GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                             nsChangeHint& aHint) const
-{
-  static const AttributeImpactEntry attributes[] = {
-    { &nsHTMLAtoms::compact, NS_STYLE_HINT_CONTENT }, // handled by ua.css?
-    { nsnull, NS_STYLE_HINT_NONE },
-  };
-
-  static const AttributeImpactEntry* const map[] = {
-    attributes,
-    sCommonAttributeMap
-  };
-
-  FindAttributeImpact(aAttribute, aHint, map, NS_ARRAY_LENGTH(map));
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLDListElement::GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const
-{
-  aMapRuleFunc = &MapAttributesIntoRule;
-  return NS_OK;
-}

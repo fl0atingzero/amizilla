@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /*
  * The contents of this file are subject to the Netscape Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -27,7 +27,7 @@
 #include "nsDebug.h"
 #include "nsIServiceManager.h"
 #include "nsIEventQueueService.h"
-#include "nsICertificatePrincipal.h"
+#include "nsIJSContextStack.h"
 
 static NS_DEFINE_IID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 
@@ -39,8 +39,9 @@ MOZ_DECL_CTOR_COUNTER(nsXPITriggerItem)
 
 nsXPITriggerItem::nsXPITriggerItem( const PRUnichar* aName,
                                     const PRUnichar* aURL,
+                                    const PRUnichar* aIconURL,
                                     PRInt32 aFlags)
-  : mName(aName), mURL(aURL), mFlags(aFlags)
+  : mName(aName), mURL(aURL), mIconURL(aIconURL), mFlags(aFlags)
 {
     MOZ_COUNT_CTOR(nsXPITriggerItem);
 
@@ -93,15 +94,24 @@ PRBool nsXPITriggerItem::IsRelativeURL()
 void
 nsXPITriggerItem::SetPrincipal(nsIPrincipal* aPrincipal)
 {
-	mPrincipal = aPrincipal;
+    mPrincipal = aPrincipal;
 
-	nsCOMPtr<nsICertificatePrincipal> cp(do_QueryInterface(aPrincipal));
-	if (cp) {
-		nsXPIDLCString cName;
-		cp->GetCommonName(getter_Copies(cName));
-		mCertName = NS_ConvertUTF8toUCS2(cName);
-	}
+    // aPrincipal can be null for various failure cases.
+    // see bug 213894 for an example.
+    // nsXPInstallManager::OnCertAvailable can be called with a null principal
+    // and it can also force a null principal.
+    if (!aPrincipal)
+        return;
+
+    PRBool hasCert;
+    aPrincipal->GetHasCertificate(&hasCert);
+    if (hasCert) {
+        nsXPIDLCString cName;
+        aPrincipal->GetCommonName(getter_Copies(cName));
+        mCertName = NS_ConvertUTF8toUCS2(cName);
+    }
 }
+
 //
 // nsXPITriggerInfo
 //
@@ -177,12 +187,20 @@ static void* handleTriggerEvent(XPITriggerEvent* event)
                              event->status );
     if ( args )
     {
+        nsCOMPtr<nsIJSContextStack> stack =
+            do_GetService("@mozilla.org/js/xpc/ContextStack;1");
+        if (stack)
+            stack->Push(event->cx);
+
         JS_CallFunctionValue( event->cx,
                               JSVAL_TO_OBJECT(event->global),
                               event->cbval,
                               2,
                               args,
                               &ret );
+
+        if (stack)
+            stack->Pop(nsnull);
 
         JS_PopArguments( event->cx, mark );
     }

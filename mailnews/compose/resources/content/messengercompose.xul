@@ -20,7 +20,7 @@
    - 
    - Contributor(s):
    -   Ben Goodger <ben@netscape.com> (ass'td polish fixes)
-   -   Håkan Waara <hwaara@chello.se>
+   -   HÃ¥kan Waara <hwaara@chello.se>
    -   Neil Rashbrook <neil@parkwaycc.co.uk> (ass'td polish fix)
   -->
 
@@ -47,6 +47,9 @@
 %messengerDTD;
 <!ENTITY % brandDTD SYSTEM "chrome://global/locale/brand.dtd" >
 %brandDTD;
+<!ENTITY % platformCommunicatorDTD SYSTEM
+  "chrome://communicator-platform/locale/platformCommunicatorOverlay.dtd">
+%platformCommunicatorDTD;
 ]>
 
 <window id="msgcomposeWindow"
@@ -103,6 +106,7 @@
   <command id="cmd_new" oncommand="goDoCommand('cmd_newMessage')"/>
   <command id="cmd_attachFile" oncommand="goDoCommand('cmd_attachFile')"/>
   <command id="cmd_attachPage" oncommand="goDoCommand('cmd_attachPage')"/>
+  <command id="cmd_attachVCard" checked="false" oncommand="ToggleAttachVCard(event.target)"/>
   <command id="cmd_close" oncommand="goDoCommand('cmd_close')"/>
   <command id="cmd_saveDefault" oncommand="goDoCommand('cmd_saveDefault')"/>
   <command id="cmd_saveAsFile" oncommand="goDoCommand('cmd_saveAsFile')"/>
@@ -157,7 +161,6 @@
   <key id="key_cut"/>
   <key id="key_copy"/>
   <key id="key_paste"/>
-  <key id="pastequotationkb"/>
   <key id="key_delete"/>
   <key id="key_selectAll"/>
   <key id="key_find"  key="&findCmd.key;"  command="cmd_find" modifiers="accel"/>
@@ -168,7 +171,11 @@
   
   <!-- Options Menu -->
   <!-- key id="key_selectAddresses" xulkey="true" key="&selectAddressCmd.key;" command="cmd_selectAddress"/ -->
-  <key id="key_checkspelling"  key="&checkSpellingCmd.key;" command="cmd_spelling"  modifiers="accel"/>
+  <key id="key_checkspelling"
+       key="&checkSpellingCmd.key;"
+       command="cmd_spelling"  
+       modifiers="&accel.emacs_conflict;"
+  />
   
   <!-- Tab/F6 Keys -->
   <key keycode="VK_TAB" oncommand="SwitchElementFocus(event);" modifiers="control"/>
@@ -186,6 +193,7 @@
   <menuitem label="&cut.label;" accesskey="&cut.accesskey;" command="cmd_cut"/>
   <menuitem label="&copy.label;" accesskey="&copy.accesskey;" command="cmd_copy"/>
   <menuitem label="&paste.label;" accesskey="&paste.accesskey;" command="cmd_paste"/>
+  <menuitem command="cmd_pasteNoFormatting"/>
   <menuitem label="&pasteQuote.label;" accesskey="&pasteQuote.accesskey;" command="cmd_pasteQuote"/>
   <menuitem label="&delete.label;" accesskey="&delete.accesskey;" command="cmd_delete"/>
   <menuseparator/>
@@ -196,7 +204,8 @@
   <menuitem label="&delete.label;" accesskey="&delete.accesskey;" command="cmd_delete"/>
   <menuitem label="&selectAll.label;" accesskey="&selectAll.accesskey;" command="cmd_selectAll"/>
   <menuseparator/>
-  <menuitem label="&addAttachment.label;" accesskey="&addAttachment.accesskey;" command="cmd_attachFile"/>
+  <menuitem label="&attachFile.label;" accesskey="&attachFile.accesskey;" command="cmd_attachFile"/>
+  <menuitem label="&attachPage.label;" accesskey="&attachPage.accesskey;" command="cmd_attachPage"/>
 </popup>
 
   <toolbox class="toolbox-top" id="headers-box">
@@ -211,9 +220,14 @@
               <menuitem id="menu_newEditor"/>
             </menupopup>
           </menu>
-          <menuitem label="&attachFileCmd.label;" accesskey="&attachFileCmd.accesskey;" command="cmd_attachFile"/>
-          <menuitem label="&attachPageCmd.label;" accesskey="&attachPageCmd.accesskey;" command="cmd_attachPage"/>
-          <menuitem hidden="true" observes="Communicator:WorkMode"/>
+          <menu label="&attachMenu.label;" accesskey="&attachMenu.accesskey;">
+            <menupopup>
+              <menuitem label="&attachFileCmd.label;" accesskey="&attachFileCmd.accesskey;" command="cmd_attachFile"/>
+              <menuitem label="&attachPageCmd.label;" accesskey="&attachPageCmd.accesskey;" command="cmd_attachPage"/>
+              <menuseparator/>
+              <menuitem type="checkbox" label="&attachVCardCmd.label;" accesskey="&attachVCardCmd.accesskey;" command="cmd_attachVCard"/>
+            </menupopup>
+          </menu>
           <menuitem id="menu_close"/>
           <menuseparator/>
           <menuitem label="&saveCmd.label;" accesskey="&saveCmd.accesskey;" key="key_save" command="cmd_saveDefault"/>
@@ -241,6 +255,7 @@
           <menuitem id="menu_cut"/>
           <menuitem id="menu_copy"/>
           <menuitem id="menu_paste"/>
+          <menuitem id="menu_pasteNoFormatting" command="cmd_pasteNoFormatting"/>
           <menuitem id="menu_pasteQuote"/>
           <menuitem label="&editRewrapCmd.label;" accesskey="&editRewrapCmd.accesskey;" command="cmd_rewrap"/>
           <menuitem id="menu_delete"/>
@@ -403,6 +418,8 @@
          <menupopup>
            <menuitem label="&attachFileCmd.label;" accesskey="&attachFileCmd.accesskey;" command="cmd_attachFile"/>
            <menuitem label="&attachPageCmd.label;" accesskey="&attachPageCmd.accesskey;" command="cmd_attachPage"/>
+           <menuseparator/>
+           <menuitem type="checkbox" label="&attachVCardCmd.label;" accesskey="&attachVCardCmd.accesskey;" command="cmd_attachVCard"/>
          </menupopup>
        </toolbarbutton>
        <toolbarbutton class="toolbarbutton-1"
@@ -454,6 +471,7 @@
           <label id="attachmentBucketText" value="&attachments.label;" crop="right"
                  accesskey="&attachments.accesskey;" control="attachmentBucket"/>
           <listbox seltype="multiple" id="attachmentBucket" flex="1" rows="4"
+                   style="-moz-user-focus: none;"
                    context="msgComposeAttachmentContext"
                    onkeypress="if (event.keyCode == 8 || event.keyCode == 46) RemoveSelectedAttachment();"
                    onclick="AttachmentBucketClicked(event);"
@@ -493,7 +511,7 @@
   <!-- The mail message body frame -->
   <vbox id="appcontent" flex="1">
     <editor type="content-primary" id="content-frame" src="about:blank" name="browser.message.body" flex="1"
-            onkeypress="editorKeyPress(event);" context="msgComposeContext"/>
+            context="msgComposeContext"/>
   </vbox>
 
   <statusbar id="status-bar" class="chromeclass-status">

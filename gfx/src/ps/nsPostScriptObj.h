@@ -21,6 +21,7 @@
  *
  * Contributor(s):
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
+ *   Ken Herron <kherron@newsguy.com>
  *
  *
  * Alternatively, the contents of this file may be used under the terms of
@@ -45,6 +46,7 @@
 #ifdef __cplusplus
 #include "nsColor.h"
 #include "nsCoord.h"
+#include "nsRect.h"
 #include "nsString.h"
 
 #include "nsCOMPtr.h"
@@ -54,6 +56,7 @@
 
 #include "nsIDeviceContextSpecPS.h"
 #include "nsIPersistentProperties2.h"
+#include "nsTempfilePS.h"
 
 class nsIImage;
 #endif
@@ -62,70 +65,10 @@ class nsIImage;
 
 #define N_FONTS 8
 #define INCH_TO_PAGE(f) ((int) (.5 + (f)*720))
-#define PAGE_TO_POINT_I(f) ((int) ((f) / 10.0))
-#define PAGE_TO_POINT_F(f) ((f) / 10.0)
-#define POINT_TO_PAGE(p) ((p)*10)
 
 typedef int XP_Bool;
 
-typedef struct {
-  const char *name;
-  float       left,
-              top,
-              right,
-              bottom,
-              width,
-              height;
-} PSPaperSizeRec;
-
- 
-static const
-PSPaperSizeRec postscript_module_paper_sizes[] =
-{
-  { "A5",        0.25f, 0.25f, 0.25f, 0.25f,  5.33f,  7.77f }, /* 148mm X 210mm ( 5.83in X  8.27in) */
-  { "A4",        0.25f, 0.25f, 0.25f, 0.25f,  7.77f, 11.19f }, /* 210mm X 297mm ( 8.27in X 11.69in) */
-  { "A3",        0.25f, 0.25f, 0.25f, 0.25f, 11.19f, 16.03f }, /* 297mm X 420mm (11.69in X 16.53in) */
-  { "Letter",    0.25f, 0.25f, 0.25f, 0.25f,  8.00f, 10.50f }, /* 8.50in X 11.0in */
-  { "Legal",     0.25f, 0.25f, 0.25f, 0.25f,  8.00f, 13.50f }, /* 8.50in X 14.0in */
-  { "Executive", 0.25f, 0.25f, 0.25f, 0.25f,  7.00f,  9.50f }, /* 7.50in X 10.0in */
-  { 0,           0.25f, 0.25f, 0.25f, 0.25f,  0.00f,  0.0f  }
-};
-
-#define PSPaperSizeRec_FullPaperWidth(rec)  ((rec)->left + (rec)->right  + (rec)->width)
-#define PSPaperSizeRec_FullPaperHeight(rec) ((rec)->top  + (rec)->bottom + (rec)->height)
-
-/* This will be extended some day... */
-typedef struct {
-  const char *orientation;
-} PSOrientationRec;
-
-/* This will be extended some day... */
-static const
-PSOrientationRec postscript_module_orientations[] =
-{
-  { "portrait"  },
-  { "landscape" },
-  { NULL        }
-};
-
 typedef void (*XL_CompletionRoutine)(void*);
-
-
-typedef struct {
-    short llx, lly, urx, ury;
-} PS_BBox;
-
-typedef struct {
-	short wx, wy;
-	PS_BBox charBBox;
-} PS_CharInfo;
-
-typedef struct {
-    const char *name;
-    PS_BBox fontBBox;
-    short upos, uthick;
-    PS_CharInfo chars[256];
-} PS_FontInfo;
 
 typedef struct page_breaks {
     int32 y_top;
@@ -145,21 +88,7 @@ typedef struct LineRecord_struct LineRecord;
 ** Used to store state needed while translation is in progress
 */
 struct PrintInfo_ {
-  /*	for table printing */
-  int32	page_height;	/* Size of printable area on page  */
-  int32	page_width;	  /* Size of printable area on page  */
-  int32	page_break;	  /* Current page bottom  */
-  int32 page_topy;	  /* Current page top  */
-  int phase;
-
-	PageBreaks *pages;	/* Contains extents of each page  */
-
-  int pt_size;		    /* Size of above table  */
-  int n_pages;		    /* # of valid entries in above table */
-
   const char *doc_title; /* best guess at title */
-  int32 doc_width;	 /* Total document width */
-  int32 doc_height;	 /* Total document height */
 
 #ifdef LATER
   THIS IS GOING TO BE DELETED XXXXX
@@ -186,16 +115,12 @@ typedef struct PrintInfo_ PrintInfo;
 ** Used to pass info into text and/or postscript translation
 */
 struct PrintSetup_ {
-  int top;                        /* Margins  (PostScript Only) */
-  int bottom;
-  int left;
-  int right;
-
-  int width;                       /* Paper size, # of cols for text xlate */
-  int height;
+  nscoord width;                /* Page size, in twips, as oriented for */
+  nscoord height;               /* this print job. */
   
   const char* header;
   const char* footer;
+  const char* paper_name;
 
   int *sizes;
   XP_Bool reverse;              /* Output order */
@@ -205,33 +130,21 @@ struct PrintSetup_ {
   XP_Bool underline;            /* underline links */
   XP_Bool scale_images;         /* Scale unsized images which are too big */
   XP_Bool scale_pre;		        /* do the pre-scaling thing */
-  float dpi;                    /* dpi for externally sized items */
   float rules;			            /* Scale factor for rulers */
   int n_up;                     /* cool page combining */
   int bigger;                   /* Used to init sizes if sizesin NULL */
-  const PSPaperSizeRec *paper_size; /* Paper size record */
   const char* prefix;           /* For text xlate, prepended to each line */
   const char* eol;              /* For text translation, line terminator  */
   const char* bullet;           /* What char to use for bullets */
 
   struct URL_Struct_ *url;      /* url of doc being translated */
   FILE *out;                    /* Where to send the output */
-  const char *filename;         /* output file name, if any */
   FILE *tmpBody;                   /* temp file for True-Type printing */
-  const char *tmpBody_filename;    /* temp file name*/
   XL_CompletionRoutine completion; /* Called when translation finished */
   void* carg;                   /* Data saved for completion routine */
   int status;                   /* Status of URL on completion */
   const char *print_cmd;        /* print command */
   int num_copies;               /* Number of copies of job to print */
-
-	/* "other" font is for encodings other than iso-8859-1 */
-  char *otherFontName[N_FONTS];		   
-  /* name of "other" PostScript font */
-  PS_FontInfo *otherFontInfo[N_FONTS];	   
-  /* font info parsed from "other" afm file */
-  int16 otherFontCharSetID;	    /* charset ID of "other" font */
-
 };
 
 typedef struct PrintSetup_ PrintSetup;
@@ -288,22 +201,24 @@ public:
    */
   void add_cid_check();
   /** ---------------------------------------------------
-   *  move the cursor to this location
-   *	@update 2/1/99 dwc
+   *  move the current point to this location
+   *	@update 9/30/2003 kherron
+   *	@param  aX   X coordinate
+   *	        aY   Y coordinate
+   *    @return VOID
    */
-  void moveto(int aX, int aY);
+  void moveto(nscoord aX, nscoord aY);
   /** ---------------------------------------------------
-   *  move the cursor to this location
-   *	@update 2/1/99 dwc
+   *  Add a line to the current path, from the current point
+   *  to the specified point.
+   *	@update 9/30/2003
+   *	@param  aX   X coordinate
+   *	        aY   Y coordinate
+   *	@return VOID
    */
-  void moveto_loc(int aX, int aY);
+  void lineto(nscoord aX, nscoord aY);
   /** ---------------------------------------------------
-   *  put down a line from the current cursor to the x and y location
-   *	@update 2/1/99 dwc
-   */
-  void lineto(int aX, int aY);
-  /** ---------------------------------------------------
-   *  close the current postscript path, basically will return to the starting point
+   *  close the current path.
    *	@update 2/1/99 dwc
    */
   void closepath();
@@ -313,29 +228,35 @@ public:
    *  @param aWidth - Width of the ellipse
    *  @param aHeight - Height of the ellipse
    */
-  void ellipse(int aWidth, int aHeight);
+  void arc(nscoord aWidth, nscoord aHeight,float aStartAngle,float aEndAngle);
   /** ---------------------------------------------------
-   *  create an elliptical path
-   *	@update 2/1/99 dwc
-   *  @param aWidth - Width of the ellipse
-   *  @param aHeight - Height of the ellipse
+   *  create a retangular path. The current point is at
+   *  the top left corner.
+   *	@update 9/30/2003 kherron
+   *	@param aX      Starting point X
+   *	@param aY      Starting point Y
+   *	@param aWidth  Distance rightwards.
+   *	@param aHeight Distance downwards.
    */
-  void arc(int aWidth, int aHeight,float aStartAngle,float aEndAngle);
+  void box(nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight);
   /** ---------------------------------------------------
-   *  create a retangular path
-   *	@update 2/1/99 dwc
+   *  create a retangular path, drawing counterclockwise.
+   *  The current point is at the top left corner.
+   *	@update 9/30/2003 kherron
+   *	@param aWidth  Distance rightwards.
+   *	@param aHeight Distance downwards.
    */
-  void box(int aWidth, int aHeight);
+  void box_subtract(nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight);
   /** ---------------------------------------------------
-   *  create a retangular path, but winding the opposite way of a normal path, for clipping
-   *	@update 2/1/99 dwc
+   *  Draw (stroke) a line.
+   *	@update 9/30/2003 kherron
+   *	@param  aX1     Starting point X
+   *	        aY1     Starting point Y
+   *	        aX2     Ending point X
+   *	        aY2     Ending point Y
+   *	        aThick  Line thickness
    */
-  void box_subtract(int aWidth, int aHeight);
-  /** ---------------------------------------------------
-   *  Draw a postscript line
-   *	@update 2/1/99 dwc
-   */
-  void line(int aX1, int aY1, int aX2, int aY2, int aThink);
+  void line(nscoord aX1, nscoord aY1, nscoord aX2, nscoord aY2, nscoord aThick);
   /** ---------------------------------------------------
    *  strock the current path
    *	@update 2/1/99 dwc
@@ -356,17 +277,27 @@ public:
    *	@update 2/1/99 dwc
    */
   void graphics_restore();
-  /** ---------------------------------------------------
-   *  output a color postscript image
-   *	@update 2/1/99 dwc
-   */
-  void colorimage(nsIImage *aImage,int aX, int aY, int aWidth, int aHeight);
 
   /** ---------------------------------------------------
-   *  output a grayscale postscript image
-   *	@update 9/1/99 dwc
+   *  Draw an image. dRect may be thought of as a hole in the document
+   *  page, through which we can see another page containing the image.
+   *  sRect is the portion of the image page which is visible through the 
+   *  hole in the document. iRect is the portion of the image page which
+   *  contains the image represented by anImage. sRect and iRect may be
+   *  at arbitrary positions relative to each other.
+   *
+   *    @update 11/25/2003 kherron
+   *    @param anImage  Image to draw
+   *    @param dRect    Rectangle describing where on the page the image
+   *                    should appear. Units are twips.
+   *    @param sRect    Rectangle describing the portion of the image that
+   *                    appears on the page, i.e. the part of the image's
+   *                    coordinate space that maps to dRect.
+   *    @param iRect    Rectangle describing the portion of the image's
+   *                    coordinate space covered by the image pixel data.
    */
-  void grayimage(nsIImage *aImage,int aX, int aY, int aWidth, int aHeight);
+  void draw_image(nsIImage *anImage,
+      const nsRect& sRect, const nsRect& iRect, const nsRect& dRect);
 
   /** ---------------------------------------------------
    *  ???
@@ -384,15 +315,18 @@ public:
    */
   void finalize_translation();
   /** ---------------------------------------------------
-   *  ???
-   *	@update 2/1/99 dwc
+   *  Output postscript to scale the current coordinate system
+   *	@param aX   X scale factor
+   *	@param aY   Y scale factor
    */
-  void annotate_page( const char*, int, int, int);
+  void scale(float aX, float aY);
   /** ---------------------------------------------------
    *  translate the current coordinate system
-   *	@update 2/1/99 dwc
+   *	@update 9/30/2003
+   *	@param aX   Distance to move X coordinates
+   *	       aY   Distance to move Y coordinates
    */
-  void translate(int aX, int aY);
+  void translate(nscoord aX, nscoord aY);
   /** ---------------------------------------------------
    *  Issue a PS show command, which causes image to be rastered
    *	@update 2/1/99 dwc
@@ -462,7 +396,6 @@ public:
   void settitle(PRUnichar * aTitle);
 
   FILE * GetPrintFile();
-  PRBool  InitUnixPrinterProps();
   PRBool  GetUnixPrinterSetting(const nsCAutoString&, char**);
   PrintSetup            *mPrintSetup;
 private:
@@ -470,6 +403,9 @@ private:
   PRUint16              mPageNumber;
   nsCOMPtr<nsIPersistentProperties> mPrinterProps;
   char                  *mTitle;
+  nsTempfilePS          mTempfileFactory;
+  nsCOMPtr<nsILocalFile> mDocProlog;
+  nsCOMPtr<nsILocalFile> mDocScript;
 
 
 

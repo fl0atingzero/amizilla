@@ -59,8 +59,6 @@
 #include "nsMsgSend.h"
 #include "nsIStreamConverterService.h"
 
-static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID);
-
 NS_IMPL_ISUPPORTS6(nsURLFetcher, nsIURLFetcher, nsIStreamListener, nsIURIContentListener, nsIInterfaceRequestor, nsIWebProgressListener, nsISupportsWeakReference)
 
 
@@ -364,9 +362,7 @@ nsURLFetcher::FireURLRequest(nsIURI *aURL, nsILocalFile *localFile, nsIFileOutpu
   pURILoader->GetLoadGroupForContext(cntListener, getter_AddRefs(loadGroup));
   NS_ENSURE_SUCCESS(NS_NewChannel(getter_AddRefs(channel), aURL, nsnull, loadGroup, this), NS_ERROR_FAILURE);
  
-  rv = pURILoader->OpenURI(channel, PR_FALSE, cntListener);
-
-  return NS_OK;
+  return pURILoader->OpenURI(channel, PR_FALSE, cntListener);
 }
 
 nsresult

@@ -33,6 +33,8 @@ IS_COMPONENT	= 1
 MODULE_NAME	= nsCookieModule
 GRE_MODULE	= 1
 
+PACKAGE_FILE = cookie.pkg
+
 REQUIRES	= xpcom \
 		  string \
 		  necko \
@@ -40,50 +42,27 @@ REQUIRES	= xpcom \
 		  widget \
 		  content \
 		  pref \
-		  intl \
 		  uriloader \
 		  windowwatcher \
 		  docshell \
 		  appshell \
 		  $(NULL)
 
-ifdef ENABLE_TESTS
-DIRS		= tests
-endif
-
 CPPSRCS		= \
 		nsModuleFactory.cpp \
-		nsCookie.cpp \
 		nsPermission.cpp \
-		nsCookieService.cpp \
 		nsImgManager.cpp \
 		nsPermissionManager.cpp \
 		nsPopupWindowManager.cpp \
-		nsCookieHTTPNotify.cpp \
 		nsCookiePromptService.cpp \
 		nsCookiePermission.cpp \
 		$(NULL)
 
-SDK_XPIDLSRCS   = \
-		nsICookie.idl \
-		nsICookieManager.idl \
-		$(NULL)
-
 XPIDLSRCS	= \
-		nsICookie2.idl \
-		nsICookieConsent.idl \
 		nsIImgManager.idl \
-		nsIPermissionManager.idl \
 		nsIPermission.idl \
 		nsICookieAcceptDialog.idl \
 		nsICookiePromptService.idl \
-		nsICookieManager2.idl \
-		nsICookiePermission.idl \
-		$(NULL)
-
-EXPORTS		= \
-		nsCookieHTTPNotify.h \
-		nsCCookieManager.h \
 		$(NULL)
 
 EXTRA_DSO_LDOPTS = \

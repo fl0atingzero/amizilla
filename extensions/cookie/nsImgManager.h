@@ -41,15 +41,11 @@
 
 #include "nsIImgManager.h"
 #include "nsIContentPolicy.h"
-#include "nsCOMPtr.h"
-#include "nsIIOService.h"
-#include "nsIDocShell.h"
 #include "nsIObserver.h"
 #include "nsWeakReference.h"
 #include "nsIPermissionManager.h"
 
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
+class nsIPrefBranch;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -70,22 +66,15 @@ public:
   virtual ~nsImgManager();
   nsresult Init();
 
-private:
-
-  nsresult ReadPrefs();
-  
-  PRBool   mBlockerPref;
-  PRInt32  mBehaviorPref;
-  PRBool   mWarningPref;
-  PRBool   mBlockInMailNewsPref;
-
-  PRBool   mPolicy;
-
 protected:
-  NS_IMETHOD GetRootDocShell(nsIDOMWindow *aWindow, nsIDocShell **result);
 
-  nsCOMPtr<nsIPermissionManager> mPermissionManager;
-  nsCOMPtr<nsIPrefBranch>        mPrefBranch;
+  void PrefChanged(nsIPrefBranch *, const char *);
+
+  nsCOMPtr<nsIPermissionManager> mPermissionManager;  
+  
+  PRUint8      mBehaviorPref;
+  PRPackedBool mWarningPref;
+  PRPackedBool mBlockInMailNewsPref;
 };
 
 // {D60B3710-166D-11d5-A542-0010A401EB10}

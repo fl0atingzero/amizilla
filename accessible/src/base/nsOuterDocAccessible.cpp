@@ -53,40 +53,50 @@ nsOuterDocAccessible::nsOuterDocAccessible(nsIDOMNode* aNode,
   mAccChildCount = 1;
 }
 
+NS_IMETHODIMP nsOuterDocAccessible::GetChildCount(PRInt32 *aAccChildCount) 
+{
+  *aAccChildCount = 1;
+  return NS_OK;  
+}
+
   /* attribute wstring accName; */
-NS_IMETHODIMP nsOuterDocAccessible::GetAccName(nsAString& aAccName) 
+NS_IMETHODIMP nsOuterDocAccessible::GetName(nsAString& aName) 
 { 
   nsCOMPtr<nsIAccessibleDocument> accDoc(do_QueryInterface(mFirstChild));
   if (!accDoc) {
     return NS_ERROR_FAILURE;
   }
-  nsresult rv = accDoc->GetTitle(aAccName);
-  if (NS_FAILED(rv) || aAccName.IsEmpty())
-    rv = accDoc->GetURL(aAccName);
+  nsresult rv = accDoc->GetTitle(aName);
+  if (NS_FAILED(rv) || aName.IsEmpty())
+    rv = accDoc->GetURL(aName);
   return rv;
 }
 
-NS_IMETHODIMP nsOuterDocAccessible::GetAccValue(nsAString& aAccValue) 
+NS_IMETHODIMP nsOuterDocAccessible::GetValue(nsAString& aValue) 
 { 
   return NS_OK;
 }
 
-/* unsigned long getAccRole (); */
-NS_IMETHODIMP nsOuterDocAccessible::GetAccRole(PRUint32 *_retval)
+/* unsigned long getRole (); */
+NS_IMETHODIMP nsOuterDocAccessible::GetRole(PRUint32 *_retval)
 {
+#ifndef MOZ_ACCESSIBILITY_ATK
   *_retval = ROLE_CLIENT;
+#else
+  *_retval = ROLE_PANE;
+#endif
   return NS_OK;
 }
 
-NS_IMETHODIMP nsOuterDocAccessible::GetAccState(PRUint32 *aAccState)
+NS_IMETHODIMP nsOuterDocAccessible::GetState(PRUint32 *aState)
 {
-  return nsAccessible::GetAccState(aAccState);
+  return nsAccessible::GetState(aState);
 }
 
-NS_IMETHODIMP nsOuterDocAccessible::AccGetBounds(PRInt32 *x, PRInt32 *y, 
+NS_IMETHODIMP nsOuterDocAccessible::GetBounds(PRInt32 *x, PRInt32 *y, 
                                                  PRInt32 *width, PRInt32 *height)
 {
-  return mFirstChild? mFirstChild->AccGetBounds(x, y, width, height): NS_ERROR_FAILURE;
+  return mFirstChild? mFirstChild->GetBounds(x, y, width, height): NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP nsOuterDocAccessible::Init()
@@ -102,17 +112,14 @@ NS_IMETHODIMP nsOuterDocAccessible::Init()
   nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMNode));
   NS_ASSERTION(content, "No nsIContent for <browser>/<iframe>/<editor> dom node");
 
-  nsCOMPtr<nsIDocument> outerDoc;
-  content->GetDocument(getter_AddRefs(outerDoc));
+  nsCOMPtr<nsIDocument> outerDoc = content->GetDocument();
   NS_ENSURE_TRUE(outerDoc, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIDocument> innerDoc;
-  outerDoc->GetSubDocumentFor(content, getter_AddRefs(innerDoc));
+  nsIDocument *innerDoc = outerDoc->GetSubDocumentFor(content);
   nsCOMPtr<nsIDOMNode> innerNode(do_QueryInterface(innerDoc));
   NS_ENSURE_TRUE(innerNode, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIPresShell> innerPresShell;
-  innerDoc->GetShellAt(0, getter_AddRefs(innerPresShell));
+  nsIPresShell *innerPresShell = innerDoc->GetShellAt(0);
   NS_ENSURE_TRUE(innerPresShell, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsIAccessible> innerAccessible;
@@ -122,6 +129,8 @@ NS_IMETHODIMP nsOuterDocAccessible::Init()
                                    getter_AddRefs(innerAccessible));
   NS_ENSURE_TRUE(innerAccessible, NS_ERROR_FAILURE);
 
-  SetAccFirstChild(innerAccessible); // weak ref
-  return innerAccessible->SetAccParent(this);
+  SetFirstChild(innerAccessible); // weak ref
+  nsCOMPtr<nsPIAccessible> privateInnerAccessible = 
+    do_QueryInterface(innerAccessible);
+  return privateInnerAccessible->SetParent(this);
 }

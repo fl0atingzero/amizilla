@@ -52,7 +52,8 @@ MOZ_DECL_CTOR_COUNTER(nsXBLProtoImplField)
 nsXBLProtoImplField::nsXBLProtoImplField(const PRUnichar* aName, const PRUnichar* aReadOnly)
   : nsXBLProtoImplMember(aName),
     mFieldText(nsnull),
-    mFieldTextLength(0)
+    mFieldTextLength(0),
+    mLineNumber(0)
 {
   MOZ_COUNT_CTOR(nsXBLProtoImplField);
   mJSAttributes = JSPROP_ENUMERATE;
@@ -80,7 +81,7 @@ nsXBLProtoImplField::AppendFieldText(const nsAString& aText)
 {
   if (mFieldText) {
     nsDependentString fieldTextStr(mFieldText, mFieldTextLength);
-    const nsAString& newFieldText = fieldTextStr + aText;
+    nsAutoString newFieldText = fieldTextStr + aText;
     PRUnichar* temp = mFieldText;
     mFieldText = ToNewUnicode(newFieldText);
     mFieldTextLength = newFieldText.Length();
@@ -93,8 +94,11 @@ nsXBLProtoImplField::AppendFieldText(const nsAString& aText)
 }
 
 nsresult
-nsXBLProtoImplField::InstallMember(nsIScriptContext* aContext, nsIContent* aBoundElement, 
-                                   void* aScriptObject, void* aTargetClassObject)
+nsXBLProtoImplField::InstallMember(nsIScriptContext* aContext,
+                                   nsIContent* aBoundElement, 
+                                   void* aScriptObject,
+                                   void* aTargetClassObject,
+                                   const nsCString& aClassStr)
 {
   if (mFieldTextLength == 0)
     return NS_OK; // nothing to do.
@@ -105,20 +109,30 @@ nsXBLProtoImplField::InstallMember(nsIScriptContext* aContext, nsIContent* aBoun
   if (!scriptObject)
     return NS_ERROR_FAILURE;
 
+  nsCAutoString bindingURI(aClassStr);
+  PRInt32 hash = bindingURI.RFindChar('#');
+  if (hash != kNotFound)
+    bindingURI.Truncate(hash);
+  
   // compile the literal string 
   jsval result = nsnull;
   PRBool undefined;
-  aContext->EvaluateStringWithValue(nsDependentString(mFieldText,
-                                                      mFieldTextLength), 
-                                    scriptObject,
-                                    nsnull, nsnull, 0, nsnull,
-                                    (void*) &result, &undefined);
-              
+  // XXX Need a URI here!
+  nsresult rv = aContext->EvaluateStringWithValue(nsDependentString(mFieldText,
+                                                                    mFieldTextLength), 
+                                                  scriptObject,
+                                                  nsnull, bindingURI.get(),
+                                                  mLineNumber, nsnull,
+                                                  (void*) &result, &undefined);
+  if (NS_FAILED(rv))
+    return rv;
+
   if (!undefined) {
     // Define the evaluated result as a JS property
     nsDependentString name(mName);
-   ::JS_DefineUCProperty(cx, scriptObject, NS_REINTERPRET_CAST(const jschar*, mName), 
-                         name.Length(), result,nsnull, nsnull, mJSAttributes); 
+    if (!::JS_DefineUCProperty(cx, scriptObject, NS_REINTERPRET_CAST(const jschar*, mName), 
+                               name.Length(), result, nsnull, nsnull, mJSAttributes))
+      return NS_ERROR_OUT_OF_MEMORY;
   }
   
   return NS_OK;

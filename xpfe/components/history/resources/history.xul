@@ -32,7 +32,7 @@
 <!DOCTYPE window SYSTEM "chrome://communicator/locale/history/history.dtd" >
 
 <window title="&historyWindowTitle.label;" id="history-window"
-        onload="HistoryWindowInit();"
+        onload="HistoryCommonInit();"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         width="500" height="400"
         persist="width height screenX screenY sizemode"
@@ -103,6 +103,7 @@
       <menu id="groupingMenu" label="&groupBy.label;" accesskey="&groupBy.accesskey;">
         <menupopup>
           <menuitem id="groupByDay" label="&groupByDay.label;" accesskey="&groupByDay.accesskey;" type="radio" oncommand="GroupBy('day');"/>
+          <menuitem id="groupBySite" label="&groupBySite.label;" accesskey="&groupBySite.accesskey;" type="radio" oncommand="GroupBy('site');"/>
           <menuitem id="groupByNone" label="&groupByNone.label;" accesskey="&groupByNone.accesskey;" type="radio" oncommand="GroupBy('none');"/>
         </menupopup>
       </menu>

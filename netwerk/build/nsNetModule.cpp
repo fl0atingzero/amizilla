@@ -43,22 +43,20 @@
 #include "nsIComponentManager.h"
 #include "nsIServiceManager.h"
 #include "nsICategoryManager.h"
-#include "nsNetModuleMgr.h"
 #include "nsSocketProviderService.h"
 #include "nscore.h"
 #include "nsSimpleURI.h"
-#include "nsDnsService.h"
 #include "nsLoadGroup.h"
 #include "nsStreamLoader.h"
 #include "nsUnicharStreamLoader.h"
-#include "nsDownloader.h"
 #include "nsAsyncStreamListener.h"
 #include "nsFileStreams.h"
 #include "nsBufferedStreams.h"
 #include "nsMIMEInputStream.h"
 #include "nsSOCKSSocketProvider.h"
-#include "nsSOCKS4SocketProvider.h"
 #include "nsCacheService.h"
+#include "nsIOThreadPool.h"
+#include "nsMimeTypes.h"
 
 #include "nsNetCID.h"
 
@@ -74,17 +72,23 @@
 
 #include "nsIOService.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsIOService, Init)
+
+#include "nsDNSService2.h"
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsDNSService, Init)
   
 #include "nsProtocolProxyService.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsProtocolProxyService, Init)
 
 #include "nsStreamTransportService.h"
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsStreamTransportService, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsStreamTransportService)
 
 #include "nsSocketTransportService2.h"
 #undef LOG
 #undef LOG_ENABLED
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsSocketTransportService, Init)
+
+#include "nsServerSocket.h"
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsServerSocket)
 
 #include "nsAsyncStreamCopier.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsAsyncStreamCopier)
@@ -95,6 +99,12 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsInputStreamPump)
 #include "nsInputStreamChannel.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsInputStreamChannel)
 
+#include "nsDownloader.h"
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsDownloader)
+
+#include "nsSyncStreamListener.h"
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsSyncStreamListener, Init)
+
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "nsStreamConverterService.h"
@@ -103,12 +113,6 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsInputStreamChannel)
 #include "nsAppleFileDecoder.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsAppleFileDecoder)
 #endif
-
-///////////////////////////////////////////////////////////////////////////////
-
-#include "nsMIMEInfoImpl.h"
-
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsMIMEInfoImpl)
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -131,6 +135,11 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsDirIndex)
 
 #include "nsStreamListenerTee.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsStreamListenerTee)
+
+///////////////////////////////////////////////////////////////////////////////
+
+#include "nsCookieService.h"
+NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsCookieService, nsCookieService::GetSingleton)
 
 ///////////////////////////////////////////////////////////////////////////////
 // protocols
@@ -158,7 +167,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsFileProtocolHandler, Init)
 #ifdef NECKO_PROTOCOL_ftp
 // ftp
 #include "nsFtpProtocolHandler.h"
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsFtpProtocolHandler, Init);
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsFtpProtocolHandler, Init)
 #endif
 
 #ifdef NECKO_PROTOCOL_http
@@ -167,10 +176,8 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsFtpProtocolHandler, Init);
 #include "nsHttpAuthManager.h"
 #include "nsHttpBasicAuth.h"
 #include "nsHttpDigestAuth.h"
-#ifdef XP_WIN
 #include "nsHttpNTLMAuth.h"
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsHttpNTLMAuth, Init)
-#endif
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsHttpNTLMAuth)
 #undef LOG
 #undef LOG_ENABLED
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsHttpHandler, Init)
@@ -219,8 +226,16 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsIDNService, Init)
 
 ///////////////////////////////////////////////////////////////////////////////
 
+#ifdef NECKO_PROTOCOL_ftp
 #include "nsFTPDirListingConv.h"
+nsresult NS_NewFTPDirListingConv(nsFTPDirListingConv** result);
+#endif
+
+#ifdef NECKO_PROTOCOL_gopher
 #include "nsGopherDirListingConv.h"
+nsresult NS_NewGopherDirListingConv(nsGopherDirListingConv** result);
+#endif
+
 #include "nsMultiMixedConv.h"
 #include "nsHTTPCompressConv.h"
 #include "mozTXTToHTMLConv.h"
@@ -231,8 +246,6 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsIDNService, Init)
 #include "nsBinHexDecoder.h"
 #endif
 
-nsresult NS_NewFTPDirListingConv(nsFTPDirListingConv** result);
-nsresult NS_NewGopherDirListingConv(nsGopherDirListingConv** result);
 nsresult NS_NewMultiMixedConv (nsMultiMixedConv** result);
 nsresult MOZ_NewTXTToHTMLConv (mozTXTToHTMLConv** result);
 nsresult NS_NewHTTPCompressConv  (nsHTTPCompressConv ** result);
@@ -245,7 +258,8 @@ nsresult NS_NewStreamConv(nsStreamConverterService **aStreamConv);
 #define MULTI_MIXED_X                "?from=multipart/x-mixed-replace&to=*/*"
 #define MULTI_MIXED                  "?from=multipart/mixed&to=*/*"
 #define MULTI_BYTERANGES             "?from=multipart/byteranges&to=*/*"
-#define UNKNOWN_CONTENT              "?from=application/x-unknown-content-type&to=*/*"
+#define UNKNOWN_CONTENT              "?from=" UNKNOWN_CONTENT_TYPE "&to=*/*"
+#define MAYBE_TEXT                   "?from=" APPLICATION_MAYBE_TEXT "&to=*/*"
 #define GZIP_TO_UNCOMPRESSED         "?from=gzip&to=uncompressed"
 #define XGZIP_TO_UNCOMPRESSED        "?from=x-gzip&to=uncompressed"
 #define COMPRESS_TO_UNCOMPRESSED     "?from=compress&to=uncompressed"
@@ -265,6 +279,7 @@ static const char *const g_StreamConverterArray[] = {
         MULTI_MIXED,
         MULTI_BYTERANGES,
         UNKNOWN_CONTENT,
+        MAYBE_TEXT,
         GZIP_TO_UNCOMPRESSED,
         XGZIP_TO_UNCOMPRESSED,
         COMPRESS_TO_UNCOMPRESSED,
@@ -329,7 +344,7 @@ UnregisterStreamConverters(nsIComponentManager *aCompMgr, nsIFile *aPath,
 }
 
 #ifdef BUILD_BINHEX_DECODER
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsBinHexDecoder);
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsBinHexDecoder)
 #endif
 
 static NS_IMETHODIMP                 
@@ -356,6 +371,7 @@ CreateNewStreamConvServiceFactory(nsISupports* aOuter, REFNSIID aIID, void **aRe
     return rv;              
 }
 
+#ifdef NECKO_PROTOCOL_ftp
 static NS_IMETHODIMP                 
 CreateNewFTPDirListingConv(nsISupports* aOuter, REFNSIID aIID, void **aResult) 
 {
@@ -379,7 +395,9 @@ CreateNewFTPDirListingConv(nsISupports* aOuter, REFNSIID aIID, void **aResult)
     NS_RELEASE(inst);             /* get rid of extra refcnt */      
     return rv;              
 }
+#endif
 
+#ifdef NECKO_PROTOCOL_gopher
 static NS_IMETHODIMP                 
 CreateNewGopherDirListingConv(nsISupports* aOuter, REFNSIID aIID, void **aResult) 
 {
@@ -403,6 +421,7 @@ CreateNewGopherDirListingConv(nsISupports* aOuter, REFNSIID aIID, void **aResult
     NS_RELEASE(inst);             /* get rid of extra refcnt */
     return rv;
 }
+#endif
 
 static NS_IMETHODIMP                 
 CreateNewMultiMixedConvFactory(nsISupports* aOuter, REFNSIID aIID, void **aResult) 
@@ -504,6 +523,31 @@ CreateNewUnknownDecoderFactory(nsISupports *aOuter, REFNSIID aIID, void **aResul
 }
 
 static NS_IMETHODIMP
+CreateNewBinaryDetectorFactory(nsISupports *aOuter, REFNSIID aIID, void **aResult)
+{
+  nsresult rv;
+
+  if (!aResult) {
+    return NS_ERROR_NULL_POINTER;
+  }
+  *aResult = nsnull;
+
+  if (aOuter) {
+    return NS_ERROR_NO_AGGREGATION;
+  }
+
+  nsBinaryDetector* inst = new nsBinaryDetector();
+  if (!inst) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  NS_ADDREF(inst);
+  rv = inst->QueryInterface(aIID, aResult);
+  NS_RELEASE(inst);
+
+  return rv;
+}
+
+static NS_IMETHODIMP
 CreateNewNSTXTToHTMLConvFactory(nsISupports *aOuter, REFNSIID aIID, void **aResult)
 {
   nsresult rv;
@@ -555,6 +599,10 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
       NS_IOSERVICE_CID,
       NS_IOSERVICE_CONTRACTID,
       nsIOServiceConstructor },
+    { NS_IOTHREADPOOL_CLASSNAME,
+      NS_IOTHREADPOOL_CID,
+      NS_IOTHREADPOOL_CONTRACTID,
+      net_NewIOThreadPool },
     { NS_STREAMTRANSPORTSERVICE_CLASSNAME,
       NS_STREAMTRANSPORTSERVICE_CID,
       NS_STREAMTRANSPORTSERVICE_CONTRACTID,
@@ -563,14 +611,18 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
       NS_SOCKETTRANSPORTSERVICE_CID,
       NS_SOCKETTRANSPORTSERVICE_CONTRACTID,
       nsSocketTransportServiceConstructor },
-    { "Socket Provider Service", 
+    { NS_SERVERSOCKET_CLASSNAME,
+      NS_SERVERSOCKET_CID,
+      NS_SERVERSOCKET_CONTRACTID,
+      nsServerSocketConstructor },
+    { NS_SOCKETPROVIDERSERVICE_CLASSNAME,
       NS_SOCKETPROVIDERSERVICE_CID,
-      "@mozilla.org/network/socket-provider-service;1",
+      NS_SOCKETPROVIDERSERVICE_CONTRACTID,
       nsSocketProviderService::Create },
-    { "DNS Service", 
+    { NS_DNSSERVICE_CLASSNAME,
       NS_DNSSERVICE_CID,
-      "@mozilla.org/network/dns-service;1",
-      nsDNSService::Create },
+      NS_DNSSERVICE_CONTRACTID,
+      nsDNSServiceConstructor },
     { NS_IDNSERVICE_CLASSNAME,
       NS_IDNSERVICE_CID,
       NS_IDNSERVICE_CONTRACTID,
@@ -579,10 +631,6 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
       NS_SIMPLEURI_CID,
       NS_SIMPLEURI_CONTRACTID,
       nsSimpleURI::Create },
-    { "External Module Manager", 
-      NS_NETMODULEMGR_CID,
-      "@mozilla.org/network/net-extern-mod;1",
-      nsNetModuleMgr::Create },
     { NS_ASYNCSTREAMCOPIER_CLASSNAME,
       NS_ASYNCSTREAMCOPIER_CID,
       NS_ASYNCSTREAMCOPIER_CONTRACTID,
@@ -606,7 +654,11 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
     { NS_DOWNLOADER_CLASSNAME,
       NS_DOWNLOADER_CID,
       NS_DOWNLOADER_CONTRACTID,
-      nsDownloader::Create },
+      nsDownloaderConstructor },
+    { NS_SYNCSTREAMLISTENER_CLASSNAME,
+      NS_SYNCSTREAMLISTENER_CID,
+      NS_SYNCSTREAMLISTENER_CONTRACTID,
+      nsSyncStreamListenerConstructor },
     { NS_REQUESTOBSERVERPROXY_CLASSNAME,
       NS_REQUESTOBSERVERPROXY_CID,
       NS_REQUESTOBSERVERPROXY_CONTRACTID,
@@ -709,18 +761,22 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
     },
 #endif
 
+#ifdef NECKO_PROTOCOL_ftp
     // from netwerk/streamconv/converters:
     { "FTPDirListingConverter", 
       NS_FTPDIRLISTINGCONVERTER_CID, 
       NS_ISTREAMCONVERTER_KEY FTP_TO_INDEX, 
       CreateNewFTPDirListingConv
     },
+#endif
 
+#ifdef NECKO_PROTOCOL_gopher
     { "GopherDirListingConverter",
       NS_GOPHERDIRLISTINGCONVERTER_CID,
       NS_ISTREAMCONVERTER_KEY GOPHER_TO_INDEX,
       CreateNewGopherDirListingConv
-    },    
+    },
+#endif
 
     { "Indexed to HTML Converter", 
       NS_NSINDEXEDTOHTMLCONVERTER_CID,
@@ -756,6 +812,12 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
       NS_UNKNOWNDECODER_CID,
       NS_ISTREAMCONVERTER_KEY UNKNOWN_CONTENT,
       CreateNewUnknownDecoderFactory
+    },
+
+    { "Binary Detector",
+      NS_BINARYDETECTOR_CID,
+      NS_ISTREAMCONVERTER_KEY MAYBE_TEXT,
+      CreateNewBinaryDetectorFactory
     },
 
     { "HttpCompressConverter", 
@@ -795,12 +857,12 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
       nsBinHexDecoderConstructor
     },
 #endif
-	// This is not a real stream converter, it's just
-	// registering it's cid factory here.
-	{ "HACK-TXTToHTMLConverter", 
-  	  MOZITXTTOHTMLCONV_CID,
-	  MOZ_TXTTOHTMLCONV_CONTRACTID, 
-	  CreateNewTXTToHTMLConvFactory
+    // This is not a real stream converter, it's just
+    // registering its cid factory here.
+    { "HACK-TXTToHTMLConverter", 
+      MOZITXTTOHTMLCONV_CID,
+      MOZ_TXTTOHTMLCONV_CONTRACTID, 
+      CreateNewTXTToHTMLConvFactory
     },
 
     { "Directory Index",
@@ -810,12 +872,6 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
     },
 
     // from netwerk/mime:
-    { "xml mime INFO", 
-      NS_MIMEINFO_CID,
-      NS_MIMEINFO_CONTRACTID,
-      nsMIMEInfoImplConstructor
-    },
-
     { "mime header param", 
       NS_MIMEHEADERPARAM_CID,
       NS_MIMEHEADERPARAM_CONTRACTID,
@@ -852,12 +908,10 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
       NS_HTTP_AUTHENTICATOR_CONTRACTID_PREFIX "digest",
       nsHttpDigestAuthConstructor },
 
-#ifdef XP_WIN
     { "HTTP NTLM Auth Encoder",
       NS_HTTPNTLMAUTH_CID,
       NS_HTTP_AUTHENTICATOR_CONTRACTID_PREFIX "ntlm",
       nsHttpNTLMAuthConstructor },
-#endif
 
     { NS_HTTPAUTHMANAGER_CLASSNAME,
       NS_HTTPAUTHMANAGER_CID,
@@ -939,6 +993,11 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
       NS_ABOUT_MODULE_CONTRACTID_PREFIX "buildconfig",
       nsAboutRedirector::Create
     },
+    { "about:about",
+      NS_ABOUT_REDIRECTOR_MODULE_CID,
+      NS_ABOUT_MODULE_CONTRACTID_PREFIX "about",
+      nsAboutRedirector::Create
+    },
 
     { "about:cache", 
       NS_ABOUT_CACHE_MODULE_CID,
@@ -952,22 +1011,34 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
     },
 #endif
 
-    {  NS_ISOCKSSOCKETPROVIDER_CLASSNAME,
+    {  "nsSOCKSSocketProvider",
        NS_SOCKSSOCKETPROVIDER_CID,
-       NS_ISOCKSSOCKETPROVIDER_CONTRACTID,
-       nsSOCKSSocketProvider::Create
+       NS_NETWORK_SOCKET_CONTRACTID_PREFIX "socks",
+       nsSOCKSSocketProvider::CreateV5
     },
 
-    {  NS_ISOCKS4SOCKETPROVIDER_CLASSNAME,
+    {  "nsSOCKS4SocketProvider",
        NS_SOCKS4SOCKETPROVIDER_CID,
-       NS_ISOCKS4SOCKETPROVIDER_CONTRACTID,
-       nsSOCKS4SocketProvider::Create
+       NS_NETWORK_SOCKET_CONTRACTID_PREFIX "socks4",
+       nsSOCKSSocketProvider::CreateV4
     },
 
     {  NS_CACHESERVICE_CLASSNAME,
        NS_CACHESERVICE_CID,
        NS_CACHESERVICE_CONTRACTID,
        nsCacheService::Create
+    },
+
+    { NS_COOKIEMANAGER_CLASSNAME,
+      NS_COOKIEMANAGER_CID,
+      NS_COOKIEMANAGER_CONTRACTID,
+      nsCookieServiceConstructor
+    },
+
+    { NS_COOKIESERVICE_CLASSNAME,
+      NS_COOKIESERVICE_CID,
+      NS_COOKIESERVICE_CONTRACTID,
+      nsCookieServiceConstructor
     },
 
 };

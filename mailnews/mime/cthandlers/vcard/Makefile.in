@@ -38,6 +38,8 @@ else
 LIBRARY_NAME = vcard_s
 endif
 
+PACKAGE_FILE = vcard.pkg
+
 META_COMPONENT = mail
 
 REQUIRES	= xpcom \
@@ -52,6 +54,7 @@ REQUIRES	= xpcom \
 		  pref \
 		  mailnews \
 		  msgdb \
+		  addrbook \
 		  $(NULL)
 
 ifeq ($(OS_ARCH),WINNT)
@@ -63,8 +66,6 @@ LOCAL_INCLUDES = -I$(srcdir)/../glue
 
 CPPSRCS		= \
 		mimevcrd.cpp \
-		nsVCard.cpp \
-		nsVCardObj.cpp \
 		$(NULL)
 
 ifndef MOZ_STATIC_MAIL_BUILD

@@ -1,36 +1,41 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 #include "jsstddef.h"
 #include "jsconfig.h"
 
@@ -117,19 +122,19 @@ mem_set32(JSXDRState *xdr, uint32 *lp)
 }
 
 static JSBool
-mem_getbytes(JSXDRState *xdr, char **bytesp, uint32 len)
+mem_getbytes(JSXDRState *xdr, char *bytes, uint32 len)
 {
     MEM_LEFT(xdr, len);
-    memcpy(*bytesp, MEM_DATA(xdr), len);
+    memcpy(bytes, MEM_DATA(xdr), len);
     MEM_INCR(xdr, len);
     return JS_TRUE;
 }
 
 static JSBool
-mem_setbytes(JSXDRState *xdr, char **bytesp, uint32 len)
+mem_setbytes(JSXDRState *xdr, char *bytes, uint32 len)
 {
     MEM_NEED(xdr, len);
-    memcpy(MEM_DATA(xdr), *bytesp, len);
+    memcpy(MEM_DATA(xdr), bytes, len);
     MEM_INCR(xdr, len);
     return JS_TRUE;
 }
@@ -334,25 +339,23 @@ JS_XDRUint32(JSXDRState *xdr, uint32 *lp)
 }
 
 JS_PUBLIC_API(JSBool)
-JS_XDRBytes(JSXDRState *xdr, char **bytesp, uint32 len)
+JS_XDRBytes(JSXDRState *xdr, char *bytes, uint32 len)
 {
     uint32 padlen;
-    char *padbp;
     static char padbuf[JSXDR_ALIGN-1];
 
     if (xdr->mode == JSXDR_ENCODE) {
-        if (!xdr->ops->setbytes(xdr, bytesp, len))
+        if (!xdr->ops->setbytes(xdr, bytes, len))
             return JS_FALSE;
     } else {
-        if (!xdr->ops->getbytes(xdr, bytesp, len))
+        if (!xdr->ops->getbytes(xdr, bytes, len))
             return JS_FALSE;
     }
     len = xdr->ops->tell(xdr);
     if (len % JSXDR_ALIGN) {
         padlen = JSXDR_ALIGN - (len % JSXDR_ALIGN);
         if (xdr->mode == JSXDR_ENCODE) {
-            padbp = padbuf;
-            if (!xdr->ops->setbytes(xdr, &padbp, padlen))
+            if (!xdr->ops->setbytes(xdr, padbuf, padlen))
                 return JS_FALSE;
         } else {
             if (!xdr->ops->seek(xdr, padlen, JSXDR_SEEK_CUR))
@@ -379,7 +382,7 @@ JS_XDRCString(JSXDRState *xdr, char **sp)
         if (!(*sp = (char *) JS_malloc(xdr->cx, len + 1)))
             return JS_FALSE;
     }
-    if (!JS_XDRBytes(xdr, sp, len)) {
+    if (!JS_XDRBytes(xdr, *sp, len)) {
         if (xdr->mode == JSXDR_DECODE)
             JS_free(xdr->cx, *sp);
         return JS_FALSE;

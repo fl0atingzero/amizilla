@@ -66,10 +66,11 @@ public:
   // Empty interface
 
   // nsIContent
-  NS_IMETHOD GetTag(nsIAtom** aResult) const;
+  virtual nsIAtom *Tag() const;
+  virtual PRBool IsContentOfType(PRUint32 aFlags) const;
 #ifdef DEBUG
-  NS_IMETHOD List(FILE* out, PRInt32 aIndent) const;
-  NS_IMETHOD DumpContent(FILE* out, PRInt32 aIndent,PRBool aDumpAll) const;
+  virtual void List(FILE* out, PRInt32 aIndent) const;
+  virtual void DumpContent(FILE* out, PRInt32 aIndent,PRBool aDumpAll) const;
 #endif
 
   // nsITextContent
@@ -112,12 +113,16 @@ NS_IMPL_ADDREF_INHERITED(nsXMLCDATASection, nsGenericDOMDataNode)
 NS_IMPL_RELEASE_INHERITED(nsXMLCDATASection, nsGenericDOMDataNode)
 
 
-NS_IMETHODIMP 
-nsXMLCDATASection::GetTag(nsIAtom** aResult) const
+nsIAtom *
+nsXMLCDATASection::Tag() const
 {
-  *aResult = nsLayoutAtoms::textTagName;
-  NS_ADDREF(*aResult);
-  return NS_OK;
+  return nsLayoutAtoms::textTagName;
+}
+
+PRBool
+nsXMLCDATASection::IsContentOfType(PRUint32 aFlags) const
+{
+  return !(aFlags & ~eTEXT);
 }
 
 NS_IMETHODIMP
@@ -125,6 +130,18 @@ nsXMLCDATASection::GetNodeName(nsAString& aNodeName)
 {
   aNodeName.Assign(NS_LITERAL_STRING("#cdata-section"));
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXMLCDATASection::GetNodeValue(nsAString& aNodeValue)
+{
+  return nsGenericDOMDataNode::GetNodeValue(aNodeValue);
+}
+
+NS_IMETHODIMP
+nsXMLCDATASection::SetNodeValue(const nsAString& aNodeValue)
+{
+  return nsGenericDOMDataNode::SetNodeValue(aNodeValue);
 }
 
 NS_IMETHODIMP
@@ -163,7 +180,7 @@ nsXMLCDATASection::CloneContent(PRBool aCloneText, nsITextContent** aReturn)
 }
 
 #ifdef DEBUG
-NS_IMETHODIMP
+void
 nsXMLCDATASection::List(FILE* out, PRInt32 aIndent) const
 {
   NS_PRECONDITION(mDocument, "bad content");
@@ -178,12 +195,10 @@ nsXMLCDATASection::List(FILE* out, PRInt32 aIndent) const
   fputs(NS_LossyConvertUCS2toASCII(tmp).get(), out);
 
   fputs(">\n", out);
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsXMLCDATASection::DumpContent(FILE* out, PRInt32 aIndent,
                                PRBool aDumpAll) const {
-  return NS_OK;
 }
 #endif

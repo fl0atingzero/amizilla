@@ -46,6 +46,7 @@ REQUIRES	= xpcom \
 		  chrome \
 		  docshell \
 		  pref \
+		  profile \
 		  xpconnect \
 		  util \
 		  unicharutil \
@@ -56,11 +57,19 @@ REQUIRES	= xpcom \
 		  imglib2 \
 		  uriloader \
 		  webbrwsr \
-		  debug \
 		  plugin \
+		  prefetch \
 		  $(NULL)
 
+EXPORTS		= \
+		nsStubDocumentObserver.h \
+		nsStyleSet.h \
+		$(NULL)
+
 CPPSRCS		= \
+		nsAttrAndChildArray.cpp \
+		nsAttrValue.cpp \
+		nsContentSink.cpp \
 		nsPrintEngine.cpp \
 		nsPrintData.cpp \
 		nsPrintObject.cpp \
@@ -77,21 +86,24 @@ CPPSRCS		= \
 		nsDOMAttribute.cpp \
 		nsDOMAttributeMap.cpp \
 		nsDOMDocumentType.cpp \
+		nsDOMLists.cpp \
 		nsGeneratedIterator.cpp \
 		nsGenericDOMDataNode.cpp \
 		nsGenericDOMNodeList.cpp \
 		nsGenericElement.cpp \
 		nsContentUtils.cpp \
+		nsLayoutStylesheetCache.cpp \
+		nsMappedAttributes.cpp \
 		nsNameSpaceManager.cpp \
 		nsNodeInfo.cpp \
 		nsNodeInfoManager.cpp \
 		nsRange.cpp \
 		nsRuleNode.cpp \
 		nsSelection.cpp \
+		nsStubDocumentObserver.cpp \
 		nsStyleContext.cpp \
 		nsStyleSet.cpp \
 		nsSyncLoadService.cpp \
-		nsTextContentChangeData.cpp \
 		nsTextNode.cpp \
 		nsTreeWalker.cpp \
 		nsXMLContentSerializer.cpp \
@@ -123,3 +135,5 @@ INCLUDES	+= \
 		-I$(srcdir)/../../base/src \
 		-I$(srcdir)/../../../layout/html/base/src \
 		$(NULL)
+
+DEFINES += -D_IMPL_NS_LAYOUT

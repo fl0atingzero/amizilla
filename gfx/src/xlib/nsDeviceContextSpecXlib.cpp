@@ -42,9 +42,12 @@
 #define SET_PRINTER_FEATURES_VIA_PREFS 1 
 #define PRINTERFEATURES_PREF "print.tmp.printerfeatures"
 
-#define FORCE_PR_LOG /* Allow logging in the release build */
-#define PR_LOGGING 1
+#ifdef MOZ_LOGGING
+#define FORCE_PR_LOG 1 /* Allow logging in the release build */
+#endif /* MOZ_LOGGING */
 #include "prlog.h"
+
+#include "plstr.h"
 
 #include "nsDeviceContextSpecXlib.h"
 
@@ -54,15 +57,13 @@
 #include "nsPrintfCString.h"
 #include "nsReadableUtils.h"
 #include "nsIServiceManager.h" 
-#include "nsCRT.h"
 
 #ifdef USE_XPRINT
 #include "xprintutil.h"
 #endif /* USE_XPRINT */
 
 #ifdef USE_POSTSCRIPT
-/* Fetch |postscript_module_paper_sizes| */
-#include "nsPostScriptObj.h"
+#include "nsPaperPS.h"  /* Paper size list */
 #endif /* USE_POSTSCRIPT */
 
 /* Ensure that the result is always equal to either PR_TRUE or PR_FALSE */
@@ -108,21 +109,35 @@ public:
   nsPrinterFeatures( const char *printername );
   ~nsPrinterFeatures() {};
 
-  /* Does this device allow to set/change the paper size ? */
+  /* Does this printer allow to set/change the paper size ? */
   void SetCanChangePaperSize( PRBool aCanSetPaperSize );
+  /* Does this Mozilla print module allow set/change the paper size ? */
+  void SetSupportsPaperSizeChange( PRBool aSupportsPaperSizeChange );
   /* Set number of paper size records and the records itself */
   void SetNumPaperSizeRecords( PRInt32 aCount );
   void SetPaperRecord( PRInt32 aIndex, const char *aName, PRInt32 aWidthMM, PRInt32 aHeightMM, PRBool aIsInch );
 
-  /* Does this device allow to set/change the content orientation ? */
+  /* Does this printer allow to set/change the content orientation ? */
   void SetCanChangeOrientation( PRBool aCanSetOrientation );
+  /* Does this Mozilla print module allow set/change the content orientation ? */
+  void SetSupportsOrientationChange( PRBool aSupportsOrientationChange );
   /* Set number of orientation records and the records itself */
   void SetNumOrientationRecords( PRInt32 aCount );
   void SetOrientationRecord( PRInt32 aIndex, const char *aName );
-  
+
+  /* Does this printer allow to set/change the plex mode ? */
+  void SetCanChangePlex( PRBool aCanSetPlex );
+  /* Does this Mozilla print module allow set/change the plex mode ? */
+  void SetSupportsPlexChange( PRBool aSupportsPlexChange );
+  /* Set number of plex records and the records itself */
+  void SetNumPlexRecords( PRInt32 aCount );
+  void SetPlexRecord( PRInt32 aIndex, const char *aName );
+    
   /* Does this device allow to set/change the spooler command ? */
   void SetCanChangeSpoolerCommand( PRBool aCanSetSpoolerCommand );
-
+  /* Does this printer allow to set/change the spooler command ? */
+  void SetSupportsSpoolerCommandChange( PRBool aSupportSpoolerCommandChange );
+  
   /* Does this device allow to set/change number of copies for an document ? */
   void SetCanChangeNumCopies( PRBool aCanSetNumCopies );
 
@@ -130,7 +145,7 @@ public:
    * parallel (e.g. print while the device is already in use by print-preview
    * or printing while another print job is in progress) ? */
   void SetMultipleConcurrentDeviceContextsSupported( PRBool aCanUseMultipleInstances );
-   
+  
 private:
   /* private helper methods */
   void SetBoolValue( const char *tagname, PRBool value );
@@ -170,6 +185,11 @@ void nsPrinterFeatures::SetCanChangePaperSize( PRBool aCanSetPaperSize )
   SetBoolValue("can_change_paper_size", aCanSetPaperSize);
 }
 
+void nsPrinterFeatures::SetSupportsPaperSizeChange( PRBool aSupportsPaperSizeChange )
+{
+  SetBoolValue("supports_paper_size_change", aSupportsPaperSizeChange);
+}
+
 /* Set number of paper size records and the records itself */
 void nsPrinterFeatures::SetNumPaperSizeRecords( PRInt32 aCount )
 {
@@ -189,6 +209,11 @@ void nsPrinterFeatures::SetCanChangeOrientation( PRBool aCanSetOrientation )
   SetBoolValue("can_change_orientation", aCanSetOrientation);
 }
 
+void nsPrinterFeatures::SetSupportsOrientationChange( PRBool aSupportsOrientationChange )
+{
+  SetBoolValue("supports_orientation_change", aSupportsOrientationChange);
+}
+
 void nsPrinterFeatures::SetNumOrientationRecords( PRInt32 aCount )
 {
   SetIntValue("orientation.count", aCount);          
@@ -199,9 +224,34 @@ void nsPrinterFeatures::SetOrientationRecord( PRInt32 aIndex, const char *aOrien
   SetCharValue(nsPrintfCString(256, "orientation.%d.name", aIndex).get(), aOrientationName);
 }
 
+void nsPrinterFeatures::SetCanChangePlex( PRBool aCanSetPlex )
+{
+  SetBoolValue("can_change_plex", aCanSetPlex);
+}
+
+void nsPrinterFeatures::SetSupportsPlexChange( PRBool aSupportsPlexChange )
+{
+  SetBoolValue("supports_plex_change", aSupportsPlexChange);
+}
+
+void nsPrinterFeatures::SetNumPlexRecords( PRInt32 aCount )
+{
+  SetIntValue("plex.count", aCount);          
+}
+
+void nsPrinterFeatures::SetPlexRecord( PRInt32 aIndex, const char *aPlexName )
+{
+  SetCharValue(nsPrintfCString(256, "plex.%d.name", aIndex).get(), aPlexName);
+}
+
 void nsPrinterFeatures::SetCanChangeSpoolerCommand( PRBool aCanSetSpoolerCommand )
 {
   SetBoolValue("can_change_spoolercommand", aCanSetSpoolerCommand);
+}
+
+void nsPrinterFeatures::SetSupportsSpoolerCommandChange( PRBool aSupportSpoolerCommandChange )
+{
+  SetBoolValue("supports_spoolercommand_change", aSupportSpoolerCommandChange);
 }
 
 void nsPrinterFeatures::SetCanChangeNumCopies( PRBool aCanSetNumCopies )
@@ -266,7 +316,7 @@ NS_IMPL_ISUPPORTS1(nsDeviceContextSpecXlib,
  * toolkits including:
  * - GTK+-toolkit:
  *   file:     mozilla/gfx/src/gtk/nsDeviceContextSpecG.cpp
- *   function: NS_IMETHODIMP nsDeviceContextSpecGTK::Init()
+ *   function: NS_IMETHODIMP nsDeviceContextSpecXlib::Init()
  * - Xlib-toolkit: 
  *   file:     mozilla/gfx/src/xlib/nsDeviceContextSpecXlib.cpp 
  *   function: NS_IMETHODIMP nsDeviceContextSpecXlib::Init()
@@ -278,21 +328,12 @@ NS_IMPL_ISUPPORTS1(nsDeviceContextSpecXlib,
  */
 NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
 {
-  DO_PR_DEBUG_LOG(("nsDeviceContextSpecXlib::Init(aPS=%p\n", aPS));
+  DO_PR_DEBUG_LOG(("nsDeviceContextSpecXlib::Init(aPS=%p)\n", aPS));
   nsresult rv = NS_ERROR_FAILURE;
 
   mPrintSettings = aPS;
 
   // if there is a current selection then enable the "Selection" radio button
-  if (mPrintSettings) {
-    PRBool isOn;
-    mPrintSettings->GetPrintOptions(nsIPrintSettings::kEnableSelectionRB, &isOn);
-    nsCOMPtr<nsIPref> pPrefs = do_GetService(NS_PREF_CONTRACTID, &rv);
-    if (NS_SUCCEEDED(rv)) {
-      (void) pPrefs->SetBoolPref("print.selection_radio_enabled", isOn);
-    }
-  }
-
   rv = GlobalPrinters::GetInstance()->InitializeGlobalPrinters();
   if (NS_FAILED(rv)) {
     return rv;
@@ -312,6 +353,7 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
     PRInt32    copies         = 1;
     PRUnichar *printer        = nsnull;
     PRUnichar *papername      = nsnull;
+    PRUnichar *plexname       = nsnull;
     PRUnichar *printfile      = nsnull;
     double     dleft          = 0.5;
     double     dright         = 0.5;
@@ -322,6 +364,7 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
     aPS->GetPrintReversed(&reversed);
     aPS->GetPrintInColor(&color);
     aPS->GetPaperName(&papername);
+    aPS->GetPlexName(&plexname);
     aPS->GetOrientation(&orientation);
     aPS->GetPrintCommand(&command);
     aPS->GetPrintRange(&printRange);
@@ -336,13 +379,15 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
     aPS->GetMarginRight(&dright);
 
     if (printfile)
-      strcpy(mPath,    NS_ConvertUCS2toUTF8(printfile).get());
+      PL_strncpyz(mPath,      NS_ConvertUCS2toUTF8(printfile).get(), sizeof(mPath));
     if (command)
-      strcpy(mCommand, NS_ConvertUCS2toUTF8(command).get());  
+      PL_strncpyz(mCommand,   NS_ConvertUCS2toUTF8(command).get(),   sizeof(mCommand));  
     if (printer) 
-      strcpy(mPrinter, NS_ConvertUCS2toUTF8(printer).get());        
+      PL_strncpyz(mPrinter,   NS_ConvertUCS2toUTF8(printer).get(),   sizeof(mPrinter));        
     if (papername) 
-      strcpy(mPaperName, NS_ConvertUCS2toUTF8(papername).get());  
+      PL_strncpyz(mPaperName, NS_ConvertUCS2toUTF8(papername).get(), sizeof(mPaperName));  
+    if (plexname) 
+      PL_strncpyz(mPlexName,  NS_ConvertUCS2toUTF8(plexname).get(),  sizeof(mPlexName));  
 
     DO_PR_DEBUG_LOG(("margins:   %5.2f,%5.2f,%5.2f,%5.2f\n", dtop, dleft, dbottom, dright));
     DO_PR_DEBUG_LOG(("printRange %d\n",   printRange));
@@ -353,6 +398,7 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
     DO_PR_DEBUG_LOG(("command    '%s'\n", command? NS_ConvertUCS2toUTF8(command).get():"<NULL>"));
     DO_PR_DEBUG_LOG(("printer    '%s'\n", printer? NS_ConvertUCS2toUTF8(printer).get():"<NULL>"));
     DO_PR_DEBUG_LOG(("papername  '%s'\n", papername? NS_ConvertUCS2toUTF8(papername).get():"<NULL>"));
+    DO_PR_DEBUG_LOG(("plexname   '%s'\n", plexname? NS_ConvertUCS2toUTF8(plexname).get():"<NULL>"));
 
     mTop         = dtop;
     mBottom      = dbottom;
@@ -449,6 +495,12 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::GetUserCancelled(PRBool &aCancel)
 NS_IMETHODIMP nsDeviceContextSpecXlib::GetPaperName( const char **aPaperName )
 {
   *aPaperName = mPaperName;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsDeviceContextSpecXlib::GetPlexName( const char **aPlexName )
+{
+  *aPlexName = mPlexName;
   return NS_OK;
 }
 
@@ -682,9 +734,22 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
   aPrintSettings->SetToFileName(NS_ConvertUTF8toUCS2(filename).get());
 
   aPrintSettings->SetIsInitializedFromPrinter(PR_TRUE);
+
 #ifdef USE_XPRINT
   if (type == pmXprint) {
     DO_PR_DEBUG_LOG(("InitPrintSettingsFromPrinter() for Xprint printer\n"));
+
+    /* Setup the capabilties list of Mozilla's Xprint print module */
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+    nsPrinterFeatures printerFeatures(fullPrinterName);
+
+    printerFeatures.SetSupportsPaperSizeChange(PR_TRUE);
+    printerFeatures.SetSupportsOrientationChange(PR_TRUE);
+    printerFeatures.SetSupportsPlexChange(PR_TRUE);
+    printerFeatures.SetSupportsSpoolerCommandChange(PR_FALSE); /* won't work by design and very good reasons! */
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */ 
+    
+    /* Setup the capabilties list of this specific printer */
 
     Display   *pdpy;
     XPContext  pcontext;
@@ -693,14 +758,15 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
       
     XpuSupportedFlags supported_doc_attrs = XpuGetSupportedDocAttributes(pdpy, pcontext);
 
-#ifdef SET_PRINTER_FEATURES_VIA_PREFS
-    nsPrinterFeatures printerFeatures(fullPrinterName);
-#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
-
     /* Setup orientation stuff */
     XpuOrientationList  olist;
     int                 ocount;
     XpuOrientationRec  *default_orientation;
+
+    /* Setup plex stuff */
+    XpuPlexList         plexlist;
+    int                 plexcount;
+    XpuPlexRec         *default_plex;
 
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
     PRBool canSetOrientation = MAKE_PR_BOOL(supported_doc_attrs & XPUATTRIBUTESUPPORTED_CONTENT_ORIENTATION);
@@ -737,6 +803,32 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
       XpuFreeOrientationList(olist);
     }  
 
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+    PRBool canSetPlexMode = MAKE_PR_BOOL(supported_doc_attrs & XPUATTRIBUTESUPPORTED_PLEX);
+    printerFeatures.SetCanChangePlex(canSetPlexMode);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+
+    /* Get list of supported plex modes */
+    plexlist = XpuGetPlexList(pdpy, pcontext, &plexcount);
+    if (plexlist) {
+      default_plex = &plexlist[0]; /* First entry is the default one */
+    
+      DO_PR_DEBUG_LOG(("setting default plex to '%s'\n", default_plex->plex));
+      aPrintSettings->SetPlexName(NS_ConvertUTF8toUCS2(default_plex->plex).get());
+
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+      int i;
+      for( i = 0 ; i < plexcount ; i++ )
+      {
+        XpuPlexRec *curr = &plexlist[i];
+        printerFeatures.SetPlexRecord(i, curr->plex);
+      }
+      printerFeatures.SetNumPlexRecords(plexcount);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+   
+      XpuFreePlexList(plexlist);
+    }  
+
     /* Setup Number of Copies */
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
     PRBool canSetNumCopies = MAKE_PR_BOOL(supported_doc_attrs & XPUATTRIBUTESUPPORTED_COPY_COUNT);
@@ -769,12 +861,12 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
              total_height = default_medium->ma3 + default_medium->ma4;
 
       /* Either "paper" or "tray/paper" */
+      papername.Truncate();
       if (default_medium->tray_name) {
-        papername = nsPrintfCString(256, "%s/%s", default_medium->tray_name, default_medium->medium_name);
+        papername.Append(default_medium->tray_name);
+        papername.Append("/");
       }
-      else {
-        papername.Assign(default_medium->medium_name);
-      }
+      papername.Append(default_medium->medium_name);
  
       DO_PR_DEBUG_LOG(("setting default paper size to '%s' (%g/%g mm)\n", papername.get(), total_width, total_height));
       aPrintSettings->SetPaperSizeType(nsIPrintSettings::kPaperSizeDefined);
@@ -790,12 +882,13 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
         XpuMediumSourceSizeRec *curr = &mlist[i];
         double total_width  = curr->ma1 + curr->ma2,
                total_height = curr->ma3 + curr->ma4;
+
+        papername.Truncate();
         if (curr->tray_name) {
-          papername = nsPrintfCString(256, "%s/%s", curr->tray_name, curr->medium_name);
+          papername.Append(curr->tray_name);
+          papername.Append("/");
         }
-        else {
-          papername.Assign(curr->medium_name);
-        }
+        papername.Append(curr->medium_name);
 
         printerFeatures.SetPaperRecord(i, papername, PRInt32(total_width), PRInt32(total_height), PR_FALSE);
       }
@@ -828,7 +921,12 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
 
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
     nsPrinterFeatures printerFeatures(fullPrinterName);
-#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+
+    printerFeatures.SetSupportsPaperSizeChange(PR_TRUE);
+    printerFeatures.SetSupportsOrientationChange(PR_TRUE);
+    printerFeatures.SetSupportsPlexChange(PR_FALSE);
+    printerFeatures.SetSupportsSpoolerCommandChange(PR_TRUE);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */ 
       
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
     printerFeatures.SetCanChangeOrientation(PR_TRUE);
@@ -850,13 +948,20 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
     }
 
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
-    int i;
-    for( i = 0 ; postscript_module_orientations[i].orientation != nsnull ; i++ )
-    {
-      const PSOrientationRec *curr = &postscript_module_orientations[i];
-      printerFeatures.SetOrientationRecord(i, curr->orientation);
-    }
-    printerFeatures.SetNumOrientationRecords(i);
+    printerFeatures.SetOrientationRecord(0, "portrait");
+    printerFeatures.SetOrientationRecord(1, "landscape");
+    printerFeatures.SetNumOrientationRecords(2);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+
+    /* PostScript module does not support changing the plex mode... */
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+    printerFeatures.SetCanChangePlex(PR_FALSE);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+    DO_PR_DEBUG_LOG(("setting default plex to '%s'\n", "default"));
+    aPrintSettings->SetPlexName(NS_LITERAL_STRING("default").get());
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+    printerFeatures.SetPlexRecord(0, "default");
+    printerFeatures.SetNumPlexRecords(1);
 #endif /* SET_PRINTER_FEATURES_VIA_PREFS */
    
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
@@ -864,44 +969,32 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
 #endif /* SET_PRINTER_FEATURES_VIA_PREFS */
     nsXPIDLCString papername;
     if (NS_SUCCEEDED(CopyPrinterCharPref(pPrefs, "postscript", printerName, "paper_size", getter_Copies(papername)))) {
-      int                   i;
-      const PSPaperSizeRec *default_paper = nsnull;
+      nsPaperSizePS paper;
       
-      for( i = 0 ; postscript_module_paper_sizes[i].name != nsnull ; i++ )
-      {
-        const PSPaperSizeRec *curr = &postscript_module_paper_sizes[i];
-
-        if (!PL_strcasecmp(papername, curr->name)) {
-          default_paper = curr;        
-          break;
-        }
-      }  
-
-      if (default_paper) {
-        DO_PR_DEBUG_LOG(("setting default paper size to '%s' (%g inch/%g inch)\n", 
-                        default_paper->name,
-                        PSPaperSizeRec_FullPaperWidth(default_paper),
-                        PSPaperSizeRec_FullPaperHeight(default_paper)));
+      if (paper.Find(papername)) {
+        DO_PR_DEBUG_LOG(("setting default paper size to '%s' (%g mm/%g mm)\n",
+              paper.Name(), paper.Width_mm(), paper.Height_mm()));
         aPrintSettings->SetPaperSizeType(nsIPrintSettings::kPaperSizeDefined);
-        aPrintSettings->SetPaperSizeUnit(nsIPrintSettings::kPaperSizeInches);
-        aPrintSettings->SetPaperWidth(PSPaperSizeRec_FullPaperWidth(default_paper));
-        aPrintSettings->SetPaperHeight(PSPaperSizeRec_FullPaperHeight(default_paper));
-        aPrintSettings->SetPaperName(NS_ConvertUTF8toUCS2(default_paper->name).get());
+        aPrintSettings->SetPaperSizeUnit(paper.IsMetric() ?
+            (int)nsIPrintSettings::kPaperSizeMillimeters :
+            (int)nsIPrintSettings::kPaperSizeInches);
+        aPrintSettings->SetPaperWidth(paper.Width_mm());
+        aPrintSettings->SetPaperHeight(paper.Height_mm());
+        aPrintSettings->SetPaperName(NS_ConvertASCIItoUCS2(paper.Name()).get());
       }
       else {
         DO_PR_DEBUG_LOG(("Unknown paper size '%s' given.\n", papername.get()));
       }
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
-      for( i = 0 ; postscript_module_paper_sizes[i].name != nsnull ; i++ )
+      paper.First();
+      int count = 0;
+      while (!paper.AtEnd())
       {
-        const PSPaperSizeRec *curr = &postscript_module_paper_sizes[i];
-#define CONVERT_INCH_TO_MILLIMETERS(inch) ((inch) * 25.4)
-        double total_width  = CONVERT_INCH_TO_MILLIMETERS(PSPaperSizeRec_FullPaperWidth(curr)),
-               total_height = CONVERT_INCH_TO_MILLIMETERS(PSPaperSizeRec_FullPaperHeight(curr));
-
-        printerFeatures.SetPaperRecord(i, curr->name, PRInt32(total_width), PRInt32(total_height), PR_TRUE);
+        printerFeatures.SetPaperRecord(count++, paper.Name(),
+            (int)paper.Width_mm(), (int)paper.Height_mm(), !paper.IsMetric());
+        paper.Next();
       }
-      printerFeatures.SetNumPaperSizeRecords(i);
+      printerFeatures.SetNumPaperSizeRecords(count);
 #endif /* SET_PRINTER_FEATURES_VIA_PREFS */
     }
 
@@ -959,55 +1052,72 @@ nsresult GlobalPrinters::InitializeGlobalPrinters ()
 #endif /* USE_XPRINT */
 
 #ifdef USE_POSTSCRIPT
-  /* Get the list of PostScript-module printers */
-  char   *printerList           = nsnull;
-  PRBool  added_default_printer = PR_FALSE; /* Did we already add the default printer ? */
-  
-  /* The env var MOZILLA_POSTSCRIPT_PRINTER_LIST can "override" the prefs */
-  printerList = PR_GetEnv("MOZILLA_POSTSCRIPT_PRINTER_LIST");
-  
-  if (!printerList) {
-    nsresult rv;
-    nsCOMPtr<nsIPref> pPrefs = do_GetService(NS_PREF_CONTRACTID, &rv);
-    if (NS_SUCCEEDED(rv)) {
-      (void) pPrefs->CopyCharPref("print.printer_list", &printerList);
-    }
-  }  
+  nsCOMPtr<nsIPref> pPrefs = do_GetService(NS_PREF_CONTRACTID);
+  PRBool psPrintModuleEnabled = PR_TRUE;
 
-  if (printerList) {
-    char       *tok_lasts;
-    const char *name;
-    
-    /* PL_strtok_r() will modify the string - copy it! */
-    printerList = strdup(printerList);
-    if (!printerList)
-      return NS_ERROR_OUT_OF_MEMORY;    
-    
-    for( name = PL_strtok_r(printerList, " ", &tok_lasts) ; 
-         name != nsnull ; 
-         name = PL_strtok_r(nsnull, " ", &tok_lasts) )
-    {
-      /* Is this the "default" printer ? */
-      if (!strcmp(name, "default"))
-        added_default_printer = PR_TRUE;
-
-      mGlobalPrinterList->AppendString(
-        nsString(NS_ConvertASCIItoUCS2(NS_POSTSCRIPT_DRIVER_NAME)) + 
-        nsString(NS_ConvertASCIItoUCS2(name)));
-      mGlobalNumPrinters++;      
+  const char *val = PR_GetEnv("MOZILLA_POSTSCRIPT_ENABLED");
+  if (val) {
+    if (val[0] == '0' || !strcasecmp(val, "false"))
+      psPrintModuleEnabled = PR_FALSE;
+  }
+  else
+  {
+    if (pPrefs) {
+      if (NS_FAILED(pPrefs->GetBoolPref("print.postscript.enabled", &psPrintModuleEnabled))) {
+        psPrintModuleEnabled = PR_TRUE;
+      }
     }
-    
-    free(printerList);
   }
 
-  /* Add an entry for the default printer (see nsPostScriptObj.cpp) if we
-   * did not add it already... */
-  if (!added_default_printer)
-  {
-    mGlobalPrinterList->AppendString(
-      nsString(NS_ConvertASCIItoUCS2(NS_POSTSCRIPT_DRIVER_NAME "default")));
-    mGlobalNumPrinters++;
-  }  
+  if (psPrintModuleEnabled) {
+    /* Get the list of PostScript-module printers */
+    char   *printerList           = nsnull;
+    PRBool  added_default_printer = PR_FALSE; /* Did we already add the default printer ? */
+
+    /* The env var MOZILLA_POSTSCRIPT_PRINTER_LIST can "override" the prefs */
+    printerList = PR_GetEnv("MOZILLA_POSTSCRIPT_PRINTER_LIST");
+
+    if (!printerList) {
+      if (pPrefs) {
+        (void) pPrefs->CopyCharPref("print.printer_list", &printerList);
+      }
+    }  
+
+    if (printerList) {
+      char       *tok_lasts;
+      const char *name;
+
+      /* PL_strtok_r() will modify the string - copy it! */
+      printerList = strdup(printerList);
+      if (!printerList)
+        return NS_ERROR_OUT_OF_MEMORY;    
+
+      for( name = PL_strtok_r(printerList, " ", &tok_lasts) ; 
+           name != nsnull ; 
+           name = PL_strtok_r(nsnull, " ", &tok_lasts) )
+      {
+        /* Is this the "default" printer ? */
+        if (!strcmp(name, "default"))
+          added_default_printer = PR_TRUE;
+
+        mGlobalPrinterList->AppendString(
+          nsString(NS_ConvertASCIItoUCS2(NS_POSTSCRIPT_DRIVER_NAME)) + 
+          nsString(NS_ConvertASCIItoUCS2(name)));
+        mGlobalNumPrinters++;      
+      }
+
+      free(printerList);
+    }
+
+    /* Add an entry for the default printer (see nsPostScriptObj.cpp) if we
+     * did not add it already... */
+    if (!added_default_printer)
+    {
+      mGlobalPrinterList->AppendString(
+        nsString(NS_ConvertASCIItoUCS2(NS_POSTSCRIPT_DRIVER_NAME "default")));
+      mGlobalNumPrinters++;
+    }
+  }
 #endif /* USE_POSTSCRIPT */  
       
   /* If there are no printers available after all checks, return an error */

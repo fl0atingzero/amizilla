@@ -34,19 +34,11 @@ REQUIRES	= xpcom \
 		  content \
 		  gfx \
 		  widget \
-		  locale \
-		  view \
 		  necko \
-		  webshell \
 		  pref \
 		  docshell \
-		  plugin \
-		  xuldoc \
-		  imglib2 \
-		  gfx2 \
-	 	  webbrwsr \
+		  webbrwsr \
 		  appshell \
-		  layout \
 		  caps \
 		  uriloader \
 		  $(NULL)
@@ -76,7 +68,7 @@ CPPSRCS		= \
     nsAEWindowClass.cpp \
     nsMacUtils.cpp \
     nsWindowUtils.cpp \
-    ../nsDocLoadObserver.cpp \
+    nsDocLoadObserver.cpp \
     $(NULL)
 
 
@@ -98,15 +90,25 @@ REZ_TOOL = /Developer/Tools/Rez
 SDEF_SRC = $(srcdir)/mozilla.sdef
 RES_DEST = mozillaSuite.r
 RSRC_DEST = mozillaSuite.rsrc
+PACKAGE_DIR = $(DIST)/package
 
-$(RSRC_DEST): $(SDEF_SRC)
-	$(SDP_TOOL) -fa -o $(RES_DEST) $(SDEF_SRC) 
+$(RSRC_DEST): $(SDEF_SRC) $(PACKAGE_DIR)
+	NEXT_ROOT= $(SDP_TOOL) -fa -o $(RES_DEST) $(SDEF_SRC) 
 	$(REZ_TOOL) -useDF -o $(RSRC_DEST) $(RES_DEST) 
-	cp $(RSRC_DEST) $(DIST)/package/
-	rm -f $(RES_DEST) $(RSRC_DEST)
+	cp $(RSRC_DEST) $(PACKAGE_DIR)
+	rm -f $(RES_DEST)
+
+$(PACKAGE_DIR):
+	mkdir $(PACKAGE_DIR)
 
 libs:: $(RSRC_DEST)
 
-GARBAGE += $(RES_DEST) $(RSRC_DEST)
+# workaround gcc -MD dependency issue by copying source to local dir
+export:: $(srcdir)/../nsDocLoadObserver.cpp
+	$(INSTALL) $< .
+
+GARBAGE += $(RES_DEST) $(RSRC_DEST) \
+	../nsDocLoadObserver.$(OBJ_SUFFIX) nsDocLoadObserver.cpp \
+	$(NULL)
 
 OS_CXXFLAGS += -fexceptions

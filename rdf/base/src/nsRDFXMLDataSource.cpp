@@ -204,7 +204,7 @@ public:
     }
 };
 
-NS_IMPL_ISUPPORTS1(ProxyStream, nsIInputStream);
+NS_IMPL_ISUPPORTS1(ProxyStream, nsIInputStream)
 
 //----------------------------------------------------------------------
 //
@@ -537,7 +537,7 @@ NS_IMPL_ISUPPORTS6(RDFXMLDataSourceImpl,
                    nsIRDFXMLSink,
                    nsIRDFXMLSource,
                    nsIRequestObserver,
-                   nsIStreamListener);
+                   nsIStreamListener)
 
 
 nsresult
@@ -830,7 +830,6 @@ RDFXMLDataSourceImpl::rdfXMLFlush(nsIURI *aURI)
         }
     }
 
-done:
     return NS_OK;
 }
 

@@ -64,7 +64,7 @@ sub CopySubDirs
 
   if(!(-d "$aDestDir"))
   {
-    mkdir("$aDestDir", 755) || die "\n mkdir(\"$aDestDir\", 755): $!\n";
+    mkdir("$aDestDir", 0755) || die "\n mkdir(\"$aDestDir\", 0755): $!\n";
   }
 
   if(-d $aSrc)
@@ -80,7 +80,7 @@ sub CopySubDirs
 
       if(!(-d "$aDestDir/$file"))
       {
-        mkdir("$aDestDir/$file", 755) || die "\n mkdir(\"$aDestDir/$file\", 755): $!\n";
+        mkdir("$aDestDir/$file", 0755) || die "\n mkdir(\"$aDestDir/$file\", 0755): $!\n";
       }
 
       CopySubDirs("$aSrc/$file", "$aDestDir/$file");
@@ -105,7 +105,7 @@ sub CopyFiles
 
   if(!(-d "$aDestDir"))
   {
-    mkdir("$aDestDir", 755) || die "\n mkdir(\"$aDestDir\", 755): $!\n";
+    mkdir("$aDestDir", 0755) || die "\n mkdir(\"$aDestDir\", 0755): $!\n";
   }
   if(-d $aSrc)
   {
@@ -160,7 +160,7 @@ sub GetAbsPath
   }
 
   # verify the existance of path
-  if(!$_path)
+  if(!defined($_path))
   {
     die " StageUtils::GetAbsPath::unrecognized path to locate: $aWhichPath\n";
   }
@@ -197,7 +197,7 @@ sub CreateStage
   chdir("$savedCwd");
   if(!(-d "$aDirStageProductName"))
   {
-    mkdir("$aDirStageProductName", 755) || die "mkdir($aDirStageProductName, 755): $!\n";
+    mkdir("$aDirStageProductName", 0755) || die "mkdir($aDirStageProductName, 0755): $!\n";
   }
   print("\n Stage area: $aDirStageProductName\n"); 
   if(-d $aDirDistPackagesProductName)
@@ -210,6 +210,12 @@ sub CreateStage
       next if(-d "$aDirDistPackagesProductName/$file");
       $processedAFile = 1;
       print "\n\n pkg file: $file (located in $aDirDistPackagesProductName)\n\n";
+
+      if(defined($ENV{DEBUG_INSTALLER_BUILD}))
+      {
+        print "\n calling \"$dirMozPackager/pkgcp.pl\" -s \"$aDirSrcDist\" -d \"$aDirStageProductName\" -f \"$aDirDistPackagesProductName/$file\" -o $aOs -v\n\n";
+      }
+
       system("perl \"$dirMozPackager/pkgcp.pl\" -s \"$aDirSrcDist\" -d \"$aDirStageProductName\" -f \"$aDirDistPackagesProductName/$file\" -o $aOs -v");
     }
     closedir($SDIR);
@@ -231,7 +237,7 @@ sub CopyAdditionalPackage
 
   if(!(-e "$aDirDistPackagesProductName"))
   {
-    mkdir("$aDirDistPackagesProductName", 755) || die "\n mkdir($aDirDistPackagesProductName, 755): $!\n";
+    mkdir("$aDirDistPackagesProductName", 0755) || die "\n mkdir($aDirDistPackagesProductName, 0755): $!\n";
   }
 
   if(-e $aFile)
@@ -249,7 +255,7 @@ sub CleanupStage
   rmtree([$dirStageProduct],0,0) if(-d $dirStageProduct);
   if(!(-d "$aDirStage"))
   {
-    mkdir("$aDirStage", 755) || die "\n mkdir($aDirStage, 755): $!\n";
+    mkdir("$aDirStage", 0755) || die "\n mkdir($aDirStage, 0755): $!\n";
   }
 }
 
@@ -261,11 +267,11 @@ sub CleanupDistPackages
   rmtree([$dirDistPackagesProductName],0,0) if(-d $dirDistPackagesProductName);
   if(!(-d "$aDirDistPackages"))
   {
-    mkdir("$aDirDistPackages", 755) || die "\n mkdir($aDirDistPackages, 755): $!\n";
+    mkdir("$aDirDistPackages", 0755) || die "\n mkdir($aDirDistPackages, 0755): $!\n";
   }
   if(!(-d "$dirDistPackagesProductName"))
   {
-    mkdir("$dirDistPackagesProductName", 755) || die "\n mkdir($dirDistPackagesProductName, 755): $!\n";
+    mkdir("$dirDistPackagesProductName", 0755) || die "\n mkdir($dirDistPackagesProductName, 0755): $!\n";
   }
 }
 
@@ -275,19 +281,26 @@ sub GeneratePackagesFromSinglePackage
 
   if(!(-d "$aDestination"))
   {
-    mkdir("$aDestination", 755) || die "\n mkdir('$aDestination', 755): $!\n";
+    mkdir("$aDestination", 0755) || die "\n mkdir('$aDestination', 0755): $!\n";
   }
   system("perl $gDirScripts/make_pkgs_from_list.pl -p $aPlatform -pkg $aSinglePackage -o $aDestination");
 }
 
 # To retrieve a build id ($aDefine) from $aBuildIDFile (normally
-# mozilla/config/nsBuildID.h).
+# $topobjdir/dist/include/nsBuildID.h).
 sub GetProductBuildID
 {
   my($aBuildIDFile, $aDefine) = @_;
   my($line);
   my($buildID);
   my($fpInIt);
+
+  if(defined($ENV{DEBUG_INSTALLER_BUILD}))
+  {
+    print " GetProductBuildID\n";
+    print "   aBuildIDFile  : $aBuildIDFile\n";
+    print "   aDefine       : $aDefine\n";
+  }
 
   if(!(-e $aBuildIDFile))
   {
@@ -309,6 +322,7 @@ sub GetProductBuildID
       $buildID =~ s/..*$aDefine\s+//;
       # strip out any quote characters
       $buildID =~ s/\"//g;
+      chomp ($buildID);
     }
   }
   close($fpInIt);
@@ -320,15 +334,23 @@ sub GetProductBuildID
 #     * Use mozilla's milestone version for 1st 2 numbers of version x.x.x.x.
 #     * DO NOT Strip out any non numerical chars from mozilla's milestone
 #       version.
-#     * Get the y2k ID from mozilla/config/nsBuildID.h.
+#     * Get the y2k ID from Mozilla's $topobjdir/dist/include/nsBuildID.h.  It
+#       has to be from Mozilla because GRE is from Mozilla.
 #     * Build the GRE special ID given the following:
 #         mozilla milestone: 1.4a
 #         mozilla buildID.h: 2003030510
 #         GRE Special ID   : 1.4a_2003030510
 sub GetGreSpecialID
 {
-  my($aDirMozTopSrc)                    = @_;
-  my($fileBuildID)                      = "$aDirMozTopSrc/config/nsBuildID.h";
+  my($aDirMozTopObj)                    = @_;
+  my($fileBuildID)                      = "$aDirMozTopObj/dist/include/nsBuildID.h";
+
+  if(defined($ENV{DEBUG_INSTALLER_BUILD}))
+  {
+    print " GetGreSpecialID\n";
+    print "   aDirMozTopObj : $aDirMozTopObj\n";
+    print "   fileBuildID   : $fileBuildID\n";
+  }
 
   return(GetProductBuildID($fileBuildID, "GRE_BUILD_ID"));
 }
@@ -337,7 +359,7 @@ sub GetGreSpecialID
 #   To build GRE's file version as follows:
 #     * Use mozilla's milestone version for 1st 2 numbers of version x.x.x.x.
 #     * Strip out any non numerical chars from mozilla's milestone version.
-#     * Get the y2k ID from mozilla/config/nsBuildID.h.
+#     * Get the y2k ID from $topobjdir/dist/include/nsBuildID.h.
 #     * Split the y2k ID exactly in 2 equal parts and use them for the last
 #       2 numbers of the version x.x.x.x.
 #         ie: y2k: 2003030510
@@ -354,14 +376,23 @@ sub GetGreSpecialID
 #         GRE version: 1.4.20030.30510
 sub GetGreFileVersion
 {
-  my($aDirMozTopSrc)                    = @_;
-  my($fileBuildID)                      = "$aDirMozTopSrc/config/nsBuildID.h";
+  my($aDirTopObj, $aDirMozTopSrc)       = @_;
+  my($fileBuildID)                      = "$aDirTopObj/dist/include/nsBuildID.h";
+
+  if(defined($ENV{DEBUG_INSTALLER_BUILD}))
+  {
+    print " GetGreFileVersion\n";
+    print "   aDirTopObj    : $aDirTopObj\n";
+    print "   aDirMozTopSrc : $aDirMozTopSrc\n";
+    print "   fileBuildID   : $fileBuildID\n";
+  }
+
   my($initEmptyValues)                  = 1;
   my(@version)                          = undef;
   my($y2kDate)                          = undef;
   my($buildID_hi)                       = undef;
   my($buildID_lo)                       = undef;
-  my($versionMilestone)                 = GetProductMilestoneVersion($aDirMozTopSrc, $aDirMozTopSrc, $initEmptyValues);
+  my($versionMilestone)                 = GetProductMilestoneVersion($aDirTopObj, $aDirMozTopSrc, $aDirMozTopSrc, $initEmptyValues);
 
   $versionMilestone =~ s/[^0-9.][^.]*//g; # Strip out non numerical chars from versionMilestone.
   @version          = split /\./, $versionMilestone;
@@ -396,19 +427,33 @@ sub GetGreFileVersion
 # The milestone version is acquired from [topsrcdir]/config/milestone.txt
 sub GetProductMilestoneVersion
 {
-  my($aDirMozTopSrc, $aDirConfigTopSrc, $initEmptyValues) = @_;
+  my($aDirTopObj, $aDirMozTopSrc, $aDirConfigTopSrc, $initEmptyValues) = @_;
   my($y2kDate)                          = undef;
   my($versionMilestone)                 = undef;
   my($counter)                          = undef;
   my(@version)                          = undef;
   my($saveCwd)                          = cwd();
 
+  if(defined($ENV{DEBUG_INSTALLER_BUILD}))
+  {
+    print " GetProductMileStoneVersion\n";
+    print "   aDirTopObj      : $aDirTopObj\n";
+    print "   aDirMozTopSrc   : $aDirMozTopSrc\n";
+    print "   aDirConfigTopSrc: $aDirConfigTopSrc\n";
+  }
+
   chdir("$aDirMozTopSrc/config");
   $versionMilestone = `perl milestone.pl --topsrcdir $aDirConfigTopSrc`;
+
+  if(defined($ENV{DEBUG_INSTALLER_BUILD}))
+  {
+    print "   versionMilestone: $versionMilestone\n";
+  }
+
   chop($versionMilestone);
   chdir($saveCwd);
 
-  if(($initEmptyValues ne undef) && ($initEmptyValues eq 1))
+  if(defined($initEmptyValues) && ($initEmptyValues eq 1))
   {
     @version = split /\./, $versionMilestone;
 
@@ -425,7 +470,9 @@ sub GetProductMilestoneVersion
 # Retrieves the products's milestone version from either the ns tree or the
 # mozilla tree.
 #
-# It will also use the y2k compliant build id from mozilla/config/nsBuildID.h
+# However, it will use the y2k compliant build id only from:
+#   .../mozilla/dist/include/nsBuildID.h
+#
 # in the last value:
 #   ie: milestone.txt               : 1.4a
 #       nsBuildID.h                 : 2003030510
@@ -434,12 +481,24 @@ sub GetProductMilestoneVersion
 # The milestone version is acquired from [topsrcdir]/config/milestone.txt
 sub GetProductY2KVersion
 {
-  my($aDirMozTopSrc, $aDirConfigTopSrc) = @_;
-  my($fileBuildID)                      = "$aDirMozTopSrc/config/nsBuildID.h";
+  my($aDirTopObj, $aDirMozTopSrc, $aDirConfigTopSrc, $aDirMozTopObj) = @_;
+
+  $aDirMozTopObj = $aDirTopObj if(!defined($aDirMozTopObj));
+
+  if(defined($ENV{DEBUG_INSTALLER_BUILD}))
+  {
+    print " GetProductY2KVersion\n";
+    print "   aDirTopObj      : $aDirTopObj\n";
+    print "   aDirMozTopObj   : $aDirMozTopObj\n";
+    print "   aDirMozTopSrc   : $aDirMozTopSrc\n";
+    print "   aDirConfigTopSrc: $aDirConfigTopSrc\n";
+  }
+
+  my($fileBuildID)                      = "$aDirMozTopObj/dist/include/nsBuildID.h";
   my($initEmptyValues)                  = 1;
   my(@version)                          = undef;
   my($y2kDate)                          = undef;
-  my($versionMilestone)                 = GetProductMilestoneVersion($aDirMozTopSrc, $aDirConfigTopSrc, $initEmptyValues);
+  my($versionMilestone)                 = GetProductMilestoneVersion($aDirTopObj, $aDirMozTopSrc, $aDirConfigTopSrc, $initEmptyValues);
 
   @version = split /\./, $versionMilestone;
   $y2kDate = GetProductBuildID($fileBuildID, "NS_BUILD_ID");

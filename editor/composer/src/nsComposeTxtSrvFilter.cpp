@@ -46,15 +46,18 @@ nsComposeTxtSrvFilter::nsComposeTxtSrvFilter() :
   mIsForMail(PR_FALSE)
 {
 
-  mBlockQuoteAtom  = getter_AddRefs(do_GetAtom("blockquote"));
-  mTypeAtom        = getter_AddRefs(do_GetAtom("type"));
-  mScriptAtom      = getter_AddRefs(do_GetAtom("script"));
-  mTextAreaAtom    = getter_AddRefs(do_GetAtom("textarea"));
-  mSelectAreaAtom  = getter_AddRefs(do_GetAtom("select"));
-  mMapAtom         = getter_AddRefs(do_GetAtom("map"));
+  mBlockQuoteAtom  = do_GetAtom("blockquote");
+  mPreAtom         = do_GetAtom("pre");
+  mSpanAtom        = do_GetAtom("span");
+  mMozQuoteAtom    = do_GetAtom("_moz_quote");
+  mTypeAtom        = do_GetAtom("type");
+  mScriptAtom      = do_GetAtom("script");
+  mTextAreaAtom    = do_GetAtom("textarea");
+  mSelectAreaAtom  = do_GetAtom("select");
+  mMapAtom         = do_GetAtom("map");
 }
 
-NS_IMPL_ISUPPORTS1(nsComposeTxtSrvFilter, nsITextServicesFilter);
+NS_IMPL_ISUPPORTS1(nsComposeTxtSrvFilter, nsITextServicesFilter)
 
 NS_IMETHODIMP 
 nsComposeTxtSrvFilter::Skip(nsIDOMNode* aNode, PRBool *_retval)
@@ -66,22 +69,26 @@ nsComposeTxtSrvFilter::Skip(nsIDOMNode* aNode, PRBool *_retval)
   // their type is "cite"
   nsCOMPtr<nsIContent> content(do_QueryInterface(aNode));
   if (content) {
-    nsCOMPtr<nsIAtom> tag;
-    content->GetTag(getter_AddRefs(tag));
-    if (tag) {
-      if (tag == mBlockQuoteAtom) {
-        if (mIsForMail) {
-          nsAutoString cite;
-          if (NS_SUCCEEDED(content->GetAttr(kNameSpaceID_None, mTypeAtom, cite))) {
-            *_retval = cite.EqualsIgnoreCase("cite");
-          }
+    nsIAtom *tag = content->Tag();
+    if (tag == mBlockQuoteAtom) {
+      if (mIsForMail) {
+        nsAutoString cite;
+        if (NS_SUCCEEDED(content->GetAttr(kNameSpaceID_None, mTypeAtom, cite))) {
+          *_retval = cite.EqualsIgnoreCase("cite");
         }
-      } else if (tag == mScriptAtom ||
-                 tag == mTextAreaAtom ||
-                 tag == mSelectAreaAtom ||
-                 tag == mMapAtom) {
-        *_retval = PR_TRUE;
       }
+    } else if (tag == mPreAtom || tag == mSpanAtom) {
+      if (mIsForMail) {
+        nsAutoString mozQuote;
+        if (NS_SUCCEEDED(content->GetAttr(kNameSpaceID_None, mMozQuoteAtom, mozQuote))) {
+          *_retval = mozQuote.EqualsIgnoreCase("true");            
+        }
+      }         
+    } else if (tag == mScriptAtom ||
+               tag == mTextAreaAtom ||
+               tag == mSelectAreaAtom ||
+               tag == mMapAtom) {
+      *_retval = PR_TRUE;
     }
   }
 

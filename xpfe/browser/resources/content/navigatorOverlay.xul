@@ -122,6 +122,7 @@
     <command id="Browser:OpenFile"  oncommand="BrowserOpenFileWindow();"/>
     <command id="Browser:SavePage" oncommand="saveDocument(window._content.document);"/>
     <command id="Browser:EditPage" oncommand="editPageOrFrame();" observes="isImage"/>
+    <command id="Browser:UploadFile" oncommand="BrowserUploadFile();"/>
     <command id="Browser:Open" oncommand="BrowserOpenWindow();"/>
     <command id="cmd_printSetup" oncommand="NSPrintSetup();"/>
     <command id="Browser:Print" oncommand="NSPrint();"/>
@@ -129,7 +130,7 @@
     <command id="cmd_quit"/>
     <command id="cmd_close" oncommand="BrowserCloseTabOrWindow()"/>
     <command id="cmd_closeOtherTabs" oncommand="BrowserCloseOtherTabs()"/>
-    <command id="cmd_closeWindow" oncommand="BrowserCloseWindow()"/>
+    <command id="cmd_closeWindow" oncommand="BrowserTryToCloseWindow()"/>
 
     <!-- Edit Menu -->
     <command id="cmd_undo"/>
@@ -227,6 +228,8 @@
     <rule parent="hbox" iscontainer="true" isempty="true"
           rdf:type="http://home.netscape.com/NC-rdf#Folder">
       <toolbarbutton type="menu" editable="true" class="bookmark-item"
+                     image="rdf:http://home.netscape.com/NC-rdf#Icon"
+                     validate="never"
                      rdf:type="http://home.netscape.com/NC-rdf#Folder"
                      uri="rdf:*" label="rdf:http://home.netscape.com/NC-rdf#Name">
         <menupopup>
@@ -236,6 +239,8 @@
     </rule>
     <rule parent="hbox" iscontainer="true">
       <toolbarbutton type="menu" class="bookmark-item" uri="rdf:*" editable="true"
+                     image="rdf:http://home.netscape.com/NC-rdf#Icon"
+                     validate="never"
                      rdf:type="http://home.netscape.com/NC-rdf#Folder"
                      label="rdf:http://home.netscape.com/NC-rdf#Name">
         <menupopup/>
@@ -243,6 +248,8 @@
     </rule>
     <rule parent="hbox">
       <toolbarbutton class="bookmark-item" uri="rdf:*" editable="true" 
+                     image="rdf:http://home.netscape.com/NC-rdf#Icon"
+                     validate="never"
                      status="rdf:http://home.netscape.com/WEB-rdf#status"
                      rdf:type="http://home.netscape.com/NC-rdf#Bookmark"
                      statustext="rdf:http://home.netscape.com/NC-rdf#URL"
@@ -262,6 +269,8 @@
           rdf:type="http://home.netscape.com/NC-rdf#Folder">
       <menupopup>
         <menu class="menu-iconic bookmark-item" uri="rdf:*" 
+              image="rdf:http://home.netscape.com/NC-rdf#Icon"
+              validate="never"
               type="rdf:http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
               label="rdf:http://home.netscape.com/NC-rdf#Name">
           <menupopup>
@@ -273,6 +282,8 @@
     <rule iscontainer="true">
       <menupopup>
         <menu class="menu-iconic bookmark-item" uri="rdf:*"
+              image="rdf:http://home.netscape.com/NC-rdf#Icon"
+              validate="never"
               label="rdf:http://home.netscape.com/NC-rdf#Name"
               type="rdf:http://www.w3.org/1999/02/22-rdf-syntax-ns#type">
           <menupopup />
@@ -287,6 +298,8 @@
     <rule>
       <menupopup>
         <menuitem class="menuitem-iconic bookmark-item" uri="rdf:*"
+                  src="rdf:http://home.netscape.com/NC-rdf#Icon"
+                  validate="never"
                   label="rdf:http://home.netscape.com/NC-rdf#Name" 
                   status="rdf:http://home.netscape.com/WEB-rdf#status"/>
       </menupopup>
@@ -296,7 +309,7 @@
   <!-- Menu -->
   <menubar id="main-menubar" class="chromeclass-menubar">
     <menu id="menu_File">
-      <menupopup id="menu_FilePopup" onpopupshowing="updateCloseItems();getContentAreaFrameCount();">
+      <menupopup id="menu_FilePopup" onpopupshowing="updateCloseItems();getContentAreaFrameCount();updateFileUploadItem();">
         <menu id="menu_New">
           <menupopup id="menu_NewPopup">
             <!-- From utilityOverlay.xul -->
@@ -317,6 +330,8 @@
         <menuitem id="savepage" label="&saveFrameCmd.label;" accesskey="&saveFrameCmd.accesskey;" oncommand="saveFrameDocument();" hidden="true"/>
         <menuseparator id="saveMenuBlockEnd"/>
         <menuitem label="&editPageCmd.label;" accesskey="&editPageCmd.accesskey;" key="key_editPage" command="Browser:EditPage" />
+        <menuseparator/>
+        <menuitem command="Browser:UploadFile" label="&uploadFile.label;" accesskey="&uploadFile.accesskey;"/>
         <menuseparator/>
         <menuitem id="printSetupMenuItem" label="&printSetupCmd.label;" accesskey="&printSetupCmd.accesskey;" command="cmd_printSetup"/>
         <menuitem id="printPreviewMenuItem" label="&printPreviewCmd.label;" accesskey="&printPreviewCmd.accesskey;" command="Browser:PrintPreview"/>
@@ -384,7 +399,9 @@
         <menuitem accesskey="&pageInfoCmd.accesskey;"   label="&pageInfoCmd.label;"   key="key_viewInfo"   command="View:PageInfo"/>
         <menuseparator />
         <menu label="&applyTheme.label;" accesskey="&applyTheme.accesskey;">
-          <menupopup id="theme" datasources="rdf:chrome" ref="urn:mozilla:skin:root" oncommand="applyTheme(event.target)" onpopupshowing="checkTheme()">
+          <menupopup id="theme" datasources="rdf:chrome" ref="urn:mozilla:skin:root" oncommand="applyTheme(event.target)" onpopupshowing="checkTheme()"
+                     sortResource="http://www.mozilla.org/rdf/chrome#displayName"
+                     sortDirection="ascending">
             <menuitem label="&getNewThemesCmd.label;" accesskey="&getNewThemesCmd.accesskey;" oncommand="getNewThemes();"/>
             <menuseparator/>
             <template>
@@ -433,6 +450,7 @@
   <menu id="tasksMenu">
     <menupopup id="taskPopup">
       <menuitem id="menu_searchWeb" label="&searchInternetCmd.label;" key="searchInternetKb" accesskey="&searchInternetCmd.accesskey;" command="Browser:SearchInternet"/>
+      <menuitem id="menu_translate" label="&translateMenu.label;" accesskey="&translateMenu.accesskey;" oncommand="Translate();"/>  
       <menuseparator id="navBeginGlobalItems"/>
     </menupopup>
   </menu>
@@ -441,13 +459,13 @@
   
   <menu accesskey="&helpMenuCmd.accesskey;" id="menu_Help"/>
 
-  <!-- Menu for testing. -->
+  <!-- Menu for testing. disabled for release
   <menu id="debugMenu" accesskey="U" label="Debug">
     <menupopup>
       <menu label="Verification">
         <menupopup>
           <menuitem label="Tables" oncommand="loadURI('resource:/res/samples/test6.html');"/>
-          <menuitem label="JavaScript" oncommand="loadURI('http://mozilla.org/quality/browser/standards/javascript/tcmatrix/index.html');"/>
+          <menuitem label="DOM" oncommand="loadURI('http://mozilla.org/quality/browser/standards/javascript/tcmatrix/index.html');"/>
           <menuitem label="GIF Images" oncommand="loadURI('http://www.mozilla.org/quality/browser/debugtc/bft_browser_imagemap.html');"/>
           <menuitem label="JPEG Images" oncommand="loadURI('resource:/res/samples/test2.html');"/>
           <menuitem label="PNG Images" oncommand="loadURI('http://www.libpng.org/pub/png/png-MagnoliaAlpha.html');"/>
@@ -518,9 +536,10 @@
 
       <menuitem label="Form Manager Samples" oncommand="loadURI('http://www.mozilla.org/wallet/samples/wallet.html');"/>
 
-      <menuitem label="chofmann's Browser Buster" oncommand="loadURI('http://komodo.mozilla.org/buster/');"/>
+      <menuitem label="chofmann's Browser Buster" oncommand="loadURI('http://webtools.mozilla.org/buster/');"/>
       <menuitem label="Composer (with test page)" oncommand="window.openDialog('chrome://editor/content','_blank','chrome,all,dialog=no','chrome://editor/content/EditorInitPage.html')"/>
       <menuitem label="Flush Memory" oncommand="Components.classes['@mozilla.org/xpcom/memory-service;1'].getService(Components.interfaces.nsIMemory).heapMinimize(true);" />
+      <menuitem label="Show Build Configuration" oncommand="loadURI('about:buildconfig');"/>
 
       <menuseparator />
 
@@ -555,7 +574,7 @@
 
       <menuseparator />
 
-      <menuitem label="Bugs Filed Today" oncommand="loadURI('http://bugzilla.mozilla.org/buglist.cgi?changedin=1&amp;chfield=%5BBug+creation%5D&amp;amp;chfieldto=Now&amp;product=Browser&amp;product=MailNews');"/>
+      <menuitem label="Bugs Filed Today" oncommand="loadURI('http://bugzilla.mozilla.org/buglist.cgi?chfield=%5BBug+creation%5D&amp;chfieldfrom=0d&amp;chfieldto=Now&amp;product=Browser&amp;product=MailNews');"/>
       <menuitem label="CVS Checkins Today" oncommand="loadURI('http://bonsai.mozilla.org/cvsquery.cgi?treeid=default&amp;module=SeaMonkeyAll&amp;branch=HEAD&amp;branchtype=match&amp;sortby=Date&amp;date=day&amp;cvsroot=%2Fcvsroot');"/>
       <menuitem label="Tree Status" oncommand="loadURI('http://tinderbox.mozilla.org/showbuilds.cgi?tree=SeaMonkey');"/>
 
@@ -566,9 +585,10 @@
 
       <menuseparator />
 
-      <menuitem label="Latest Builds" oncommand="loadURI('ftp://ftp.mozilla.org/pub/mozilla/nightly/latest/');"/>
+      <menuitem label="Latest Builds" oncommand="loadURI('http://ftp.mozilla.org/pub/mozilla.org/mozilla/nightly/latest/');"/>
     </menupopup>
   </menu>
+  end release comment --> 
 </menubar>
 
 </overlay>

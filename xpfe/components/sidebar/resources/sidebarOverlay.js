@@ -292,6 +292,10 @@ function panel_loader() {
       var element = this.contentDocument.getElementById(elementToFocus);
       if (element)
         element.focus();
+      else
+        dump(elementToFocus + ' element was not found to focus!\n');
+    } else {
+      this.contentWindow.focus();
     }
     this.removeAttribute('focusOnLoad');
   }
@@ -1240,7 +1244,7 @@ function SidebarShowHide() {
 function SidebarBuildPickerPopup() {
   var menu = document.getElementById('sidebar-panel-picker-popup');
   menu.database.AddDataSource(RDF.GetDataSource(sidebarObj.datasource_uri));
-  menu.setAttribute('ref', sidebarObj.resource);
+  menu.builder.rebuild();
 
   for (var ii=3; ii < menu.childNodes.length; ii++) {
     var panel_menuitem = menu.childNodes.item(ii);

@@ -78,9 +78,6 @@
 
 #define IMPORT_MSGS_URL       "chrome://messenger/locale/importMsgs.properties"
 
-static NS_DEFINE_CID(kMsgAccountCID, NS_MSGACCOUNT_CID);
-static NS_DEFINE_CID(kMsgIdentityCID, NS_MSGIDENTITY_CID);
-static NS_DEFINE_CID(kMsgBiffManagerCID, NS_MSGBIFFMANAGER_CID);
 static NS_DEFINE_CID(kProxyObjectManagerCID, NS_PROXYEVENT_MANAGER_CID);
 static NS_DEFINE_CID(kSupportsWStringCID, NS_SUPPORTS_STRING_CID);
 
@@ -817,7 +814,7 @@ ImportMailThread( void *stuff)
 			else if (newDepth < depth) {
 				rv = NS_OK;
 				while ((newDepth < depth) && NS_SUCCEEDED( rv)) {
-					nsCOMPtr<nsIFolder> parFolder;
+					nsCOMPtr<nsIMsgFolder> parFolder;
 					rv = curProxy->GetParent( getter_AddRefs( parFolder));
           if (NS_FAILED( rv)) {
             IMPORT_LOG1("*** ImportMailThread: Failed to get the interface for parent folder '%s'.", lastName.get());

@@ -40,7 +40,7 @@
 #include "nsCSSDeclaration.h"
 #include "nsIDocument.h"
 #include "nsHTMLAtoms.h"
-#include "nsIHTMLContent.h"
+#include "nsIStyledContent.h"
 #include "nsIDOMMutationEvent.h"
 #include "nsHTMLValue.h"
 #include "nsICSSStyleRule.h"
@@ -49,12 +49,11 @@
 #include "nsICSSParser.h"
 #include "nsIURI.h"
 #include "nsINameSpaceManager.h"
-#include "nsIHTMLContentContainer.h"
 #include "nsStyleConsts.h"
 
 MOZ_DECL_CTOR_COUNTER(nsDOMCSSAttributeDeclaration)
 
-nsDOMCSSAttributeDeclaration::nsDOMCSSAttributeDeclaration(nsIHTMLContent *aContent)
+nsDOMCSSAttributeDeclaration::nsDOMCSSAttributeDeclaration(nsIStyledContent *aContent)
 {
   MOZ_COUNT_CTOR(nsDOMCSSAttributeDeclaration);
 
@@ -68,6 +67,9 @@ nsDOMCSSAttributeDeclaration::~nsDOMCSSAttributeDeclaration()
   MOZ_COUNT_DTOR(nsDOMCSSAttributeDeclaration);
 }
 
+NS_IMPL_ADDREF(nsDOMCSSAttributeDeclaration)
+NS_IMPL_RELEASE(nsDOMCSSAttributeDeclaration)
+
 void
 nsDOMCSSAttributeDeclaration::DropReference()
 {
@@ -78,22 +80,16 @@ nsresult
 nsDOMCSSAttributeDeclaration::DeclarationChanged()
 {
   NS_ASSERTION(mContent, "Must have content node to set the decl!");
-  nsHTMLValue val;
-  nsresult rv = mContent->GetHTMLAttribute(nsHTMLAtoms::style, val);
-  NS_ASSERTION(rv == NS_CONTENT_ATTR_HAS_VALUE &&
-               eHTMLUnit_ISupports == val.GetUnit(),
-               "content must have rule");
-  nsCOMPtr<nsICSSStyleRule> oldRule =
-    do_QueryInterface(nsCOMPtr<nsISupports>(val.GetISupportsValue()));
+  nsCOMPtr<nsICSSStyleRule> oldRule;
+  mContent->GetInlineStyleRule(getter_AddRefs(oldRule));
+  NS_ASSERTION(oldRule, "content must have rule");
 
   nsCOMPtr<nsICSSStyleRule> newRule = oldRule->DeclarationChanged(PR_FALSE);
   if (!newRule) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
     
-  return mContent->SetHTMLAttribute(nsHTMLAtoms::style,
-                                    nsHTMLValue(newRule),
-                                    PR_TRUE);
+  return mContent->SetInlineStyleRule(newRule, PR_TRUE);
 }
 
 nsresult
@@ -104,15 +100,10 @@ nsDOMCSSAttributeDeclaration::GetCSSDeclaration(nsCSSDeclaration **aDecl,
 
   *aDecl = nsnull;
   if (mContent) {
-    nsHTMLValue val;
-    result = mContent->GetHTMLAttribute(nsHTMLAtoms::style, val);
-    if (result == NS_CONTENT_ATTR_HAS_VALUE &&
-        eHTMLUnit_ISupports == val.GetUnit()) {
-      nsCOMPtr<nsISupports> rule = val.GetISupportsValue();
-      nsCOMPtr<nsICSSStyleRule> cssRule = do_QueryInterface(rule, &result);
-      if (cssRule) {
-        *aDecl = cssRule->GetDeclaration();
-      }
+    nsCOMPtr<nsICSSStyleRule> cssRule;
+    mContent->GetInlineStyleRule(getter_AddRefs(cssRule));
+    if (cssRule) {
+      *aDecl = cssRule->GetDeclaration();
     }
     else if (aAllocate) {
       nsCSSDeclaration *decl = new nsCSSDeclaration();
@@ -130,9 +121,7 @@ nsDOMCSSAttributeDeclaration::GetCSSDeclaration(nsCSSDeclaration **aDecl,
         return result;
       }
         
-      result = mContent->SetHTMLAttribute(nsHTMLAtoms::style,
-                                          nsHTMLValue(cssRule),
-                                          PR_FALSE);
+      result = mContent->SetInlineStyleRule(cssRule, PR_FALSE);
       if (NS_SUCCEEDED(result)) {
         *aDecl = decl;
       }
@@ -157,33 +146,28 @@ nsDOMCSSAttributeDeclaration::GetCSSParsingEnvironment(nsIURI** aBaseURI,
   *aBaseURI = nsnull;
   *aCSSLoader = nsnull;
   *aCSSParser = nsnull;
-  
-  nsCOMPtr<nsINodeInfo> nodeInfo;
-  nsresult result = mContent->GetNodeInfo(getter_AddRefs(nodeInfo));
-  if (NS_FAILED(result)) {
-    return result;
-  }
-  nsCOMPtr<nsIDocument> doc;
-  result = nodeInfo->GetDocument(getter_AddRefs(doc));
-  if (NS_FAILED(result)) {
-    return result;
-  }
-  
+
+  nsINodeInfo *nodeInfo = mContent->GetNodeInfo();
+
+  // XXXbz GetOwnerDocument
+  nsIDocument* doc = nodeInfo->GetDocument();
+
+  nsCOMPtr<nsIURI> base = mContent->GetBaseURI();
+
   if (doc) {
-    doc->GetBaseURL(aBaseURI);
-    nsCOMPtr<nsIHTMLContentContainer> htmlContainer(do_QueryInterface(doc));
-    if (htmlContainer) {
-      htmlContainer->GetCSSLoader(*aCSSLoader);
-    }
+    NS_IF_ADDREF(*aCSSLoader = doc->GetCSSLoader());
     NS_ASSERTION(*aCSSLoader, "Document with no CSS loader!");
   }
+  
+  nsresult rv = NS_OK;
+
   if (*aCSSLoader) {
-    result = (*aCSSLoader)->GetParserFor(nsnull, aCSSParser);
+    rv = (*aCSSLoader)->GetParserFor(nsnull, aCSSParser);
   } else {
-    result = NS_NewCSSParser(aCSSParser);
+    rv = NS_NewCSSParser(aCSSParser);
   }
-  if (NS_FAILED(result)) {
-    return result;
+  if (NS_FAILED(rv)) {
+    return rv;
   }
   
   // If we are not HTML, we need to be case-sensitive.  Otherwise, Look up our
@@ -192,17 +176,17 @@ nsDOMCSSAttributeDeclaration::GetCSSParsingEnvironment(nsIURI** aBaseURI,
   (*aCSSParser)->SetCaseSensitive(!mContent->IsContentOfType(nsIContent::eHTML) ||
                                   nodeInfo->NamespaceEquals(kNameSpaceID_XHTML));
 
+  base.swap(*aBaseURI);
+
   return NS_OK;
 }
 
-nsresult
-nsDOMCSSAttributeDeclaration::GetParent(nsISupports **aParent)
+NS_IMETHODIMP
+nsDOMCSSAttributeDeclaration::GetParentRule(nsIDOMCSSRule **aParent)
 {
   NS_ENSURE_ARG_POINTER(aParent);
 
-  *aParent = mContent;
-  NS_IF_ADDREF(*aParent);
-
+  *aParent = nsnull;
   return NS_OK;
 }
 

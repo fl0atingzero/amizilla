@@ -215,7 +215,7 @@ NS_IMETHODIMP nsScrollBoxObject::ScrollToElement(nsIDOMElement *child)
     nsCOMPtr<nsIPresContext> context;
     mPresShell->GetPresContext(getter_AddRefs(context));
     float pixelsToTwips = 0.0;
-    context->GetPixelsToTwips(&pixelsToTwips);
+    pixelsToTwips = context->PixelsToTwips();
     
     // get our box
     nsIFrame* frame = GetFrame();
@@ -295,7 +295,7 @@ NS_IMETHODIMP nsScrollBoxObject::EnsureElementIsVisible(nsIDOMElement *child)
     nsCOMPtr<nsIPresContext> context;
     mPresShell->GetPresContext(getter_AddRefs(context));
     float pixelsToTwips = 0.0;
-    context->GetPixelsToTwips(&pixelsToTwips);
+    pixelsToTwips = context->PixelsToTwips();
     
     // get our box
     nsIFrame* frame = GetFrame();
@@ -378,11 +378,8 @@ nsScrollBoxObject::GetScrollableView()
   if (!frame) 
     return nsnull;
   
-  nsCOMPtr<nsIPresContext> context;
-  mPresShell->GetPresContext(getter_AddRefs(context));
-  nsIView* view = frame->GetView(context);
   nsIScrollableView* scrollingView;
-  if (NS_SUCCEEDED(CallQueryInterface(view, &scrollingView))) {  
+  if (NS_SUCCEEDED(CallQueryInterface(frame->GetView(), &scrollingView))) {  
     return scrollingView;
   }
 

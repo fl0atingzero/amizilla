@@ -77,11 +77,13 @@ interface nsMsgViewFlagsType
     const nsMsgViewFlagsTypeValue kThreadedDisplay = 0x1;
     const nsMsgViewFlagsTypeValue kShowIgnored = 0x8;
     const nsMsgViewFlagsTypeValue kUnreadOnly = 0x10;
+    const nsMsgViewFlagsTypeValue kExpandAll = 0x20;
 };
 
 [scriptable, uuid(b2f31bca-fd18-11d4-a5be-0060b0fc04b7)]
 interface nsMsgViewSortType
 {
+  const nsMsgViewSortTypeValue byNone = 0x11; /* not sorted */
 	const nsMsgViewSortTypeValue byDate = 0x12;
 	const nsMsgViewSortTypeValue bySubject = 0x13;
 	const nsMsgViewSortTypeValue byAuthor = 0x14;
@@ -93,9 +95,10 @@ interface nsMsgViewSortType
 	const nsMsgViewSortTypeValue byFlagged = 0x1a;
 	const nsMsgViewSortTypeValue byUnread = 0x1b;
 	const nsMsgViewSortTypeValue byRecipient = 0x1c;
-    const nsMsgViewSortTypeValue byLocation = 0x1d;
+  const nsMsgViewSortTypeValue byLocation = 0x1d;
 	const nsMsgViewSortTypeValue byLabel = 0x1e;
 	const nsMsgViewSortTypeValue byJunkStatus = 0x1f;
+	const nsMsgViewSortTypeValue byAttachments = 0x20;
 };
 
 [scriptable, uuid(255d1c1e-fde7-11d4-a5be-0060b0fc04b7)]
@@ -225,7 +228,6 @@ interface nsMsgNavigationType
   const nsMsgNavigationTypeValue nextUnreadFolder = 11;
   const nsMsgNavigationTypeValue nextFolder = 12;
   const nsMsgNavigationTypeValue readMore = 13;
-  const nsMsgNavigationTypeValue laterMessage = 14;
   /**
    * Go back to the previous visited message
    */
@@ -246,7 +248,7 @@ interface nsMsgNavigationType
 [scriptable, uuid(704c7d28-fd1a-11d4-a5be-0060b0fc04b7)]
 interface nsIMsgDBView : nsISupports
 {
-    void open(in nsIMsgFolder folder, in nsMsgViewSortTypeValue sortType, in nsMsgViewSortOrderValue sortOrder, in nsMsgViewFlagsTypeValue viewFlags, in boolean aTreatRecipientAsAuthor, out long count);
+    void open(in nsIMsgFolder folder, in nsMsgViewSortTypeValue sortType, in nsMsgViewSortOrderValue sortOrder, in nsMsgViewFlagsTypeValue viewFlags, out long count);
     void close();
 
     void init(in nsIMessenger aMessengerInstance, in nsIMsgWindow aMsgWindow, in nsIMsgDBViewCommandUpdater aCommandUpdater);

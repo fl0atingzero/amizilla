@@ -49,7 +49,7 @@
 #include "nsIDOMElement.h"
 #include "nsIScrollbarMediator.h"
 
-NS_IMPL_ISUPPORTS_INHERITED1(nsNativeScrollbar, nsChildView, nsINativeScrollbar);
+NS_IMPL_ISUPPORTS_INHERITED1(nsNativeScrollbar, nsChildView, nsINativeScrollbar)
 
 inline void BoundsCheck(PRInt32 low, PRUint32& value, PRUint32 high)
 {
@@ -459,7 +459,7 @@ nsNativeScrollbar::RecreateHorizontalScrollbar()
   
   // create the new horizontal scroller, init it, hook it up to the
   // view hierarchy and reset the values.
-  mView = [[[NativeScrollbarView alloc] initWithFrame:orientation geckoChild:this] retain];
+  mView = [[NativeScrollbarView alloc] initWithFrame:orientation geckoChild:this];
   [mView setNativeWindow: [mParentView getNativeWindow]];
   [mView setFrame:oldBounds];
   [mView setFloatValue:oldValue knobProportion:oldProportion];

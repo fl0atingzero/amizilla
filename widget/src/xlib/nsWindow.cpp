@@ -169,7 +169,7 @@ nsWindow::UpdateIdle (void *data)
 // Just raises the window.
 // There should probably be checks on this.
 // FIXME KenF
-NS_IMETHODIMP nsWindow::GetAttention(void)
+NS_IMETHODIMP nsWindow::GetAttention(PRInt32 aCycleCount)
 {
   XRaiseWindow(mDisplay, mBaseWindow);
   return NS_OK;
@@ -349,7 +349,7 @@ NS_IMETHODIMP nsWindow::CaptureRollupEvents(nsIRollupListener * aListener,
 
     gRollupConsumeRollupEvent = PR_TRUE;
     gRollupListener = aListener;
-    gRollupWidget = getter_AddRefs(NS_GetWeakReference(NS_STATIC_CAST(nsIWidget*, this)));
+    gRollupWidget = do_GetWeakReference(NS_STATIC_CAST(nsIWidget*, this));
   }else{
     // Release Grab
     if (sGrabWindow == this)
@@ -381,7 +381,7 @@ NS_IMETHODIMP nsWindow::InvalidateRegion(const nsIRegion* aRegion, PRBool aIsSyn
 NS_IMETHODIMP nsWindow::SetFocus(PRBool aRaise)
 {
   nsEventStatus status;
-  nsGUIEvent event; 
+  nsFocusEvent event(NS_GOTFOCUS, this);
   //  nsGUIEvent eventActivate;
 
   if (mBaseWindow)
@@ -392,26 +392,14 @@ NS_IMETHODIMP nsWindow::SetFocus(PRBool aRaise)
    
   mBlockFocusEvents = PR_TRUE;
  
-  event.message = NS_GOTFOCUS;
-  event.widget  = this;
-  event.eventStructType = NS_GUI_EVENT;
-  event.time = 0;
-  event.point.x = 0;
-  event.point.y = 0;
-  
   AddRef();
   DispatchEvent(&event, status);
   Release();
   
-  event.message = NS_ACTIVATE;
-  event.widget  = this;
-  event.eventStructType = NS_GUI_EVENT;
-  event.time = 0;
-  event.point.x = 0;
-  event.point.y = 0;
+  nsGUIEvent actEvent(NS_ACTIVATE, this);
   
   AddRef();
-  DispatchWindowEvent(event);
+  DispatchWindowEvent(actEvent);
   Release();
   
   mBlockFocusEvents = PR_FALSE;
@@ -460,17 +448,11 @@ NS_IMETHODIMP nsWindow::Resize(PRInt32 aWidth,
   }
   nsWidget::Resize(aWidth, aHeight, aRepaint);
 
-  nsSizeEvent sevent;
+  nsSizeEvent sevent(NS_SIZE, this);
   nsRect sevent_windowSize(0, 0, aWidth, aHeight);
-  sevent.message = NS_SIZE;
-  sevent.widget = this;
-  sevent.eventStructType = NS_SIZE_EVENT;
   sevent.windowSize = &sevent_windowSize;
-  sevent.point.x = 0;
-  sevent.point.y = 0;
   sevent.mWinWidth = aWidth;
   sevent.mWinHeight = aHeight;
-  sevent.time = 0;
   AddRef();
   OnResize(sevent);
   Release();
@@ -499,17 +481,11 @@ NS_IMETHODIMP nsWindow::Resize(PRInt32 aX,
 
   nsWidget::Resize(aX, aY, aWidth, aHeight, aRepaint);
 
-  nsSizeEvent sevent;
+  nsSizeEvent sevent(NS_SIZE, this);
   nsRect sevent_windowSize(0, 0, aWidth, aHeight);
-  sevent.message = NS_SIZE;
-  sevent.widget = this;
-  sevent.eventStructType = NS_SIZE_EVENT;
   sevent.windowSize = &sevent_windowSize;
-  sevent.point.x = 0;
-  sevent.point.y = 0;
   sevent.mWinWidth = aWidth;
   sevent.mWinHeight = aHeight;
-  sevent.time = 0;
   AddRef();
   OnResize(sevent);
   Release();
@@ -572,16 +548,12 @@ nsWindow::DoPaint (PRInt32 aX, PRInt32 aY, PRInt32 aWidth, PRInt32 aHeight,
                    nsIRegion *aClipRegion)
 {
   if (mEventCallback) {
-    nsPaintEvent event;
+    nsPaintEvent event(NS_PAINT, this);
     nsRect rect(aX, aY, aWidth, aHeight);
-    event.message = NS_PAINT;
-    event.widget = this;
-    event.eventStructType = NS_PAINT_EVENT;
     event.point.x = aX;
     event.point.y = aY; 
     event.time = PR_Now(); /* No time in EXPOSE events */
     event.rect = &rect;
-    event.region = nsnull;
     
     event.renderingContext = GetRenderingContext();
     if (event.renderingContext) {
@@ -804,7 +776,10 @@ NS_IMETHODIMP nsWindow::SetTitle(const nsString& aTitle)
   /* get the encoder */
   nsCOMPtr<nsICharsetConverterManager> ccm = 
            do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);  
-  rv = ccm->GetUnicodeEncoder(platformCharset.get(), getter_AddRefs(encoder));
+  rv = ccm->GetUnicodeEncoderRaw(platformCharset.get(), getter_AddRefs(encoder));
+  NS_ASSERTION(NS_SUCCEEDED(rv), "GetUnicodeEncoderRaw failed.");
+  if (NS_FAILED(rv))
+    return NS_ERROR_FAILURE;
 
   /* Estimate out length and allocate the buffer based on a worst-case estimate, then do
      the conversion. */

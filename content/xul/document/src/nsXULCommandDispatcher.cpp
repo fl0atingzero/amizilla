@@ -124,9 +124,7 @@ void
 nsXULCommandDispatcher::EnsureFocusController()
 {
   if (!mFocusController) {
-    nsCOMPtr<nsIScriptGlobalObject> global;
-    mDocument->GetScriptGlobalObject(getter_AddRefs(global));
-    nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(global));
+    nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(mDocument->GetScriptGlobalObject()));
   
     // An inelegant way to retrieve this to be sure, but we are
     // guaranteed that the focus controller outlives us, so it
@@ -234,8 +232,8 @@ nsXULCommandDispatcher::AddCommandUpdater(nsIDOMElement* aElement,
       nsCAutoString eventsC, targetsC, aeventsC, atargetsC; 
       eventsC.AssignWithConversion(updater->mEvents);
       targetsC.AssignWithConversion(updater->mTargets);
-      aeventsC.Assign(NS_ConvertUCS2toUTF8(aEvents));
-      atargetsC.Assign(NS_ConvertUCS2toUTF8(aTargets));
+      CopyUTF16toUTF8(aEvents, aeventsC);
+      CopyUTF16toUTF8(aTargets, atargetsC);
       PR_LOG(gLog, PR_LOG_ALWAYS,
              ("xulcmd[%p] replace %p(events=%s targets=%s) with (events=%s targets=%s)",
               this, aElement,
@@ -258,8 +256,8 @@ nsXULCommandDispatcher::AddCommandUpdater(nsIDOMElement* aElement,
   }
 #ifdef NS_DEBUG
   nsCAutoString aeventsC, atargetsC; 
-  aeventsC.Assign(NS_ConvertUCS2toUTF8(aEvents));
-  atargetsC.Assign(NS_ConvertUCS2toUTF8(aTargets));
+  CopyUTF16toUTF8(aEvents, aeventsC);
+  CopyUTF16toUTF8(aTargets, atargetsC);
 
   PR_LOG(gLog, PR_LOG_ALWAYS,
          ("xulcmd[%p] add     %p(events=%s targets=%s)",
@@ -351,10 +349,7 @@ nsXULCommandDispatcher::UpdateCommands(const nsAString& aEventName)
     if (! content)
       return NS_ERROR_UNEXPECTED;
 
-    nsCOMPtr<nsIDocument> document;
-    rv = content->GetDocument(getter_AddRefs(document));
-    NS_ASSERTION(NS_SUCCEEDED(rv), "unable to get document");
-    if (NS_FAILED(rv)) return rv;
+    nsCOMPtr<nsIDocument> document = content->GetDocument();
 
     NS_ASSERTION(document != nsnull, "element has no document");
     if (! document)
@@ -362,20 +357,17 @@ nsXULCommandDispatcher::UpdateCommands(const nsAString& aEventName)
 
 #ifdef NS_DEBUG
     nsCAutoString aeventnameC; 
-    aeventnameC.Assign(NS_ConvertUCS2toUTF8(aEventName));
+    CopyUTF16toUTF8(aEventName, aeventnameC);
     PR_LOG(gLog, PR_LOG_ALWAYS,
            ("xulcmd[%p] update %p event=%s",
             this, updater->mElement,
             aeventnameC.get()));
 #endif
 
-    PRInt32 count = document->GetNumberOfShells();
-    for (PRInt32 i = 0; i < count; i++) {
-      nsCOMPtr<nsIPresShell> shell;
-      document->GetShellAt(i, getter_AddRefs(shell));
-      if (! shell)
-          continue;
-      
+    PRUint32 count = document->GetNumberOfShells();
+    for (PRUint32 i = 0; i < count; i++) {
+      nsIPresShell *shell = document->GetShellAt(i);
+
       // Retrieve the context in which our DOM event will fire.
       nsCOMPtr<nsIPresContext> context;
       rv = shell->GetPresContext(getter_AddRefs(context));
@@ -383,9 +375,7 @@ nsXULCommandDispatcher::UpdateCommands(const nsAString& aEventName)
 
       // Handle the DOM event
       nsEventStatus status = nsEventStatus_eIgnore;
-      nsEvent event;
-      event.eventStructType = NS_EVENT;
-      event.message = NS_XUL_COMMAND_UPDATE; 
+      nsEvent event(NS_XUL_COMMAND_UPDATE);
       content->HandleDOMEvent(context, &event, nsnull, NS_EVENT_FLAG_INIT, &status);
     }
   }
@@ -432,5 +422,19 @@ nsXULCommandDispatcher::GetControllerForCommand(const char *aCommand, nsIControl
 {
   EnsureFocusController();
   return mFocusController->GetControllerForCommand(aCommand, _retval);
+}
+
+NS_IMETHODIMP
+nsXULCommandDispatcher::GetSuppressFocusScroll(PRBool* aSuppressFocusScroll)
+{
+  EnsureFocusController();
+  return mFocusController->GetSuppressFocusScroll(aSuppressFocusScroll);
+}
+
+NS_IMETHODIMP
+nsXULCommandDispatcher::SetSuppressFocusScroll(PRBool aSuppressFocusScroll)
+{
+  EnsureFocusController();
+  return mFocusController->SetSuppressFocusScroll(aSuppressFocusScroll);
 }
 

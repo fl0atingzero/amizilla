@@ -154,7 +154,6 @@ protected:
             id == sParent_id       ||
             id == sScrollbars_id   ||
             id == sContent_id      ||
-            id == sSidebar_id      ||
             id == sMenubar_id      ||
             id == sToolbar_id      ||
             id == sLocationbar_id  ||
@@ -175,6 +174,7 @@ protected:
   {
     return (id == sInnerHeight_id  ||
             id == sInnerWidth_id   ||
+            id == sOpener_id       ||
             id == sOuterHeight_id  ||
             id == sOuterWidth_id   ||
             id == sScreenX_id      ||
@@ -206,7 +206,6 @@ protected:
   static jsval sConstructor_id;
   static jsval s_content_id;
   static jsval sContent_id;
-  static jsval sSidebar_id;
   static jsval sMenubar_id;
   static jsval sToolbar_id;
   static jsval sLocationbar_id;
@@ -241,6 +240,7 @@ protected:
   static jsval sOnchange_id;
   static jsval sOnselect_id;
   static jsval sOnload_id;
+  static jsval sOnbeforeunload_id;
   static jsval sOnunload_id;
   static jsval sOnabort_id;
   static jsval sOnerror_id;
@@ -260,6 +260,8 @@ protected:
   static jsval sWindow_id;
   static jsval sFrames_id;
   static jsval sSelf_id;
+  static jsval sOpener_id;
+  static jsval sAdd_id;
 
   static const JSClass *sObjectClass;
 
@@ -310,6 +312,8 @@ public:
   NS_IMETHOD SetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                          JSObject *obj, jsval id, jsval *vp,
                          PRBool *_retval);
+  NS_IMETHOD AddProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
+                         JSObject *obj, jsval id, jsval *vp, PRBool *_retval);
 };
 
 
@@ -434,12 +438,36 @@ public:
 };
 
 
-// NodeList scriptable helper
+// Generic array scriptable helper
 
-class nsArraySH : public nsDOMClassInfo
+class nsGenericArraySH : public nsDOMClassInfo
 {
 protected:
-  nsArraySH(nsDOMClassInfoData* aData) : nsDOMClassInfo(aData)
+  nsGenericArraySH(nsDOMClassInfoData* aData) : nsDOMClassInfo(aData)
+  {
+  }
+
+  virtual ~nsGenericArraySH()
+  {
+  }
+  
+public:
+  NS_IMETHOD Enumerate(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
+                       JSObject *obj, PRBool *_retval);
+  
+  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
+  {
+    return new nsGenericArraySH(aData);
+  }
+};
+
+
+// NodeList scriptable helper
+
+class nsArraySH : public nsGenericArraySH
+{
+protected:
+  nsArraySH(nsDOMClassInfoData* aData) : nsGenericArraySH(aData)
   {
   }
 
@@ -782,6 +810,8 @@ protected:
 public:
   NS_IMETHOD PostCreate(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                         JSObject *obj);
+  NS_IMETHOD SetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
+                         JSObject *obj, jsval id, jsval *vp, PRBool *_retval);
 };
 
 
@@ -856,10 +886,16 @@ protected:
   {
   }
 
+  static JSBool JS_DLL_CALLBACK Add(JSContext *cx, JSObject *obj, uintN argc,
+                                    jsval *argv, jsval *rval);
+
 public:
   NS_IMETHOD SetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                          JSObject *obj, jsval id, jsval *vp, PRBool *_retval);
-
+  NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
+                        JSObject *obj, jsval id, PRUint32 flags,
+                        JSObject **objp, PRBool *_retval);
+  
   static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
   {
     return new nsHTMLOptionsCollectionSH(aData);
@@ -957,12 +993,12 @@ public:
 };
 
 
-// History helper
+// String array helper
 
-class nsStringArraySH : public nsDOMClassInfo
+class nsStringArraySH : public nsGenericArraySH
 {
 protected:
-  nsStringArraySH(nsDOMClassInfoData* aData) : nsDOMClassInfo(aData)
+  nsStringArraySH(nsDOMClassInfoData* aData) : nsGenericArraySH(aData)
   {
   }
 
@@ -1002,6 +1038,31 @@ public:
   static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
   {
     return new nsHistorySH(aData);
+  }
+};
+
+// StringList scriptable helper
+
+class nsStringListSH : public nsStringArraySH
+{
+protected:
+  nsStringListSH(nsDOMClassInfoData* aData) : nsStringArraySH(aData)
+  {
+  }
+
+  virtual ~nsStringListSH()
+  {
+  }
+
+  virtual nsresult GetStringAt(nsISupports *aNative, PRInt32 aIndex,
+                               nsAString& aResult);
+
+public:
+  // Inherit GetProperty, Enumerate from nsStringArraySH
+  
+  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
+  {
+    return new nsStringListSH(aData);
   }
 };
 
@@ -1169,11 +1230,10 @@ void InvalidateContextAndWrapperCache();
   if (aIID.Equals(NS_GET_IID(nsIClassInfo))) {                                \
     foundInterface =                                                          \
       nsDOMClassInfo::GetClassInfoInstance(eDOMClassInfo_##_class##_id);      \
-    NS_ENSURE_TRUE(foundInterface, NS_ERROR_OUT_OF_MEMORY);                   \
-                                                                              \
-    *aInstancePtr = foundInterface;                                           \
-                                                                              \
-    return NS_OK;                                                             \
+    if (!foundInterface) {                                                    \
+      *aInstancePtr = nsnull;                                                 \
+      return NS_ERROR_OUT_OF_MEMORY;                                          \
+    }                                                                         \
   } else
 
 #endif /* nsDOMClassInfo_h___ */

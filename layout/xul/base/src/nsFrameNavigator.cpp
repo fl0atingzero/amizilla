@@ -47,24 +47,9 @@
 #include "nsIContent.h"
 #include "nsIBox.h"
 
-void
-nsFrameNavigator::GetTag(nsIBox* aBox, nsCOMPtr<nsIAtom>& aAtom)
-{
-   nsIFrame* frame = nsnull;
-   aBox->GetFrame(&frame);
-
-   nsCOMPtr<nsIContent> content;
-   frame->GetContent(getter_AddRefs(content));
-   if (content) {
-     content->GetTag(getter_AddRefs(aAtom));
-     return; 
-   }
-
-   return;
-}
-
 nsIBox*
-nsFrameNavigator::GetChildBeforeAfter(nsIPresContext* aPresContext, nsIBox* start, PRBool before)
+nsFrameNavigator::GetChildBeforeAfter(nsIPresContext* aPresContext,
+                                      nsIBox* start, PRBool before)
 {
    nsIBox* parent = nsnull;
    start->GetParentBox(&parent);

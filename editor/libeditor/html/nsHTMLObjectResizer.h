@@ -40,6 +40,7 @@
 #define _nshtmlobjectresizer__h
 
 #include "nsCOMPtr.h"
+#include "nsWeakReference.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMElement.h"
 
@@ -82,7 +83,7 @@ public:
 
 protected:
 
-  nsIHTMLEditor * mEditor;
+  nsWeakPtr mEditor;
 };
 
 // ==================================================================
@@ -105,19 +106,19 @@ public:
   NS_IMETHOD DragMove(nsIDOMEvent* aMouseEvent);
 
  protected:
-  nsIHTMLEditor * mEditor;
+  nsWeakPtr mEditor;
 
 };
 
 // ==================================================================
-// ResizeEventListener
+// DocumentResizeEventListener
 // ==================================================================
 
-class ResizeEventListener: public nsIDOMEventListener
+class DocumentResizeEventListener: public nsIDOMEventListener
 {
 public:
-  ResizeEventListener(nsIHTMLEditor * aEditor);
-  virtual ~ResizeEventListener();
+  DocumentResizeEventListener(nsIHTMLEditor * aEditor);
+  virtual ~DocumentResizeEventListener();
 
   /*interfaces for addref and release and queryinterface*/
   NS_DECL_ISUPPORTS
@@ -125,9 +126,8 @@ public:
   NS_DECL_NSIDOMEVENTLISTENER
 
  protected:
-  nsIHTMLEditor * mEditor;
+  nsWeakPtr mEditor;
 
 };
-
 
 #endif /* _nshtmlobjectresizer__h */

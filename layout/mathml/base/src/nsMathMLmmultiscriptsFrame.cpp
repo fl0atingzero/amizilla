@@ -82,11 +82,7 @@ nsMathMLmmultiscriptsFrame::TransmitAutomaticData(nsIPresContext* aPresContext)
   nsAutoVoidArray subScriptFrames;
   nsIFrame* childFrame = mFrames.FirstChild();
   while (childFrame) {
-    nsCOMPtr<nsIContent> childContent;
-    nsCOMPtr<nsIAtom> childTag;
-    childFrame->GetContent(getter_AddRefs(childContent));
-    childContent->GetTag(getter_AddRefs(childTag));
-    if (childTag.get() == nsMathMLAtoms::mprescripts_) {
+    if (childFrame->GetContent()->Tag() == nsMathMLAtoms::mprescripts_) {
       // mprescripts frame
     }
     else if (0 == count) {
@@ -104,7 +100,7 @@ nsMathMLmmultiscriptsFrame::TransmitAutomaticData(nsIPresContext* aPresContext)
       isSubScript = !isSubScript;
     }
     count++;
-    childFrame->GetNextSibling(&childFrame);
+    childFrame = childFrame->GetNextSibling();
   }
   for (PRInt32 i = subScriptFrames.Count() - 1; i >= 0; i--) {
     childFrame = (nsIFrame*)subScriptFrames[i];
@@ -260,12 +256,7 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
 
   nsIFrame* childFrame = mFrames.FirstChild();
   while (childFrame) {
-    nsCOMPtr<nsIContent> childContent;
-    nsCOMPtr<nsIAtom> childTag;
-    childFrame->GetContent(getter_AddRefs(childContent));
-    childContent->GetTag(getter_AddRefs(childTag));
-
-    if (childTag.get() == nsMathMLAtoms::mprescripts_) {
+    if (childFrame->GetContent()->Tag() == nsMathMLAtoms::mprescripts_) {
       if (mprescriptsFrame) {
         // duplicate <mprescripts/> found
         // report an error, encourage people to get their markups in order
@@ -373,7 +364,7 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
       isSubScript = !isSubScript;
     }
     count++;
-    childFrame->GetNextSibling(&childFrame);
+    childFrame = childFrame->GetNextSibling();
   }
   // note: width=0 if all sup-sub pairs match correctly
   if ((0 != width) || !baseFrame || !subScriptFrame || !supScriptFrame) {
@@ -455,7 +446,7 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
           dx += mScriptSpace + width;
         }
       }
-      childFrame->GetNextSibling(&childFrame);
+      childFrame = childFrame->GetNextSibling();
     } while (mprescriptsFrame != childFrame);
   }
 

@@ -7,7 +7,7 @@
 
 </head>
 
-<body bgcolor="white">
+<body>
 
 <hr>
 <a NAME="certificates:usingIDX"></a>
@@ -33,7 +33,6 @@
 <p><a href="#using_certs_devices">Managing Smart Cards and Other Security Devices</a></p>
 <p><a href="#using_certs_ssl">Managing SSL Warnings and Settings</a></p>
 <p><a href="#using_certs_validation">Controlling Validation</a></p>
-<p><a href="#using_certs_settings">Certificate Settings</a></p>
 </td>
 </tr>
 </table>
@@ -113,7 +112,7 @@
 <p>To open the Certificate Manager:
 
 <ol>
-	<li>Open the Edit menu and choose Preferences.
+	<li>Open the Edit menu (Mozilla menu on Mac OS X) and choose Preferences.
 	<li>Under the Privacy &amp; Security category, click Certificates. (If no subcategories are visible, double-click Privacy &amp; Security to expand the list.)
 	<li>In the Manage Certificates section, click Manage Certificates. You see the Certificate Manager.
 </ol>
@@ -206,7 +205,7 @@
 <a NAME="using_certs_cas"></a><a NAME="certificates:certificate_authorityIDX"></a>
 <H2>Managing Certificates that Identify Certificate Authorities</H2>
 
-<p>Like other commonly used forms of ID, a certificate is issued by an organization with recognized authority to issue such identification. An organization that issues certificates is called a <a href="glossary.html#certificate_authority_(CA)">certificate authority (CA)</a>. A certificate that identifies a CA is called a CA certificate.
+<p>Like other commonly used forms of ID, a certificate is issued by an organization with recognized authority to issue such identification. An organization that issues certificates is called a <a href="glossary.html#certificate_authority">certificate authority (CA)</a>. A certificate that identifies a CA is called a CA certificate.
 
 <p> Certificate Manager typically has many CA certificates on file. These CA certificates permit Certificate Manager to recognize and work with certificates issued by the corresponding CAs. However, the presence of a CA certificate in this list does <i>not</i> guarantee that the certificates it issues can be trusted. You or your system administrator must make decisions about what kinds of certificates to trust depending on your security needs.  
 
@@ -290,7 +289,7 @@
 <p>The Device Manager allows you to perform operations on security devices. To open the Device Manager, follow these steps: 
 
 <ol>
-	<li>Open the Edit menu and choose Preferences.
+	<li>Open the Edit menu (Mozilla menu on Mac OS X) and choose Preferences.
 	<li>Under the Privacy &amp; Security category, click Certificates. (If no subcategories are visible, double-click Privacy &amp; Security to expand the list.)
 	<li>In the Certificates panel, click Manage Security Devices.
 </ol>
@@ -325,7 +324,7 @@
 <p>After a new module is installed on your computer, follow these steps to load it:
 
 <ol>
-	<li>Open the Edit menu and choose Preferences.
+	<li>Open the Edit menu (Mozilla menu on Mac OS X) and choose Preferences.
 	<li>Under the Privacy &amp; Security category, click Certificates. (If no subcategories are visible, double-click Privacy &amp; Security to expand the list.)
 	<li>In the Certificates panel, click Manage Security Devices.
 	<li>Click Load.
@@ -347,7 +346,7 @@
 <p>To enable FIPS mode for the browser, you use the Device Manager:
 
 <ol>
-	<li>Open the Edit menu and choose Preferences.
+	<li>Open the Edit menu (Mozilla menu on Mac OS X) and choose Preferences.
 	<li>Under the Privacy &amp; Security category, click Certificates. (If no subcategories are visible, double-click Privacy &amp; Security to expand the list.)
 	<li>In the Certificates panel, click Manage Devices.
 	<li>Click the Enable FIPS button. When FIPS is enabled, the name NSS Internal PKCS #11 Module changes to NSS Internal FIPS PKCS #11 Module and the Enable FIPS button changes to Disable FIPS. 
@@ -372,7 +371,7 @@
 <p>You shouldn't adjust the SSL settings for your browser unless you know what you're doing or have the assistance of someone else who does. If you do need to adjust them for some reason, follow these steps:
 
 <ol>
-	<li>Open the Edit menu and choose Preferences.
+	<li>Open the Edit menu (Mozilla menu on Mac OS X) and choose Preferences.
 	<li>Under the Privacy &amp; Security category, select SSL. (If no subcategories are visible, double-click Privacy &amp; Security to expand the list.)
 </ol>
 
@@ -404,7 +403,7 @@
 <p><a href="#How_Certificate_Validation_Works">How Validation Works</a></p>
 <p><a href="#Managing_CRLs">Managing CRLs</a></p>
 <p><a href="#Configuring_Certificate_Manager_for_OCSP">Configuring OCSP</a></p>
-<p><a href="#validation_help.html">Validation Settings</a></p>
+<p><a href="validation_help.html">Validation Settings</a></p>
 </td>
 </tr>
 </table>
@@ -435,7 +434,7 @@
 <p>&nbsp;</p>
 <a name="Managing_CRLs"></a><h2>Managing CRLs</h2>
 
-<p>A certificate revocation list (CRL) is list of revoked certificates.  A <a href="glossary.html#certificate_authority (CA)">certificate authority (CA)</a> might revoke a certificate, for example, if it has been compromised in some way&mdash;much the way a credit card company might revoke your credit card if you report that it's been stolen.
+<p>A certificate revocation list (CRL) is list of revoked certificates.  A <a href="glossary.html#certificate_authority">certificate authority (CA)</a> might revoke a certificate, for example, if it has been compromised in some way&mdash;much the way a credit card company might revoke your credit card if you report that it's been stolen.
 </p>
 
 <p>This section describes how to import and manage CRLs. <p>For background information, see <a href="#How_Certificate_Validation_Works">How Validation Works</a>. 
@@ -498,7 +497,7 @@
 <p>You can view and manage CRLs available to the browser through the browser's Validation preferences:
 
 <ol>
-	<li>Open the Edit menu and choose Preferences.
+	<li>Open the Edit menu (Mozilla menu on Mac OS X) and choose Preferences.
 	<li>Under the Privacy &amp; Security category, click Validation. (If no subcategories are visible, double-click Privacy &amp; Security to expand the list.)
 	<li>Click Manage CRLs in the Validation panel to see a list of the CRLs available to Certificate Manager.
 </ol>
@@ -524,7 +523,7 @@
 <p>The settings that control OCSP are part of Validation preferences. To view Validation preferences, follow these steps:
 
 <ol>
-	<li>Open the Edit menu and choose Preferences.
+	<li>Open the Edit menu (Mozilla menu on Mac OS X) and choose Preferences.
 	<li>Under the Privacy &amp; Security category, click Validation. (If no subcategories are visible, double-click Privacy &amp; Security to expand the list.)
 </ol>
 

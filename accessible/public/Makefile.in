@@ -40,10 +40,12 @@ GRE_MODULE	= 1
 
 XPIDLSRCS = \
       nsIAccessibilityService.idl \
+      nsIAccessibleRetrieval.idl \
       nsIAccessible.idl \
+      nsPIAccessible.idl \
       nsIAccessibleCaret.idl \
       nsIAccessibleDocument.idl \
-      nsIAccessibleEventReceiver.idl \
+      nsPIAccessibleDocument.idl \
       nsIAccessibleProvider.idl \
       nsIAccessibleSelectable.idl \
       nsIAccessNode.idl \

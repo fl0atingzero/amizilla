@@ -73,6 +73,7 @@ public:
   NS_IMETHOD DrawTile(nsIRenderingContext &aContext,
                       nsDrawingSurface aSurface,
                       PRInt32 aSXOffset, PRInt32 aSYOffset,
+		      PRInt32 aPadX, PRInt32 aPadY,
                       const nsRect &aTileRect);
 
   NS_IMETHOD DrawToImage(nsIImage* aDstImage, nscoord aDX, nscoord aDY,
@@ -129,6 +130,11 @@ public:
    * @param aCleanUpAll - if True, all the memory used will be released otherwise just clean up the DIB memory
    */
   void CleanUp(PRBool aCleanUpAll);
+
+  void DrawComposited24(unsigned char *aBits,
+                        PRUint8 *aImageRGB, PRUint32 aStrideRGB,
+                        PRUint8 *aImageAlpha, PRUint32 aStrideAlpha,
+                        int aWidth, int aHeight);
 
 #ifdef OS2TODO
   /** 
@@ -195,8 +201,7 @@ public:
   void NS2PM_ININ( const nsRect &in, RECTL &rcl);
   void CreateBitmaps( nsDrawingSurfaceOS2 *surf);
 
-  nsresult SlowTile (nsIRenderingContext& aContext, nsDrawingSurface aSurface, PRInt32 aSXOffset, PRInt32 aSYOffset, const nsRect &aTileRect);
-  void     BuildTile (HPS hpsTile, PRUint8* pImageBits, PBITMAPINFO2 pBitmapInfo, nscoord aTileWidth, nscoord aTileHeight);
+  void     BuildTile (HPS hpsTile, PRUint8* pImageBits, PBITMAPINFO2 pBitmapInfo, nscoord aTileWidth, nscoord aTileHeight, float scale);
 };
 
 #endif

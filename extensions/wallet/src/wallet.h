@@ -62,8 +62,8 @@ PR_BEGIN_EXTERN_C
 #define NO_BUTTON 1
 #define NEVER_BUTTON 2
 
-static const char *pref_Crypto = "wallet.crypto";
-static const char *pref_AutoCompleteOverride = "wallet.crypto.autocompleteoverride";
+#define pref_Crypto "wallet.crypto"
+#define pref_AutoCompleteOverride "wallet.crypto.autocompleteoverride"
 
 extern void
 WLLT_ChangePassword(PRBool* status);
@@ -109,10 +109,10 @@ extern void
 WLLT_OnSubmit(nsIContent* formNode, nsIDOMWindowInternal* window);
 
 extern void
-WLLT_FetchFromNetCenter();
+WLLT_ExpirePassword(PRBool* status);
 
 extern void
-WLLT_ExpirePassword(PRBool* status);
+WLLT_ExpirePasswordOnly(PRBool* status);
 
 extern void
 WLLT_InitReencryptCallback(nsIDOMWindowInternal* window);

@@ -43,6 +43,7 @@
 
 #include "nsCOMPtr.h"
 #include "nsIContent.h"
+#include "nsINodeInfo.h"
 #include "nsIDocument.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMXULCommandDispatcher.h"
@@ -54,7 +55,6 @@
 #include "nsIServiceManager.h"
 #include "nsITextContent.h"
 #include "nsIURL.h"
-#include "nsIXMLContent.h"
 #include "nsXULContentUtils.h"
 #include "nsIXULPrototypeCache.h"
 #include "nsLayoutCID.h"
@@ -154,29 +154,20 @@ nsXULContentUtils::FindChildByTag(nsIContent* aElement,
                                   nsIAtom* aTag,
                                   nsIContent** aResult)
 {
-    nsresult rv;
+    PRUint32 count = aElement->GetChildCount();
 
-    PRInt32 count;
-    if (NS_FAILED(rv = aElement->ChildCount(count)))
-        return rv;
-
-    for (PRInt32 i = 0; i < count; ++i) {
-        nsCOMPtr<nsIContent> kid;
-        if (NS_FAILED(rv = aElement->ChildAt(i, getter_AddRefs(kid))))
-            return rv; // XXX fatal
+    for (PRUint32 i = 0; i < count; ++i) {
+        nsIContent *kid = aElement->GetChildAt(i);
 
         PRInt32 nameSpaceID;
-        if (NS_FAILED(rv = kid->GetNameSpaceID(&nameSpaceID)))
-            return rv; // XXX fatal
+        kid->GetNameSpaceID(&nameSpaceID);
 
         if (nameSpaceID != aNameSpaceID)
             continue; // wrong namespace
 
-        nsCOMPtr<nsIAtom> kidTag;
-        if (NS_FAILED(rv = kid->GetTag(getter_AddRefs(kidTag))))
-            return rv; // XXX fatal
+        nsINodeInfo *ni = kid->GetNodeInfo();
 
-        if (kidTag.get() != aTag)
+        if (!ni || !ni->Equals(aTag))
             continue;
 
         *aResult = kid;
@@ -197,7 +188,7 @@ nsXULContentUtils::GetElementResource(nsIContent* aElement, nsIRDFResource** aRe
     nsresult rv;
 
     PRUnichar buf[128];
-    nsAutoString id(CBufDescriptor(buf, PR_TRUE, sizeof(buf) / sizeof(PRUnichar), 0));
+    nsFixedString id(buf, NS_ARRAY_LENGTH(buf), 0);
 
     rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::id, id);
     NS_ASSERTION(NS_SUCCEEDED(rv), "severe error retrieving attribute");
@@ -208,11 +199,8 @@ nsXULContentUtils::GetElementResource(nsIContent* aElement, nsIRDFResource** aRe
 
     // Since the element will store its ID attribute as a document-relative value,
     // we may need to qualify it first...
-    nsCOMPtr<nsIDocument> doc;
-    rv = aElement->GetDocument(getter_AddRefs(doc));
-    if (NS_FAILED(rv)) return rv;
-
-    NS_ASSERTION(doc != nsnull, "element is not in any document");
+    nsCOMPtr<nsIDocument> doc = aElement->GetDocument();
+    NS_ASSERTION(doc, "element is not in any document");
     if (! doc)
         return NS_ERROR_FAILURE;
 
@@ -232,7 +220,7 @@ nsXULContentUtils::GetElementRefResource(nsIContent* aElement, nsIRDFResource** 
     // fallback on an "id" attribute.
     nsresult rv;
     PRUnichar buf[128];
-    nsAutoString uri(CBufDescriptor(buf, PR_TRUE, sizeof(buf) / sizeof(PRUnichar), 0));
+    nsFixedString uri(buf, NS_ARRAY_LENGTH(buf), 0);
 
     rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::ref, uri);
     NS_ASSERTION(NS_SUCCEEDED(rv), "severe error retrieving attribute");
@@ -240,12 +228,9 @@ nsXULContentUtils::GetElementRefResource(nsIContent* aElement, nsIRDFResource** 
 
     if (rv == NS_CONTENT_ATTR_HAS_VALUE) {
         // We'll use rdf_MakeAbsolute() to translate this to a URL.
-        nsCOMPtr<nsIDocument> doc;
-        rv = aElement->GetDocument(getter_AddRefs(doc));
-        if (NS_FAILED(rv)) return rv;
+        nsCOMPtr<nsIDocument> doc = aElement->GetDocument();
 
-        nsCOMPtr<nsIURI> url;
-        doc->GetDocumentURL(getter_AddRefs(url));
+        nsIURI *url = doc->GetDocumentURI();
         NS_ASSERTION(url != nsnull, "element has no document");
         if (! url)
             return NS_ERROR_UNEXPECTED;
@@ -328,7 +313,7 @@ nsXULContentUtils::GetTextForNode(nsIRDFNode* aNode, nsAString& aResult)
         const char* p;
         rv = resource->GetValueConst(&p);
         if (NS_FAILED(rv)) return rv;
-        aResult.Assign(NS_ConvertASCIItoUCS2(p));
+        CopyASCIItoUTF16(p, aResult);
         return NS_OK;
     }
 
@@ -347,11 +332,7 @@ nsXULContentUtils::MakeElementURI(nsIDocument* aDocument, const nsAString& aElem
         CopyUTF16toUTF8(aElementID, aURI);
     }
     else {
-        nsresult rv;
-
-        nsCOMPtr<nsIURI> docURL;
-        rv = aDocument->GetBaseURL(getter_AddRefs(docURL));
-        if (NS_FAILED(rv)) return rv;
+        nsIURI *docURL = aDocument->GetBaseURI();
 
         // XXX Urgh. This is so broken; I'd really just like to use
         // NS_MakeAbsolueURI(). Unfortunatly, doing that breaks
@@ -367,7 +348,7 @@ nsXULContentUtils::MakeElementURI(nsIDocument* aDocument, const nsAString& aElem
         AppendUTF16toUTF8(aElementID, aURI);
 #else
         nsXPIDLCString spec;
-        rv = NS_MakeAbsoluteURI(nsCAutoString(aElementID), docURL, getter_Copies(spec));
+        nsresult rv = NS_MakeAbsoluteURI(nsCAutoString(aElementID), docURL, getter_Copies(spec));
         if (NS_SUCCEEDED(rv)) {
             aURI = spec;
         }
@@ -388,7 +369,7 @@ nsXULContentUtils::MakeElementResource(nsIDocument* aDocument, const nsAString& 
     nsresult rv;
 
     char buf[256];
-    nsCAutoString uri(CBufDescriptor(buf, PR_TRUE, sizeof(buf), 0));
+    nsFixedCString uri(buf, sizeof(buf), 0);
     rv = MakeElementURI(aDocument, aID, uri);
     if (NS_FAILED(rv)) return rv;
 
@@ -406,14 +387,8 @@ nsXULContentUtils::MakeElementID(nsIDocument* aDocument, const nsAString& aURI, 
 {
     // Convert a URI into an element ID that can be accessed from the
     // DOM APIs.
-    nsresult rv;
-
-    nsCOMPtr<nsIURI> docURL;
-    rv = aDocument->GetBaseURL(getter_AddRefs(docURL));
-    if (NS_FAILED(rv)) return rv;
-
     nsCAutoString spec;
-    docURL->GetSpec(spec);
+    aDocument->GetBaseURI()->GetSpec(spec);
 
     // XXX FIX ME to not do a copy
     nsAutoString str(aURI);
@@ -464,7 +439,7 @@ nsXULContentUtils::GetResource(PRInt32 aNameSpaceID, const nsAString& aAttribute
     nsresult rv;
 
     PRUnichar buf[256];
-    nsAutoString uri(CBufDescriptor(buf, PR_TRUE, sizeof(buf) / sizeof(PRUnichar), 0));
+    nsFixedString uri(buf, NS_ARRAY_LENGTH(buf), 0);
     if (aNameSpaceID != kNameSpaceID_Unknown && aNameSpaceID != kNameSpaceID_None) {
         rv = nsContentUtils::GetNSManagerWeakRef()->GetNameSpaceURI(aNameSpaceID, uri);
         // XXX ignore failure; treat as "no namespace"

@@ -259,7 +259,8 @@ nsSHistory::GetTransactionAtIndex(PRInt32 aIndex, nsISHTransaction ** aResult)
    return NS_OK;
 }
 
-NS_IMETHODIMP
+#ifdef DEBUG
+nsresult
 nsSHistory::PrintHistory()
 {
 
@@ -318,13 +319,12 @@ nsSHistory::PrintHistory()
       
   return NS_OK;
 }
+#endif
 
 
 NS_IMETHODIMP
 nsSHistory::GetRootTransaction(nsISHTransaction ** aResult)
 {
-    nsCOMPtr<nsISHEntry>   entry;
-
     NS_ENSURE_ARG_POINTER(aResult);
     *aResult=mListRoot;
       NS_IF_ADDREF(*aResult);
@@ -358,7 +358,9 @@ nsSHistory::PurgeHistory(PRInt32 aEntries)
 {
   if (mLength <= 0 || aEntries <= 0)
     return NS_ERROR_FAILURE;
-        
+
+  aEntries = PR_MIN(aEntries, mLength);
+  
   PRBool purgeHistory = PR_TRUE;
   // Notify the listener about the history purge
   if (mListener) {
@@ -375,16 +377,20 @@ nsSHistory::PurgeHistory(PRInt32 aEntries)
 
   PRInt32 cnt = 0;
   while (cnt < aEntries) {
-    nsCOMPtr<nsISHTransaction>  txn = mListRoot;
     nsCOMPtr<nsISHTransaction> nextTxn;
     if (mListRoot)
       mListRoot->GetNext(getter_AddRefs(nextTxn));
-    txn = nsnull;
     mListRoot = nextTxn;
     cnt++;        
   }
   mLength -= cnt;
   mIndex -= cnt;
+
+  // Now if we were not at the end of the history, mIndex could have
+  // become far too negative.  If so, just set it to -1.
+  if (mIndex < -1) {
+    mIndex = -1;
+  }
   return NS_OK;
 }
 
@@ -397,7 +403,7 @@ nsSHistory::AddSHistoryListener(nsISHistoryListener * aListener)
   // Check if the listener supports Weak Reference. This is a must.
   // This listener functionality is used by embedders and we want to 
   // have the right ownership with who ever listens to SHistory
-  nsWeakPtr listener = getter_AddRefs(NS_GetWeakReference(aListener));
+  nsWeakPtr listener = do_GetWeakReference(aListener);
   if (!listener) return NS_ERROR_FAILURE;
   mListener = listener;
   return NS_OK;
@@ -409,7 +415,7 @@ nsSHistory::RemoveSHistoryListener(nsISHistoryListener * aListener)
 {
   // Make sure the listener that wants to be removed is the
   // one we have in store. 
-  nsWeakPtr listener = getter_AddRefs(NS_GetWeakReference(aListener));  
+  nsWeakPtr listener = do_GetWeakReference(aListener);  
   if (listener == mListener) {
     mListener = nsnull;
     return NS_OK;

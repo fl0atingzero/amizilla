@@ -70,13 +70,11 @@ static const PRUnichar kApplyFunction  = PRUnichar(0x2061);
 static const PRUnichar kInvisibleTimes = PRUnichar(0x2062);
 static const PRUnichar kNullCh         = PRUnichar('\0');
 
-NS_IMETHODIMP
-nsMathMLmoFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsMathMLmoFrame::GetType() const
 {
   if (mFrames.GetLength() > 1) {
-    *aType = nsMathMLAtoms::operatorVisibleMathMLFrame;
-    NS_ADDREF(*aType);
-    return NS_OK;
+    return nsMathMLAtoms::operatorVisibleMathMLFrame;
   }
 
   nsAutoString data;
@@ -84,17 +82,15 @@ nsMathMLmoFrame::GetFrameType(nsIAtom** aType) const
   PRInt32 length = data.Length();
   PRUnichar ch = (length == 0) ? kNullCh : data[0];
   if (length > 1)
-    *aType = nsMathMLAtoms::operatorVisibleMathMLFrame;
-  else if (ch == kInvisibleComma || 
-           ch == kApplyFunction  ||
-           ch == kInvisibleTimes ||
-           ch == kNullCh)
-    *aType = nsMathMLAtoms::operatorInvisibleMathMLFrame;
-  else
-    *aType = nsMathMLAtoms::operatorVisibleMathMLFrame;
+    return nsMathMLAtoms::operatorVisibleMathMLFrame;
+  
+  if (ch == kInvisibleComma || 
+      ch == kApplyFunction  ||
+      ch == kInvisibleTimes ||
+      ch == kNullCh)
+    return nsMathMLAtoms::operatorInvisibleMathMLFrame;
 
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsMathMLAtoms::operatorVisibleMathMLFrame;
 }
 
 // since a mouse click implies selection, we cannot just rely on the
@@ -114,20 +110,18 @@ nsMathMLmoFrame::IsFrameInSelection(nsIPresContext* aPresContext,
     return PR_FALSE;
 
   SelectionDetails* details = nsnull;
-  nsCOMPtr<nsIPresShell> shell;
-  nsresult rv = aPresContext->GetShell(getter_AddRefs(shell));
-  if (NS_SUCCEEDED(rv) && shell) {
+  nsIPresShell *shell = aPresContext->GetPresShell();
+  if (shell) {
     nsCOMPtr<nsIFrameSelection> frameSelection;
     nsCOMPtr<nsISelectionController> selCon;
-    rv = GetSelectionController(aPresContext, getter_AddRefs(selCon));
+    nsresult rv = GetSelectionController(aPresContext, getter_AddRefs(selCon));
     if (NS_SUCCEEDED(rv) && selCon)
       frameSelection = do_QueryInterface(selCon);
     if (!frameSelection)
       rv = shell->GetFrameSelection(getter_AddRefs(frameSelection));
     if (NS_SUCCEEDED(rv) && frameSelection) {
-      nsCOMPtr<nsIContent> content;
-      aFrame->GetContent(getter_AddRefs(content));   
-      frameSelection->LookUpSelection(content, 0, 1, &details, PR_TRUE);
+      frameSelection->LookUpSelection(aFrame->GetContent(),
+				      0, 1, &details, PR_TRUE);
     }
   }
   if (!details)
@@ -165,7 +159,7 @@ nsMathMLmoFrame::Paint(nsIPresContext*      aPresContext,
     nsRect selectedRect;
     nsIFrame* firstChild = mFrames.FirstChild();
     if (IsFrameInSelection(aPresContext, firstChild)) {
-      firstChild->GetRect(selectedRect);
+      selectedRect = firstChild->GetRect();
       isSelected = PR_TRUE;
     }
     rv = mMathMLChar.Paint(aPresContext, aRenderingContext, aDirtyRect,
@@ -203,18 +197,14 @@ nsMathMLmoFrame::ProcessTextData(nsIPresContext* aPresContext)
 
   // kids can be comment-nodes, attribute-nodes, text-nodes...
   // we use the DOM to ensure that we only look at text-nodes...
-  PRInt32 numKids;
-  mContent->ChildCount(numKids);
-  for (PRInt32 kid=0; kid<numKids; kid++) {
-    nsCOMPtr<nsIContent> kidContent;
-    mContent->ChildAt(kid, getter_AddRefs(kidContent));
-    if (kidContent.get()) {
-      nsCOMPtr<nsIDOMText> kidText(do_QueryInterface(kidContent));
-      if (kidText.get()) {
-        nsAutoString kidData;
-        kidText->GetData(kidData);
-        data += kidData;
-      }
+  PRUint32 numKids = mContent->GetChildCount();
+  for (PRUint32 kid = 0; kid < numKids; ++kid) {
+    nsCOMPtr<nsIDOMText> kidText(do_QueryInterface(mContent->GetChildAt(kid)));
+
+    if (kidText) {
+      nsAutoString kidData;
+      kidText->GetData(kidData);
+      data += kidData;
     }
   }
   PRInt32 length = data.Length();
@@ -373,7 +363,7 @@ nsMathMLmoFrame::ProcessOperatorData(nsIPresContext* aPresContext)
     nsIFrame* parentAncestor = this;
     do {
       embellishAncestor = parentAncestor;
-      embellishAncestor->GetParent(&parentAncestor);
+      parentAncestor = embellishAncestor->GetParent();
       GetEmbellishDataFrom(parentAncestor, embellishData);
     } while (embellishData.coreFrame == this);
 
@@ -385,12 +375,9 @@ nsMathMLmoFrame::ProcessOperatorData(nsIPresContext* aPresContext)
 
     // find the position of our outermost embellished container w.r.t
     // its siblings (frames are singly-linked together).
-    nsIFrame* firstChild;
-    parentAncestor->FirstChild(aPresContext, nsnull, &firstChild);
-    nsFrameList frameList(firstChild);
+    nsFrameList frameList(parentAncestor->GetFirstChild(nsnull));
 
-    nsIFrame* nextSibling;
-    embellishAncestor->GetNextSibling(&nextSibling);
+    nsIFrame* nextSibling = embellishAncestor->GetNextSibling();
     nsIFrame* prevSibling = frameList.GetPrevSiblingFor(embellishAncestor);
 
     // flag to distinguish from a real infix
@@ -849,9 +836,7 @@ nsMathMLmoFrame::Stretch(nsIPresContext*      aPresContext,
     aDesiredStretchSize.ascent = mBoundingMetrics.ascent + leading;
     aDesiredStretchSize.descent = mBoundingMetrics.descent;
 
-    nsPoint origin;
-    firstChild->GetOrigin(origin);
-    firstChild->MoveTo(aPresContext, origin.x, origin.y - dy);
+    firstChild->SetPosition(firstChild->GetPosition() - nsPoint(0, dy));
   }
   else if (useMathMLChar) {
     nscoord ascent, descent;
@@ -899,17 +884,17 @@ nsMathMLmoFrame::Stretch(nsIPresContext*      aPresContext,
       aDesiredStretchSize.mBoundingMetrics.leftBearing += leftSpace;
       aDesiredStretchSize.mBoundingMetrics.rightBearing += leftSpace;
 
-      nsRect rect;
       if (useMathMLChar) {
+	nsRect rect;
         mMathMLChar.GetRect(rect);
         mMathMLChar.SetRect(nsRect(rect.x + leftSpace, rect.y, rect.width, rect.height));
       }
       else {
         nsIFrame* childFrame = firstChild;
         while (childFrame) {
-          childFrame->GetRect(rect);
-          childFrame->MoveTo(aPresContext, rect.x + leftSpace, rect.y);
-          childFrame->GetNextSibling(&childFrame);
+          childFrame->SetPosition(childFrame->GetPosition()
+				  + nsPoint(leftSpace, 0));
+          childFrame = childFrame->GetNextSibling();
         }
       }
     }
@@ -918,8 +903,7 @@ nsMathMLmoFrame::Stretch(nsIPresContext*      aPresContext,
   if (mFrames.GetLength() != 1)
     return NS_OK;
 
-  nsRect rect;
-  firstChild->GetRect(rect);
+  nsRect rect = firstChild->GetRect();
   if (useMathMLChar) {
     // even though our child text frame is not doing the rendering, we make it play
     // nice with other operations that the MathMLChar doesn't handle (e.g., caret)
@@ -928,7 +912,7 @@ nsMathMLmoFrame::Stretch(nsIPresContext*      aPresContext,
     rect.y = 0;
   }
   rect.height = aDesiredStretchSize.height;
-  firstChild->SetRect(aPresContext, rect);
+  firstChild->SetRect(rect);
   return NS_OK;
 }
 
@@ -984,7 +968,7 @@ nsMathMLmoFrame::ReflowDirtyChild(nsIPresShell* aPresShell,
   nsIFrame* target = this;
   nsEmbellishData embellishData;
   do {
-    target->GetParent(&target);
+    target = target->GetParent();
     GetEmbellishDataFrom(target, embellishData);
   } while (embellishData.coreFrame == this);
 
@@ -997,8 +981,7 @@ nsMathMLmoFrame::AttributeChanged(nsIPresContext* aPresContext,
                                   nsIContent*     aContent,
                                   PRInt32         aNameSpaceID,
                                   nsIAtom*        aAttribute,
-                                  PRInt32         aModType, 
-                                  PRInt32         aHint)
+                                  PRInt32         aModType)
 {
   // check if this is an attribute that can affect the embellished hierarchy
   // in a significant way and re-layout the entire hierarchy.
@@ -1010,7 +993,7 @@ nsMathMLmoFrame::AttributeChanged(nsIPresContext* aPresContext,
     nsIFrame* target = this;
     nsEmbellishData embellishData;
     do {
-      target->GetParent(&target);
+      target = target->GetParent();
       GetEmbellishDataFrom(target, embellishData);
     } while (embellishData.coreFrame == this);
 
@@ -1020,7 +1003,7 @@ nsMathMLmoFrame::AttributeChanged(nsIPresContext* aPresContext,
 
   return nsMathMLTokenFrame::
          AttributeChanged(aPresContext, aContent, aNameSpaceID,
-                          aAttribute, aModType, aHint);
+                          aAttribute, aModType);
 }
 
 // ----------------------

@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -30,14 +30,14 @@
  *                 Suresh Duddi <dp@netscape.com>
  *                 Bruce Mitchener <bruce@cybersight.com>
  *                 Scott Collins <scc@netscape.com>
- *                 Dan Matejka <danm@netscape.com>
+ *                 Daniel Matejka <danm@netscape.com>
  *                 Doug Turner <dougt@netscape.com>
  *                 Stuart Parmenter <pavlov@netscape.com>
  *                 Mike Kaply <mkaply@us.ibm.com>
  *                 Dan Mosedale <dmose@mozilla.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
@@ -53,7 +53,6 @@
 #include "nsEventQueueService.h"
 #include "prmon.h"
 #include "nsIComponentManager.h"
-#include "nsIEventQueue.h"
 #include "nsIThread.h"
 #include "nsPIEventQueueChain.h"
 
@@ -75,12 +74,13 @@ nsEventQueueServiceImpl::nsEventQueueServiceImpl()
 #endif
 }
 
-PRBool hash_enum_remove_queues(nsHashKey *aKey, void *aData, void* closure)
+PR_STATIC_CALLBACK(PLDHashOperator)
+hash_enum_remove_queues(const void *aThread_ptr,
+                        nsCOMPtr<nsIEventQueue>& aEldestQueue,
+                        void* closure)
 {
-  // 'queue' should be the eldest queue.
-  nsIEventQueue *tmpQueue = (nsIEventQueue*)aData;
-
-  nsCOMPtr<nsPIEventQueueChain> pie(do_QueryInterface(tmpQueue));
+  // 'aQueue' should be the eldest queue.
+  nsCOMPtr<nsPIEventQueueChain> pie(do_QueryInterface(aEldestQueue));
   nsCOMPtr<nsIEventQueue> q;
 
   // stop accepting events for youngest to oldest
@@ -92,29 +92,38 @@ PRBool hash_enum_remove_queues(nsHashKey *aKey, void *aData, void* closure)
     pq->GetElder(getter_AddRefs(q));
   }
 
-  return PR_TRUE;
+  return PL_DHASH_REMOVE;
 }
 
 nsEventQueueServiceImpl::~nsEventQueueServiceImpl()
 {
   // XXX make it so we only enum over this once
-  mEventQTable.Enumerate(NS_STATIC_CAST(nsHashtableEnumFunc, hash_enum_remove_queues), nsnull); // call StopAcceptingEvents on everything
-  mEventQTable.Reset(); // this should release all the 
+  mEventQTable.Enumerate(hash_enum_remove_queues, nsnull); // call StopAcceptingEvents on everything and clear out the hashtable
 
   PR_DestroyMonitor(mEventQMonitor);
 }
 
-NS_METHOD
-nsEventQueueServiceImpl::Create(nsISupports *aOuter, REFNSIID aIID, void **aResult)
+nsresult
+nsEventQueueServiceImpl::Init()
 {
-  if (aOuter)
-    return NS_ERROR_NO_AGGREGATION;
-  nsEventQueueServiceImpl* eqs = new nsEventQueueServiceImpl();
-  if (eqs == NULL)
+  NS_ENSURE_TRUE(mEventQMonitor, NS_ERROR_OUT_OF_MEMORY);
+
+  // This will only be called once on the main thread, so it's safe to
+  // not enter the monitor here.
+  if (!mEventQTable.Init()) {
     return NS_ERROR_OUT_OF_MEMORY;
-  NS_ADDREF(eqs);
-  nsresult rv = eqs->QueryInterface(aIID, aResult);
-  NS_RELEASE(eqs);
+  }
+  
+  // ensure that a main thread event queue exists!
+  nsresult rv;
+  nsCOMPtr<nsIThread> mainThread;
+  rv = nsIThread::GetMainThread(getter_AddRefs(mainThread));
+  if (NS_SUCCEEDED(rv)) {
+    PRThread *thr;
+    rv = mainThread->GetPRThread(&thr);
+    if (NS_SUCCEEDED(rv))
+      rv = CreateEventQueue(thr, PR_TRUE);
+  }
   return rv;
 }
 
@@ -173,19 +182,16 @@ NS_IMETHODIMP
 nsEventQueueServiceImpl::CreateEventQueue(PRThread *aThread, PRBool aNative)
 {
   nsresult rv = NS_OK;
-  nsVoidKey  key(aThread);
-  nsCOMPtr<nsIEventQueue> queue;
-
-  /* Enter the lock which protects the EventQ hashtable... */
+  /* Enter the lock that protects the EventQ hashtable... */
   PR_EnterMonitor(mEventQMonitor);
 
   /* create only one event queue chain per thread... */
-  queue = getter_AddRefs((nsIEventQueue*)mEventQTable.Get(&key));
+  if (!mEventQTable.GetWeak(aThread)) {
+    nsCOMPtr<nsIEventQueue> queue;
 
-  if (!queue) {
     // we don't have one in the table
-    rv = MakeNewQueue(PR_GetCurrentThread(), aNative, getter_AddRefs(queue)); // create new queue
-    mEventQTable.Put(&key, queue); // add to the table (initial addref)
+    rv = MakeNewQueue(aThread, aNative, getter_AddRefs(queue)); // create new queue
+    mEventQTable.Put(aThread, queue); // add to the table (initial addref)
   }
 
   // Release the EventQ lock...
@@ -198,17 +204,16 @@ NS_IMETHODIMP
 nsEventQueueServiceImpl::DestroyThreadEventQueue(void)
 {
   nsresult rv = NS_OK;
-  nsVoidKey key(PR_GetCurrentThread());
 
-  /* Enter the lock which protects the EventQ hashtable... */
+  /* Enter the lock that protects the EventQ hashtable... */
   PR_EnterMonitor(mEventQMonitor);
 
-  nsCOMPtr<nsIEventQueue> queue;
-  queue = getter_AddRefs((nsIEventQueue*)mEventQTable.Get(&key)); // remove nsIEventQueue from hash table (releases)
+  PRThread* currentThread = PR_GetCurrentThread();
+  nsIEventQueue* queue = mEventQTable.GetWeak(currentThread);
   if (queue) {
     queue->StopAcceptingEvents(); // tell the queue to stop accepting events
-    queue = nsnull; // release the ref we hold on to now so that the queue might go away when we release below
-    mEventQTable.Remove(&key); // remove nsIEventQueue from hash table (releases)
+    queue = nsnull; // Queue may die on the next line
+    mEventQTable.Remove(currentThread); // remove nsIEventQueue from hash table (releases)
   }
 
   // Release the EventQ lock...
@@ -259,32 +264,33 @@ NS_IMETHODIMP
 nsEventQueueServiceImpl::PushThreadEventQueue(nsIEventQueue **aNewQueue)
 {
   nsresult rv = NS_OK;
-  nsVoidKey  key(PR_GetCurrentThread());
+  PRThread* currentThread = PR_GetCurrentThread();
   PRBool native = PR_TRUE; // native by default as per old comment
 
 
   NS_ASSERTION(aNewQueue, "PushThreadEventQueue called with null param");
 
-  /* Enter the lock which protects the EventQ hashtable... */
+  /* Enter the lock that protects the EventQ hashtable... */
   PR_EnterMonitor(mEventQMonitor);
 
-  nsCOMPtr<nsIEventQueue> queue = getter_AddRefs((nsIEventQueue*)mEventQTable.Get(&key));
+  nsIEventQueue* queue = mEventQTable.GetWeak(currentThread);
+  
   NS_ASSERTION(queue, "pushed event queue on top of nothing");
 
   if (queue) { // find out what kind of queue our relatives are
     nsCOMPtr<nsIEventQueue> youngQueue;
     GetYoungestEventQueue(queue, getter_AddRefs(youngQueue));
     if (youngQueue) {
-      queue->IsQueueNative(&native);
+      youngQueue->IsQueueNative(&native);
     }
   }
 
-  nsCOMPtr<nsIEventQueue> newQueue;
-  MakeNewQueue((PRThread*)key.GetValue(), native, getter_AddRefs(newQueue)); // create new queue
+  nsIEventQueue* newQueue = nsnull;
+  MakeNewQueue(currentThread, native, &newQueue); // create new queue; addrefs
 
   if (!queue) {
     // shouldn't happen. as a fallback, we guess you wanted a native queue
-    mEventQTable.Put(&key, newQueue);
+    mEventQTable.Put(currentThread, newQueue);
   }
 
   // append to the event queue chain
@@ -293,7 +299,6 @@ nsEventQueueServiceImpl::PushThreadEventQueue(nsIEventQueue **aNewQueue)
     ourChain->AppendQueue(newQueue); // append new queue to it
 
   *aNewQueue = newQueue;
-  NS_IF_ADDREF(*aNewQueue);
 
 #if defined(PR_LOGGING) && defined(DEBUG_danm)
   PLEventQueue *equeue;
@@ -312,37 +317,36 @@ nsEventQueueServiceImpl::PushThreadEventQueue(nsIEventQueue **aNewQueue)
 NS_IMETHODIMP
 nsEventQueueServiceImpl::PopThreadEventQueue(nsIEventQueue *aQueue)
 {
-  nsresult rv = NS_OK;
-  nsVoidKey key(PR_GetCurrentThread());
+  PRThread* currentThread = PR_GetCurrentThread();
 
-  /* Enter the lock which protects the EventQ hashtable... */
+  /* Enter the lock that protects the EventQ hashtable... */
   PR_EnterMonitor(mEventQMonitor);
 
+  nsCOMPtr<nsIEventQueue> eldestQueue;
+  mEventQTable.Get(currentThread, getter_AddRefs(eldestQueue));
 
-  nsCOMPtr<nsIEventQueue> queue = getter_AddRefs((nsIEventQueue*)mEventQTable.Get(&key)); // addrefs
-  if (queue) {
-#if defined(PR_LOGGING) && defined(DEBUG_danm)
-    PLEventQueue *equeue;
-    aQueue->GetPLEventQueue(&equeue);
-    PR_LOG(gEventQueueLog, PR_LOG_DEBUG,
-           ("EventQueue: Service pop queue [queue=%lx]",(long)equeue));
-    ++gEventQueueLogCount;
-#endif
-    aQueue->StopAcceptingEvents();
-    aQueue->ProcessPendingEvents(); // make sure we don't orphan any events
+  // If we are popping the eldest queue, remove its mEventQTable entry.
+  if (aQueue == eldestQueue)
+    mEventQTable.Remove(currentThread);
 
-    if (aQueue == queue.get()) { // are we reomving the eldest queue?
-      mEventQTable.Remove(&key); // remove nsIEventQueue from hash table (releases)
-    }
-
-    // should we release aQueue ?? hmm...  only if it is in the hash table i think
-  } else {
-    rv = NS_ERROR_FAILURE;
-  }
-
-  // Release the EventQ lock...
+  // Exit the monitor before processing pending events to avoid deadlock.
+  // Our reference from the eldestQueue nsCOMPtr will keep that object alive.
+  // Since it is thread-private, no one else can race with us here.
   PR_ExitMonitor(mEventQMonitor);
-  return rv;
+  if (!eldestQueue)
+    return NS_ERROR_FAILURE;
+
+#if defined(PR_LOGGING) && defined(DEBUG_danm)
+  PLEventQueue *equeue;
+  aQueue->GetPLEventQueue(&equeue);
+  PR_LOG(gEventQueueLog, PR_LOG_DEBUG,
+         ("EventQueue: Service pop queue [queue=%lx]",(long)equeue));
+  ++gEventQueueLogCount;
+#endif
+  aQueue->StopAcceptingEvents();
+  aQueue->ProcessPendingEvents(); // make sure we don't orphan any events
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -350,17 +354,17 @@ nsEventQueueServiceImpl::GetThreadEventQueue(PRThread* aThread, nsIEventQueue** 
 {
   /* Parameter validation... */
   if (NULL == aResult) return NS_ERROR_NULL_POINTER;
-  
+
   PRThread* keyThread = aThread;
 
-  if (keyThread == NS_CURRENT_THREAD) 
+  if (keyThread == NS_CURRENT_THREAD)
   {
      keyThread = PR_GetCurrentThread();
   }
   else if (keyThread == NS_UI_THREAD)
   {
     nsCOMPtr<nsIThread>  mainIThread;
-    
+
     // Get the primordial thread
     nsresult rv = nsIThread::GetMainThread(getter_AddRefs(mainIThread));
     if (NS_FAILED(rv)) return rv;
@@ -369,25 +373,23 @@ nsEventQueueServiceImpl::GetThreadEventQueue(PRThread* aThread, nsIEventQueue** 
     if (NS_FAILED(rv)) return rv;
   }
 
-  nsVoidKey key(keyThread);
-
-  /* Enter the lock which protects the EventQ hashtable... */
+  /* Enter the lock that protects the EventQ hashtable... */
   PR_EnterMonitor(mEventQMonitor);
 
-  nsCOMPtr<nsIEventQueue> queue = getter_AddRefs((nsIEventQueue*)mEventQTable.Get(&key));
+  nsCOMPtr<nsIEventQueue> queue;
+  mEventQTable.Get(keyThread, getter_AddRefs(queue));
 
   PR_ExitMonitor(mEventQMonitor);
 
-  nsCOMPtr<nsIEventQueue> youngestQueue;
   if (queue) {
-    GetYoungestEventQueue(queue, getter_AddRefs(youngestQueue)); // get the youngest active queue
+    GetYoungestEventQueue(queue, aResult); // get the youngest active queue
+  } else {
+    *aResult = nsnull;
   }
-  *aResult = youngestQueue;
   // XXX: Need error code for requesting an event queue when none exists...
-  if (!youngestQueue) {
+  if (!*aResult) {
     return NS_ERROR_NOT_AVAILABLE;
   }
-  NS_ADDREF(*aResult);
   return NS_OK;
 }
 
@@ -408,7 +410,7 @@ nsEventQueueServiceImpl::ResolveEventQueue(nsIEventQueue* queueOrConstant, nsIEv
 }
 
 NS_IMETHODIMP
-nsEventQueueServiceImpl::GetSpecialEventQueue(PRInt32 aQueue, 
+nsEventQueueServiceImpl::GetSpecialEventQueue(PRInt32 aQueue,
                                               nsIEventQueue* *_retval)
 {
   nsresult rv;

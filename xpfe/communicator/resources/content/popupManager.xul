@@ -36,13 +36,14 @@
 
 <?xml-stylesheet href="chrome://communicator/skin/" type="text/css"?> 
 
-<!DOCTYPE window SYSTEM "chrome://communicator/locale/popupManager.dtd" >
+<!DOCTYPE dialog SYSTEM "chrome://communicator/locale/popupManager.dtd" >
 
 <dialog id="popupManager"
         buttons="accept,cancel,help"
         title="&windowtitle.label;"        
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         style="width:32em; height:42em;"
+        persist="width height screenX screenY"
         onload="Startup();"        
         ondialogaccept="return onAccept();"
         ondialoghelp="return doHelpButton();">
@@ -73,7 +74,7 @@
 
       <separator class="thin"/>
 
-      <tree id="permissionsTree" flex="1" style="height: 10em;"
+      <tree id="permissionsTree" flex="1"
             hidecolumnpicker="true"
             onkeypress="handlePermissionKeyPress(event)"
             onselect="permissionSelected();"

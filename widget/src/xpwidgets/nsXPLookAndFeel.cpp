@@ -48,7 +48,6 @@ static int PR_CALLBACK colorPrefChanged(const char* aPref, void* aData);
 #include "nsSize.h"
 #endif
  
-static NS_DEFINE_IID(kILookAndFeelIID, NS_ILOOKANDFEEL_IID);
 static NS_DEFINE_CID(kPrefServiceCID, NS_PREF_CID);
 
 NS_IMPL_ISUPPORTS1(nsXPLookAndFeel, nsILookAndFeel)
@@ -85,6 +84,7 @@ nsLookAndFeelIntPref nsXPLookAndFeel::sIntPrefs[] =
     PR_FALSE, nsLookAndFeelTypeInt, 0 },
   { "ui.caretBlinkTime", eMetric_CaretBlinkTime, PR_FALSE, nsLookAndFeelTypeInt, 0 },
   { "ui.caretWidthTwips", eMetric_SingleLineCaretWidth, PR_FALSE, nsLookAndFeelTypeInt, 0 },
+  { "ui.caretVisibleWithSelection", eMetric_ShowCaretDuringSelection, PR_FALSE, nsLookAndFeelTypeInt, 0 },
   { "ui.submenuDelay", eMetric_SubmenuDelay, PR_FALSE, nsLookAndFeelTypeInt, 0 },
   { "ui.dragFullWindow", eMetric_DragFullWindow, PR_FALSE, nsLookAndFeelTypeInt, 0 },
   { "ui.dragThresholdX", eMetric_DragThresholdX, PR_FALSE, nsLookAndFeelTypeInt, 0 },
@@ -125,8 +125,12 @@ nsLookAndFeelFloatPref nsXPLookAndFeel::sFloatPrefs[] =
 
 
 // This array MUST be kept in the same order as the color list in nsILookAndFeel.h.
-
-char* nsXPLookAndFeel::sColorPrefs[] =
+/* XXX If you add any strings longer than
+ * "ui.-moz-mac-accentlightesthighlight"
+ * to the following array then you MUST update the
+ * sizes of the sColorPrefs array in nsXPLookAndFeel.h
+ */
+const char nsXPLookAndFeel::sColorPrefs[][36] =
 {
   "ui.windowBackground",
   "ui.windowForeground",

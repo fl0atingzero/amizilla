@@ -110,11 +110,12 @@
       <method name="loadURI">
         <parameter name="aURI"/>
         <parameter name="aReferrerURI"/>
+        <parameter name="aCharset"/>
         <body>
           <![CDATA[
             const nsIWebNavigation = Components.interfaces.nsIWebNavigation;
             const flags = nsIWebNavigation.LOAD_FLAGS_NONE;
-            this.loadURIWithFlags(aURI, flags, aReferrerURI);
+            this.loadURIWithFlags(aURI, flags, aReferrerURI, aCharset);
           ]]>
         </body>
       </method>
@@ -124,11 +125,19 @@
         <parameter name="aURI"/>
         <parameter name="aFlags"/>
         <parameter name="aReferrerURI"/>
+        <parameter name="aCharset"/>
         <body>
           <![CDATA[
             if (!aURI)
               aURI = "about:blank";
 
+            if (aCharset) {
+              try { 
+                this.documentCharsetInfo.parentCharset = this.mAtomService.getAtom(aCharset);
+              }
+              catch (e) {
+              }
+            }
             this.webNavigation.loadURI(aURI, aFlags, aReferrerURI, null, null);
           ]]>
         </body>
@@ -192,9 +201,18 @@
                 onget="return this.docShell.QueryInterface(Components.interfaces.nsIWebNavigation);"
                 readonly="true"/>
 
+      <field name="_webBrowserFind">null</field>
+
       <property name="webBrowserFind"
-                readonly="true"
-                onget="return this.docShell.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIWebBrowserFind);"/>
+                readonly="true">
+        <getter>
+        <![CDATA[
+          if (!this._webBrowserFind)
+            this._webBrowserFind = this.docShell.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIWebBrowserFind);
+          return this._webBrowserFind;
+        ]]>
+        </getter>
+      </property>
 
       <property name="webProgress"
                 readonly="true"
@@ -238,6 +256,11 @@
                   .getBranch(null);
       </field>
 
+      <field name="mAtomService" readonly="true">
+        Components.classes['@mozilla.org/atom-service;1']
+                  .getService(Components.interfaces.nsIAtomService);
+      </field>
+
       <field name="_mStrBundle">null</field>
 
       <property name="mStrBundle">
@@ -251,7 +274,7 @@
             var stringBundleService = Components.classes["@mozilla.org/intl/stringbundle;1"]
                                   .getService(Components.interfaces.nsIStringBundleService);
             var bundleURL = "chrome://global/locale/tabbrowser.properties";
-            this._mStrBundle = stringBundleService.createBundle(bundleURL, localeService.GetApplicationLocale());
+            this._mStrBundle = stringBundleService.createBundle(bundleURL, localeService.getApplicationLocale());
           }
           return this._mStrBundle;
         ]]></getter>
@@ -284,16 +307,24 @@
       </field>
 
       <field name="userTypedClear">
-        true
+        1
       </field>
 
       <field name="_userTypedValue">
         null
       </field>
 
+      <field name="focusedWindow">
+        null
+      </field>
+
+      <field name="focusedElement">
+        null
+      </field>
+
       <property name="userTypedValue"
                 onget="return this._userTypedValue;"
-                onset="this.userTypedClear = false; return this._userTypedValue = val;"/>
+                onset="this.userTypedClear = 0; return this._userTypedValue = val;"/>
      
       <constructor>
         <![CDATA[
@@ -302,10 +333,8 @@
               // wire up session history
               this.webNavigation.sessionHistory = Components.classes["@mozilla.org/browser/shistory;1"].createInstance(Components.interfaces.nsISHistory);
 
-              // wire up global history
-              var globalHistory = Components.classes["@mozilla.org/browser/global-history;1"].getService(Components.interfaces.nsIGlobalHistory);
-
-              this.docShell.QueryInterface(Components.interfaces.nsIDocShellHistory).globalHistory = globalHistory;      
+              // enable global history
+              this.docShell.QueryInterface(Components.interfaces.nsIDocShellHistory).useGlobalHistory = true;
             }
           }
           catch (e) {
@@ -362,10 +391,9 @@
             var buttonPressed = promptService.confirmEx(window, 
               this.mStrBundle.GetStringFromName('browsewithcaret.checkWindowTitle'), 
               this.mStrBundle.GetStringFromName('browsewithcaret.checkLabel'),
-              (promptService.BUTTON_TITLE_IS_STRING * promptService.BUTTON_POS_0) +
+              (promptService.BUTTON_TITLE_OK * promptService.BUTTON_POS_0) +
               (promptService.BUTTON_TITLE_CANCEL * promptService.BUTTON_POS_1),
-              this.mStrBundle.GetStringFromName('browsewithcaret.checkButtonLabel'),
-              null, null,
+              null, null, null,
               this.mStrBundle.GetStringFromName('browsewithcaret.checkMsg'), 
               checkValue);
             if (buttonPressed != 0)

@@ -49,7 +49,6 @@
 #include "nsAppShell.h"
 #include "nsIServiceManager.h"
 #include "nsSound.h"
-#include "nsFullScreen.h"
 
 #include "nsBidiKeyboard.h"
 
@@ -75,7 +74,6 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsHTMLFormatConverter)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsClipboard)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsClipboardHelper)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDragService)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsFullScreen)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsBidiKeyboard)
 
 static const nsModuleComponentInfo components[] =
@@ -102,7 +100,7 @@ static const nsModuleComponentInfo components[] =
     nsToolkitConstructor },
   { "Look And Feel",
     NS_LOOKANDFEEL_CID,
-    "@mozilla.org/widget/lookandfeel/win;1",
+    "@mozilla.org/widget/lookandfeel;1",
     nsLookAndFeelConstructor },
   { "Sound",
     NS_SOUND_CID,
@@ -116,7 +114,7 @@ static const nsModuleComponentInfo components[] =
     nsTransferableConstructor },
   { "HTML Format Converter",
     NS_HTMLFORMATCONVERTER_CID,
-    "@mozilla.org/widget/htmlformatconverter/win;1",
+    "@mozilla.org/widget/htmlformatconverter;1",
     nsHTMLFormatConverterConstructor },
   { "Clipboard",
     NS_CLIPBOARD_CID,
@@ -132,8 +130,6 @@ static const nsModuleComponentInfo components[] =
     //    "@mozilla.org/widget/dragservice/win;1",
     "@mozilla.org/widget/dragservice;1",
     nsDragServiceConstructor },
-    { "Full Screen", NS_FULLSCREEN_SERVICE_CID,
-      NS_FULLSCREEN_SERVICE_CONTRACTID, nsFullScreenConstructor },
   { "Bidi Keyboard",
     NS_BIDIKEYBOARD_CID,
     "@mozilla.org/widget/bidikeyboard;1",

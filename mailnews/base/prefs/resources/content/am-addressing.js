@@ -11,6 +11,7 @@ function onInit()
 {
   setupDirectoriesList();
   enabling();
+  quoteEnabling();
 }
 
 function onPreInit(account, accountValues)
@@ -101,3 +102,30 @@ function onSave()
       break;
   } 
 }
+
+function quoteEnabling()
+{
+  var quotebox = document.getElementById("thenBox");
+  var placebox = document.getElementById("placeBox");
+  var quotecheck = document.getElementById("identity.autoQuote");
+
+  if (quotecheck.checked && !quotecheck.disabled &&
+      document.getElementById("identity.attachSignature").checked &&
+      (document.getElementById("identity.replyOnTop").value == 1)) {
+    placebox.firstChild.removeAttribute("disabled");
+    placebox.lastChild.removeAttribute("disabled");
+  }
+  else {
+    placebox.firstChild.setAttribute("disabled", "true");
+    placebox.lastChild.setAttribute("disabled", "true");
+  }
+  if (quotecheck.checked && !quotecheck.disabled) {
+    quotebox.firstChild.removeAttribute("disabled");
+    quotebox.lastChild.removeAttribute("disabled");
+  }
+  else {
+    quotebox.firstChild.setAttribute("disabled", "true");
+    quotebox.lastChild.setAttribute("disabled", "true");
+  }
+}
+

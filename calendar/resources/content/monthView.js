@@ -129,8 +129,6 @@ function MonthView( calendarWindow )
    {
       onSelectionChanged : function( EventSelectionArray )
       {
-         
-         dump( "\nIn Month view, on selection changed");
          if( EventSelectionArray.length > 0 )
          {
             //if there are selected events.
@@ -141,20 +139,16 @@ function MonthView( calendarWindow )
 
             gCalendarWindow.monthView.clearSelectedBoxes();
             
-            //dump( "\nIn Month view, eventSelectionArray.length is "+EventSelectionArray.length );
             var i = 0;
             
             for( i = 0; i < EventSelectionArray.length; i++ )
             {
-               //dump( "\nin Month view, going to try and get the event boxes with name 'month-view-event-box-"+EventSelectionArray[i].id+"'" );
                var EventBoxes = document.getElementsByAttribute( "name", "month-view-event-box-"+EventSelectionArray[i].id );
-               //dump( "\nIn Month view, found "+EventBoxes.length+" matches for the selected event." );
-               for ( j = 0; j < EventBoxes.length; j++ ) 
+               for ( var j = 0; j < EventBoxes.length; j++ ) 
                {
                   EventBoxes[j].setAttribute( "eventselected", "true" );
                }
             }
-            //dump( "\nAll Done in Selection for Month View" );
          }
          else
          {
@@ -293,12 +287,7 @@ MonthView.prototype.refreshEvents = function monthView_refreshEvents( )
         eventBox.setAttribute("class", "month-day-event-box-class " + containerName );
 
 		// end calendar color change by CofC
-		     
-         if( calendarEventDisplay.event.categories && calendarEventDisplay.event.categories != "" )
-         {
-            eventBox.setAttribute( calendarEventDisplay.event.categories, "true" );
-         }
-            
+
          eventBox.setAttribute( "eventbox", "monthview" );
          eventBox.setAttribute( "onclick", "monthEventBoxClickEvent( this, event )" );
          eventBox.setAttribute( "ondblclick", "monthEventBoxDoubleClickEvent( this, event )" );
@@ -514,14 +503,14 @@ MonthView.prototype.refreshDisplay = function monthView_refreshDisplay( )
    
    var Checked = gOnlyWorkdayChecked ;
 
-   for( var i = - Offset; i <= 1 - Offset; i++ ){
+   for( i = - Offset; i <= 1 - Offset; i++ ){
      //ni = i - Offset ;
      var ni = (i >0)? i : i + 7;
      if( Checked === "true" )
          document.getElementById( "month-view-column-"+ni ).setAttribute( "collapsed", "true" );
      else 
        document.getElementById( "month-view-column-"+ ni).removeAttribute( "collapsed");	      
-	   }
+   }
        
    if( Checked === "true" && Offset <= 1 && firstDayOfWeek >= 6-Offset) {
 	      document.getElementById( "month-week-1-row" ).setAttribute( "collapsed", "true" );
@@ -880,6 +869,7 @@ MonthView.prototype.doubleClickDay = function monthView_doubleClickDay( event )
 
 MonthView.prototype.clearSelectedEvent = function monthView_clearSelectedEvent( )
 {
+  debug("clearSelectedEvent");
    var ArrayOfBoxes = document.getElementsByAttribute( "eventselected", "true" );
 
    for( i = 0; i < ArrayOfBoxes.length; i++ )
@@ -967,12 +957,6 @@ MonthView.prototype.setNumberOfEventsToShow = function monthView_setNumberOfEven
 
    //calculate the number of events to show.
   var numberOfEventsToShow = parseInt(  ( MonthViewBoxHeight - MonthViewLabelHeight - 14) / EventBoxHeight )
-//    dump( "\nNactual"+( MonthViewBoxHeight - MonthViewLabelHeight ) / EventBoxHeight );
-//    dump( "\nM MonthViewBoxHeight: "+MonthViewBoxHeight );
-//    dump( "\nM MonthViewLabelHeight: "+MonthViewLabelHeight );
-//    dump( "\nM EventBoxHeight"+EventBoxHeight );
-//    dump( "\nM EventDotBoxHeight"+ EventDotBoxHeight );
-//    dump( "\nNnew : "+ numberOfEventsToShow) ;
   this.numberOfEventsToShow = numberOfEventsToShow ;
 
   // remove created event boxes
@@ -989,7 +973,7 @@ MonthView.prototype.setFictitiousEvents = function monthView_setFictitiousEvents
 {
   var dayBoxItem = this.dayBoxItemArray[ 24 ];
   if( !dayBoxItem ) 
-     return false;
+     return;
   // Make a box item to hold the event
   var eventBox = document.createElement( "box" );
   eventBox.setAttribute( "id", "month-view-event-box-fictitious" );
@@ -1042,7 +1026,6 @@ var monthViewEventDragAndDropObserver  = {
 	  return;
 	}
       }
-      //dump( "\nEvent being dragged is "+gEventBeingDragged );
       transferData.data=new TransferData();
       transferData.data.addDataForFlavour("text/unicode",0);
   },
@@ -1052,14 +1035,10 @@ var monthViewEventDragAndDropObserver  = {
     return weekflavours;
   },
   onDragOver: function (evt,flavour,session){
-    //dump( "on dragged over "+evt.target.getAttribute( "id" )+"\n" );
     gBoxBeingDroppedOn = document.getElementById( evt.target.getAttribute( "id" ) );
-    //dump( evt.target.getAttribute( "id" ) );
   },
   onDrop: function (evt,dropdata,session){
     //get the date of the current event box.
-    //dump( "\n\nDROP EVNET->\n"+gEventBeingDragged.start );
-
     if( gBoxBeingDroppedOn.date == null )
         return;
     
@@ -1115,3 +1094,10 @@ var monthViewEventDragAndDropObserver  = {
     }
   }
 };
+
+function debug( Text )
+{
+   dump( "\nmonthView.js: "+ Text);
+
+}
+

@@ -40,7 +40,7 @@
 #include "nsReadableUtils.h"
 #include "nsIStringBundle.h"
 #include "nsIEventQueueService.h"
-#include <iostream.h>
+#include <stdio.h>
 
 #include "nsIURL.h"
 #include "nsIServiceManager.h"
@@ -53,10 +53,7 @@
 #include "nsIServiceManager.h"
 #include "nsIComponentManager.h"
 //
-#define TEST_URL "resource:/res/strres.properties"
-
-static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
-static NS_DEFINE_CID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
+#define TEST_URL "resource://gre/res/strres.properties"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -71,35 +68,21 @@ static NS_DEFINE_CID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
 //
 //
 nsresult
-getCountry(PRUnichar *lc_name_unichar, PRUnichar **aCountry)
+getCountry(const nsAString &lc_name, nsAString &aCountry)
 {
-
-  nsresult        result = NS_OK;
-  nsAutoString  	category(NS_LITERAL_STRING("NSILOCALE_MESSAGES"));
-
-  nsAutoString	  lc_name;
-  lc_name.Assign(lc_name_unichar);
-  // nsMemory::Free(lc_name_unichar);
-
   PRInt32   dash = lc_name.FindChar('-');
   if (dash > 0) {
-    /* 
-     */
-    nsAutoString lang;
-    nsAutoString country;
-    PRInt32 count = 0;
-    count = lc_name.Left(lang, dash);
-    count = lc_name.Right(country, (lc_name.Length()-dash-1));
-    *aCountry = ToNewUnicode(country);
+    aCountry = lc_name;
+    aCountry.Cut(dash, (lc_name.Length()-dash-1));
   }
   else
-    result = NS_ERROR_FAILURE;
+    return NS_ERROR_FAILURE;
 
   return NS_OK;
 }
 
 nsresult
-getUILangCountry(PRUnichar** aUILang, PRUnichar** aCountry)
+getUILangCountry(nsAString& aUILang, nsAString& aCountry)
 {
 	nsresult	 result;
 	// get a locale service 
@@ -107,7 +90,8 @@ getUILangCountry(PRUnichar** aUILang, PRUnichar** aCountry)
 	NS_ASSERTION(NS_SUCCEEDED(result),"nsLocaleTest: get locale service failed");
 
   result = localeService->GetLocaleComponentForUserAgent(aUILang);
-  result = getCountry(*aUILang, aCountry);
+  NS_ASSERTION(NS_SUCCEEDED(result),"nsLocaleTest: get locale component failed");
+  result = getCountry(aUILang, aCountry);
   return result;
 }
 
@@ -124,21 +108,19 @@ main(int argc, char *argv[])
   registrar->AutoRegister(nsnull);
   
   nsCOMPtr<nsIStringBundleService> service =
-      do_GetService(kStringBundleServiceCID);
+      do_GetService(NS_STRINGBUNDLE_CONTRACTID);
   if (!service) {
     printf("cannot create service\n");
     return 1;
   }
 
-  PRUnichar *uiLang = nsnull;
-  PRUnichar *country = nsnull;
-  ret = getUILangCountry(&uiLang, &country);
+  nsAutoString uiLang;
+  nsAutoString country;
+  ret = getUILangCountry(uiLang, country);
 #if DEBUG_tao
-  nsAutoString uaStr(uiLang); // testing only
-  nsAutoString countryStr(country); // testing only
-  cout << "\n uaStr=" << ToNewCString(uaStr) 
-       << ", country=" << ToNewCString(countryStr) 
-       << "\n" << endl;
+  printf("\n uiLang=%s, country=%s\n\n",
+         NS_LossyConvertUTF16toASCII(uiLang).get(),
+         NS_LossyConvertUTF16toASCII(country).get());
 #endif
 
   nsIStringBundle* bundle = nsnull;
@@ -151,7 +133,6 @@ main(int argc, char *argv[])
   }
 
   nsAutoString v;
-  v.Assign(NS_LITERAL_STRING(""));
   PRUnichar *ptrv = nsnull;
   char *value = nsnull;
 
@@ -163,7 +144,7 @@ main(int argc, char *argv[])
   }
   v = ptrv;
   value = ToNewCString(v);
-  cout << "123=\"" << value << "\"" << endl;
+  printf("123=\"%s\"\n", value);
 
   // file
   nsString strfile;
@@ -176,7 +157,7 @@ main(int argc, char *argv[])
   }
   v = ptrv;
   value = ToNewCString(v);
-  cout << "file=\"" << value << "\"" << endl;
+  printf("file=\"%s\"\n", value);
 
   return 0;
 }

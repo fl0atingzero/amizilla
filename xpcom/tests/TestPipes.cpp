@@ -111,18 +111,19 @@ public:
         NS_ADDREF(in);
     }
 
-    virtual ~nsReceiver() {
+    PRUint32 GetBytesRead() { return mCount; }
+
+private:
+    ~nsReceiver() {
         NS_RELEASE(mIn);
     }
-
-    PRUint32 GetBytesRead() { return mCount; }
 
 protected:
     nsIInputStream*     mIn;
     PRUint32            mCount;
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsReceiver, nsIRunnable);
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsReceiver, nsIRunnable)
 
 nsresult
 TestPipe(nsIInputStream* in, nsIOutputStream* out)
@@ -207,10 +208,6 @@ public:
         NS_ADDREF(in);
     }
 
-    virtual ~nsShortReader() {
-        NS_RELEASE(mIn);
-    }
-
     void Received(PRUint32 count) {
         nsAutoCMonitor mon(this);
         mReceived += count;
@@ -229,12 +226,17 @@ public:
         return result;
     }
 
+private:
+    ~nsShortReader() {
+        NS_RELEASE(mIn);
+    }
+
 protected:
     nsIInputStream*     mIn;
     PRUint32            mReceived;
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsShortReader, nsIRunnable);
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsShortReader, nsIRunnable)
 
 nsresult
 TestShortWrites(nsIInputStream* in, nsIOutputStream* out)
@@ -312,10 +314,12 @@ public:
     }
 
     nsPipeObserver() { }
-    virtual ~nsPipeObserver() {}
+
+private:
+    ~nsPipeObserver() {}
 };
 
-NS_IMPL_ISUPPORTS2(nsPipeObserver, nsIInputStreamObserver, nsIOutputStreamObserver);
+NS_IMPL_ISUPPORTS2(nsPipeObserver, nsIInputStreamObserver, nsIOutputStreamObserver)
 
 nsresult
 TestPipeObserver()
@@ -401,9 +405,7 @@ TestPipeObserver()
 
 ////////////////////////////////////////////////////////////////////////////////
 
-class nsPump : /*public nsIInputStreamObserver, 
-               public nsIOutputStreamObserver,*/
-               public nsIRunnable
+class nsPump : public nsIRunnable
 {
 public:
     NS_DECL_ISUPPORTS
@@ -437,8 +439,8 @@ public:
         : mIn(in), mOut(out), mCount(0) {
     }
 
-    virtual ~nsPump() {
-    }
+private:
+    ~nsPump() {}
 
 protected:
     nsCOMPtr<nsIInputStream>      mIn;
@@ -489,14 +491,12 @@ TestChainedPipes()
         len = len * rand() / RAND_MAX;
         len = PR_MAX(1, len);
         rv = WriteAll(out1, buf, len, &writeCount);
-        //rv = out1->Write(buf, len, &writeCount);
         if (NS_FAILED(rv)) return rv;
         NS_ASSERTION(writeCount == len, "didn't write enough");
         total += writeCount;
 
         if (gTrace)
             printf("wrote %d bytes: %s\n", writeCount, buf);
-        //out1->Flush();  // wakes up the pump
 
         PR_smprintf_free(buf);
     }
@@ -638,8 +638,6 @@ main(int argc, char* argv[])
     TestSearch("baz", 2);
 #endif
 
-    //rv = TestPipeObserver();
-    //NS_ASSERTION(NS_SUCCEEDED(rv), "TestPipeObserver failed");
     rv = TestChainedPipes();
     NS_ASSERTION(NS_SUCCEEDED(rv), "TestChainedPipes failed");
     RunTests(16, 1);

@@ -40,6 +40,7 @@
 #include "nsStyleConsts.h"
 #include "nsIPresContext.h"
 #include "nsIViewManager.h"
+#include "nsINodeInfo.h"
 #include "nsHTMLAtoms.h"
 #include "nsIView.h"
 #include "nsHTMLValue.h"
@@ -87,18 +88,10 @@ nsAreaFrame::RegUnregAccessKey(nsIPresContext* aPresContext,
   if (!mContent)
     return NS_ERROR_FAILURE;
 
-  PRBool isXUL = mContent->IsContentOfType(nsIContent::eXUL);
-  if (!isXUL)
-    return NS_OK;
-
-  // find out what type of element this is
-  nsCOMPtr<nsIAtom> atom;
-  nsresult rv = mContent->GetTag(getter_AddRefs(atom));
-  if (NS_FAILED(rv))
-    return rv;
+  nsINodeInfo *ni = mContent->GetNodeInfo();
 
   // only support accesskeys for the following elements
-  if (atom != nsXULAtoms::label)
+  if (!ni || !ni->Equals(nsXULAtoms::label, kNameSpaceID_XUL))
     return NS_OK;
 
   // To filter out <label>s without a control attribute.
@@ -117,18 +110,14 @@ nsAreaFrame::RegUnregAccessKey(nsIPresContext* aPresContext,
 
   // With a valid PresContext we can get the ESM 
   // and register the access key
-  nsCOMPtr<nsIEventStateManager> esm;
-  aPresContext->GetEventStateManager(getter_AddRefs(esm));
+  nsIEventStateManager *esm = aPresContext->EventStateManager();
+  nsresult rv;
 
-  rv = NS_OK;
-
-  if (esm) {
-    PRUint32 key = accessKey.First();
-    if (aDoReg)
-      rv = esm->RegisterAccessKey(mContent, key);
-    else
-      rv = esm->UnregisterAccessKey(mContent, key);
-  }
+  PRUint32 key = accessKey.First();
+  if (aDoReg)
+    rv = esm->RegisterAccessKey(mContent, key);
+  else
+    rv = esm->UnregisterAccessKey(mContent, key);
 
   return rv;
 }
@@ -171,12 +160,11 @@ nsAreaFrame::AttributeChanged(nsIPresContext* aPresContext,
                               nsIContent* aChild,
                               PRInt32 aNameSpaceID,
                               nsIAtom* aAttribute,
-                              PRInt32 aModType,
-                              PRInt32 aHint)
+                              PRInt32 aModType)
 {
   nsresult rv = nsBlockFrame::AttributeChanged(aPresContext, aChild,
                                                aNameSpaceID, aAttribute,
-                                               aModType, aHint);
+                                               aModType);
 
   // If the accesskey changed, register for the new value
   // The old value has been unregistered in nsXULElement::SetAttr
@@ -187,13 +175,10 @@ nsAreaFrame::AttributeChanged(nsIPresContext* aPresContext,
 }
 #endif
 
-NS_IMETHODIMP
-nsAreaFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsAreaFrame::GetType() const
 {
-  NS_PRECONDITION(nsnull != aType, "null OUT parameter pointer");
-  *aType = nsLayoutAtoms::areaFrame; 
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsLayoutAtoms::areaFrame;
 }
 
 /////////////////////////////////////////////////////////////////////////////

@@ -46,9 +46,9 @@
 #include "nsIServiceManager.h"
 #include "nsHTMLAtoms.h"
 #include "nsIDOMText.h"
+#include "nsIDOMCDATASection.h"
 #include "nsIDOMElement.h"
 #include "nsINameSpaceManager.h"
-#include "nsIHTMLContent.h"
 #include "nsITextContent.h"
 #include "nsTextFragment.h"
 #include "nsContentUtils.h"
@@ -164,7 +164,10 @@ nsPlainTextSerializer::Init(PRUint32 aFlags, PRUint32 aWrapColumn,
                  "Can't do formatted and preformatted output at the same time!");
   }
 #endif
-  
+
+  NS_ENSURE_TRUE(nsContentUtils::GetParserServiceWeakRef(),
+                 NS_ERROR_UNEXPECTED);
+
   nsresult rv;
   
   mFlags = aFlags;
@@ -361,7 +364,7 @@ nsPlainTextSerializer::AppendText(nsIDOMText* aText,
   }
 
   // Consume the last bit of the string if there's any left
-  if (NS_SUCCEEDED(rv) & (start < length)) {
+  if (NS_SUCCEEDED(rv) && start < length) {
     if (start) {
       rv = DoAddLeaf(nsnull,
                      eHTMLTag_text,
@@ -377,7 +380,16 @@ nsPlainTextSerializer::AppendText(nsIDOMText* aText,
   return rv;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
+nsPlainTextSerializer::AppendCDATASection(nsIDOMCDATASection* aCDATASection,
+                                          PRInt32 aStartOffset,
+                                          PRInt32 aEndOffset,
+                                          nsAString& aStr)
+{
+  return AppendText(aCDATASection, aStartOffset, aEndOffset, aStr);
+}
+
+NS_IMETHODIMP
 nsPlainTextSerializer::AppendElementStart(nsIDOMElement *aElement,
                                           PRBool aHasChildren,
                                           nsAString& aStr)
@@ -388,9 +400,7 @@ nsPlainTextSerializer::AppendElementStart(nsIDOMElement *aElement,
   if (!mContent) return NS_ERROR_FAILURE;
 
   nsresult rv;
-  PRInt32 id;
-  rv = GetIdForContent(mContent, &id);
-  if (NS_FAILED(rv)) return rv;
+  PRInt32 id = GetIdForContent(mContent);
 
   PRBool isContainer = IsContainer(id);
 
@@ -423,9 +433,7 @@ nsPlainTextSerializer::AppendElementEnd(nsIDOMElement *aElement,
   if (!mContent) return NS_ERROR_FAILURE;
 
   nsresult rv;
-  PRInt32 id;
-  rv = GetIdForContent(mContent, &id);
-  if (NS_FAILED(rv)) return rv;
+  PRInt32 id = GetIdForContent(mContent);
 
   PRBool isContainer = IsContainer(id);
 
@@ -610,6 +618,15 @@ nsPlainTextSerializer::IsEnabled(PRInt32 aTag, PRBool* aReturn)
 nsresult
 nsPlainTextSerializer::DoOpenContainer(const nsIParserNode* aNode, PRInt32 aTag)
 {
+  if (mFlags & nsIDocumentEncoder::OutputRaw) {
+    // Raw means raw.  Don't even think about doing anything fancy
+    // here like indenting, adding line breaks or any other
+    // characters such as list item bullets, quote characters
+    // around <q>, etc.  I mean it!  Don't make me smack you!
+
+    return NS_OK;
+  }
+
   eHTMLTags type = (eHTMLTags)aTag;
 
   if (mTagStackIndex < TagStackSize) {
@@ -831,7 +848,6 @@ nsPlainTextSerializer::DoOpenContainer(const nsIParserNode* aNode, PRInt32 aTag)
     if (mHeaderStrategy == 2) {  // numbered
       mIndent += kIndentSizeHeaders;
       // Caching
-      nsCAutoString leadup;
       PRInt32 level = HeaderLevel(type);
       // Increase counter for current level
       mHeaderCounter[level]++;
@@ -843,12 +859,13 @@ nsPlainTextSerializer::DoOpenContainer(const nsIParserNode* aNode, PRInt32 aTag)
       }
 
       // Construct numbers
+      nsAutoString leadup;
       for (i = 1; i <= level; i++) {
         leadup.AppendInt(mHeaderCounter[i]);
-        leadup += ".";
+        leadup.Append(PRUnichar('.'));
       }
-      leadup += " ";
-      Write(NS_ConvertASCIItoUCS2(leadup.get()));
+      leadup.Append(PRUnichar(' '));
+      Write(leadup);
     }
     else if (mHeaderStrategy == 1) { // indent increasingly
       mIndent += kIndentSizeHeaders;
@@ -888,37 +905,22 @@ nsPlainTextSerializer::DoOpenContainer(const nsIParserNode* aNode, PRInt32 aTag)
   else if (type == eHTMLTag_u && mStructs && !currentNodeIsConverted) {
     Write(NS_LITERAL_STRING("_"));
   }
-  else if (type == eHTMLTag_img) {
-    /* Output (in decreasing order of preference)
-       alt, title or nothing */
-    // See <http://www.w3.org/TR/REC-html40/struct/objects.html#edef-IMG>
-    nsAutoString imageDescription;
-    if (NS_SUCCEEDED(GetAttributeValue(aNode,
-                                       nsHTMLAtoms::alt,
-                                       imageDescription))) {
-      // If the alt attribute has an empty value (|alt=""|), output nothing
-    }
-    else if (NS_SUCCEEDED(GetAttributeValue(aNode,
-                                            nsHTMLAtoms::title,
-                                            imageDescription))
-             && !imageDescription.IsEmpty()) {
-      imageDescription = NS_LITERAL_STRING(" [") +
-                         imageDescription +
-                         NS_LITERAL_STRING("] ");
-    }
-    
-    if (!imageDescription.IsEmpty()) {
-      Write(imageDescription);
-    }
-  }
 
   return NS_OK;
-
 }
 
 nsresult
 nsPlainTextSerializer::DoCloseContainer(PRInt32 aTag)
 {
+  if (mFlags & nsIDocumentEncoder::OutputRaw) {
+    // Raw means raw.  Don't even think about doing anything fancy
+    // here like indenting, adding line breaks or any other
+    // characters such as list item bullets, quote characters
+    // around <q>, etc.  I mean it!  Don't make me smack you!
+
+    return NS_OK;
+  }
+
   if (mTagStackIndex > 0) {
     --mTagStackIndex;
   }
@@ -1208,6 +1210,28 @@ nsPlainTextSerializer::DoAddLeaf(const nsIParserNode *aNode, PRInt32 aTag,
 
     EnsureVerticalSpace(0);
   }
+  else if (type == eHTMLTag_img) {
+    /* Output (in decreasing order of preference)
+       alt, title or nothing */
+    // See <http://www.w3.org/TR/REC-html40/struct/objects.html#edef-IMG>
+    nsAutoString imageDescription;
+    if (NS_SUCCEEDED(GetAttributeValue(aNode,
+                                       nsHTMLAtoms::alt,
+                                       imageDescription))) {
+      // If the alt attribute has an empty value (|alt=""|), output nothing
+    }
+    else if (NS_SUCCEEDED(GetAttributeValue(aNode,
+                                            nsHTMLAtoms::title,
+                                            imageDescription))
+             && !imageDescription.IsEmpty()) {
+      imageDescription = NS_LITERAL_STRING(" [") +
+                         imageDescription +
+                         NS_LITERAL_STRING("] ");
+    }
+   
+    Write(imageDescription);
+  }
+
 
   return NS_OK;
 }
@@ -1439,7 +1463,7 @@ nsPlainTextSerializer::AddToLine(const PRUnichar * aLineFragment,
               (
                 restOfLine[0] == '>' ||
                 restOfLine[0] == ' ' ||
-                Substring(restOfLine, 0, 5).Equals(NS_LITERAL_STRING("From "))
+                StringBeginsWith(restOfLine, NS_LITERAL_STRING("From "))
               )
               && mCiteQuoteLevel == 0  // We space-stuff quoted lines anyway
             )
@@ -1832,33 +1856,21 @@ nsPlainTextSerializer::IsCurrentNodeConverted(const nsIParserNode* aNode)
 }
 
 
-nsresult
-nsPlainTextSerializer::GetIdForContent(nsIContent* aContent,
-                                       PRInt32* aID)
+// static
+PRInt32
+nsPlainTextSerializer::GetIdForContent(nsIContent* aContent)
 {
-  nsCOMPtr<nsIHTMLContent> htmlcontent = do_QueryInterface(aContent);
-  if (!htmlcontent) {
-    *aID = eHTMLTag_unknown;
-    return NS_OK;
+  if (!aContent->IsContentOfType(nsIContent::eHTML)) {
+    return eHTMLTag_unknown;
   }
 
-  nsCOMPtr<nsIAtom> tagname;
-  mContent->GetTag(getter_AddRefs(tagname));
-  if (!tagname) return NS_ERROR_FAILURE;
-  
-  nsAutoString namestr;
-  tagname->ToString(namestr);
-  
-  nsIParserService* parserService =
-    nsContentUtils::GetParserServiceWeakRef();
-  if (!parserService)
-    return NS_ERROR_FAILURE;
+  nsIParserService* parserService = nsContentUtils::GetParserServiceWeakRef();
 
-  nsresult rv;
-  rv = parserService->HTMLStringTagToId(namestr, aID);
-  if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
+  PRInt32 id;
+  nsresult rv = parserService->HTMLAtomTagToId(aContent->Tag(), &id);
+  NS_ASSERTION(NS_SUCCEEDED(rv), "Can't map HTML tag to id!");
 
-  return NS_OK;
+  return id;
 }
 
 /**

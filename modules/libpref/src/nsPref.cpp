@@ -63,7 +63,6 @@
 class nsPref : public nsIPref,
                public nsIPrefService,
                public nsIObserver,
-               public nsIPrefBranch,
                public nsIPrefBranchInternal,
                public nsISecurityPref,
                public nsSupportsWeakReference
@@ -125,7 +124,7 @@ nsPref* nsPref::gInstance = NULL;
 static PRInt32 g_InstanceCount = 0;
 
 
-NS_IMPL_THREADSAFE_ISUPPORTS7(nsPref, nsIPref, nsIPrefService, nsIObserver, nsIPrefBranch, nsIPrefBranchInternal, nsISecurityPref, nsISupportsWeakReference);
+NS_IMPL_THREADSAFE_ISUPPORTS7(nsPref, nsIPref, nsIPrefService, nsIObserver, nsIPrefBranch, nsIPrefBranchInternal, nsISecurityPref, nsISupportsWeakReference)
 
 //----------------------------------------------------------------------------------------
 nsPref::nsPref()
@@ -506,6 +505,7 @@ NS_IMETHODIMP nsPref::SetFileXPref(const char *pref, nsILocalFile *value)
 {
   nsresult rv;
 
+  NS_ENSURE_ARG_POINTER(value);
   nsCOMPtr<nsIPrefBranch> prefBranch = do_QueryInterface(mPrefService, &rv);
   if (NS_SUCCEEDED(rv))
     rv = prefBranch->SetComplexValue(pref, NS_GET_IID(nsILocalFile), value);
@@ -533,11 +533,7 @@ NS_IMETHODIMP nsPref::UnregisterCallback( const char* domain,
                         void* instance_data )
 //----------------------------------------------------------------------------------------
 {
-  if (PREF_UnregisterCallback(domain, callback, instance_data) == PREF_NOERROR) {
-    return NS_OK;
-  } else {
-    return NS_ERROR_FAILURE;
-  }
+  return PREF_UnregisterCallback(domain, callback, instance_data);
 }
 
 /*

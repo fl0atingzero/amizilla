@@ -44,13 +44,13 @@
 #include "nsDOMError.h"
 #include "nsContentUtils.h"
 #include "nsUnicharUtils.h"
-
+#include "nsDOMString.h"
 
 //----------------------------------------------------------------------
 
 nsDOMAttribute::nsDOMAttribute(nsIContent* aContent, nsINodeInfo *aNodeInfo,
                                const nsAString& aValue)
-  : mContent(aContent), mNodeInfo(aNodeInfo), mValue(aValue), mChild(nsnull),
+  : nsIAttribute(aContent, aNodeInfo), mValue(aValue), mChild(nsnull),
     mChildList(nsnull)
 {
   NS_ABORT_IF_FALSE(mNodeInfo, "We must get a nodeinfo here!");
@@ -82,58 +82,20 @@ NS_IMPL_ADDREF(nsDOMAttribute)
 NS_IMPL_RELEASE(nsDOMAttribute)
 
 
-NS_IMETHODIMP
-nsDOMAttribute::DropReference()
-{
-  mContent = nsnull;
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMAttribute::SetContent(nsIContent* aContent)
-{
-  mContent = aContent;
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMAttribute::GetContent(nsIContent** aContent)
-{
-  *aContent = mContent;
-  NS_IF_ADDREF(*aContent);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMAttribute::GetNodeInfo(nsINodeInfo** aNodeInfo)
-{
-  NS_IF_ADDREF(*aNodeInfo = mNodeInfo);
-
-  return NS_OK;
-}
-
 nsresult
 nsDOMAttribute::GetName(nsAString& aName)
 {
-  NS_ENSURE_TRUE(mNodeInfo, NS_ERROR_FAILURE);
-
-  return mNodeInfo->GetQualifiedName(aName);
+  mNodeInfo->GetQualifiedName(aName);
+  return NS_OK;
 }
 
 nsresult
 nsDOMAttribute::GetValue(nsAString& aValue)
 {
-  NS_ENSURE_TRUE(mNodeInfo, NS_ERROR_FAILURE);
-
   if (mContent) {
-    nsCOMPtr<nsIAtom> name = mNodeInfo->GetNameAtom();
-    PRInt32 nameSpaceID = mNodeInfo->GetNamespaceID();
-
     nsAutoString tmpValue;
-    nsresult attrResult = mContent->GetAttr(nameSpaceID, name,
+    nsresult attrResult = mContent->GetAttr(mNodeInfo->NamespaceID(),
+                                            mNodeInfo->NameAtom(),
                                             tmpValue);
     if (NS_CONTENT_ATTR_NOT_THERE != attrResult) {
       mValue = tmpValue;
@@ -148,11 +110,10 @@ nsDOMAttribute::GetValue(nsAString& aValue)
 nsresult
 nsDOMAttribute::SetValue(const nsAString& aValue)
 {
-  NS_ENSURE_TRUE(mNodeInfo, NS_ERROR_FAILURE);
-
   nsresult result = NS_OK;
   if (mContent) {
-    result = mContent->SetAttr(mNodeInfo, aValue, PR_TRUE);
+    result = mContent->SetAttr(mNodeInfo->NamespaceID(), mNodeInfo->NameAtom(),
+                               mNodeInfo->GetPrefixAtom(), aValue, PR_TRUE);
   }
   mValue=aValue;
 
@@ -162,7 +123,6 @@ nsDOMAttribute::SetValue(const nsAString& aValue)
 nsresult
 nsDOMAttribute::GetSpecified(PRBool* aSpecified)
 {
-  NS_ENSURE_TRUE(mNodeInfo, NS_ERROR_FAILURE);
   NS_ENSURE_ARG_POINTER(aSpecified);
 
   if (!mContent) {
@@ -170,10 +130,8 @@ nsDOMAttribute::GetSpecified(PRBool* aSpecified)
     return NS_OK;
   }
 
-  nsCOMPtr<nsIAtom> name = mNodeInfo->GetNameAtom();
-  PRInt32 nameSpaceID = mNodeInfo->GetNamespaceID();
-
-  *aSpecified = mContent->HasAttr(nameSpaceID, name);
+  *aSpecified = mContent->HasAttr(mNodeInfo->NamespaceID(),
+                                  mNodeInfo->NameAtom());
 
   return NS_OK;
 }
@@ -281,7 +239,7 @@ nsDOMAttribute::GetFirstChild(nsIDOMNode** aFirstChild)
     return result;
   }
   if (!value.IsEmpty()) {
-    if (!mChild) {      
+    if (!mChild) {
       nsCOMPtr<nsITextContent> content;
 
       result = NS_NewTextNode(getter_AddRefs(content));
@@ -362,15 +320,13 @@ nsDOMAttribute::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   nsDOMAttribute* newAttr;
 
   if (mContent) {
-    nsCOMPtr<nsIAtom> name = mNodeInfo->GetNameAtom();
-    PRInt32 nameSpaceID = mNodeInfo->GetNamespaceID();
-  
     nsAutoString value;
-    mContent->GetAttr(nameSpaceID, name, value);
-    newAttr = new nsDOMAttribute(nsnull, mNodeInfo, value); 
+    mContent->GetAttr(mNodeInfo->NamespaceID(),
+                      mNodeInfo->NameAtom(), value);
+    newAttr = new nsDOMAttribute(nsnull, mNodeInfo, value);
   }
   else {
-    newAttr = new nsDOMAttribute(nsnull, mNodeInfo, mValue); 
+    newAttr = new nsDOMAttribute(nsnull, mNodeInfo, mValue);
   }
 
   if (!newAttr) {
@@ -380,7 +336,7 @@ nsDOMAttribute::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   return CallQueryInterface(newAttr, aReturn);
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsDOMAttribute::GetOwnerDocument(nsIDOMDocument** aOwnerDocument)
 {
   nsresult result = NS_OK;
@@ -397,26 +353,22 @@ nsDOMAttribute::GetOwnerDocument(nsIDOMDocument** aOwnerDocument)
   return result;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsDOMAttribute::GetNamespaceURI(nsAString& aNamespaceURI)
 {
-  NS_ENSURE_TRUE(mNodeInfo, NS_ERROR_FAILURE);
-
   return mNodeInfo->GetNamespaceURI(aNamespaceURI);
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsDOMAttribute::GetPrefix(nsAString& aPrefix)
 {
-  NS_ENSURE_TRUE(mNodeInfo, NS_ERROR_FAILURE);
-
-  return mNodeInfo->GetPrefix(aPrefix);
+  mNodeInfo->GetPrefix(aPrefix);
+  return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsDOMAttribute::SetPrefix(const nsAString& aPrefix)
 {
-  NS_ENSURE_TRUE(mNodeInfo, NS_ERROR_FAILURE);
   nsCOMPtr<nsINodeInfo> newNodeInfo;
   nsCOMPtr<nsIAtom> prefix;
 
@@ -428,32 +380,32 @@ nsDOMAttribute::SetPrefix(const nsAString& aPrefix)
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (mContent) {
-    nsCOMPtr<nsIAtom> name = mNodeInfo->GetNameAtom();
-    PRInt32 nameSpaceID = mNodeInfo->GetNamespaceID();
+    nsIAtom *name = mNodeInfo->NameAtom();
+    PRInt32 nameSpaceID = mNodeInfo->NamespaceID();
 
     nsAutoString tmpValue;
     rv = mContent->GetAttr(nameSpaceID, name, tmpValue);
     if (rv == NS_CONTENT_ATTR_HAS_VALUE) {
       mContent->UnsetAttr(nameSpaceID, name, PR_TRUE);
 
-      mContent->SetAttr(newNodeInfo, tmpValue, PR_TRUE);
+      mContent->SetAttr(newNodeInfo->NamespaceID(), newNodeInfo->NameAtom(),
+                        newNodeInfo->GetPrefixAtom(), tmpValue, PR_TRUE);
     }
   }
 
-  mNodeInfo = newNodeInfo;
+  newNodeInfo.swap(mNodeInfo);
 
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsDOMAttribute::GetLocalName(nsAString& aLocalName)
 {
-  NS_ENSURE_TRUE(mNodeInfo, NS_ERROR_FAILURE);
-
-  return mNodeInfo->GetLocalName(aLocalName);
+  mNodeInfo->GetLocalName(aLocalName);
+  return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsDOMAttribute::Normalize()
 {
   // Nothing to do here
@@ -622,8 +574,7 @@ nsDOMAttribute::IsSameNode(nsIDOMNode* aOther,
       nsCOMPtr<nsIContent> content(do_QueryInterface(nodeOwner));
       // Check to see if we're in HTML.
       if (content->IsContentOfType(nsIContent::eHTML)) {
-        nsCOMPtr<nsINodeInfo> ni;
-        content->GetNodeInfo(getter_AddRefs(ni));
+        nsINodeInfo *ni = content->GetNodeInfo();
         if (ni) {
           // If there is no namespace, we're in HTML (as opposed to XHTML)
           // and we'll need to compare node names case insensitively.
@@ -646,19 +597,82 @@ nsDOMAttribute::IsSameNode(nsIDOMNode* aOther,
   return NS_OK;
 }
 
-NS_IMETHODIMP    
-nsDOMAttribute::LookupNamespacePrefix(const nsAString& aNamespaceURI,
-                                      nsAString& aPrefix) 
+NS_IMETHODIMP
+nsDOMAttribute::IsEqualNode(nsIDOMNode* aOther,
+                            PRBool* aReturn)
 {
-  aPrefix.Truncate();
-  nsresult rv = NS_OK;
-  nsCOMPtr<nsIDOM3Node> node(do_QueryInterface(mContent));
-  if (node)
-    rv = node->LookupNamespacePrefix(aNamespaceURI, aPrefix);
-  return rv;
+  NS_NOTYETIMPLEMENTED("nsDocument::IsEqualNode()");
+
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP    
+NS_IMETHODIMP
+nsDOMAttribute::IsDefaultNamespace(const nsAString& aNamespaceURI,
+                                   PRBool* aReturn)
+{
+  NS_NOTYETIMPLEMENTED("nsDOMAttribute::IsDefaultNamespace()");
+
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsDOMAttribute::GetTextContent(nsAString &aTextContent)
+{
+  return GetNodeValue(aTextContent);
+}
+
+NS_IMETHODIMP
+nsDOMAttribute::SetTextContent(const nsAString& aTextContent)
+{
+  return SetNodeValue(aTextContent);
+}
+
+
+NS_IMETHODIMP
+nsDOMAttribute::GetFeature(const nsAString& aFeature,
+                           const nsAString& aVersion,
+                           nsISupports** aReturn)
+{
+  NS_NOTYETIMPLEMENTED("nsDocument::GetFeature()");
+
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsDOMAttribute::SetUserData(const nsAString& aKey,
+                            nsIVariant* aData,
+                            nsIDOMUserDataHandler* aHandler,
+                            nsIVariant** aReturn)
+{
+  NS_NOTYETIMPLEMENTED("nsDocument::SetUserData()");
+
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsDOMAttribute::GetUserData(const nsAString& aKey,
+                            nsIVariant** aReturn)
+{
+  NS_NOTYETIMPLEMENTED("nsDocument::GetUserData()");
+
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsDOMAttribute::LookupPrefix(const nsAString& aNamespaceURI,
+                             nsAString& aPrefix)
+{
+  aPrefix.Truncate();
+
+  nsCOMPtr<nsIDOM3Node> node(do_QueryInterface(mContent));
+  if (node) {
+    return node->LookupPrefix(aNamespaceURI, aPrefix);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDOMAttribute::LookupNamespaceURI(const nsAString& aNamespacePrefix,
                                    nsAString& aNamespaceURI)
 {
@@ -683,7 +697,7 @@ nsAttributeChildList::~nsAttributeChildList()
 {
 }
 
-NS_IMETHODIMP    
+NS_IMETHODIMP
 nsAttributeChildList::GetLength(PRUint32* aLength)
 {
   *aLength = 0;
@@ -698,7 +712,7 @@ nsAttributeChildList::GetLength(PRUint32* aLength)
   return NS_OK;
 }
 
-NS_IMETHODIMP    
+NS_IMETHODIMP
 nsAttributeChildList::Item(PRUint32 aIndex, nsIDOMNode** aReturn)
 {
   *aReturn = nsnull;
@@ -709,7 +723,7 @@ nsAttributeChildList::Item(PRUint32 aIndex, nsIDOMNode** aReturn)
   return NS_OK;
 }
 
-void 
+void
 nsAttributeChildList::DropReference()
 {
   mAttribute = nsnull;

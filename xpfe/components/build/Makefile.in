@@ -32,24 +32,24 @@ EXPORT_LIBRARY = 1
 IS_COMPONENT	= 1
 MODULE_NAME	= application
 
+PACKAGE_FILE = appcomps.pkg
+PACKAGE_VARS += MOZ_PHOENIX
+
 REQUIRES	= xpcom \
-		  xpcom_obsolete \
 		  string \
 		  content \
 		  rdf \
 		  necko \
-		  necko2 \
 		  nkcache \
 		  intl \
 		  locale \
 		  mork \
 		  widget \
 		  dom \
-                  alerts\
-                  uriloader \
-                  mimetype \
-                  webbrowserpersist \
-                  progressDlg \
+		  uriloader \
+		  mimetype \
+		  webbrowserpersist \
+		  progressDlg \
 		  pref \
 		  docshell \
 		  webshell \
@@ -79,7 +79,6 @@ SHARED_LIBRARY_LIBS = \
 	$(DIST)/lib/$(LIB_PREFIX)appcompintl_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)related_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)search_s.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)timebomb_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)windowds_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)mozbrwsr_s.$(LIB_SUFFIX) \
 	$(NULL)
@@ -92,13 +91,20 @@ SHARED_LIBRARY_LIBS += \
 	$(DIST)/lib/$(LIB_PREFIX)history_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)urlbarhistory_s.$(LIB_SUFFIX) \
   $(NULL)
+
+ifeq ($(OS_ARCH),WINNT)
+SHARED_LIBRARY_LIBS += \
+	$(DIST)/lib/$(LIB_PREFIX)alerts_s.$(LIB_SUFFIX) \
+  $(DIST)/lib/$(LIB_PREFIX)winhooks_s.$(LIB_SUFFIX) \
+	$(NULL)
+endif
+
 endif
 
 LOCAL_INCLUDES	= \
 	-I$(srcdir)/../directory         \
 	-I$(srcdir)/../related/src       \
 	-I$(srcdir)/../search/src        \
-	-I$(srcdir)/../timebomb          \
 	-I$(srcdir)/../windowds \
 	-I$(srcdir)/../../browser/src \
 	$(NULL)
@@ -111,14 +117,20 @@ LOCAL_INCLUDES += \
 	-I$(srcdir)/../urlbarhistory/src \
   -I$(srcdir)/../download-manager/src \
   $(NULL)
+
+ifeq ($(OS_ARCH),WINNT)
+LOCAL_INCLUDES += \
+	-I$(srcdir)/../alerts/src \
+  -I$(srcdir)/../winhooks \
+  $(NULL)
+endif
+
 endif
 
 ifeq ($(OS_ARCH),WINNT)
 
 SHARED_LIBRARY_LIBS += \
-	$(DIST)/lib/$(LIB_PREFIX)winhooks_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)urlwidgt_s.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)alerts_s.$(LIB_SUFFIX) \
 	$(NULL)
 
 
@@ -126,17 +138,14 @@ OS_LIBS	+= $(call EXPAND_LIBNAME,ole32 shell32)
 
 LOCAL_INCLUDES	+= \
 	-I$(srcdir)/../urlwidget \
-	-I$(srcdir)/../winhooks \
-        -I$(srcdir)/../alerts/src \
 	$(NULL)
 endif
 
 EXTRA_DSO_LDOPTS = \
 	$(MOZ_UNICHARUTIL_LIBS) \
 	$(MOZ_COMPONENT_LIBS) \
-	$(MOZ_XPCOM_OBSOLETE_LIBS) \
 	$(EXTRA_DSO_LIBS) \
 	$(MOZ_JS_LIBS) \
 	$(NULL)
-
+ 
 include $(topsrcdir)/config/rules.mk

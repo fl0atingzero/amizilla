@@ -125,8 +125,7 @@ nsTextBoxFrame::AttributeChanged(nsIPresContext* aPresContext,
                                  nsIContent*     aChild,
                                  PRInt32         aNameSpaceID,
                                  nsIAtom*        aAttribute,
-                                 PRInt32         aModType, 
-                                 PRInt32         aHint)
+                                 PRInt32         aModType)
 {
     mState |= NS_STATE_NEED_LAYOUT;
     PRBool aResize;
@@ -158,8 +157,7 @@ nsTextBoxFrame::nsTextBoxFrame(nsIPresShell* aShell):nsLeafBoxFrame(aShell), mCr
 
 nsTextBoxFrame::~nsTextBoxFrame()
 {
-    if (mAccessKeyInfo)
-        delete mAccessKeyInfo;
+    delete mAccessKeyInfo;
 }
 
 
@@ -238,11 +236,13 @@ nsTextBoxFrame::UpdateAttributes(nsIPresContext*  aPresContext,
         mContent->GetAttr(kNameSpaceID_None, nsXULAtoms::crop, value);
         CroppingStyle cropType;
 
-        if (value.EqualsIgnoreCase(CROP_LEFT) || value.EqualsIgnoreCase(CROP_START))
+        if (value.Equals(NS_LITERAL_STRING(CROP_LEFT)) ||
+            value.Equals(NS_LITERAL_STRING(CROP_START)))
             cropType = CropLeft;
-        else if (value.EqualsIgnoreCase(CROP_CENTER))
+        else if (value.Equals(NS_LITERAL_STRING(CROP_CENTER)))
             cropType = CropCenter;
-        else if (value.EqualsIgnoreCase(CROP_RIGHT) || value.EqualsIgnoreCase(CROP_END))
+        else if (value.Equals(NS_LITERAL_STRING(CROP_RIGHT)) ||
+                 value.Equals(NS_LITERAL_STRING(CROP_END)))
             cropType = CropRight;
         else
             cropType = CropNone;
@@ -392,27 +392,26 @@ nsTextBoxFrame::PaintTitle(nsIPresContext*      aPresContext,
     nscoord offset;
     nscoord size;
     nscoord baseline;
-    nsCOMPtr<nsIDeviceContext> deviceContext;
     nsCOMPtr<nsIFontMetrics> fontMet;
-    aPresContext->GetDeviceContext(getter_AddRefs(deviceContext));
-    deviceContext->GetMetricsFor(fontStyle->mFont, *getter_AddRefs(fontMet));
+    aPresContext->DeviceContext()->GetMetricsFor(fontStyle->mFont,
+                                                 *getter_AddRefs(fontMet));
     fontMet->GetMaxAscent(baseline);
 
     if (decorations & (NS_FONT_DECORATION_OVERLINE | NS_FONT_DECORATION_UNDERLINE)) {
       fontMet->GetUnderline(offset, size);
       if (decorations & NS_FONT_DECORATION_OVERLINE) {
         aRenderingContext.SetColor(overColor);
-        aRenderingContext.FillRect(textRect.x, textRect.y, mRect.width, size);
+        aRenderingContext.FillRect(textRect.x, textRect.y, textRect.width, size);
       }
       if (decorations & NS_FONT_DECORATION_UNDERLINE) {
         aRenderingContext.SetColor(underColor);
-        aRenderingContext.FillRect(textRect.x, textRect.y + baseline - offset, mRect.width, size);
+        aRenderingContext.FillRect(textRect.x, textRect.y + baseline - offset, textRect.width, size);
       }
     }
     if (decorations & NS_FONT_DECORATION_LINE_THROUGH) {
       fontMet->GetStrikeout(offset, size);
       aRenderingContext.SetColor(strikeColor);
-      aRenderingContext.FillRect(textRect.x, textRect.y + baseline - offset, mRect.width, size);
+      aRenderingContext.FillRect(textRect.x, textRect.y + baseline - offset, textRect.width, size);
     }
  
     aRenderingContext.SetFont(fontStyle->mFont, nsnull);
@@ -512,11 +511,9 @@ nsTextBoxFrame::CalculateTitleForWidth(nsIPresContext*      aPresContext,
     if (mTitle.IsEmpty())
         return;
 
-    nsCOMPtr<nsIDeviceContext> deviceContext;
-    aPresContext->GetDeviceContext(getter_AddRefs(deviceContext));
-
     nsCOMPtr<nsIFontMetrics> fontMet;
-    deviceContext->GetMetricsFor(GetStyleFont()->mFont, *getter_AddRefs(fontMet));
+    aPresContext->DeviceContext()->GetMetricsFor(GetStyleFont()->mFont,
+                                                 *getter_AddRefs(fontMet));
     aRenderingContext.SetFont(fontMet);
 
     // see if the text will completely fit in the width given
@@ -732,8 +729,11 @@ nsTextBoxFrame::UpdateAccessIndex()
                 mAccessKeyInfo = nsnull;
             }
         } else {
-            if (!mAccessKeyInfo)
+            if (!mAccessKeyInfo) {
                 mAccessKeyInfo = new nsAccessKeyInfo();
+                if (!mAccessKeyInfo)
+                    return;
+            }
 
             nsAString::const_iterator start, end;
                 
@@ -786,11 +786,9 @@ void
 nsTextBoxFrame::GetTextSize(nsIPresContext* aPresContext, nsIRenderingContext& aRenderingContext,
                                 const nsString& aString, nsSize& aSize, nscoord& aAscent)
 {
-    nsCOMPtr<nsIDeviceContext> deviceContext;
-    aPresContext->GetDeviceContext(getter_AddRefs(deviceContext));
-
     nsCOMPtr<nsIFontMetrics> fontMet;
-    deviceContext->GetMetricsFor(GetStyleFont()->mFont, *getter_AddRefs(fontMet));
+    aPresContext->DeviceContext()->GetMetricsFor(GetStyleFont()->mFont,
+                                                 *getter_AddRefs(fontMet));
     fontMet->GetHeight(aSize.height);
     aRenderingContext.SetFont(fontMet);
     aRenderingContext.GetWidth(aString, aSize.width);
@@ -912,20 +910,17 @@ nsTextBoxFrame::RegUnregAccessKey(nsIPresContext* aPresContext,
     if (accessKey.IsEmpty())
         return NS_OK;
 
-    nsresult rv = NS_OK;
+    nsresult rv;
 
     // With a valid PresContext we can get the ESM 
     // and (un)register the access key
-    nsCOMPtr<nsIEventStateManager> esm;
-    aPresContext->GetEventStateManager(getter_AddRefs(esm));
+    nsIEventStateManager *esm = aPresContext->EventStateManager();
 
-    if (esm) {
-        PRUint32 key = accessKey.First();
-        if (aDoReg)
-            rv = esm->RegisterAccessKey(mContent, key);
-        else
-            rv = esm->UnregisterAccessKey(mContent, key);
-    }
+    PRUint32 key = accessKey.First();
+    if (aDoReg)
+        rv = esm->RegisterAccessKey(mContent, key);
+    else
+        rv = esm->UnregisterAccessKey(mContent, key);
 
     return rv;
 }

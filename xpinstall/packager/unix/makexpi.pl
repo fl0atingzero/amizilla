@@ -39,12 +39,15 @@
 #
 
 use Cwd;
+use File::Find;
+
+@libraryList = undef;
 
 ##
 # RecursiveStrip
 #
-# Strips all libs by recursing into all directories and calling
-# the strip utility on all *.so files.
+# Strips all strippable files by recursing into all directories and calling
+# the strip utility on all files.
 #
 # @param   targetDir  the directory to traverse recursively
 #
@@ -55,23 +58,28 @@ sub RecursiveStrip
     my($entry) = "";
     my($saveCwd) = cwd();
 
+    undef @libraryList;
+    find({ wanted => \&find_libraries, no_chdir => 1 }, $targetDir);
     @dirEntries = <$targetDir/*>;
 
-    # strip all .so files in this dir
-    chdir($targetDir);                  # push targetDir
-    system("strip *.so > /dev/null 2>&1");
-    chdir($saveCwd);                    # pop targetDir
+    # strip all strippable files
+    system("strip @libraryList") if (defined(@libraryList));
+}
 
-    # iterate over all subdir entries 
-    foreach $entry ( @dirEntries ) 
-    {
-        # if dir entry is dir
-        if (-d $entry)
-        {       
-            # recurse into subdir
-            RecursiveStrip($entry);
-        }
-    }
+sub MakeJsFile
+{
+  my($componentName) = @_;
+
+  # Make .js file
+  if(system("perl makejs.pl $componentName.jst $inDefaultVersion $inStagePath/$componentName install.js") != 0)
+  {
+    exit(1);
+  }
+}
+
+sub find_libraries
+{
+    push @libraryList, $File::Find::name;
 }
 
 # Make sure there are at least three arguments
@@ -88,17 +96,12 @@ if($#ARGV < 2)
 $inComponentName  = $ARGV[0];
 $inStagePath      = $ARGV[1];
 $inDestPath       = $ARGV[2];
+$inDefaultVersion = $ARGV[3];
 
 # check for existence of staging component path
 if(!(-e "$inStagePath/$inComponentName"))
 {
   die "invalid path: $inStagePath/$inComponentName\n";
-}
-
-# check for existence of .js script
-if(!(-e "$inComponentName.js"))
-{
-  die "missing .js script: $inComponentName.js\n";
 }
 
 # delete component .xpi file
@@ -138,7 +141,9 @@ RecursiveStrip(cwd());
 system("zip -r -y $inDestPath/$inComponentName.xpi *");
 chdir("$saveCwdir");
 
-system("cp $inComponentName.js install.js");
+# Make .js file
+MakeJsFile($inComponentName);
+
 system("zip -g $inDestPath/$inComponentName.xpi install.js");
 
 # delete install.js

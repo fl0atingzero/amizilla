@@ -44,7 +44,7 @@
 #include "nsIPresContext.h"
 #include "nsIAtom.h"
 
-class nsHTMLSpanElement : public nsGenericHTMLContainerElement,
+class nsHTMLSpanElement : public nsGenericHTMLElement,
                           public nsIDOMHTMLElement
 {
 public:
@@ -55,21 +55,21 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLElement::)
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLElement::)
 
-  nsresult GetInnerHTML(nsAString& aInnerHTML);
-  nsresult SetInnerHTML(const nsAString& aInnerHTML);
+  virtual nsresult GetInnerHTML(nsAString& aInnerHTML);
+  virtual nsresult SetInnerHTML(const nsAString& aInnerHTML);
 };
 
 nsresult
 NS_NewHTMLSpanElement(nsIHTMLContent** aInstancePtrResult,
-                      nsINodeInfo *aNodeInfo)
+                      nsINodeInfo *aNodeInfo, PRBool aFromParser)
 {
   NS_ENSURE_ARG_POINTER(aInstancePtrResult);
 
@@ -103,13 +103,12 @@ nsHTMLSpanElement::~nsHTMLSpanElement()
 }
 
 
-NS_IMPL_ADDREF_INHERITED(nsHTMLSpanElement, nsGenericElement);
-NS_IMPL_RELEASE_INHERITED(nsHTMLSpanElement, nsGenericElement);
+NS_IMPL_ADDREF_INHERITED(nsHTMLSpanElement, nsGenericElement)
+NS_IMPL_RELEASE_INHERITED(nsHTMLSpanElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLSpanElement
-NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLSpanElement,
-                                    nsGenericHTMLContainerElement)
+NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLSpanElement, nsGenericHTMLElement)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLSpanElement)
 NS_HTML_CONTENT_INTERFACE_MAP_END
 
@@ -133,7 +132,7 @@ nsHTMLSpanElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   if (NS_FAILED(rv))
     return rv;
 
-  CopyInnerTo(this, it, aDeep);
+  CopyInnerTo(it, aDeep);
 
   *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
 
@@ -145,23 +144,21 @@ nsHTMLSpanElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
 nsresult
 nsHTMLSpanElement::GetInnerHTML(nsAString& aInnerHTML)
 {
-  nsCOMPtr<nsIAtom> tag;
-  GetTag(getter_AddRefs(tag));
-  if (tag == nsHTMLAtoms::xmp || tag == nsHTMLAtoms::plaintext) {
+  if (mNodeInfo->Equals(nsHTMLAtoms::xmp) ||
+      mNodeInfo->Equals(nsHTMLAtoms::plaintext)) {
     return GetContentsAsText(aInnerHTML);
   }
 
-  return nsGenericHTMLContainerElement::GetInnerHTML(aInnerHTML);  
+  return nsGenericHTMLElement::GetInnerHTML(aInnerHTML);  
 }
 
 nsresult
 nsHTMLSpanElement::SetInnerHTML(const nsAString& aInnerHTML)
 {
-  nsCOMPtr<nsIAtom> tag;
-  GetTag(getter_AddRefs(tag));
-  if (tag == nsHTMLAtoms::xmp || tag == nsHTMLAtoms::plaintext) {
+  if (mNodeInfo->Equals(nsHTMLAtoms::xmp) ||
+      mNodeInfo->Equals(nsHTMLAtoms::plaintext)) {
     return ReplaceContentsWithText(aInnerHTML, PR_TRUE);
   }
 
-  return nsGenericHTMLContainerElement::SetInnerHTML(aInnerHTML);
+  return nsGenericHTMLElement::SetInnerHTML(aInnerHTML);
 }

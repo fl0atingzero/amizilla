@@ -527,15 +527,15 @@ void nsAddrDatabase::UnixToNative(char*& ioPath)
 /* caller need to delete *aDbPath */
 NS_IMETHODIMP nsAddrDatabase::GetDbPath(nsFileSpec * *aDbPath)
 {
-    if (aDbPath)
-    {
-        nsFileSpec* pFilePath = new nsFileSpec();
-        *pFilePath = m_dbName;
-        *aDbPath = pFilePath;
-        return NS_OK;
-    }
-    else
+    if (!aDbPath)
         return NS_ERROR_NULL_POINTER;
+
+    nsFileSpec* pFilePath = new nsFileSpec();
+    if (!pFilePath)
+        return NS_ERROR_OUT_OF_MEMORY;
+    *pFilePath = m_dbName;
+    *aDbPath = pFilePath;
+    return NS_OK;
 }
 
 NS_IMETHODIMP nsAddrDatabase::SetDbPath(nsFileSpec * aDbPath)
@@ -565,6 +565,8 @@ NS_IMETHODIMP nsAddrDatabase::Open
   if (aCreate) 
   {
     nsFileSpec *newMabFile = new nsFileSpec(*aMabFile);
+    if (!newMabFile)
+      return NS_ERROR_OUT_OF_MEMORY;
     
     // save off the name of the corrupt mab file, example abook.mab
     nsXPIDLCString originalMabFileName;
@@ -1618,7 +1620,7 @@ NS_IMETHODIMP nsAddrDatabase::CreateNewListCardAndAddToDB(nsIAbDirectory *aList,
     return rv;
 }
 
-nsresult nsAddrDatabase::AddListCardColumnsToRow
+NS_IMETHODIMP nsAddrDatabase::AddListCardColumnsToRow
 (nsIAbCard *pCard, nsIMdbRow *pListRow, PRUint32 pos, nsIAbCard** pNewCard, PRBool aInMailingList)
 {
   if (!pCard && !pListRow )
@@ -1782,11 +1784,17 @@ PRUint32 nsAddrDatabase::GetListAddressTotal(nsIMdbRow* listRow)
     return count;
 }
 
-nsresult nsAddrDatabase::SetListAddressTotal(nsIMdbRow* listRow, PRUint32 total)
+NS_IMETHODIMP nsAddrDatabase::SetListAddressTotal(nsIMdbRow* aListRow, PRUint32 aTotal)
 {
-    return AddIntColumn(listRow, m_ListTotalColumnToken, total);
+    return AddIntColumn(aListRow, m_ListTotalColumnToken, aTotal);
 }
 
+NS_IMETHODIMP nsAddrDatabase::FindRowByCard(nsIAbCard * aCard,nsIMdbRow **aRow)
+{
+    nsXPIDLString primaryEmail;
+    aCard->GetPrimaryEmail(getter_Copies(primaryEmail));
+    return GetRowForCharColumn(primaryEmail, m_PriEmailColumnToken, PR_TRUE, aRow);
+}
 
 nsresult nsAddrDatabase::GetAddressRowByPos(nsIMdbRow* listRow, PRUint16 pos, nsIMdbRow** cardRow)
 {
@@ -2607,7 +2615,7 @@ nsresult nsAddrDatabase::AddLowercaseColumn
   return rv;
 }
 
-nsresult nsAddrDatabase::GetCardFromDB(nsIAbCard *newCard, nsIMdbRow* cardRow)
+NS_IMETHODIMP nsAddrDatabase::InitCardFromRow(nsIAbCard *newCard, nsIMdbRow* cardRow)
 {
     nsresult    err = NS_OK;
     if (!newCard || !cardRow)
@@ -3348,7 +3356,7 @@ nsresult nsAddrDatabase::CreateCardFromDeletedCardsTable(nsIMdbRow* cardRow, mdb
 
         if (NS_SUCCEEDED(rv) && dbpersonCard)
         {
-            GetCardFromDB(personCard, cardRow);
+            InitCardFromRow(personCard, cardRow);
             mdbOid tableOid;
             m_mdbDeletedCardsTable->GetOid(GetEnv(), &tableOid);
 
@@ -3383,7 +3391,7 @@ nsresult nsAddrDatabase::CreateCard(nsIMdbRow* cardRow, mdb_id listRowID, nsIAbC
 
         if (NS_SUCCEEDED(rv) && dbpersonCard)
         {
-            GetCardFromDB(personCard, cardRow);
+            InitCardFromRow(personCard, cardRow);
             mdbOid tableOid;
             m_mdbPabTable->GetOid(GetEnv(), &tableOid);
 

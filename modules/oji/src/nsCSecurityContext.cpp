@@ -50,18 +50,12 @@
 #include "nsCSecurityContext.h"
 #include "nsIScriptContext.h"
 #include "jvmmgr.h"
+#include "jsjava.h"
 
 // For GetOrigin()
 
-#include "nsCOMPtr.h"
-#include "nsJSPrincipals.h"
-#include "nsSystemPrincipal.h"
-#include "nsCodebasePrincipal.h"
-#include "nsCertificatePrincipal.h"
-#include "nsScriptSecurityManager.h"
-#include "nsIScriptGlobalObject.h"
+#include "nsIScriptSecurityManager.h"
 #include "nsIServiceManager.h"
-#include "nsIScriptObjectPrincipal.h"
 #include "nsCRT.h"
 
 #include "nsTraceRefcnt.h"
@@ -71,31 +65,12 @@ static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);
 
 
 ////////////////////////////////////////////////////////////////////////////
-// from nsISupports 
+// nsISupports 
 
-// Thes macro expands to the aggregated query interface scheme.
-
-NS_IMPL_ADDREF(nsCSecurityContext);
-NS_IMPL_RELEASE(nsCSecurityContext);
-
-NS_METHOD
-nsCSecurityContext::QueryInterface(const nsIID& aIID, void** aInstancePtr)
-{
-    if (NULL == aInstancePtr) {                                            
-        return NS_ERROR_NULL_POINTER;                                        
-    }   
-    *aInstancePtr = NULL;
-    if (aIID.Equals(kISecurityContextIID) ||
-        aIID.Equals(kISupportsIID)) {
-        *aInstancePtr = (nsISecurityContext*) this;
-        AddRef();
-        return NS_OK;
-    }
-    return NS_NOINTERFACE; 
-}
+NS_IMPL_ISUPPORTS1(nsCSecurityContext, nsISecurityContext)
 
 ////////////////////////////////////////////////////////////////////////////
-// from nsISecurityContext:
+// nsISecurityContext
 
 NS_METHOD 
 nsCSecurityContext::Implies(const char* target, const char* action, PRBool *bAllowedAccess)
@@ -105,14 +80,26 @@ nsCSecurityContext::Implies(const char* target, const char* action, PRBool *bAll
     }
   
     if(!nsCRT::strcmp(target,"UniversalBrowserRead")) {
-        *bAllowedAccess = m_HasUniversalBrowserReadCapability;
-        return NS_OK;
+        // XXX we lie to the applet and say we have UniversalBrowserRead
+        // even if we don't so that we can bypass the Java plugin's broken
+        // origin checks.  Note that this only affects the plugin's perception
+        // of our script's capabilities, and has no bearing on the script's
+        // real capabilities. This code should be changed to assign
+        // |m_HasUniversalBrowserReadCapability| into the out parameter
+        // once Java's origin checking code is fixed.
+        // See bug 146458 for details.
+        if (JSJ_IsJSCallApplet()) {
+            *bAllowedAccess = PR_TRUE;
+        }
+        else {
+            *bAllowedAccess = m_HasUniversalBrowserReadCapability;
+        }
     } else if(!nsCRT::strcmp(target,"UniversalJavaPermission")) {
         *bAllowedAccess = m_HasUniversalJavaCapability;
-        return NS_OK;
     } else {
         *bAllowedAccess = PR_FALSE;
     }
+
     return NS_OK;
 }
 
@@ -120,70 +107,34 @@ nsCSecurityContext::Implies(const char* target, const char* action, PRBool *bAll
 NS_METHOD 
 nsCSecurityContext::GetOrigin(char* buf, int buflen)
 {
-    // Get the Script Security Manager.
-
-    nsresult rv      = NS_OK;
-    nsCOMPtr<nsIScriptSecurityManager> secMan = 
-             do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
-    if (NS_FAILED(rv) || !secMan) return NS_ERROR_FAILURE;
-
-
-    // First, try to get the principal from the security manager.
-    // Next, try to get it from the dom.
-    // If neither of those work, the qi for codebase will fail.
-
     if (!m_pPrincipal) {
-        if (NS_FAILED(secMan->GetSubjectPrincipal(&m_pPrincipal))) 
-        // return NS_ERROR_FAILURE;
-        ; // Don't return here because the security manager returns 
-          // NS_ERROR_FAILURE when there is no subject principal. In
-          // that case we are not done.
-        
-        if (!m_pPrincipal && m_pJSCX ) {
-            nsCOMPtr<nsIScriptContext> scriptContext = (nsIScriptContext*)JS_GetContextPrivate(m_pJSCX);
-            if (scriptContext) {
-                nsCOMPtr<nsIScriptGlobalObject> global;
-                scriptContext->GetGlobalObject(getter_AddRefs(global));
-                NS_ASSERTION(global, "script context has no global object");
-
-                if (global) {
-                    nsCOMPtr<nsIScriptObjectPrincipal> globalData = do_QueryInterface(global);
-                    if (globalData) {
-                        // ISSUE: proper ref counting.
-                        if (NS_FAILED(globalData->GetPrincipal(&m_pPrincipal)))
-                            return NS_ERROR_FAILURE; 
-                       
-                   }
-                }
-            }
-        }
-    }
-
-    nsCOMPtr<nsICodebasePrincipal> codebase = do_QueryInterface(m_pPrincipal);
-    if (!codebase) 
-        return NS_ERROR_FAILURE;
-
-    char* origin=nsnull;
-    codebase->GetOrigin(&origin);
-
-    if (origin) {
-        PRInt32 originlen = (PRInt32) strlen(origin);
-        if (!buf || buflen<=originlen) {
-            if (origin) {
-                nsCRT::free(origin);
-            }
+        // Get the Script Security Manager.
+        nsresult rv = NS_OK;
+        nsCOMPtr<nsIScriptSecurityManager> secMan =
+             do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
+        if (NS_FAILED(rv) || !secMan) {
             return NS_ERROR_FAILURE;
         }
 
-        // Copy the string into to user supplied buffer. Is there a better
-        // way to do this?
-
-        memcpy(buf,origin,originlen);
-        buf[originlen]=nsnull; // Gotta terminate it.
-        nsCRT::free(origin);
-    } else {
-        *buf = nsnull;
+        secMan->GetSubjectPrincipal(getter_AddRefs(m_pPrincipal));
+        if (!m_pPrincipal) {
+            return NS_ERROR_FAILURE;
+        }
     }
+
+    nsXPIDLCString origin;
+    m_pPrincipal->GetOrigin(getter_Copies(origin));
+
+    PRInt32 originlen = origin.Length();
+    if (origin.IsEmpty() || originlen > buflen - 1) {
+        return NS_ERROR_FAILURE;
+    }
+
+    // Copy the string into to user supplied buffer. Is there a better
+    // way to do this?
+
+    memcpy(buf, origin, originlen);
+    buf[originlen] = nsnull; // Gotta terminate it.
 
     return NS_OK;
 }
@@ -191,7 +142,7 @@ nsCSecurityContext::GetOrigin(char* buf, int buflen)
 NS_METHOD 
 nsCSecurityContext::GetCertificateID(char* buf, int buflen)
 {
-    nsCOMPtr<nsIPrincipal> principal = NULL;
+    nsCOMPtr<nsIPrincipal> principal;
   
     // Get the Script Security Manager.
 
@@ -200,27 +151,21 @@ nsCSecurityContext::GetCertificateID(char* buf, int buflen)
              do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
     if (NS_FAILED(rv) || !secMan) return NS_ERROR_FAILURE;
 
-
     secMan->GetSubjectPrincipal(getter_AddRefs(principal));
-    nsCOMPtr<nsICertificatePrincipal> cprincipal = do_QueryInterface(principal);
-    if (!cprincipal) 
+    if (!principal) {
         return NS_ERROR_FAILURE;
-
-    char* certificate = nsnull;
-    cprincipal->GetCertificateID(&certificate);
-
-    if (certificate) {
-        PRInt32 certlen = (PRInt32) strlen(certificate);
-        if( buflen<=certlen ) {
-            nsCRT::free(certificate);
-            return NS_ERROR_FAILURE;
-        }
-        memcpy(buf,certificate,certlen);
-        buf[certlen]=nsnull;
-        nsCRT::free(certificate);
-    } else {
-        *buf = nsnull;
     }
+
+    nsXPIDLCString certificate;
+    principal->GetCertificateID(getter_Copies(certificate));
+
+    PRInt32 certlen = certificate.Length();
+    if (buflen <= certlen) {
+        return NS_ERROR_FAILURE;
+    }
+
+    memcpy(buf, certificate.get(), certlen);
+    buf[certlen] = nsnull;
 
     return NS_OK;
 }
@@ -295,9 +240,7 @@ nsCSecurityContext::nsCSecurityContext(nsIPrincipal *principal)
 
     // Do early evaluation of "UniversalJavaPermission" capability.
 
-    PRBool equals;
-    if (!m_pPrincipal || 
-        NS_SUCCEEDED(m_pPrincipal->Equals(sysprincipal, &equals)) && equals) {
+    if (!m_pPrincipal || m_pPrincipal == sysprincipal) {
         // We have native code or the system principal: just allow general access
         m_HasUniversalBrowserReadCapability = PR_TRUE;
         m_HasUniversalJavaCapability = PR_TRUE;

@@ -55,6 +55,7 @@
 #include "nsIXULDocument.h"
 #include "nsIXULPrototypeDocument.h"
 #include "nsScriptLoader.h"
+#include "nsIStreamListener.h"
 
 class nsIRDFResource;
 class nsIRDFService;
@@ -92,50 +93,49 @@ public:
     NS_DECL_NSISTREAMLOADEROBSERVER
 
     // nsIDocument interface
-    NS_IMETHOD Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup);
-    NS_IMETHOD ResetToURI(nsIURI *aURI, nsILoadGroup* aLoadGroup);
+    virtual void Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup);
+    virtual void ResetToURI(nsIURI *aURI, nsILoadGroup* aLoadGroup);
 
-    NS_IMETHOD StartDocumentLoad(const char* aCommand,
-                                 nsIChannel *channel,
-                                 nsILoadGroup* aLoadGroup,
-                                 nsISupports* aContainer,
-                                 nsIStreamListener **aDocListener,
-                                 PRBool aReset = PR_TRUE,
-                                 nsIContentSink* aSink = nsnull);
+    virtual nsresult StartDocumentLoad(const char* aCommand,
+                                       nsIChannel *channel,
+                                       nsILoadGroup* aLoadGroup,
+                                       nsISupports* aContainer,
+                                       nsIStreamListener **aDocListener,
+                                       PRBool aReset = PR_TRUE,
+                                       nsIContentSink* aSink = nsnull);
 
-    NS_IMETHOD GetPrincipal(nsIPrincipal **aPrincipal);
+    virtual nsIPrincipal* GetPrincipal();
 
-    NS_IMETHOD AddPrincipal(nsIPrincipal *aPrincipal);
+    virtual void SetPrincipal(nsIPrincipal *aPrincipal);
 
-    NS_IMETHOD SetContentType(const nsAString& aContentType);
+    virtual void SetContentType(const nsAString& aContentType);
 
-    NS_IMETHOD EndLoad();
+    virtual void EndLoad();
 
-    NS_IMETHOD ContentAppended(nsIContent* aContainer,
-                               PRInt32 aNewIndexInContainer);
+    virtual void ContentAppended(nsIContent* aContainer,
+                                 PRInt32 aNewIndexInContainer);
 
-    NS_IMETHOD ContentInserted(nsIContent* aContainer,
-                               nsIContent* aChild,
-                               PRInt32 aIndexInContainer);
+    virtual void ContentInserted(nsIContent* aContainer,
+                                 nsIContent* aChild,
+                                 PRInt32 aIndexInContainer);
 
-    NS_IMETHOD ContentReplaced(nsIContent* aContainer,
-                               nsIContent* aOldChild,
-                               nsIContent* aNewChild,
-                               PRInt32 aIndexInContainer);
+    virtual void ContentReplaced(nsIContent* aContainer,
+                                 nsIContent* aOldChild,
+                                 nsIContent* aNewChild,
+                                 PRInt32 aIndexInContainer);
 
-    NS_IMETHOD ContentRemoved(nsIContent* aContainer,
-                              nsIContent* aChild,
-                              PRInt32 aIndexInContainer);
+    virtual void ContentRemoved(nsIContent* aContainer,
+                                nsIContent* aChild,
+                                PRInt32 aIndexInContainer);
 
-    NS_IMETHOD AttributeChanged(nsIContent* aElement, PRInt32 aNameSpaceID,
-                                nsIAtom* aAttribute, PRInt32 aModType, 
-                                nsChangeHint aHint);
+    virtual void AttributeChanged(nsIContent* aElement, PRInt32 aNameSpaceID,
+                                  nsIAtom* aAttribute, PRInt32 aModType);
 
-    NS_IMETHOD HandleDOMEvent(nsIPresContext* aPresContext,
-                              nsEvent* aEvent,
-                              nsIDOMEvent** aDOMEvent,
-                              PRUint32 aFlags,
-                              nsEventStatus* aEventStatus);
+    virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext,
+                                    nsEvent* aEvent,
+                                    nsIDOMEvent** aDOMEvent,
+                                    PRUint32 aFlags,
+                                    nsEventStatus* aEventStatus);
 
     // nsIXULDocument interface
     NS_IMETHOD AddElementForID(const nsAString& aID, nsIContent* aElement);
@@ -147,7 +147,6 @@ public:
     NS_IMETHOD SetMasterPrototype(nsIXULPrototypeDocument* aDocument);
     NS_IMETHOD GetMasterPrototype(nsIXULPrototypeDocument** aDocument);
     NS_IMETHOD SetCurrentPrototype(nsIXULPrototypeDocument* aDocument);
-    NS_IMETHOD PrepareStyleSheets(nsIURI* anURL);
     NS_IMETHOD AddSubtreeToDocument(nsIContent* aElement);
     NS_IMETHOD RemoveSubtreeFromDocument(nsIContent* aElement);
     NS_IMETHOD SetTemplateBuilderFor(nsIContent* aContent,
@@ -161,8 +160,6 @@ public:
     NS_IMETHOD CloneNode(PRBool deep, nsIDOMNode **_retval);
 
     // nsIDOMDocument interface overrides
-    NS_IMETHOD CreateElement(const nsAString & tagName,
-                             nsIDOMElement **_retval);
     NS_IMETHOD GetElementById(const nsAString & elementId,
                               nsIDOMElement **_retval); 
 
@@ -202,8 +199,6 @@ protected:
 
     void SetIsPopup(PRBool isPopup) { mIsPopup = isPopup; };
 
-    nsresult CreateElement(nsINodeInfo *aNodeInfo, nsIContent** aResult);
-
     nsresult PrepareToLoad(nsISupports* aContainer,
                            const char* aCommand,
                            nsIChannel* aChannel,
@@ -232,6 +227,11 @@ protected:
                                  nsIAtom* aAttr);
 
     void GetFocusController(nsIFocusController** aFocusController);
+
+    PRInt32 GetDefaultNamespaceID() const
+    {
+        return kNameSpaceID_XUL;
+    };
 
 protected:
     // pseudo constants
@@ -365,7 +365,8 @@ protected:
     /**
      * Create a delegate content model element from a prototype.
      */
-    nsresult CreateElement(nsXULPrototypeElement* aPrototype, nsIContent** aResult);
+    nsresult CreateElementFromPrototype(nsXULPrototypeElement* aPrototype,
+                                        nsIContent** aResult);
 
     /**
      * Create a temporary 'overlay' element to which content nodes

@@ -72,10 +72,6 @@ static unsigned char * scale_image(unsigned char *rgb_data, int rgb_width,
 
 static PRInt32 gPluginObjectCount = 0;
 
-static NS_DEFINE_IID(kISupportsIID,             NS_ISUPPORTS_IID             );
-static NS_DEFINE_IID(kIPluginInstanceIID,       NS_IPLUGININSTANCE_IID       );
-static NS_DEFINE_IID(knsSanePluginControlIID,   NS_ISANEPLUGININSTANCE_IID   );
-static NS_DEFINE_CID(kIOServiceCID,             NS_IOSERVICE_CID             );
 static NS_DEFINE_IID(kIPluginManagerIID,        NS_IPLUGINMANAGER_IID        );
 static NS_DEFINE_CID(kCPluginManagerCID,        NS_PLUGINMANAGER_CID         );
 static NS_DEFINE_CID(kEventQueueService,        NS_EVENTQUEUESERVICE_CID     );
@@ -2538,12 +2534,11 @@ void PR_CALLBACK scanimage_thread_routine( void * arg )
                  (PLHandleEventProc)  ThreadedHandleEvent,
                  (PLDestroyEventProc) ThreadedDestroyEvent);
 
-    if (eventQ->PostEvent(event) != PR_SUCCESS) {
+    if (NS_FAILED(eventQ->PostEvent(event))) {
         NS_ERROR("Error trying to post event!\n");
+        PL_DestroyEvent(event);
         return;
     }
-
-    return;
 }
 
 void PR_CALLBACK ThreadedHandleEvent(PLEvent * event)

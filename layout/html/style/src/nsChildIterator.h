@@ -41,11 +41,6 @@
 #include "nsIDOMNodeList.h"
 #include "nsIDOMNode.h"
 
-// Deal with |#define index(a,b) strchr(a,b)| macro in Toolkit types.h
-#if defined(XP_OS2_VACPP) && defined(index)
-#undef index
-#endif
-
 /**
  * Helper class for iterating children during frame construction.
  * This class should always be used in lieu of the straight content
@@ -103,9 +98,10 @@ public:
       nsCOMPtr<nsIDOMNode> node;
       mNodes->Item(mIndex, getter_AddRefs(node));
       CallQueryInterface(node, &result);
+    } else {
+      result = mContent->GetChildAt(PRInt32(mIndex));
+      NS_IF_ADDREF(result);
     }
-    else 
-      mContent->ChildAt(PRInt32(mIndex), &result);
 
     return result;
   }
@@ -132,7 +128,7 @@ public:
     if (mNodes)
       mNodes->GetLength(&length);
     else
-      mContent->ChildCount(NS_REINTERPRET_CAST(PRInt32&, length));
+      length = mContent->GetChildCount();
 
     NS_ASSERTION(PRInt32(aIndex) >= 0 && aIndex <= length, "out of bounds");
 

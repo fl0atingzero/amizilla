@@ -89,11 +89,11 @@
   #pragma warning( disable: 4514 )
 #endif
 
-#define NSCAP_FEATURE_FACTOR_DESTRUCTOR
+#define NSCAP_FEATURE_USE_BASE
 
 #ifdef NS_DEBUG
   #define NSCAP_FEATURE_TEST_DONTQUERY_CASES
-  #define NSCAP_FEATURE_DEBUG_PTR_TYPES
+  #undef NSCAP_FEATURE_USE_BASE
 //#define NSCAP_FEATURE_TEST_NONNULL_QUERY_SUCCEEDS
 #endif
 
@@ -107,12 +107,20 @@
   #undef NSCAP_FEATURE_TEST_DONTQUERY_CASES
 #endif
 
-#if defined(NSCAP_DISABLE_DEBUG_PTR_TYPES) || !defined(NS_DEBUG)
-  #undef NSCAP_FEATURE_DEBUG_PTR_TYPES
+#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ >= 3)
+  // Our use of nsCOMPtr_base::mRawPtr violates the C++ standard's aliasing
+  // rules. Mark it with the may_alias attribute so that gcc 3.3 and higher
+  // don't reorder instructions based on aliasing assumptions for
+  // this variable.  Fortunately, gcc versions < 3.3 do not do any
+  // optimizations that break nsCOMPtr.
+
+  #define NS_MAY_ALIAS_PTR(t)    t*  __attribute__((__may_alias__))
+#else
+  #define NS_MAY_ALIAS_PTR(t)    t*
 #endif
 
-#ifdef NSCAP_FEATURE_DEBUG_PTR_TYPES
-  #undef NSCAP_FEATURE_FACTOR_DESTRUCTOR
+#if defined(NSCAP_DISABLE_DEBUG_PTR_TYPES)
+  #define NSCAP_FEATURE_USE_BASE
 #endif
 
 
@@ -196,7 +204,7 @@ class nsDerivedSafe : public T
       nsrefcnt Release(void);
 #endif
 
-#if !defined(XP_OS2_VACPP) && !defined(AIX) && !defined(IRIX)
+#if !defined(AIX) && !defined(IRIX)
       void operator delete( void*, size_t );                  // NOT TO BE IMPLEMENTED
         // declaring |operator delete| private makes calling delete on an interface pointer a compile error
 #endif
@@ -319,24 +327,46 @@ class nsCOMPtr_helper
         - its constructor provides an optional |nsresult*| that |operator()| can fill
           in with an error when it is executed
           
-      See |class nsQueryInterface| for an example.
+      See |class nsGetInterface| for an example.
     */
   {
     public:
       virtual nsresult operator()( const nsIID&, void** ) const = 0;
   };
 
-class NS_COM nsQueryInterface : public nsCOMPtr_helper
+/*
+  |nsQueryInterface| could have been implemented as an |nsCOMPtr_helper| to
+  avoid adding specialized machinery in |nsCOMPtr|, But |do_QueryInterface|
+  is called often enough that the codesize savings are big enough to
+  warrant the specialcasing.
+*/
+
+class NS_COM nsQueryInterface
   {
     public:
-      nsQueryInterface( nsISupports* aRawPtr, nsresult* error )
+      nsQueryInterface( nsISupports* aRawPtr )
+          : mRawPtr(aRawPtr)
+        {
+          // nothing else to do here
+        }
+
+      nsresult operator()( const nsIID& aIID, void** ) const;
+
+    private:
+      nsISupports*  mRawPtr;
+  };
+
+class NS_COM nsQueryInterfaceWithError
+  {
+    public:
+      nsQueryInterfaceWithError( nsISupports* aRawPtr, nsresult* error )
           : mRawPtr(aRawPtr),
             mErrorPtr(error)
         {
           // nothing else to do here
         }
 
-      virtual nsresult operator()( const nsIID& aIID, void** ) const;
+      nsresult operator()( const nsIID& aIID, void** ) const;
 
     private:
       nsISupports*  mRawPtr;
@@ -344,10 +374,17 @@ class NS_COM nsQueryInterface : public nsCOMPtr_helper
   };
 
 inline
-const nsQueryInterface
-do_QueryInterface( nsISupports* aRawPtr, nsresult* error = 0 )
+nsQueryInterface
+do_QueryInterface( nsISupports* aRawPtr )
   {
-    return nsQueryInterface(aRawPtr, error);
+    return nsQueryInterface(aRawPtr);
+  }
+
+inline
+nsQueryInterfaceWithError
+do_QueryInterface( nsISupports* aRawPtr, nsresult* error )
+  {
+    return nsQueryInterfaceWithError(aRawPtr, error);
   }
 
 template <class T>
@@ -394,20 +431,16 @@ class nsCOMPtr_base
           // nothing else to do here
         }
 
-#ifdef NSCAP_FEATURE_FACTOR_DESTRUCTOR
       NS_COM ~nsCOMPtr_base();
-#else
-      // Allow debug builds to link with optimized versions of nsCOMPtr-using
-      // plugins (e.g., JVMs).
-      NS_COM ~nsCOMPtr_base() { }
-#endif
 
       NS_COM void    assign_with_AddRef( nsISupports* );
+      NS_COM void    assign_from_qi( const nsQueryInterface, const nsIID& );
+      NS_COM void    assign_from_qi_with_error( const nsQueryInterfaceWithError&, const nsIID& );
       NS_COM void    assign_from_helper( const nsCOMPtr_helper&, const nsIID& );
       NS_COM void**  begin_assignment();
 
     protected:
-      nsISupports* mRawPtr;
+      NS_MAY_ALIAS_PTR(nsISupports) mRawPtr;
 
       void
       assign_assuming_AddRef( nsISupports* newPtr )
@@ -433,14 +466,20 @@ class nsCOMPtr_base
 
 template <class T>
 class nsCOMPtr
-#ifndef NSCAP_FEATURE_DEBUG_PTR_TYPES
+#ifdef NSCAP_FEATURE_USE_BASE
     : private nsCOMPtr_base
 #endif
   {
 
-#ifdef NSCAP_FEATURE_DEBUG_PTR_TYPES
+#ifdef NSCAP_FEATURE_USE_BASE
+  #define NSCAP_CTOR_BASE(x) nsCOMPtr_base(x)
+#else
+  #define NSCAP_CTOR_BASE(x) mRawPtr(x)
+
     private:
       void    assign_with_AddRef( nsISupports* );
+      void    assign_from_qi( const nsQueryInterface, const nsIID& );
+      void    assign_from_qi_with_error( const nsQueryInterfaceWithError&, const nsIID& );
       void    assign_from_helper( const nsCOMPtr_helper&, const nsIID& );
       void**  begin_assignment();
 
@@ -457,16 +496,12 @@ class nsCOMPtr
 
     private:
       T* mRawPtr;
-
-  #define NSCAP_CTOR_BASE(x) mRawPtr(x)
-#else
-  #define NSCAP_CTOR_BASE(x) nsCOMPtr_base(x)
 #endif
 
     public:
       typedef T element_type;
       
-#ifndef NSCAP_FEATURE_FACTOR_DESTRUCTOR
+#ifndef NSCAP_FEATURE_USE_BASE
      ~nsCOMPtr()
         {
           NSCAP_LOG_RELEASE(this, mRawPtr);
@@ -528,6 +563,22 @@ class nsCOMPtr
           NSCAP_ASSERT_NO_QUERY_NEEDED();
         }
 
+      nsCOMPtr( const nsQueryInterface qi )
+            : NSCAP_CTOR_BASE(0)
+          // construct from |do_QueryInterface(expr)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_qi(qi, NS_GET_IID(T));
+        }
+
+      nsCOMPtr( const nsQueryInterfaceWithError& qi )
+            : NSCAP_CTOR_BASE(0)
+          // construct from |do_QueryInterface(expr, &rv)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_qi_with_error(qi, NS_GET_IID(T));
+        }
+
       nsCOMPtr( const nsCOMPtr_helper& helper )
             : NSCAP_CTOR_BASE(0)
           // ...and finally, anything else we might need to construct from
@@ -537,18 +588,6 @@ class nsCOMPtr
           assign_from_helper(helper, NS_GET_IID(T));
           NSCAP_ASSERT_NO_QUERY_NEEDED();
         }
-
-#ifdef NSCAP_FEATURE_TEST_DONTQUERY_CASES
-        // For debug only --- this particular helper doesn't need to do the
-        //  |NSCAP_ASSERT_NO_QUERY_NEEDED()| test.  In fact, with the logging
-        //  changes, skipping the query test prevents infinite recursion.
-      nsCOMPtr( const nsQueryInterface& helper )
-            : NSCAP_CTOR_BASE(0)
-        {
-          NSCAP_LOG_ASSIGNMENT(this, 0);
-          assign_from_helper(helper, NS_GET_IID(T));
-        }
-#endif
 
 
         // Assignment operators
@@ -580,6 +619,22 @@ class nsCOMPtr
         }
 
       nsCOMPtr<T>&
+      operator=( const nsQueryInterface rhs )
+          // assign from |do_QueryInterface(expr)|
+        {
+          assign_from_qi(rhs, NS_GET_IID(T));
+          return *this;
+        }
+
+      nsCOMPtr<T>&
+      operator=( const nsQueryInterfaceWithError& rhs )
+          // assign from |do_QueryInterface(expr, &rv)|
+        {
+          assign_from_qi_with_error(rhs, NS_GET_IID(T));
+          return *this;
+        }
+
+      nsCOMPtr<T>&
       operator=( const nsCOMPtr_helper& rhs )
           // ...and finally, anything else we might need to assign from
           //  can exploit the |nsCOMPtr_helper| facility.
@@ -589,26 +644,14 @@ class nsCOMPtr
           return *this;
         }
 
-#ifdef NSCAP_FEATURE_TEST_DONTQUERY_CASES
-        // For debug only --- this particular helper doesn't need to do the
-        //  |NSCAP_ASSERT_NO_QUERY_NEEDED()| test.  In fact, with the logging
-        //  changes, skipping the query test prevents infinite recursion.
-      nsCOMPtr<T>&
-      operator=( const nsQueryInterface& rhs )
-        {
-          assign_from_helper(rhs, NS_GET_IID(T));
-          return *this;
-        }
-#endif
-
       void
       swap( nsCOMPtr<T>& rhs )
           // ...exchange ownership with |rhs|; can save a pair of refcount operations
         {
-#ifdef NSCAP_FEATURE_DEBUG_PTR_TYPES
-          T* temp = rhs.mRawPtr;
-#else
+#ifdef NSCAP_FEATURE_USE_BASE
           nsISupports* temp = rhs.mRawPtr;
+#else
+          T* temp = rhs.mRawPtr;
 #endif
           NSCAP_LOG_ASSIGNMENT(&rhs, mRawPtr);
           NSCAP_LOG_ASSIGNMENT(this, temp);
@@ -623,10 +666,10 @@ class nsCOMPtr
       swap( T*& rhs )
           // ...exchange ownership with |rhs|; can save a pair of refcount operations
         {
-#ifdef NSCAP_FEATURE_DEBUG_PTR_TYPES
-          T* temp = rhs;
-#else
+#ifdef NSCAP_FEATURE_USE_BASE
           nsISupports* temp = rhs;
+#else
+          T* temp = rhs;
 #endif
           NSCAP_LOG_ASSIGNMENT(this, temp);
           NSCAP_LOG_RELEASE(this, mRawPtr);
@@ -743,16 +786,6 @@ class nsCOMPtr<nsISupports>
     public:
       typedef nsISupports element_type;
 
-#ifndef NSCAP_FEATURE_FACTOR_DESTRUCTOR
-     ~nsCOMPtr()
-        {
-          NSCAP_LOG_RELEASE(this, mRawPtr);
-          if ( mRawPtr )
-            NSCAP_RELEASE(this, mRawPtr);
-        }
-#endif
-
-
         // Constructors
 
       nsCOMPtr()
@@ -785,6 +818,22 @@ class nsCOMPtr<nsISupports>
           // construct from |dont_AddRef(expr)|
         {
           NSCAP_LOG_ASSIGNMENT(this, aSmartPtr.mRawPtr);
+        }
+
+      nsCOMPtr( const nsQueryInterface qi )
+            : nsCOMPtr_base(0)
+          // assign from |do_QueryInterface(expr)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_qi(qi, NS_GET_IID(nsISupports));
+        }
+
+      nsCOMPtr( const nsQueryInterfaceWithError& qi )
+            : nsCOMPtr_base(0)
+          // assign from |do_QueryInterface(expr, &rv)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_qi_with_error(qi, NS_GET_IID(nsISupports));
         }
 
       nsCOMPtr( const nsCOMPtr_helper& helper )
@@ -820,6 +869,22 @@ class nsCOMPtr<nsISupports>
           // assign from |dont_AddRef(expr)|
         {
           assign_assuming_AddRef(rhs.mRawPtr);
+          return *this;
+        }
+
+      nsCOMPtr<nsISupports>&
+      operator=( const nsQueryInterface rhs )
+          // assign from |do_QueryInterface(expr)|
+        {
+          assign_from_qi(rhs, NS_GET_IID(nsISupports));
+          return *this;
+        }
+
+      nsCOMPtr<nsISupports>&
+      operator=( const nsQueryInterfaceWithError& rhs )
+          // assign from |do_QueryInterface(expr, &rv)|
+        {
+          assign_from_qi_with_error(rhs, NS_GET_IID(nsISupports));
           return *this;
         }
 
@@ -947,7 +1012,7 @@ class nsCOMPtr<nsISupports>
         }
   };
 
-#ifdef NSCAP_FEATURE_DEBUG_PTR_TYPES
+#ifndef NSCAP_FEATURE_USE_BASE
 template <class T>
 void
 nsCOMPtr<T>::assign_with_AddRef( nsISupports* rawPtr )
@@ -955,6 +1020,26 @@ nsCOMPtr<T>::assign_with_AddRef( nsISupports* rawPtr )
     if ( rawPtr )
       NSCAP_ADDREF(this, rawPtr);
     assign_assuming_AddRef(NS_REINTERPRET_CAST(T*, rawPtr));
+  }
+
+template <class T>
+void
+nsCOMPtr<T>::assign_from_qi( const nsQueryInterface qi, const nsIID& aIID )
+  {
+    T* newRawPtr;
+    if ( NS_FAILED( qi(aIID, NS_REINTERPRET_CAST(void**, &newRawPtr)) ) )
+      newRawPtr = 0;
+    assign_assuming_AddRef(newRawPtr);
+  }
+
+template <class T>
+void
+nsCOMPtr<T>::assign_from_qi_with_error( const nsQueryInterfaceWithError& qi, const nsIID& aIID )
+  {
+    T* newRawPtr;
+    if ( NS_FAILED( qi(aIID, NS_REINTERPRET_CAST(void**, &newRawPtr)) ) )
+      newRawPtr = 0;
+    assign_assuming_AddRef(newRawPtr);
   }
 
 template <class T>
@@ -1135,7 +1220,7 @@ inline
 NSCAP_BOOL
 operator==( const nsCOMPtr<T>& lhs, const nsCOMPtr<U>& rhs )
   {
-    return NS_STATIC_CAST(const void*, lhs.get()) == NS_STATIC_CAST(const void*, rhs.get());
+    return NS_STATIC_CAST(const T*, lhs.get()) == NS_STATIC_CAST(const U*, rhs.get());
   }
 
 
@@ -1144,7 +1229,7 @@ inline
 NSCAP_BOOL
 operator!=( const nsCOMPtr<T>& lhs, const nsCOMPtr<U>& rhs )
   {
-    return NS_STATIC_CAST(const void*, lhs.get()) != NS_STATIC_CAST(const void*, rhs.get());
+    return NS_STATIC_CAST(const T*, lhs.get()) != NS_STATIC_CAST(const U*, rhs.get());
   }
 
 
@@ -1155,7 +1240,7 @@ inline
 NSCAP_BOOL
 operator==( const nsCOMPtr<T>& lhs, const U* rhs )
   {
-    return NS_STATIC_CAST(const void*, lhs.get()) == NS_STATIC_CAST(const void*, rhs);
+    return NS_STATIC_CAST(const T*, lhs.get()) == rhs;
   }
 
 template <class T, class U>
@@ -1163,7 +1248,7 @@ inline
 NSCAP_BOOL
 operator==( const U* lhs, const nsCOMPtr<T>& rhs )
   {
-    return NS_STATIC_CAST(const void*, lhs) == NS_STATIC_CAST(const void*, rhs.get());
+    return lhs == NS_STATIC_CAST(const T*, rhs.get());
   }
 
 template <class T, class U>
@@ -1171,7 +1256,7 @@ inline
 NSCAP_BOOL
 operator!=( const nsCOMPtr<T>& lhs, const U* rhs )
   {
-    return NS_STATIC_CAST(const void*, lhs.get()) != NS_STATIC_CAST(const void*, rhs);
+    return NS_STATIC_CAST(const T*, lhs.get()) != rhs;
   }
 
 template <class T, class U>
@@ -1179,7 +1264,7 @@ inline
 NSCAP_BOOL
 operator!=( const U* lhs, const nsCOMPtr<T>& rhs )
   {
-    return NS_STATIC_CAST(const void*, lhs) != NS_STATIC_CAST(const void*, rhs.get());
+    return lhs != NS_STATIC_CAST(const T*, rhs.get());
   }
 
   // To avoid ambiguities caused by the presence of builtin |operator==|s
@@ -1202,7 +1287,7 @@ inline
 NSCAP_BOOL
 operator==( const nsCOMPtr<T>& lhs, U* rhs )
   {
-    return NS_STATIC_CAST(const void*, lhs.get()) == NS_STATIC_CAST(void*, rhs);
+    return NS_STATIC_CAST(const T*, lhs.get()) == NS_CONST_CAST(const U*, rhs);
   }
 
 template <class T, class U>
@@ -1210,7 +1295,7 @@ inline
 NSCAP_BOOL
 operator==( U* lhs, const nsCOMPtr<T>& rhs )
   {
-    return NS_STATIC_CAST(void*, lhs) == NS_STATIC_CAST(const void*, rhs.get());
+    return NS_CONST_CAST(const U*, lhs) == NS_STATIC_CAST(const T*, rhs.get());
   }
 
 template <class T, class U>
@@ -1218,7 +1303,7 @@ inline
 NSCAP_BOOL
 operator!=( const nsCOMPtr<T>& lhs, U* rhs )
   {
-    return NS_STATIC_CAST(const void*, lhs.get()) != NS_STATIC_CAST(void*, rhs);
+    return NS_STATIC_CAST(const T*, lhs.get()) != NS_CONST_CAST(const U*, rhs);
   }
 
 template <class T, class U>
@@ -1226,7 +1311,7 @@ inline
 NSCAP_BOOL
 operator!=( U* lhs, const nsCOMPtr<T>& rhs )
   {
-    return NS_STATIC_CAST(void*, lhs) != NS_STATIC_CAST(const void*, rhs.get());
+    return NS_CONST_CAST(const U*, lhs) != NS_STATIC_CAST(const T*, rhs.get());
   }
 #endif
 

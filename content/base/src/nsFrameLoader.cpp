@@ -57,18 +57,34 @@
 #include "nsIDocShellLoadInfo.h"
 #include "nsIBaseWindow.h"
 #include "nsIWebShell.h"
-
+#include "nsContentUtils.h"
+#include "nsUnicharUtils.h"
+#include "nsIScriptGlobalObject.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsICodebasePrincipal.h"
 
 #include "nsIURI.h"
+#include "nsIURL.h"
 #include "nsNetUtil.h"
 
 #include "nsHTMLAtoms.h"
 #include "nsINameSpaceManager.h"
 
-// Bug 98158: Limit to the number of total docShells in one page.
-#define MAX_NUMBER_DOCSHELLS 100
+// Bug 136580: Limit to the number of nested content frames that can have the
+//             same URL. This is to stop content that is recursively loading
+//             itself.  Note that "#foo" on the end of URL doesn't affect
+//             whether it's considered identical, but "?foo" or ";foo" are
+//             considered and compared.
+#define MAX_SAME_URL_CONTENT_FRAMES 3
+
+// Bug 8065: Limit content frame depth to some reasonable level. This
+// does not count chrome frames when determining depth, nor does it
+// prevent chrome recursion.  Number is fairly arbitrary, but meant to
+// keep number of shells to a reasonable number on accidental recursion with a
+// small (but not 1) branching factor.  With large branching factors the number
+// of shells can rapidly become huge and run us out of memory.  To solve that,
+// we'd need to re-institute a fixed version of bug 98158.
+#define MAX_DEPTH_CONTENT_FRAMES 10
+
 
 class nsFrameLoader : public nsIFrameLoader
 {
@@ -85,10 +101,7 @@ public:
   NS_IMETHOD GetDocShell(nsIDocShell **aDocShell);
   NS_IMETHOD Destroy();
 
-  PRInt32    GetDocShellChildCount(nsIDocShellTreeNode *aParentNode);
-
 protected:
-  nsresult GetPresContext(nsIPresContext **aPresContext);
   nsresult EnsureDocShell();
   void GetURL(nsAString& aURL);
 
@@ -126,8 +139,8 @@ NS_INTERFACE_MAP_BEGIN(nsFrameLoader)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_ADDREF(nsFrameLoader);
-NS_IMPL_RELEASE(nsFrameLoader);
+NS_IMPL_ADDREF(nsFrameLoader)
+NS_IMPL_RELEASE(nsFrameLoader)
 
 NS_IMETHODIMP
 nsFrameLoader::Init(nsIContent *aOwner)
@@ -145,8 +158,7 @@ nsFrameLoader::LoadFrame()
   nsresult rv = EnsureDocShell();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIDocument> doc;
-  mOwnerContent->GetDocument(getter_AddRefs(doc));
+  nsIDocument* doc = mOwnerContent->GetDocument();
   if (!doc) {
     return NS_OK;
   }
@@ -161,26 +173,22 @@ nsFrameLoader::LoadFrame()
   }
 
   // Make an absolute URI
-  nsCOMPtr<nsIURI> base_uri;
-  doc->GetBaseURL(getter_AddRefs(base_uri));
+  nsIURI *base_uri = doc->GetBaseURI();
 
-  nsCAutoString doc_charset;
-  doc->GetDocumentCharacterSet(doc_charset);
+  const nsACString &doc_charset = doc->GetDocumentCharacterSet();
 
   nsCOMPtr<nsIURI> uri;
   rv = NS_NewURI(getter_AddRefs(uri), src,
                  doc_charset.IsEmpty() ? nsnull :
-                 doc_charset.get(), base_uri);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Check for security
-  nsCOMPtr<nsIScriptSecurityManager> secMan =
-    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
+                 PromiseFlatCString(doc_charset).get(), base_uri);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIDocShellLoadInfo> loadInfo;
   mDocShell->CreateLoadInfo(getter_AddRefs(loadInfo));
   NS_ENSURE_TRUE(loadInfo, NS_ERROR_FAILURE);
+
+  // Check for security
+  nsIScriptSecurityManager *secMan = nsContentUtils::GetSecurityManager();
 
   // Get referring URL
   nsCOMPtr<nsIURI> referrer;
@@ -191,12 +199,8 @@ nsFrameLoader::LoadFrame()
   // If we were called from script, get the referring URL from the script
 
   if (principal) {
-    nsCOMPtr<nsICodebasePrincipal> codebase(do_QueryInterface(principal));
-
-    if (codebase) {
-      rv = codebase->GetURI(getter_AddRefs(referrer));
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
+    rv = principal->GetURI(getter_AddRefs(referrer));
+    NS_ENSURE_SUCCESS(rv, rv);
 
     // Pass the script principal to the docshell
 
@@ -221,6 +225,98 @@ nsFrameLoader::LoadFrame()
     return rv; // We're not
   }
 
+
+  // Bug 136580: Check for recursive frame loading
+  // pre-grab these for speed
+  nsCAutoString prepath;
+  nsCAutoString filepath;
+  nsCAutoString query;
+  nsCAutoString param;
+  rv = uri->GetPrePath(prepath);
+  NS_ENSURE_SUCCESS(rv,rv);
+  nsCOMPtr<nsIURL> aURL(do_QueryInterface(uri, &rv)); // QI can fail
+  if (NS_SUCCEEDED(rv)) {
+    rv = aURL->GetFilePath(filepath);
+    NS_ENSURE_SUCCESS(rv,rv);
+    rv = aURL->GetQuery(query);
+    NS_ENSURE_SUCCESS(rv,rv);
+    rv = aURL->GetParam(param);
+    NS_ENSURE_SUCCESS(rv,rv);
+  } else {
+    // Not a URL, so punt and just take the whole path.  Note that if you
+    // have a self-referential-via-refs non-URL (can't happen via nsSimpleURI,
+    // but could in theory with an external protocol handler) frameset it will
+    // recurse down to the depth limit before stopping, but it will stop.
+    rv = uri->GetPath(filepath);
+    NS_ENSURE_SUCCESS(rv,rv);
+  }
+
+  PRInt32 matchCount = 0;
+  nsCOMPtr<nsIDocShellTreeItem> treeItem = do_QueryInterface(mDocShell);
+  nsCOMPtr<nsIDocShellTreeItem> parentAsItem;
+  treeItem->GetParent(getter_AddRefs(parentAsItem));
+  while (parentAsItem) {
+    // Only interested in checking for recursion in content
+    PRInt32 parentType;
+    parentAsItem->GetItemType(&parentType);
+    if (parentType != nsIDocShellTreeItem::typeContent) {
+      break; // Not content
+    }
+    // Check the parent URI with the URI we're loading
+    nsCOMPtr<nsIWebNavigation> parentAsNav(do_QueryInterface(parentAsItem));
+    if (parentAsNav) {
+      // Does the URI match the one we're about to load?
+      nsCOMPtr<nsIURI> parentURI;
+      parentAsNav->GetCurrentURI(getter_AddRefs(parentURI));
+      if (parentURI) {
+        // Bug 98158/193011: We need to ignore data after the #
+        // Note that this code is back-stopped by the maximum-depth checks.
+        
+        // Check prepath (foo://blah@bar:port/) and filepath
+        // (/dir/dir/file.ext), but not # extensions.
+        // There's no easy way to get the URI without extension
+        // directly, so check prepath, filepath and query/param (if any)
+
+        // Note that while in theory a CGI could return different data for
+        // the same query string, the spec states that it shouldn't, so
+        // we'll compare queries (and params).
+        nsCAutoString parentPrePath;
+        nsCAutoString parentFilePath;
+        nsCAutoString parentQuery;
+        nsCAutoString parentParam;
+        rv = parentURI->GetPrePath(parentPrePath);
+        NS_ENSURE_SUCCESS(rv,rv);
+        nsCOMPtr<nsIURL> parentURL(do_QueryInterface(parentURI, &rv)); // QI can fail
+        if (NS_SUCCEEDED(rv)) {
+          rv = parentURL->GetFilePath(parentFilePath);
+          NS_ENSURE_SUCCESS(rv,rv);
+          rv = parentURL->GetQuery(parentQuery);
+          NS_ENSURE_SUCCESS(rv,rv);
+          rv = parentURL->GetParam(parentParam);
+          NS_ENSURE_SUCCESS(rv,rv);
+        } else {
+          rv = uri->GetPath(filepath);
+          NS_ENSURE_SUCCESS(rv,rv);
+        }
+        
+        // filepath will often not match; test it first
+        if (filepath.Equals(parentFilePath) &&
+            query.Equals(parentQuery) &&
+            prepath.Equals(parentPrePath) &&
+            param.Equals(parentParam))
+        {
+          matchCount++;
+          if (matchCount >= MAX_SAME_URL_CONTENT_FRAMES) {
+            NS_WARNING("Too many nested content frames have the same url (recursion?) so giving up");
+            return NS_ERROR_UNEXPECTED;
+          }
+        }
+      }
+    }
+    nsIDocShellTreeItem* temp = parentAsItem;
+    temp->GetParent(getter_AddRefs(parentAsItem));
+  }
+  
   // Kick off the load...
   rv = mDocShell->LoadURI(uri, loadInfo, nsIWebNavigation::LOAD_FLAGS_NONE,
                           PR_FALSE);
@@ -252,9 +348,7 @@ NS_IMETHODIMP
 nsFrameLoader::Destroy()
 {
   if (mOwnerContent) {
-    nsCOMPtr<nsIDocument> doc;
-
-    mOwnerContent->GetDocument(getter_AddRefs(doc));
+    nsCOMPtr<nsIDocument> doc = mOwnerContent->GetDocument();
 
     if (doc) {
       doc->SetSubDocumentFor(mOwnerContent, nsnull);
@@ -263,6 +357,13 @@ nsFrameLoader::Destroy()
     mOwnerContent = nsnull;
   }
 
+  // Let our window know that we are gone
+  nsCOMPtr<nsIDOMWindow> win(do_GetInterface(mDocShell));
+  nsCOMPtr<nsPIDOMWindow> win_private(do_QueryInterface(win));
+  if (win_private) {
+    win_private->SetFrameElementInternal(nsnull);
+  }
+  
   nsCOMPtr<nsIBaseWindow> base_win(do_QueryInterface(mDocShell));
 
   if (base_win) {
@@ -274,55 +375,6 @@ nsFrameLoader::Destroy()
   return NS_OK;
 }
 
-/**
- *  Count the total number of docshell children in each page.
- */
-PRInt32
-nsFrameLoader::GetDocShellChildCount(nsIDocShellTreeNode* aParentNode)
-{
-  PRInt32 retval = 1;
-
-  PRInt32 childCount;
-  PRInt32 i;
-  aParentNode->GetChildCount(&childCount);
-  for(i=0;i<childCount;i++)
-  {
-    nsCOMPtr<nsIDocShellTreeItem> child;
-    aParentNode->GetChildAt(i,getter_AddRefs(child));
-    nsCOMPtr<nsIDocShellTreeNode> childAsNode(do_QueryInterface(child));
-    retval += GetDocShellChildCount(childAsNode);
-  }
-    
-  return retval;
-}
-
-nsresult
-nsFrameLoader::GetPresContext(nsIPresContext **aPresContext)
-{
-  *aPresContext = nsnull;
-
-  nsCOMPtr<nsIDocument> doc;
-  mOwnerContent->GetDocument(getter_AddRefs(doc));
-
-  while (doc) {
-    nsCOMPtr<nsIPresShell> presShell;
-    doc->GetShellAt(0, getter_AddRefs(presShell));
-
-    if (presShell) {
-      presShell->GetPresContext(aPresContext);
-
-      return NS_OK;
-    }
-
-    nsCOMPtr<nsIDocument> parent;
-    doc->GetParentDocument(getter_AddRefs(parent));
-
-    doc = parent;
-  }
-
-  return NS_OK;
-}
-
 nsresult
 nsFrameLoader::EnsureDocShell()
 {
@@ -330,30 +382,45 @@ nsFrameLoader::EnsureDocShell()
     return NS_OK;
   }
 
-  nsCOMPtr<nsIPresContext> presContext;
-  GetPresContext(getter_AddRefs(presContext));
-  NS_ENSURE_TRUE(presContext, NS_ERROR_UNEXPECTED);
+  // Get our parent docshell off the document of mOwnerContent
+  // XXXbz this is such a total hack.... We really need to have a
+  // better setup for doing this.
+  nsIDocument* doc = mOwnerContent->GetDocument();
+  if (!doc) {
+    return NS_ERROR_UNEXPECTED;
+  }
 
-  nsCOMPtr<nsISupports> parentAsSupports;
-  presContext->GetContainer(getter_AddRefs(parentAsSupports));
+  nsCOMPtr<nsIWebNavigation> parentAsWebNav =
+    do_GetInterface(doc->GetScriptGlobalObject());
 
-  // bug98158:count the children under the root docshell.
-  // if the total number of children under the root docshell
-  // beyond the limit,return a error.
-  if (parentAsSupports) {
-    nsCOMPtr<nsIDocShellTreeItem> parentAsItem = do_QueryInterface(parentAsSupports);
+  // Bug 8065: Don't exceed some maximum depth in content frames
+  // (MAX_DEPTH_CONTENT_FRAMES)
+  PRInt32 depth = 0;
 
-    nsCOMPtr<nsIDocShellTreeItem> root;
-    parentAsItem->GetSameTypeRootTreeItem(getter_AddRefs(root));
+  if (parentAsWebNav) {
+    nsCOMPtr<nsIDocShellTreeItem> parentAsItem =
+      do_QueryInterface(parentAsWebNav);
 
-    nsCOMPtr<nsIDocShellTreeNode> rootNode(do_QueryInterface(root));
+    while (parentAsItem) {
+      ++depth;
 
-    PRInt32  childrenCount;
-    childrenCount = GetDocShellChildCount(rootNode);
+      if (depth >= MAX_DEPTH_CONTENT_FRAMES) {
+        NS_WARNING("Too many nested content frames so giving up");
 
-    if(childrenCount >= MAX_NUMBER_DOCSHELLS) {
-      NS_WARNING("Too many docshell (recursion?) so giving up");
-      return NS_ERROR_FAILURE;
+        return NS_ERROR_UNEXPECTED; // Too deep, give up!  (silently?)
+      }
+
+      // Only count depth on content, not chrome.
+      // If we wanted to limit total depth, skip the following check:
+      PRInt32 parentType;
+      parentAsItem->GetItemType(&parentType);
+
+      if (nsIDocShellTreeItem::typeContent == parentType) {
+        nsIDocShellTreeItem* temp = parentAsItem;
+        temp->GetParent(getter_AddRefs(parentAsItem));
+      } else {
+        break; // we have exited content, stop counting, depth is OK!
+      }
     }
   }
 
@@ -375,10 +442,7 @@ nsFrameLoader::EnsureDocShell()
   // child. If it's not a web-shell then some things will not operate
   // properly.
 
-  nsCOMPtr<nsISupports> container;
-  presContext->GetContainer(getter_AddRefs(container));
-
-  nsCOMPtr<nsIDocShellTreeNode> parentAsNode(do_QueryInterface(container));
+  nsCOMPtr<nsIDocShellTreeNode> parentAsNode(do_QueryInterface(parentAsWebNav));
   if (parentAsNode) {
     nsCOMPtr<nsIDocShellTreeItem> parentAsItem =
       do_QueryInterface(parentAsNode);
@@ -387,9 +451,7 @@ nsFrameLoader::EnsureDocShell()
     parentAsItem->GetItemType(&parentType);
 
     nsAutoString value;
-    PRBool isContent;
-
-    isContent = PR_FALSE;
+    PRBool isContent = PR_FALSE;
 
     if (mOwnerContent->IsContentOfType(nsIContent::eXUL)) {
       mOwnerContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::type, value);
@@ -404,19 +466,14 @@ nsFrameLoader::EnsureDocShell()
       // on it being lowercased.
       ToLowerCase(value);
 
-      nsAutoString::const_iterator start, end;
+      nsAutoString::const_char_iterator start, end;
       value.BeginReading(start);
       value.EndReading(end);
 
-      nsAutoString::const_iterator iter(start);
-      iter.advance(7);
+      nsAutoString::const_char_iterator iter(start + 7);
 
-      const nsAString& valuePiece = Substring(start, iter);
-
-      if (valuePiece.Equals(NS_LITERAL_STRING("content")) &&
-          (iter == end || *iter == '-')) {
-        isContent = PR_TRUE;
-      }
+      isContent = Substring(start, iter) == NS_LITERAL_STRING("content") &&
+                  (iter == end || *iter == '-');
     }
 
     if (isContent) {
@@ -437,9 +494,9 @@ nsFrameLoader::EnsureDocShell()
       nsCOMPtr<nsIDocShellTreeOwner> parentTreeOwner;
       parentAsItem->GetTreeOwner(getter_AddRefs(parentTreeOwner));
 
-      if(parentTreeOwner) {
+      if (parentTreeOwner) {
         PRBool is_primary = parentType == nsIDocShellTreeItem::typeChrome &&
-                            value.Equals(NS_LITERAL_STRING("content-primary"));
+                            value == NS_LITERAL_STRING("content-primary");
 
         parentTreeOwner->ContentShellAdded(docShellAsItem, is_primary,
                                            value.get());
@@ -449,7 +506,7 @@ nsFrameLoader::EnsureDocShell()
     // connect the container...
     nsCOMPtr<nsIWebShell> webShell(do_QueryInterface(mDocShell));
     nsCOMPtr<nsIWebShellContainer> outerContainer =
-      do_QueryInterface(container);
+      do_QueryInterface(parentAsWebNav);
 
     if (outerContainer) {
       webShell->SetContainer(outerContainer);
@@ -510,10 +567,7 @@ nsFrameLoader::GetURL(nsAString& aURI)
 {
   aURI.Truncate();
 
-  nsCOMPtr<nsIAtom> type;
-  mOwnerContent->GetTag(getter_AddRefs(type));
-
-  if (type == nsHTMLAtoms::object) {
+  if (mOwnerContent->Tag() == nsHTMLAtoms::object) {
     mOwnerContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::data, aURI);
   } else {
     mOwnerContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::src, aURI);

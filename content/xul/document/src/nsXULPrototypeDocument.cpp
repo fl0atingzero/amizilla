@@ -68,6 +68,8 @@
 #include "nsIScriptError.h"
 #include "nsIDOMScriptObjectFactory.h"
 #include "nsDOMCID.h"
+#include "nsArray.h"
+#include "nsContentUtils.h"
 
 
 static NS_DEFINE_CID(kDOMScriptObjectFactoryCID,
@@ -84,24 +86,24 @@ public:
     NS_DECL_ISUPPORTS
 
     // nsIScriptGlobalObject methods
-    NS_IMETHOD SetContext(nsIScriptContext *aContext);
-    NS_IMETHOD GetContext(nsIScriptContext **aContext);
-    NS_IMETHOD SetNewDocument(nsIDOMDocument *aDocument,
-                              PRBool aRemoveEventListeners,
-                              PRBool aClearScope);
-    NS_IMETHOD SetDocShell(nsIDocShell *aDocShell);
-    NS_IMETHOD GetDocShell(nsIDocShell **aDocShell);
-    NS_IMETHOD SetOpenerWindow(nsIDOMWindowInternal *aOpener);
-    NS_IMETHOD SetGlobalObjectOwner(nsIScriptGlobalObjectOwner* aOwner);
-    NS_IMETHOD GetGlobalObjectOwner(nsIScriptGlobalObjectOwner** aOwner);
-    NS_IMETHOD HandleDOMEvent(nsIPresContext* aPresContext, 
-                              nsEvent* aEvent, 
-                              nsIDOMEvent** aDOMEvent,
-                              PRUint32 aFlags,
-                              nsEventStatus* aEventStatus);
-    NS_IMETHOD_(JSObject *) GetGlobalJSObject();
-    NS_IMETHOD OnFinalize(JSObject *aObject);
-    NS_IMETHOD SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts);
+    virtual void SetContext(nsIScriptContext *aContext);
+    virtual nsIScriptContext *GetContext();
+    virtual nsresult SetNewDocument(nsIDOMDocument *aDocument,
+                                    PRBool aRemoveEventListeners,
+                                    PRBool aClearScope);
+    virtual void SetDocShell(nsIDocShell *aDocShell);
+    virtual nsIDocShell *GetDocShell();
+    virtual void SetOpenerWindow(nsIDOMWindowInternal *aOpener);
+    virtual void SetGlobalObjectOwner(nsIScriptGlobalObjectOwner* aOwner);
+    virtual nsIScriptGlobalObjectOwner *GetGlobalObjectOwner();
+    virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext, 
+                                    nsEvent* aEvent, 
+                                    nsIDOMEvent** aDOMEvent,
+                                    PRUint32 aFlags,
+                                    nsEventStatus* aEventStatus);
+    virtual JSObject *GetGlobalJSObject();
+    virtual void OnFinalize(JSObject *aObject);
+    virtual void SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts);
 
     // nsIScriptObjectPrincipal methods
     NS_IMETHOD GetPrincipal(nsIPrincipal** aPrincipal);
@@ -146,7 +148,7 @@ public:
     NS_IMETHOD GetHeaderData(nsIAtom* aField, nsAString& aData) const;
     NS_IMETHOD SetHeaderData(nsIAtom* aField, const nsAString& aData);
 
-    NS_IMETHOD GetDocumentPrincipal(nsIPrincipal** aResult);
+    virtual nsIPrincipal* GetDocumentPrincipal();
     NS_IMETHOD SetDocumentPrincipal(nsIPrincipal* aPrincipal);
 
     NS_IMETHOD AwaitLoadDone(nsIXULDocument* aDocument, PRBool* aResult);
@@ -319,10 +321,9 @@ NS_NewXULPrototypeDocument(nsISupports* aOuter, REFNSIID aIID, void** aResult)
 nsresult
 nsXULPrototypeDocument::NewXULPDGlobalObject(nsIScriptGlobalObject** aResult)
 {
-    nsCOMPtr<nsIPrincipal> principal;
-    nsresult rv = GetDocumentPrincipal(getter_AddRefs(principal));
-    if (NS_FAILED(rv))
-        return rv;
+    nsIPrincipal *principal = GetDocumentPrincipal();
+    if (!principal)
+        return NS_ERROR_FAILURE;
 
     // Now that GetDocumentPrincipal has succeeded, we can safely compare its
     // result to gSystemPrincipal, in order to create gSystemGlobal if the two
@@ -389,7 +390,9 @@ nsXULPrototypeDocument::Read(nsIObjectInputStream* aStream)
     nsCOMPtr<nsIPrincipal> principal;
     rv |= NS_ReadOptionalObject(aStream, PR_TRUE, getter_AddRefs(principal));
     if (! principal) {
-        rv |= GetDocumentPrincipal(getter_AddRefs(principal));
+        principal = GetDocumentPrincipal();
+        if (!principal)
+            rv |= NS_ERROR_FAILURE;
     } else {
         mNodeInfoManager->SetDocumentPrincipal(principal);
         mDocumentPrincipal = principal;
@@ -404,15 +407,12 @@ nsXULPrototypeDocument::Read(nsIObjectInputStream* aStream)
     if (! mRoot)
        return NS_ERROR_OUT_OF_MEMORY;
 
-    nsCOMPtr<nsIScriptContext> scriptContext;
-    rv |= mGlobalObject->GetContext(getter_AddRefs(scriptContext));
+    nsIScriptContext *scriptContext = mGlobalObject->GetContext();
     NS_ASSERTION(scriptContext != nsnull,
                  "no prototype script context!");
 
     // nsINodeInfo table
-    nsCOMPtr<nsISupportsArray> nodeInfos;
-    rv |= NS_NewISupportsArray(getter_AddRefs(nodeInfos));
-    NS_ENSURE_TRUE(nodeInfos, rv);
+    nsCOMArray<nsINodeInfo> nodeInfos;
 
     rv |= aStream->Read32(&referenceCount);
     nsAutoString namespaceURI, qualifiedName;
@@ -422,7 +422,8 @@ nsXULPrototypeDocument::Read(nsIObjectInputStream* aStream)
 
         nsCOMPtr<nsINodeInfo> nodeInfo;
         rv |= mNodeInfoManager->GetNodeInfo(qualifiedName, namespaceURI, getter_AddRefs(nodeInfo));
-        rv |= nodeInfos->AppendElement(nodeInfo);
+        if (!nodeInfos.AppendObject(nodeInfo))
+            rv |= NS_ERROR_OUT_OF_MEMORY;
     }
 
     // Document contents
@@ -432,12 +433,57 @@ nsXULPrototypeDocument::Read(nsIObjectInputStream* aStream)
     if ((nsXULPrototypeNode::Type)type != nsXULPrototypeNode::eType_Element)
         return NS_ERROR_FAILURE;
 
-    rv |= mRoot->Deserialize(aStream, scriptContext, mURI, nodeInfos);
+    rv |= mRoot->Deserialize(aStream, scriptContext, mURI, &nodeInfos);
     rv |= NotifyLoadDone();
 
     return rv;
 }
 
+static nsresult
+GetNodeInfos(nsXULPrototypeElement* aPrototype,
+             nsCOMArray<nsINodeInfo>& aArray)
+{
+    nsresult rv;
+    if (aArray.IndexOf(aPrototype->mNodeInfo) < 0) {
+        if (!aArray.AppendObject(aPrototype->mNodeInfo)) {
+            return NS_ERROR_OUT_OF_MEMORY;
+        }
+    }
+
+    // Search attributes
+    PRUint32 i;
+    for (i = 0; i < aPrototype->mNumAttributes; ++i) {
+        nsCOMPtr<nsINodeInfo> ni;
+        nsAttrName* name = &aPrototype->mAttributes[i].mName;
+        if (name->IsAtom()) {
+            rv = aPrototype->mNodeInfo->NodeInfoManager()->
+                GetNodeInfo(name->Atom(), nsnull, kNameSpaceID_None,
+                            getter_AddRefs(ni));
+            NS_ENSURE_SUCCESS(rv, rv);
+        }
+        else {
+            ni = name->NodeInfo();
+        }
+
+        if (aArray.IndexOf(ni) < 0) {
+            if (!aArray.AppendObject(ni)) {
+                return NS_ERROR_OUT_OF_MEMORY;
+            }
+        }
+    }
+
+    // Search children
+    for (i = 0; i < aPrototype->mNumChildren; ++i) {
+        nsXULPrototypeNode* child = aPrototype->mChildren[i];
+        if (child->mType == nsXULPrototypeNode::eType_Element) {
+            rv = GetNodeInfos(NS_STATIC_CAST(nsXULPrototypeElement*, child),
+                              aArray);
+            NS_ENSURE_SUCCESS(rv, rv);
+        }
+    }
+
+    return NS_OK;
+}
 
 NS_IMETHODIMP
 nsXULPrototypeDocument::Write(nsIObjectOutputStream* aStream)
@@ -477,15 +523,14 @@ nsXULPrototypeDocument::Write(nsIObjectOutputStream* aStream)
     rv |= NS_WriteOptionalObject(aStream, mDocumentPrincipal, PR_TRUE);
     
     // nsINodeInfo table
-    nsCOMPtr<nsISupportsArray> nodeInfos;
-    rv |= mNodeInfoManager->GetNodeInfoArray(getter_AddRefs(nodeInfos));
-    NS_ENSURE_SUCCESS(rv, rv);
-    PRUint32 nodeInfoCount;
-    nodeInfos->Count(&nodeInfoCount);
+    nsCOMArray<nsINodeInfo> nodeInfos;
+    if (mRoot)
+        rv |= GetNodeInfos(mRoot, nodeInfos);
 
+    PRInt32 nodeInfoCount = nodeInfos.Count();
     rv |= aStream->Write32(nodeInfoCount);
-    for (i = 0; i < nodeInfoCount; ++i) {
-        nsCOMPtr<nsINodeInfo> nodeInfo = do_QueryElementAt(nodeInfos, i);
+    for (PRInt32 j = 0; j < nodeInfoCount; ++j) {
+        nsINodeInfo *nodeInfo = nodeInfos[j];
         NS_ENSURE_TRUE(nodeInfo, NS_ERROR_FAILURE);
 
         nsAutoString namespaceURI;
@@ -493,19 +538,18 @@ nsXULPrototypeDocument::Write(nsIObjectOutputStream* aStream)
         rv |= aStream->WriteWStringZ(namespaceURI.get());
 
         nsAutoString qualifiedName;
-        rv |= nodeInfo->GetQualifiedName(qualifiedName);
+        nodeInfo->GetQualifiedName(qualifiedName);
         rv |= aStream->WriteWStringZ(qualifiedName.get());
     }
 
     // Now serialize the document contents
     nsCOMPtr<nsIScriptGlobalObject> globalObject;
     rv |= GetScriptGlobalObject(getter_AddRefs(globalObject));
-    
-    nsCOMPtr<nsIScriptContext> scriptContext;
-    rv |= globalObject->GetContext(getter_AddRefs(scriptContext));
-    
+
+    nsIScriptContext *scriptContext = globalObject->GetContext();
+
     if (mRoot)
-        rv |= mRoot->Serialize(aStream, scriptContext, nodeInfos);
+        rv |= mRoot->Serialize(aStream, scriptContext, &nodeInfos);
  
     return rv;
 }
@@ -536,8 +580,7 @@ nsXULPrototypeDocument::SetURI(nsIURI* aURI)
     if (!mDocumentPrincipal) {
         // If the document doesn't have a principal yet we'll force the creation of one
         // so that mNodeInfoManager properly gets one.
-        nsCOMPtr<nsIPrincipal> principal;
-        GetDocumentPrincipal(getter_AddRefs(principal));
+        GetDocumentPrincipal();
     }
     return NS_OK;
 }
@@ -620,17 +663,14 @@ nsXULPrototypeDocument::SetHeaderData(nsIAtom* aField, const nsAString& aData)
 
 
 
-NS_IMETHODIMP
-nsXULPrototypeDocument::GetDocumentPrincipal(nsIPrincipal** aResult)
+nsIPrincipal*
+nsXULPrototypeDocument::GetDocumentPrincipal()
 {
     NS_PRECONDITION(mNodeInfoManager, "missing nodeInfoManager");
     if (!mDocumentPrincipal) {
-        nsresult rv;
-        nsCOMPtr<nsIScriptSecurityManager> securityManager = 
-                 do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
-
-        if (NS_FAILED(rv))
-            return NS_ERROR_FAILURE;
+        nsIScriptSecurityManager *securityManager =
+            nsContentUtils::GetSecurityManager();
+        nsresult rv = NS_OK;
 
         // XXX This should be handled by the security manager, see bug 160042
         PRBool isChrome = PR_FALSE;
@@ -648,14 +688,12 @@ nsXULPrototypeDocument::GetDocumentPrincipal(nsIPrincipal** aResult)
         }
 
         if (NS_FAILED(rv))
-            return NS_ERROR_FAILURE;
+            return nsnull;
 
         mNodeInfoManager->SetDocumentPrincipal(mDocumentPrincipal);
     }
 
-    *aResult = mDocumentPrincipal;
-    NS_ADDREF(*aResult);
-    return NS_OK;
+    return mDocumentPrincipal;
 }
 
 
@@ -797,34 +835,33 @@ NS_INTERFACE_MAP_END
 // nsIScriptGlobalObject methods
 //
 
-NS_IMETHODIMP
+void
 nsXULPDGlobalObject::SetContext(nsIScriptContext *aContext)
 {
     mScriptContext = aContext;
-    return NS_OK;
 }
 
 
-NS_IMETHODIMP
-nsXULPDGlobalObject::GetContext(nsIScriptContext **aContext)
+nsIScriptContext *
+nsXULPDGlobalObject::GetContext()
 {
     // This whole fragile mess is predicated on the fact that
     // GetContext() will be called before GetScriptObject() is.
     if (! mScriptContext) {
         nsCOMPtr<nsIDOMScriptObjectFactory> factory =
             do_GetService(kDOMScriptObjectFactoryCID);
-        NS_ENSURE_TRUE(factory, NS_ERROR_FAILURE);
+        NS_ENSURE_TRUE(factory, nsnull);
 
         nsresult rv =
             factory->NewScriptContext(nsnull, getter_AddRefs(mScriptContext));
         if (NS_FAILED(rv))
-            return rv;
+            return nsnull;
 
         JSContext *cx = (JSContext *)mScriptContext->GetNativeContext();
 
         mJSObject = ::JS_NewObject(cx, &gSharedGlobalClass, nsnull, nsnull);
         if (!mJSObject)
-            return NS_ERROR_OUT_OF_MEMORY;
+            return nsnull;
 
         ::JS_SetGlobalObject(cx, mJSObject);
 
@@ -834,13 +871,11 @@ nsXULPDGlobalObject::GetContext(nsIScriptContext **aContext)
         NS_ADDREF(this);
     }
 
-    *aContext = mScriptContext;
-    NS_IF_ADDREF(*aContext);
-    return NS_OK;
+    return mScriptContext;
 }
 
 
-NS_IMETHODIMP
+nsresult
 nsXULPDGlobalObject::SetNewDocument(nsIDOMDocument *aDocument,
                                     PRBool aRemoveEventListeners,
                                     PRBool aClearScope)
@@ -850,48 +885,44 @@ nsXULPDGlobalObject::SetNewDocument(nsIDOMDocument *aDocument,
 }
 
 
-NS_IMETHODIMP
+void
 nsXULPDGlobalObject::SetDocShell(nsIDocShell *aDocShell)
 {
     NS_NOTREACHED("waaah!");
-    return NS_ERROR_UNEXPECTED;
 }
 
 
-NS_IMETHODIMP
-nsXULPDGlobalObject::GetDocShell(nsIDocShell **aDocShell)
+nsIDocShell *
+nsXULPDGlobalObject::GetDocShell()
 {
     NS_WARNING("waaah!");
-    return NS_ERROR_UNEXPECTED;
+
+    return nsnull;
 }
 
 
-NS_IMETHODIMP
+void
 nsXULPDGlobalObject::SetOpenerWindow(nsIDOMWindowInternal *aOpener)
 {
     NS_NOTREACHED("waaah!");
-    return NS_ERROR_UNEXPECTED;
 }
 
 
-NS_IMETHODIMP
+void
 nsXULPDGlobalObject::SetGlobalObjectOwner(nsIScriptGlobalObjectOwner* aOwner)
 {
     mGlobalObjectOwner = aOwner; // weak reference
-    return NS_OK;
 }
 
 
-NS_IMETHODIMP
-nsXULPDGlobalObject::GetGlobalObjectOwner(nsIScriptGlobalObjectOwner** aOwner)
+nsIScriptGlobalObjectOwner *
+nsXULPDGlobalObject::GetGlobalObjectOwner()
 {
-    *aOwner = mGlobalObjectOwner;
-    NS_IF_ADDREF(*aOwner);
-    return NS_OK;
+    return mGlobalObjectOwner;
 }
 
 
-NS_IMETHODIMP
+nsresult
 nsXULPDGlobalObject::HandleDOMEvent(nsIPresContext* aPresContext, 
                                        nsEvent* aEvent, 
                                        nsIDOMEvent** aDOMEvent,
@@ -902,7 +933,7 @@ nsXULPDGlobalObject::HandleDOMEvent(nsIPresContext* aPresContext,
     return NS_ERROR_UNEXPECTED;
 }
 
-NS_IMETHODIMP_(JSObject *)
+JSObject *
 nsXULPDGlobalObject::GetGlobalJSObject()
 {
     // The prototype document has its own special secret script object
@@ -919,22 +950,18 @@ nsXULPDGlobalObject::GetGlobalJSObject()
     return ::JS_GetGlobalObject(cx);
 }
 
-NS_IMETHODIMP
+void
 nsXULPDGlobalObject::OnFinalize(JSObject *aObject)
 {
     NS_ASSERTION(aObject == mJSObject, "Wrong object finalized!");
 
     mJSObject = nsnull;
-
-    return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsXULPDGlobalObject::SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts)
 {
     // We don't care...
-
-    return NS_OK;
 }
 
 
@@ -959,6 +986,13 @@ nsXULPDGlobalObject::GetPrincipal(nsIPrincipal** aPrincipal)
     }
     nsCOMPtr<nsIXULPrototypeDocument> protoDoc
       = do_QueryInterface(mGlobalObjectOwner);
-    return protoDoc->GetDocumentPrincipal(aPrincipal);
+
+    *aPrincipal = protoDoc->GetDocumentPrincipal();
+    if (!*aPrincipal) {
+        return NS_ERROR_FAILURE;
+    }
+
+    NS_ADDREF(*aPrincipal);
+    return NS_OK;
 }
 

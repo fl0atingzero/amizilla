@@ -19,7 +19,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Brian Ryner <bryner@netscape.com>
+ *  Brian Ryner <bryner@brianryner.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -159,8 +159,9 @@ input[type="file"] > input[type="button"] {
  * The following rules are copied from forms.css, for widgets that aren't yet
  * defined in XBL.
  */
-*|*:-moz-fieldset-content {
+*|*::-moz-fieldset-content {
   display: block;
+  height: inherit;   /* Need this so percentage heights of kids work right */
 }
 
 form {
@@ -202,7 +203,7 @@ input {
   vertical-align: text-bottom;
   -moz-box-sizing: border-box;
   -moz-user-focus: normal;
-  -moz-binding: url("resource:///res/builtin/platformHTMLBindings.xml#inputFields");
+  -moz-binding: url("resource://gre/res/builtin/platformHTMLBindings.xml#inputFields");
   padding: 1px 0 1px 0;
 }
 
@@ -217,15 +218,15 @@ textarea {
   vertical-align: text-bottom;
   -moz-box-sizing: border-box;
   -moz-user-focus: normal;
-  -moz-binding: url("resource:///res/builtin/platformHTMLBindings.xml#textAreas");
+  -moz-binding: url("resource://gre/res/builtin/platformHTMLBindings.xml#textAreas");
 }
 
 textarea > scrollbar {
   cursor: default;
 }
 
-*|*:-moz-singleline-textcontrol-frame {
-  overflow: hidden;
+*|*::-moz-singleline-textcontrol-frame {
+  overflow: -moz-hidden-unscrollable;
   white-space: nowrap;
   background-color: inherit;
   text-align: inherit;
@@ -236,7 +237,7 @@ textarea[disabled],
 option[disabled],
 optgroup[disabled],
 select[disabled],
-select[disabled]:-moz-display-comboboxcontrol-frame {
+select[disabled]::-moz-display-comboboxcontrol-frame {
   color: GrayText;
   cursor: default;
 }
@@ -281,7 +282,7 @@ input[type="file"] > input[type="button"] {
   height: inherit;
 }
 
-input[type="file"] > input[type="button"]:-moz-focus-inner
+input[type="file"] > input[type="button"]::-moz-focus-inner
  {
   padding: 0px 2px 0px 2px;
   border: 1px dotted transparent;

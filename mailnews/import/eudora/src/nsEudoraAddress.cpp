@@ -20,13 +20,11 @@
 #include "nsEudoraAddress.h"
 
 #include "nsAddrDatabase.h"
-#include "nsABBaseCID.h"
+#include "nsAbBaseCID.h"
 #include "nsIAbCard.h"
 #include "nsIServiceManager.h"
 #include "nsEudoraImport.h"
 #include "nsReadableUtils.h"
-
-static NS_DEFINE_CID(kAbCardPropertyCID,	NS_ABCARDPROPERTY_CID);
 
 #include "EudoraDebugLog.h"
 

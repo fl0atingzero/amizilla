@@ -103,38 +103,30 @@ nsBaseContentList::Item(PRUint32 aIndex, nsIDOMNode** aReturn)
   return CallQueryInterface(tmp, aReturn);
 }
 
-NS_IMETHODIMP
+void
 nsBaseContentList::AppendElement(nsIContent *aContent)
 {
   // Shouldn't hold a reference since we'll be told when the content
   // leaves the document or the document will be destroyed.
   mElements.AppendElement(aContent);
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsBaseContentList::RemoveElement(nsIContent *aContent)
 {
   mElements.RemoveElement(aContent);
-  
-  return NS_OK;
 }
 
-NS_IMETHODIMP
-nsBaseContentList::IndexOf(nsIContent *aContent, PRInt32& aIndex)
+PRInt32
+nsBaseContentList::IndexOf(nsIContent *aContent, PRBool aDoFlush)
 {
-  aIndex = mElements.IndexOf(aContent);
-
-  return NS_OK;
+  return mElements.IndexOf(aContent);
 }
 
-NS_IMETHODIMP
+void
 nsBaseContentList::Reset()
 {
   mElements.Clear();
-
-  return NS_OK;
 }
 
 // static
@@ -146,77 +138,6 @@ nsBaseContentList::Shutdown()
 
 
 // nsFormContentList
-
-// This helper function checks if aContent is in some way associated
-// with aForm, this check is only successful if the form is a
-// container (and a form is a container as long as the document is
-// wellformed). If the form is a container the only elements that are
-// considerd to be associated with a form are the elements that are
-// contained within the form. If the form is a leaf element then all
-// the elements will be accepted into this list.
-
-static PRBool BelongsInForm(nsIDOMHTMLFormElement *aForm,
-                            nsIContent *aContent)
-{
-  nsCOMPtr<nsIContent> form(do_QueryInterface(aForm));
-
-  if (!form) {
-    NS_WARNING("This should not happen, form is not an nsIContent!");
-
-    return PR_TRUE;
-  }
-
-  if (form.get() == aContent) {
-    // The list for aForm contains the form itself, forms should not
-    // be reachable by name in the form namespace, so we return false
-    // here.
-
-    return PR_FALSE;
-  }
-
-  nsCOMPtr<nsIContent> content;
-
-  aContent->GetParent(getter_AddRefs(content));
-
-  while (content) {
-    if (content == form) {
-      // aContent is contained within the form so we return true.
-
-      return PR_TRUE;
-    }
-
-    nsCOMPtr<nsIAtom> tag;
-
-    content->GetTag(getter_AddRefs(tag));
-
-    if (tag.get() == nsHTMLAtoms::form) {
-      // The child is contained within a form, but not the right form
-      // so we ignore it.
-
-      return PR_FALSE;
-    }
-
-    nsIContent *tmp = content;
-
-    tmp->GetParent(getter_AddRefs(content));
-  }
-
-  PRInt32 count = 0;
-
-  form->ChildCount(count);
-
-  if (!count) {
-    // The form is a leaf and aContent wasn't inside any other form so
-    // we return true
-
-    return PR_TRUE;
-  }
-
-  // The form is a container but aContent wasn't inside the form,
-  // return false
-
-  return PR_FALSE;
-}
 
 nsFormContentList::nsFormContentList(nsIDOMHTMLFormElement *aForm,
                                      nsBaseContentList& aContentList)
@@ -235,7 +156,7 @@ nsFormContentList::nsFormContentList(nsIDOMHTMLFormElement *aForm,
 
     nsCOMPtr<nsIContent> c(do_QueryInterface(item));
 
-    if (c && BelongsInForm(aForm, c)) {
+    if (c && nsContentUtils::BelongsInForm(aForm, c)) {
       AppendElement(c);
     }
   }
@@ -246,15 +167,15 @@ nsFormContentList::~nsFormContentList()
   Reset();
 }
 
-NS_IMETHODIMP
+void
 nsFormContentList::AppendElement(nsIContent *aContent)
 {
   NS_ADDREF(aContent);
 
-  return nsBaseContentList::AppendElement(aContent);
+  nsBaseContentList::AppendElement(aContent);
 }
 
-NS_IMETHODIMP
+void
 nsFormContentList::RemoveElement(nsIContent *aContent)
 {
   PRInt32 i = mElements.IndexOf(aContent);
@@ -266,11 +187,9 @@ nsFormContentList::RemoveElement(nsIContent *aContent)
 
     mElements.RemoveElementAt(i);
   }
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsFormContentList::Reset()
 {
   PRInt32 i, length = mElements.Count();
@@ -281,7 +200,7 @@ nsFormContentList::Reset()
     NS_RELEASE(content);
   }
 
-  return nsBaseContentList::Reset();
+  nsBaseContentList::Reset();
 }
 
 // Hashtable for storing nsContentLists
@@ -378,9 +297,9 @@ NS_GetContentList(nsIDocument* aDocument, nsIAtom* aMatchAtom,
       else
         PL_DHashTableRawRemove(&gContentListHashTable, entry);
     }
-  }
 
-  NS_ENSURE_TRUE(list, NS_ERROR_OUT_OF_MEMORY);
+    NS_ENSURE_TRUE(list, NS_ERROR_OUT_OF_MEMORY);
+  }
 
   *aInstancePtrResult = list;
   NS_ADDREF(*aInstancePtrResult);
@@ -478,158 +397,119 @@ NS_IMPL_ADDREF_INHERITED(nsContentList, nsBaseContentList)
 NS_IMPL_RELEASE_INHERITED(nsContentList, nsBaseContentList)
 
 
-NS_IMETHODIMP
-nsContentList::GetParentObject(nsISupports** aParentObject)
+nsISupports *
+nsContentList::GetParentObject()
 {
   if (mRootContent) {
-    *aParentObject = mRootContent;
-  } else {
-    *aParentObject = mDocument;
+    return mRootContent;
   }
 
-  NS_IF_ADDREF(*aParentObject);
-  return NS_OK;
+  return mDocument;
 }
   
-NS_IMETHODIMP 
-nsContentList::GetLength(PRUint32* aLength, PRBool aDoFlush)
+PRUint32
+nsContentList::Length(PRBool aDoFlush)
 {
-  nsresult result = CheckDocumentExistence();
-  if (NS_SUCCEEDED(result)) {
-    BringSelfUpToDate(aDoFlush);
+  CheckDocumentExistence();
+  BringSelfUpToDate(aDoFlush);
     
-    *aLength = mElements.Count();
-  }
-
-  return result;
+  return mElements.Count();
 }
 
-NS_IMETHODIMP 
-nsContentList::Item(PRUint32 aIndex, nsIDOMNode** aReturn, PRBool aDoFlush)
+nsIContent *
+nsContentList::Item(PRUint32 aIndex, PRBool aDoFlush)
 {
-  nsresult result = CheckDocumentExistence();
-  if (NS_SUCCEEDED(result)) {
-    if (mDocument && aDoFlush) {
-      // Flush pending content changes Bug 4891
-      mDocument->FlushPendingNotifications(PR_FALSE);
-    }
+  CheckDocumentExistence();
 
-    if (mState != LIST_UP_TO_DATE)
-      PopulateSelf(aIndex+1);
-
-    NS_ASSERTION(!mDocument || mState != LIST_DIRTY,
-                 "PopulateSelf left the list in a dirty (useless) state!");
-
-    nsIContent *element = NS_STATIC_CAST(nsIContent *,
-                                         mElements.SafeElementAt(aIndex));
- 
-    if (element) {
-      result = CallQueryInterface(element, aReturn);
-    }
-    else {
-      *aReturn = nsnull;
-    }
+  if (mDocument && aDoFlush) {
+    // Flush pending content changes Bug 4891
+    mDocument->FlushPendingNotifications(PR_FALSE);
   }
 
-  return result;
+  if (mState != LIST_UP_TO_DATE)
+    PopulateSelf(aIndex+1);
+
+  NS_ASSERTION(!mDocument || mState != LIST_DIRTY,
+               "PopulateSelf left the list in a dirty (useless) state!");
+
+  return NS_STATIC_CAST(nsIContent *, mElements.SafeElementAt(aIndex));
 }
 
-NS_IMETHODIMP
-nsContentList::NamedItem(const nsAString& aName, nsIDOMNode** aReturn, PRBool aDoFlush)
+nsIContent *
+nsContentList::NamedItem(const nsAString& aName, PRBool aDoFlush)
 {
-  nsresult result = CheckDocumentExistence();
+  CheckDocumentExistence();
 
-  if (NS_SUCCEEDED(result)) {
-    BringSelfUpToDate(aDoFlush);
+  BringSelfUpToDate(aDoFlush);
     
-    PRInt32 i, count = mElements.Count();
+  PRInt32 i, count = mElements.Count();
 
-    for (i = 0; i < count; i++) {
-      nsIContent *content = NS_STATIC_CAST(nsIContent *,
-                                           mElements.ElementAt(i));
-      if (content) {
-        nsAutoString name;
-        // XXX Should it be an EqualsIgnoreCase?
-        if (((content->GetAttr(kNameSpaceID_None, nsHTMLAtoms::name,
-                               name) == NS_CONTENT_ATTR_HAS_VALUE) &&
-             aName.Equals(name)) ||
-            ((content->GetAttr(kNameSpaceID_None, nsHTMLAtoms::id,
-                               name) == NS_CONTENT_ATTR_HAS_VALUE) &&
-             aName.Equals(name))) {
-          return CallQueryInterface(content, aReturn);
-        }
+  for (i = 0; i < count; i++) {
+    nsIContent *content = NS_STATIC_CAST(nsIContent *,
+                                         mElements.ElementAt(i));
+    if (content) {
+      nsAutoString name;
+      // XXX Should it be an EqualsIgnoreCase?
+      if (((content->GetAttr(kNameSpaceID_None, nsHTMLAtoms::name,
+                             name) == NS_CONTENT_ATTR_HAS_VALUE) &&
+           aName.Equals(name)) ||
+          ((content->GetAttr(kNameSpaceID_None, nsHTMLAtoms::id,
+                             name) == NS_CONTENT_ATTR_HAS_VALUE) &&
+           aName.Equals(name))) {
+        return content;
       }
     }
   }
 
-  *aReturn = nsnull;
-  return result;
+  return nsnull;
 }
 
-NS_IMETHODIMP
-nsContentList::IndexOf(nsIContent *aContent, PRInt32& aIndex, PRBool aDoFlush)
+PRInt32
+nsContentList::IndexOf(nsIContent *aContent, PRBool aDoFlush)
 {
-  nsresult result = CheckDocumentExistence();
-  if (NS_SUCCEEDED(result)) {
-    BringSelfUpToDate(aDoFlush);
+  CheckDocumentExistence();
+  BringSelfUpToDate(aDoFlush);
     
-    aIndex = mElements.IndexOf(aContent);
-  }
-
-  return result;
+  return mElements.IndexOf(aContent);
 }
 
 NS_IMETHODIMP
 nsContentList::GetLength(PRUint32* aLength)
 {
-  return GetLength(aLength, PR_TRUE);
+  *aLength = Length(PR_TRUE);
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 nsContentList::Item(PRUint32 aIndex, nsIDOMNode** aReturn)
 {
-  return Item(aIndex, aReturn, PR_TRUE);
+  nsIContent *content = Item(aIndex, PR_TRUE);
+
+  if (content) {
+    return CallQueryInterface(content, aReturn);
+  }
+
+  *aReturn = nsnull;
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 nsContentList::NamedItem(const nsAString& aName, nsIDOMNode** aReturn)
 {
-  return NamedItem(aName, aReturn, PR_TRUE);
-}
+  nsIContent *content = NamedItem(aName, PR_TRUE);
 
-NS_IMPL_NSIDOCUMENTOBSERVER_LOAD_STUB(nsContentList)
-NS_IMPL_NSIDOCUMENTOBSERVER_REFLOW_STUB(nsContentList)
-NS_IMPL_NSIDOCUMENTOBSERVER_STATE_STUB(nsContentList)
-NS_IMPL_NSIDOCUMENTOBSERVER_STYLE_STUB(nsContentList)
+  if (content) {
+    return CallQueryInterface(content, aReturn);
+  }
 
-NS_IMETHODIMP 
-nsContentList::BeginUpdate(nsIDocument *aDocument)
-{
+  *aReturn = nsnull;
+
   return NS_OK;
 }
 
-NS_IMETHODIMP 
-nsContentList::EndUpdate(nsIDocument *aDocument)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsContentList::ContentChanged(nsIDocument* aDocument, nsIContent* aContent,
-                              nsISupports* aSubContent)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsContentList::AttributeChanged(nsIDocument* aDocument, nsIContent* aContent,
-                                PRInt32 aNameSpaceID, nsIAtom* aAttribute,
-                                PRInt32 aModType, nsChangeHint aHint)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP 
+void
 nsContentList::ContentAppended(nsIDocument *aDocument, nsIContent* aContainer,
                                PRInt32 aNewIndexInContainer)
 {
@@ -640,10 +520,9 @@ nsContentList::ContentAppended(nsIDocument *aDocument, nsIContent* aContainer,
    * our list and we want to put off doing work as much as possible.
    */
   if (mState == LIST_DIRTY) 
-    return NS_OK;
+    return;
 
-  PRInt32 count;
-  aContainer->ChildCount(count);
+  PRInt32 count = aContainer->GetChildCount();
 
   /*
    * We want to handle the case of ContentAppended by sometimes
@@ -668,11 +547,10 @@ nsContentList::ContentAppended(nsIDocument *aDocument, nsIContent* aContainer,
        */
       nsCOMPtr<nsIDOM3Node> ourLastDOM3Node(do_QueryInterface(ourLastContent));
       if (ourLastDOM3Node) {
-        nsCOMPtr<nsIContent> firstAppendedContent;
-        aContainer->ChildAt(aNewIndexInContainer,
-                            getter_AddRefs(firstAppendedContent));
-        nsCOMPtr<nsIDOMNode> newNode(do_QueryInterface(firstAppendedContent));
+        nsCOMPtr<nsIDOMNode> newNode =
+          do_QueryInterface(aContainer->GetChildAt(aNewIndexInContainer));
         NS_ASSERTION(newNode, "Content being inserted is not a node.... why?");
+
         PRUint16 comparisonFlags;
         nsresult rv =
           ourLastDOM3Node->CompareDocumentPosition(newNode, &comparisonFlags);
@@ -688,10 +566,8 @@ nsContentList::ContentAppended(nsIDocument *aDocument, nsIContent* aContainer,
     if (!appendToList) {
       // The new stuff is somewhere in the middle of our list; check
       // whether we need to invalidate
-      nsCOMPtr<nsIContent> content;
       for (i = aNewIndexInContainer; i <= count-1; ++i) {
-        aContainer->ChildAt(i, getter_AddRefs(content));
-        if (MatchSelf(content)) {
+        if (MatchSelf(aContainer->GetChildAt(i))) {
           // Uh-oh.  We're gonna have to add elements into the middle
           // of our list. That's not worth the effort.
           mState = LIST_DIRTY;
@@ -699,7 +575,7 @@ nsContentList::ContentAppended(nsIDocument *aDocument, nsIContent* aContainer,
         }
       }
  
-      return NS_OK;
+      return;
     }
 
     /*
@@ -709,24 +585,20 @@ nsContentList::ContentAppended(nsIDocument *aDocument, nsIContent* aContainer,
      * may never get asked for this content... so don't grab it yet.
      */
     if (mState == LIST_LAZY) // be lazy
-      return NS_OK;
+      return;
 
     /*
      * We're up to date.  That means someone's actively using us; we
      * may as well grab this content....
      */
-    nsCOMPtr<nsIContent> content;
     for (i = aNewIndexInContainer; i <= count-1; ++i) {
-      aContainer->ChildAt(i, getter_AddRefs(content));
       PRUint32 limit = PRUint32(-1);
-      PopulateWith(content, PR_TRUE, limit);
+      PopulateWith(aContainer->GetChildAt(i), PR_TRUE, limit);
     }
   }
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP 
+void
 nsContentList::ContentInserted(nsIDocument *aDocument,
                                nsIContent* aContainer,
                                nsIContent* aChild,
@@ -736,15 +608,13 @@ nsContentList::ContentInserted(nsIDocument *aDocument,
   // the document itself; any attempted optimizations to this method
   // should deal with that.
   if (mState == LIST_DIRTY)
-    return NS_OK;
+    return;
 
   if (IsDescendantOfRoot(aContainer) && MatchSelf(aChild))
     mState = LIST_DIRTY;
-  
-  return NS_OK;
 }
  
-NS_IMETHODIMP
+void
 nsContentList::ContentReplaced(nsIDocument *aDocument,
                                nsIContent* aContainer,
                                nsIContent* aOldChild,
@@ -752,7 +622,7 @@ nsContentList::ContentReplaced(nsIDocument *aDocument,
                                PRInt32 aIndexInContainer)
 {
   if (mState == LIST_DIRTY)
-    return NS_OK;
+    return;
   
   if (IsDescendantOfRoot(aContainer)) {
     if (MatchSelf(aOldChild) || MatchSelf(aNewChild)) {
@@ -762,11 +632,9 @@ nsContentList::ContentReplaced(nsIDocument *aDocument,
   else if (ContainsRoot(aOldChild)) {
     DisconnectFromDocument();
   }
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsContentList::ContentRemoved(nsIDocument *aDocument,
                               nsIContent* aContainer,
                               nsIContent* aChild,
@@ -783,17 +651,13 @@ nsContentList::ContentRemoved(nsIDocument *aDocument,
   else if (ContainsRoot(aChild)) {
     DisconnectFromDocument();
   }
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsContentList::DocumentWillBeDestroyed(nsIDocument *aDocument)
 {
   DisconnectFromDocument();
   Reset();
-  
-  return NS_OK;
 }
 
 PRBool
@@ -803,9 +667,7 @@ nsContentList::Match(nsIContent *aContent)
     return PR_FALSE;
 
   if (mMatchAtom) {
-    nsCOMPtr<nsINodeInfo> ni;
-    aContent->GetNodeInfo(getter_AddRefs(ni));
-
+    nsINodeInfo *ni = aContent->GetNodeInfo();
     if (!ni)
       return PR_FALSE;
 
@@ -834,19 +696,17 @@ nsContentList::Match(nsIContent *aContent)
   return PR_FALSE;
 }
 
-nsresult
+void
 nsContentList::CheckDocumentExistence()
 {
-  nsresult result = NS_OK;
   if (!mDocument && mRootContent) {
-    result = mRootContent->GetDocument(&mDocument);
+    
+    mDocument = mRootContent->GetDocument();
     if (mDocument) {
       mDocument->AddObserver(this);
       mState = LIST_DIRTY;
     }
   }
-
-  return result;
 }
 
 PRBool 
@@ -856,14 +716,11 @@ nsContentList::MatchSelf(nsIContent *aContent)
   
   if (Match(aContent))
     return PR_TRUE;
-  
-  PRInt32 i, count = -1;
 
-  aContent->ChildCount(count);
-  nsCOMPtr<nsIContent> child;
+  PRUint32 i, count = aContent->GetChildCount();
+
   for (i = 0; i < count; i++) {
-    aContent->ChildAt(i, getter_AddRefs(child));
-    if (MatchSelf(child)) {
+    if (MatchSelf(aContent->GetChildAt(i))) {
       return PR_TRUE;
     }
   }
@@ -884,12 +741,10 @@ nsContentList::PopulateWith(nsIContent *aContent, PRBool aIncludeRoot,
     }
   }
   
-  PRInt32 i, count;
-  aContent->ChildCount(count);
-  nsCOMPtr<nsIContent> child;
+  PRUint32 i, count = aContent->GetChildCount();
+
   for (i = 0; i < count; i++) {
-    aContent->ChildAt(i, getter_AddRefs(child));
-    PopulateWith(child, PR_TRUE, aElementsToAppend);
+    PopulateWith(aContent->GetChildAt(i), PR_TRUE, aElementsToAppend);
     if (aElementsToAppend == 0)
       return;
   }
@@ -905,17 +760,15 @@ nsContentList::PopulateWithStartingAfter(nsIContent *aStartRoot,
 #endif
   PRInt32 i = 0;
   if (aStartChild) {
-    aStartRoot->IndexOf(aStartChild, i);
+    i = aStartRoot->IndexOf(aStartChild);
     NS_ASSERTION(i >= 0, "The start child must be a child of the start root!");
     ++i;  // move to one past
   }
-  
-  PRInt32 childCount;
-  aStartRoot->ChildCount(childCount);
-  nsCOMPtr<nsIContent> child;
-  for ( ; i < childCount; ++i) {
-    aStartRoot->ChildAt(i, getter_AddRefs(child));
-    PopulateWith(child, PR_TRUE, aElementsToAppend);
+
+  PRUint32 childCount = aStartRoot->GetChildCount();
+  for ( ; ((PRUint32)i) < childCount; ++i) {
+    PopulateWith(aStartRoot->GetChildAt(i), PR_TRUE, aElementsToAppend);
+
     NS_ASSERTION(aElementsToAppend + mElements.Count() == invariant,
                  "Something is awry in PopulateWith!");
     if (aElementsToAppend == 0)
@@ -927,8 +780,7 @@ nsContentList::PopulateWithStartingAfter(nsIContent *aStartRoot,
   if (aStartRoot == mRootContent)
     return;
   
-  nsCOMPtr<nsIContent> parent;
-  aStartRoot->GetParent(getter_AddRefs(parent));
+  nsCOMPtr<nsIContent> parent = aStartRoot->GetParent();
   
   if (parent)
     PopulateWithStartingAfter(parent, aStartRoot, aElementsToAppend);
@@ -962,8 +814,7 @@ nsContentList::PopulateSelf(PRUint32 aNeededLength)
                  "Something is awry in PopulateWith!");
   }
   else if (mDocument) {
-    nsCOMPtr<nsIContent> root;
-    mDocument->GetRootContent(getter_AddRefs(root));
+    nsIContent *root = mDocument->GetRootContent();
     if (root) {
       PopulateWith(root, PR_TRUE, elementsToAppend);
       NS_ASSERTION(elementsToAppend + mElements.Count() == invariant,
@@ -995,9 +846,8 @@ nsContentList::IsDescendantOfRoot(nsIContent* aContainer)
     // seems a little pointless just to run this debug-only integrity
     // check.
     if (aContainer) { 
-      nsCOMPtr<nsIDocument> doc;
-      aContainer->GetDocument(getter_AddRefs(doc));
-      NS_ASSERTION(doc == mDocument, "We should not get in here if aContainer is in some _other_ document!");
+      NS_ASSERTION(aContainer->GetDocument() == mDocument,
+                   "We should not get in here if aContainer is in some _other_ document!");
     }
 #endif
     return PR_TRUE;

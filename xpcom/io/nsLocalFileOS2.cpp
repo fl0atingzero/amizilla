@@ -52,11 +52,7 @@ static nsresult PR_CALLBACK
 CreateDirectoryA( PSZ path, PEAOP2 ppEABuf);
 static int isleadbyte(int c);
 
-#ifdef XP_OS2_VACPP
-#include <direct.h>
-#else
 #include <unistd.h>
-#endif
 #include <io.h>
 
 
@@ -227,7 +223,8 @@ class nsDirEnumerator : public nsISimpleEnumerator
             return NS_OK;
         }
 
-        virtual ~nsDirEnumerator() 
+    private:
+        ~nsDirEnumerator() 
         {
             if (mDir) 
             {
@@ -250,7 +247,10 @@ nsLocalFile::nsLocalFile()
     MakeDirty();
 }
 
-nsLocalFile::~nsLocalFile()
+nsLocalFile::nsLocalFile(const nsLocalFile& other)
+  : mDirty(other.mDirty)
+  , mWorkingPath(other.mWorkingPath)
+  , mFileInfo64(other.mFileInfo64)
 {
 }
 
@@ -313,18 +313,14 @@ nsLocalFile::Stat()
 NS_IMETHODIMP  
 nsLocalFile::Clone(nsIFile **file)
 {
-    nsresult rv;
+    // Just copy-construct ourselves
+    *file = new nsLocalFile(*this);
+    if (!*file)
+      return NS_ERROR_OUT_OF_MEMORY;
 
-    nsCOMPtr<nsILocalFile> localFile;
-
-    rv = NS_NewNativeLocalFile(mWorkingPath, PR_TRUE, getter_AddRefs(localFile));
+    NS_ADDREF(*file);
     
-    if (NS_SUCCEEDED(rv) && localFile)
-    {
-        return localFile->QueryInterface(NS_GET_IID(nsIFile), (void**)file);
-    }
-            
-    return rv;
+    return NS_OK;
 }
 
 NS_IMETHODIMP  
@@ -747,6 +743,17 @@ nsLocalFile::CopyMove(nsIFile *aParentDir, const nsACString &newName, PRBool mov
                     
             iterator->HasMoreElements(&more);
         }
+        // we've finished moving all the children of this directory
+        // in the new directory.  so now delete the directory
+        // note, we don't need to do a recursive delete.
+        // MoveTo() is recursive.  At this point,
+        // we've already moved the children of the current folder 
+        // to the new location.  nothing should be left in the folder.
+        if (move)
+        {
+          rv = Remove(PR_FALSE);
+          NS_ENSURE_SUCCESS(rv,rv);
+        }
     }
     
 
@@ -854,11 +861,7 @@ nsLocalFile::Remove(PRBool recursive)
                 iterator->HasMoreElements(&more);
             }
         }
-#ifdef XP_OS2_VACPP
-        rv = rmdir((char *) filePath) == -1 ? NSRESULT_FOR_ERRNO() : NS_OK;
-#else
         rv = rmdir(filePath) == -1 ? NSRESULT_FOR_ERRNO() : NS_OK;
-#endif
     }
     else
     {
@@ -1715,16 +1718,13 @@ nsLocalFile::GetTarget(nsAString &_retval)
 nsresult
 NS_NewLocalFile(const nsAString &path, PRBool followLinks, nsILocalFile* *result)
 {
-    if (path.IsEmpty())
-        return NS_NewNativeLocalFile(nsCString(), followLinks, result);
-
-    nsCAutoString tmp;
-    nsresult rv = NS_CopyUnicodeToNative(path, tmp);
-
-    if (NS_SUCCEEDED(rv))
-        return NS_NewNativeLocalFile(tmp, followLinks, result);
-
-    return NS_OK;
+    nsCAutoString buf;
+    nsresult rv = NS_CopyUnicodeToNative(path, buf);
+    if (NS_FAILED(rv)) {
+        *result = nsnull;
+        return rv;
+    }
+    return NS_NewNativeLocalFile(buf, followLinks, result);
 }
 
 //----------------------------------------------------------------------------

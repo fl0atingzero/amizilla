@@ -329,6 +329,7 @@ function onLoadPageInfo()
 }
 
 function doHelpButton() {
+  var helpdoc;
   var tabControl = document.getElementById("tabbox");
   switch (tabControl.selectedTab.id) {
     case "generalTab":
@@ -367,7 +368,7 @@ function makeGeneralTab()
   var mode = ("compatMode" in theDocument && theDocument.compatMode == "BackCompat") ? theBundle.getString("generalQuirksMode") : theBundle.getString("generalStrictMode");
   document.getElementById("modetext").value = mode;
 
-  var referrer = (theDocument.referrer) ? theDocument.referrer : theBundle.getString("generalNoReferrer");
+  var referrer = ("referrer" in theDocument && theDocument.referrer) || theBundle.getString("generalNoReferrer");
   document.getElementById('refertext').value = referrer;
 
   // find out the mime type
@@ -384,8 +385,6 @@ function makeGeneralTab()
   for (var i = 0; i < length; i++)
     metaView.addRow([metaNodes[i].name || metaNodes[i].httpEquiv, metaNodes[i].content]);
 
-  metaView.rowCountChanged(0, length);
-  
   // get the document characterset
   var encoding = theDocument.characterSet;
   document.getElementById("encodingtext").value = encoding;
@@ -514,7 +513,9 @@ function doGrab(iterator, meter, i)
 
 function ensureSelection(view)
 {
-  if (view.selection.count == 0) // only select something if nothing is currently selected
+  // only select something if nothing is currently selected
+  // and if there's anything to select
+  if (view.selection.count == 0 && view.rowCount)
     view.selection.select(0);
 }
 
@@ -613,14 +614,12 @@ function onFormSelect()
     var ft = null;
     if (form.name)
       ft = theBundle.getFormattedString("formTitle", [form.name]);
-    else
-      ft = theBundle.getString("formUntitled");
 
     document.getElementById("formname").value = ft || theBundle.getString("formUntitled");
     document.getElementById("formenctype").value = form.encoding || theBundle.getString("default");
     document.getElementById("formtarget").value = form.target || theBundle.getString("formDefaultTarget");
 
-    var formfields = findFormControls(form);
+    var formfields = form.elements;
 
     var length = formfields.length;
     var i = 0;
@@ -637,7 +636,7 @@ function onFormSelect()
       else
         val = (/^password$/i.test(elem.type)) ? theBundle.getString("formPassword") : elem.value;
 
-      fieldView.addRow(["", elem.id || elem.name, elem.type, val]);
+      fieldView.addRow(["", elem.name, elem.type, val]);
     }
 
     var labels = form.getElementsByTagName("label");
@@ -659,8 +658,6 @@ function onFormSelect()
             fieldView.setCellText(j, "field-label", labeltext);
       }
     }
-
-    fieldView.rowCountChanged(0, length);
   }
 }
 
@@ -678,17 +675,6 @@ function findFirstControl(node)
   var iterator = theDocument.createTreeWalker(node, NodeFilter.SHOW_ELEMENT, FormControlFilter, true);
 
   return iterator.nextNode();
-}
-
-function findFormControls(node)
-{
-  var iterator = theDocument.createTreeWalker(node, NodeFilter.SHOW_ELEMENT, FormControlFilter, true);
-
-  var list = [];
-  while (iterator.nextNode())
-    list.push(iterator.currentNode);
-
-  return list;
 }
 
 //******** Link Stuff
@@ -913,7 +899,7 @@ function makePreview(row)
   {
     // fallback image for protocols not allowed (e.g., data: or javascript:) 
     // or elements not [yet] handled (e.g., object, embed). XXX blank??
-    newImage.src = "resource:///res/loading-image.gif";
+    newImage.src = "resource://gre/re/loading-image.gif";
     newImage.width = 40;
     newImage.height = 40;
   }
@@ -938,14 +924,11 @@ function makePreview(row)
 
 function getContentTypeFromHeaders(cacheEntryDescriptor)
 {
-  var headers, match;
+  if (!cacheEntryDescriptor)
+    return null;
 
-  if (cacheEntryDescriptor)
-  {  
-    headers = cacheEntryDescriptor.getMetaDataElement("response-head");
-    match = /^Content-Type:\s*(.*?)\s*(?:\;|$)/mi.exec(headers);
-    return match[1];
-  }
+  return (/^Content-Type:\s*(.*?)\s*(?:\;|$)/mi
+          .exec(cacheEntryDescriptor.getMetaDataElement("response-head")))[1];
 }
 
 function getContentTypeFromImgRequest(item)

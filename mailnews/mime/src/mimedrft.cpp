@@ -61,7 +61,6 @@
 #include "nsReadableUtils.h"
 #include "nsCExternalHandlerService.h"
 #include "nsIMIMEService.h"
-#include "nsIMIMEInfo.h"
 #include "nsIMsgHeaderParser.h"
 #include "nsIMsgAccountManager.h"
 #include "nsMsgBaseCID.h"
@@ -80,7 +79,7 @@
 //
 extern "C" char     *MIME_StripContinuations(char *original);
 nsresult            mime_decompose_file_init_fn ( void *stream_closure, MimeHeaders *headers );
-nsresult            mime_decompose_file_output_fn ( char *buf, PRInt32 size, void *stream_closure );
+nsresult            mime_decompose_file_output_fn ( const char *buf, PRInt32 size, void *stream_closure );
 nsresult            mime_decompose_file_close_fn ( void *stream_closure );
 extern int          MimeHeaders_build_heads_list(MimeHeaders *hdrs);
 
@@ -93,7 +92,6 @@ static NS_DEFINE_CID(kCMsgComposeServiceCID,  NS_MSGCOMPOSESERVICE_CID);
 ////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////
 // Define CIDs...
-static NS_DEFINE_CID(kMsgCompFieldsCID,       NS_MSGCOMPFIELDS_CID); 
 static NS_DEFINE_CID(kPrefCID,                NS_PREF_CID);
 
 // safe filename for all OSes
@@ -234,7 +232,7 @@ CreateTheComposeWindow(nsIMsgCompFields *   compFields,
           rv = ConvertToUnicode(msgCompHeaderInternalCharset(), curAttachment->real_name, nameStr);
           if (NS_FAILED(rv))
             nameStr.AssignWithConversion(curAttachment->real_name);
-          attachment->SetName(nameStr.get());
+          attachment->SetName(nameStr);
           attachment->SetUrl(spec.get());
           attachment->SetTemporary(PR_TRUE);
           attachment->SetContentType(curAttachment->real_type);
@@ -1893,19 +1891,15 @@ mime_decompose_file_init_fn ( void *stream_closure, MimeHeaders *headers )
     nsCOMPtr<nsIMIMEService> mimeFinder (do_GetService(NS_MIMESERVICE_CONTRACTID, &rv));
     if (NS_SUCCEEDED(rv) && mimeFinder) 
     {
-      nsCOMPtr<nsIMIMEInfo> mimeInfo = nsnull;
-      rv = mimeFinder->GetFromMIMEType(contentType.get(), getter_AddRefs(mimeInfo));
-      if (NS_SUCCEEDED(rv) && mimeInfo) 
-      {
-        nsXPIDLCString fileExtension;
+      nsXPIDLCString fileExtension;
+      rv = mimeFinder->GetPrimaryExtension(contentType.get(), nsnull, getter_Copies(fileExtension));
 
-        if ( (NS_SUCCEEDED(mimeInfo->GetPrimaryExtension(getter_Copies(fileExtension)))) && fileExtension)
-        {
-          newAttachName.Append(".");
-          newAttachName.Append(fileExtension);
-          extensionAdded = PR_TRUE;
-        }
-      }        
+      if (NS_SUCCEEDED(rv) && !fileExtension.IsEmpty())
+      {
+        newAttachName.Append(".");
+        newAttachName.Append(fileExtension);
+        extensionAdded = PR_TRUE;
+      }
     }
 
     if (!extensionAdded)
@@ -1913,7 +1907,7 @@ mime_decompose_file_init_fn ( void *stream_closure, MimeHeaders *headers )
       newAttachName.Append(".tmp");
     }
 
-    tmpSpec = nsMsgCreateTempFileSpec(NS_CONST_CAST(char*, newAttachName.get()));
+    tmpSpec = nsMsgCreateTempFileSpec(newAttachName.get());
   }
 
   // This needs to be done so the attachment structure has a handle 
@@ -1978,7 +1972,7 @@ mime_decompose_file_init_fn ( void *stream_closure, MimeHeaders *headers )
 }
 
 nsresult 
-mime_decompose_file_output_fn (char     *buf,
+mime_decompose_file_output_fn (const char     *buf,
                                PRInt32  size,
                                void     *stream_closure )
 {

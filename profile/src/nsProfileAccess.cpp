@@ -37,8 +37,6 @@
 #include "nsILocalFile.h"
 #include "nsReadableUtils.h"
 
-#include "nsIFileSpec.h"
-
 #if defined(XP_MAC) || defined(XP_MACOSX)
 #include <Processes.h>
 #include <CFBundle.h>
@@ -76,7 +74,6 @@
 #endif
 
 // IID and CIDs of all the services needed
-static NS_DEFINE_CID(kRegistryCID, NS_REGISTRY_CID);
 static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
 
 // Registry Keys
@@ -1110,12 +1107,12 @@ nsProfileAccess::Get4xProfileInfo(nsIFile *registryFile, PRBool fromImport)
         // 4.x profiles coming from japanese machine are already in unicode.
         // So, there is no need to decode into unicode further.
         NS_ConvertUCS2toUTF8 temp(profile);
-        nsCAutoString profileName(nsUnescape( NS_CONST_CAST(char*, temp.get())));
+        nsCAutoString profileName(nsUnescape(temp.BeginWriting()));
         nsAutoString convertedProfName(NS_ConvertUTF8toUCS2(profileName).get());
 #else
         nsCAutoString temp; temp.AssignWithConversion(profile);
 
-        nsCAutoString profileName(nsUnescape( NS_CONST_CAST(char*, temp.get())));
+        nsCAutoString profileName(nsUnescape(temp.BeginWriting()));
         nsAutoString convertedProfName;
         ConvertStringToUnicode(charSet, profileName.get(), convertedProfName);
 #endif
@@ -1182,28 +1179,25 @@ nsProfileAccess::Get4xProfileInfo(nsIFile *registryFile, PRBool fromImport)
         if ( ! unixProfileName.IsEmpty() && ! unixProfileDirectory.IsEmpty() ) {
             nsCAutoString profileLocation(unixProfileDirectory);
             profileLocation += "/.netscape";
-            nsCOMPtr<nsIFileSpec> users4xDotNetscapeDirectory;
 
-            rv = NS_NewFileSpec(getter_AddRefs(users4xDotNetscapeDirectory));
-            if (NS_FAILED(rv)) return rv;
-
-            rv = users4xDotNetscapeDirectory->SetNativePath(profileLocation.get());
-            if (NS_FAILED(rv)) return rv;
-            rv = users4xDotNetscapeDirectory->Exists(&exists);
-
-            if (NS_FAILED(rv)) return rv;
-
+            nsCOMPtr<nsILocalFile> fileInNSDir;
+            rv = NS_NewNativeLocalFile(profileLocation + NS_LITERAL_CSTRING("/preferences.js"),
+                                       PR_TRUE,
+                                       getter_AddRefs(fileInNSDir));
+            if (NS_FAILED(rv))
+              return rv;
+            rv = fileInNSDir->Exists(&exists);
 #ifdef DEBUG
-            printf("%s exists:  %d\n",profileLocation.get(), exists);
+            printf("%s/preferences.js exists:  %d\n",profileLocation.get(), NS_SUCCEEDED(rv) && exists);
 #endif
-            if (exists) {
+            if (NS_SUCCEEDED(rv) && exists) {
                 ProfileStruct*  profileItem     = new ProfileStruct();
                 if (!profileItem)
                     return NS_ERROR_OUT_OF_MEMORY;
 
                 profileItem->updateProfileEntry = PR_TRUE;
 
-                profileItem->profileName = NS_ConvertASCIItoUCS2(unixProfileName).get();
+                CopyASCIItoUTF16(unixProfileName, profileItem->profileName);
 
                 nsCOMPtr<nsILocalFile> localFile;
                 rv = NS_NewNativeLocalFile(profileLocation, PR_TRUE, getter_AddRefs(localFile));
@@ -1404,7 +1398,7 @@ nsresult ProfileStruct::InternalizeLocation(nsIRegistry *aRegistry, nsRegistryKe
 
         // Unescape profile location
         NS_ConvertUCS2toUTF8 tempLoc(profLoc);
-        nsCAutoString profileLocation(nsUnescape( NS_CONST_CAST(char*, tempLoc.get())));
+        nsCAutoString profileLocation(nsUnescape(tempLoc.BeginWriting()));
         nsAutoString convertedProfLoc(NS_ConvertUTF8toUCS2(profileLocation).get());
 #else
         nsCAutoString charSet;
@@ -1414,7 +1408,7 @@ nsresult ProfileStruct::InternalizeLocation(nsIRegistry *aRegistry, nsRegistryKe
         // Unescape profile location and convert it to the right format
         nsCAutoString tempLoc; tempLoc.AssignWithConversion(profLoc);
 
-        nsCAutoString profileLocation(nsUnescape( NS_CONST_CAST(char*, tempLoc.get())));
+        nsCAutoString profileLocation(nsUnescape(tempLoc.BeginWriting()));
         nsAutoString convertedProfLoc;
         ConvertStringToUnicode(charSet, profileLocation.get(), convertedProfLoc);
 #endif
@@ -1582,7 +1576,7 @@ nsresult ProfileStruct::EnsureDirPathExists(nsILocalFile *aDir, PRBool *wasCreat
     rv = aDir->Exists(&exists);
     if (NS_SUCCEEDED(rv) && !exists)
     {
-        rv = aDir->Create(nsIFile::DIRECTORY_TYPE, 0775);
+        rv = aDir->Create(nsIFile::DIRECTORY_TYPE, 0700);
         *wasCreated = NS_SUCCEEDED(rv);
     }
     return rv;

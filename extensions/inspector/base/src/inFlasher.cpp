@@ -46,6 +46,7 @@
 #include "nsIWidget.h"
 #include "nsIPresShell.h"
 #include "nsIFrame.h"
+#include "nsReadableUtils.h"
 
 #include "prprf.h"
 
@@ -65,7 +66,7 @@ inFlasher::~inFlasher()
 {
 }
 
-NS_IMPL_ISUPPORTS1(inFlasher, inIFlasher);
+NS_IMPL_ISUPPORTS1(inFlasher, inIFlasher)
 
 ///////////////////////////////////////////////////////////////////////////////
 // inIFlasher
@@ -77,7 +78,7 @@ inFlasher::GetColor(nsAString& aColor)
   char buf[10];
   PR_snprintf(buf, sizeof(buf), "#%02x%02x%02x",
               NS_GET_R(mColor), NS_GET_G(mColor), NS_GET_B(mColor));
-  aColor.Assign(NS_ConvertASCIItoUCS2(buf));
+  CopyASCIItoUTF16(buf, aColor);
 
   return NS_OK;
 }
@@ -145,20 +146,13 @@ inFlasher::RepaintElement(nsIDOMElement* aElement)
   nsIFrame* frame = inLayoutUtils::GetFrameFor(aElement, presShell);
   if (!frame) return NS_OK;
 
-  nsCOMPtr<nsIPresContext> pcontext;
-  presShell->GetPresContext(getter_AddRefs(pcontext));
-
-  nsIFrame* parentWithView = nsnull;
-  frame->GetParentWithView(pcontext, &parentWithView);
+  nsIFrame* parentWithView = frame->GetAncestorWithViewExternal();
   if (parentWithView) {
-    nsIView* view = parentWithView->GetViewExternal(pcontext);
+    nsIView* view = parentWithView->GetViewExternal();
     if (view) {
-      nsCOMPtr<nsIViewManager> viewManager;
-      view->GetViewManager(*getter_AddRefs(viewManager));
+      nsIViewManager* viewManager = view->GetViewManager();
       if (viewManager) {
-        nsRect rect;
-        parentWithView->GetRect(rect);
-
+        nsRect rect = parentWithView->GetRect();
         viewManager->UpdateView(view, rect, NS_VMREFRESH_NO_SYNC);
       }
     }
@@ -182,15 +176,14 @@ inFlasher::DrawElementOutline(nsIDOMElement* aElement)
   presShell->CreateRenderingContext(frame, getter_AddRefs(rcontext));
 
   // get view bounds in case this frame is being scrolled
-  nsRect rect;
-  frame->GetRect(rect);
+  nsRect rect = frame->GetRect();
   nsPoint origin = inLayoutUtils::GetClientOrigin(presContext, frame);
   rect.x = origin.x;
   rect.y = origin.y;
   mCSSUtils->AdjustRectForMargins(frame, rect);
   
   float p2t;
-  presContext->GetPixelsToTwips(&p2t);
+  p2t = presContext->PixelsToTwips();
 
   if (mInvert) {
     rcontext->InvertRect(rect.x, rect.y, rect.width, rect.height);

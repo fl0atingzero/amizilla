@@ -36,28 +36,57 @@
  *
  * ***** END LICENSE BLOCK ***** */
 #ifndef nsDOMCSSDeclaration_h___
-#define nsDOMCSSSDeclaration_h___
+#define nsDOMCSSDeclaration_h___
 
-#include "nsISupports.h"
 #include "nsIDOMCSSStyleDeclaration.h"
 #include "nsIDOMCSS2Properties.h"
-
-#include "nsAgg.h"
-#include "nsCOMPtr.h"
 
 class nsCSSDeclaration;
 class nsICSSParser;
 class nsICSSLoader;
 class nsIURI;
 
+class CSS2PropertiesTearoff : public nsIDOMNSCSS2Properties
+{
+public:
+  NS_DECL_ISUPPORTS_INHERITED
+
+  NS_DECL_NSIDOMCSS2PROPERTIES
+  NS_DECL_NSIDOMNSCSS2PROPERTIES
+
+  CSS2PropertiesTearoff(nsIDOMCSSStyleDeclaration *aOuter);
+  virtual ~CSS2PropertiesTearoff();
+
+private:
+  nsIDOMCSSStyleDeclaration* mOuter;
+};
+
 class nsDOMCSSDeclaration : public nsIDOMCSSStyleDeclaration
 {
 public:
   nsDOMCSSDeclaration();
 
-  NS_DECL_ISUPPORTS
+  // Only implement QueryInterface; subclasses have the responsibility
+  // of implementing AddRef/Release.
+  NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
 
-  NS_DECL_NSIDOMCSSSTYLEDECLARATION
+  // Require subclasses to implement |GetParentRule|.
+  //NS_DECL_NSIDOMCSSSTYLEDECLARATION
+  NS_IMETHOD GetCssText(nsAString & aCssText);
+  NS_IMETHOD SetCssText(const nsAString & aCssText);
+  NS_IMETHOD GetPropertyValue(const nsAString & propertyName,
+                              nsAString & _retval);
+  NS_IMETHOD GetPropertyCSSValue(const nsAString & propertyName,
+                                 nsIDOMCSSValue **_retval);
+  NS_IMETHOD RemoveProperty(const nsAString & propertyName,
+                            nsAString & _retval);
+  NS_IMETHOD GetPropertyPriority(const nsAString & propertyName,
+                                 nsAString & _retval);
+  NS_IMETHOD SetProperty(const nsAString & propertyName,
+                         const nsAString & value, const nsAString & priority);
+  NS_IMETHOD GetLength(PRUint32 *aLength);
+  NS_IMETHOD Item(PRUint32 index, nsAString & _retval);
+  NS_IMETHOD GetParentRule(nsIDOMCSSRule * *aParentRule) = 0; 
 
   virtual void DropReference() = 0;
 protected:
@@ -66,7 +95,6 @@ protected:
   // propagate.
   virtual nsresult GetCSSDeclaration(nsCSSDeclaration **aDecl,
                                      PRBool aAllocate) = 0;
-  virtual nsresult GetParent(nsISupports **aParent) = 0;
   virtual nsresult DeclarationChanged() = 0;
   
   // This will only fail if it can't get a parser.  This means it can
@@ -84,21 +112,7 @@ protected:
   virtual ~nsDOMCSSDeclaration();
 
 private:
-  nsCOMPtr<nsISupports> mInner; // CSS2Properties
+  CSS2PropertiesTearoff mInner;
 };
-
-
-class CSS2PropertiesTearoff : public nsIDOMNSCSS2Properties
-{
-public:
-  NS_DECL_AGGREGATED
-
-  NS_DECL_NSIDOMCSS2PROPERTIES
-  NS_DECL_NSIDOMNSCSS2PROPERTIES
-
-  CSS2PropertiesTearoff(nsISupports *aOuter);
-  virtual ~CSS2PropertiesTearoff();
-};
-
 
 #endif // nsDOMCSSDeclaration_h___

@@ -52,6 +52,8 @@ EXPORT_LIBRARY	= 1
 META_COMPONENT	= crypto
 GRE_MODULE	= 1
 
+PACKAGE_FILE = pipboot.pkg
+
 CPPSRCS = \
 	nsEntropyCollector.cpp \
 	nsSecureBrowserUIImpl.cpp \
@@ -63,17 +65,13 @@ REQUIRES	= nspr \
 		  xpcom \
 		  string \
 		  necko \
-		  necko2 \
 		  uriloader \
 		  dom \
 		  intl \
-		  js \
 		  docshell \
 		  widget \
 		  layout \
 		  content \
-		  unicharutil \
-		  pipnss \
 		  pref \
 		  $(NULL)
 

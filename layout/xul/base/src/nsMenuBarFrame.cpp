@@ -56,7 +56,6 @@
 #include "nsMenuFrame.h"
 #include "nsIView.h"
 #include "nsIViewManager.h"
-#include "nsIFrameManager.h"
 #include "nsMenuPopupFrame.h"
 #include "nsGUIEvent.h"
 #include "nsUnicharUtils.h"
@@ -66,6 +65,7 @@
 #include "nsIDOMDocument.h"
 #include "nsPIDOMWindow.h"
 #include "nsIInterfaceRequestorUtils.h"
+#include "nsCSSFrameConstructor.h"
 #ifdef XP_WIN
 #include "nsISound.h"
 #include "nsWidgetsCID.h"
@@ -153,9 +153,7 @@ nsMenuBarFrame::Init(nsIPresContext*  aPresContext,
 
   // Hook up the menu bar as a key listener on the whole document.  It will see every
   // key press that occurs, but after everyone else does.
-  nsCOMPtr<nsIDocument> doc;
-  aContent->GetDocument(getter_AddRefs(doc));
-  nsCOMPtr<nsIDOMEventReceiver> target = do_QueryInterface(doc);
+  nsCOMPtr<nsIDOMEventReceiver> target = do_QueryInterface(aContent->GetDocument());
   
   mTarget = target;
 
@@ -205,8 +203,7 @@ nsMenuBarFrame::SetActive(PRBool aActiveFlag)
   // The caret distracts screen readers and other assistive technologies from the menu selection
   // There is 1 caret per document, we need to find the focused document and toggle its caret 
   do {
-    nsCOMPtr<nsIPresShell> presShell;
-    mPresContext->GetShell(getter_AddRefs(presShell));
+    nsIPresShell *presShell = mPresContext->GetPresShell();
     if (!presShell)
       break;
 
@@ -215,8 +212,7 @@ nsMenuBarFrame::SetActive(PRBool aActiveFlag)
     if (!document)
       break;
 
-    nsCOMPtr<nsISupports> container;
-    document->GetContainer(getter_AddRefs(container));
+    nsCOMPtr<nsISupports> container = document->GetContainer();
     nsCOMPtr<nsPIDOMWindow> windowPrivate = do_GetInterface(container);
     if (!windowPrivate)
       break;
@@ -237,7 +233,7 @@ nsMenuBarFrame::SetActive(PRBool aActiveFlag)
     if (!document)
       break;
 
-    document->GetShellAt(0, getter_AddRefs(presShell));
+    presShell = document->GetShellAt(0);
     nsCOMPtr<nsISelectionController> selCon(do_QueryInterface(presShell));
     // there is no selection controller for full page plugins
     if (!selCon)
@@ -300,12 +296,11 @@ nsMenuBarFrame::ToggleMenuActiveState()
 static void GetInsertionPoint(nsIPresShell* aShell, nsIFrame* aFrame, nsIFrame* aChild,
                               nsIFrame** aResult)
 {
-  nsCOMPtr<nsIStyleSet> styleSet;
-  aShell->GetStyleSet(getter_AddRefs(styleSet));
-  nsCOMPtr<nsIContent> child;
+  nsIContent* child = nsnull;
   if (aChild)
-    aChild->GetContent(getter_AddRefs(child));
-  styleSet->GetInsertionPoint(aShell, aFrame, child, aResult);
+    child = aChild->GetContent();
+  aShell->FrameConstructor()->GetInsertionPoint(aShell, aFrame,
+                                                      child, aResult);
 }
 
 nsIMenuFrame*
@@ -316,18 +311,14 @@ nsMenuBarFrame::FindMenuWithShortcut(nsIDOMKeyEvent* aKeyEvent)
 
   // Enumerate over our list of frames.
   nsIFrame* immediateParent = nsnull;
-  nsCOMPtr<nsIPresShell> shell;
-  mPresContext->GetShell(getter_AddRefs(shell));
-  GetInsertionPoint(shell, this, nsnull, &immediateParent);
+  GetInsertionPoint(mPresContext->PresShell(), this, nsnull, &immediateParent);
   if (!immediateParent)
     immediateParent = this;
 
-  nsIFrame* currFrame;
-  immediateParent->FirstChild(mPresContext, nsnull, &currFrame);
+  nsIFrame* currFrame = immediateParent->GetFirstChild(nsnull);
 
   while (currFrame) {
-    nsCOMPtr<nsIContent> current;
-    currFrame->GetContent(getter_AddRefs(current));
+    nsIContent* current = currFrame->GetContent();
     
     // See if it's a menu item.
     if (IsValidItem(current)) {
@@ -347,7 +338,7 @@ nsMenuBarFrame::FindMenuWithShortcut(nsIDOMKeyEvent* aKeyEvent)
         }
       }
     }
-    currFrame->GetNextSibling(&currFrame);
+    currFrame = currFrame->GetNextSibling();
   }
 
   // didn't find a matching menu item
@@ -446,9 +437,7 @@ NS_IMETHODIMP
 nsMenuBarFrame::GetNextMenuItem(nsIMenuFrame* aStart, nsIMenuFrame** aResult)
 {
   nsIFrame* immediateParent = nsnull;
-  nsCOMPtr<nsIPresShell> shell;
-  mPresContext->GetShell(getter_AddRefs(shell));
-  GetInsertionPoint(shell, this, nsnull, &immediateParent);
+  GetInsertionPoint(mPresContext->PresShell(), this, nsnull, &immediateParent);
   if (!immediateParent)
     immediateParent = this;
 
@@ -458,46 +447,36 @@ nsMenuBarFrame::GetNextMenuItem(nsIMenuFrame* aStart, nsIMenuFrame** aResult)
     aStart->QueryInterface(NS_GET_IID(nsIFrame), (void**)&currFrame); 
     if (currFrame) {
       startFrame = currFrame;
-      currFrame->GetNextSibling(&currFrame);
+      currFrame = currFrame->GetNextSibling();
     }
   }
   else 
-    immediateParent->FirstChild(mPresContext,
-                                nsnull,
-                                &currFrame);
+    currFrame = immediateParent->GetFirstChild(nsnull);
 
   while (currFrame) {
-    nsCOMPtr<nsIContent> current;
-    currFrame->GetContent(getter_AddRefs(current));
-
     // See if it's a menu item.
-    if (IsValidItem(current)) {
+    if (IsValidItem(currFrame->GetContent())) {
       nsCOMPtr<nsIMenuFrame> menuFrame = do_QueryInterface(currFrame);
       *aResult = menuFrame.get();
       NS_IF_ADDREF(*aResult);
       return NS_OK;
     }
-    currFrame->GetNextSibling(&currFrame);
+    currFrame = currFrame->GetNextSibling();
   }
 
-  immediateParent->FirstChild(mPresContext,
-                              nsnull,
-                              &currFrame);
+  currFrame = immediateParent->GetFirstChild(nsnull);
 
   // Still don't have anything. Try cycling from the beginning.
   while (currFrame && currFrame != startFrame) {
-    nsCOMPtr<nsIContent> current;
-    currFrame->GetContent(getter_AddRefs(current));
-    
     // See if it's a menu item.
-    if (IsValidItem(current)) {
+    if (IsValidItem(currFrame->GetContent())) {
       nsCOMPtr<nsIMenuFrame> menuFrame = do_QueryInterface(currFrame);
       *aResult = menuFrame.get();
       NS_IF_ADDREF(*aResult);
       return NS_OK;
     }
 
-    currFrame->GetNextSibling(&currFrame);
+    currFrame = currFrame->GetNextSibling();
   }
 
   // No luck. Just return our start value.
@@ -509,16 +488,11 @@ NS_IMETHODIMP
 nsMenuBarFrame::GetPreviousMenuItem(nsIMenuFrame* aStart, nsIMenuFrame** aResult)
 {
   nsIFrame* immediateParent = nsnull;
-  nsCOMPtr<nsIPresShell> shell;
-  mPresContext->GetShell(getter_AddRefs(shell));
-  GetInsertionPoint(shell, this, nsnull, &immediateParent);
+  GetInsertionPoint(mPresContext->PresShell(), this, nsnull, &immediateParent);
   if (!immediateParent)
     immediateParent = this;
 
-  nsIFrame* first;
-  immediateParent->FirstChild(mPresContext,
-                              nsnull, &first);
-  nsFrameList frames(first);
+  nsFrameList frames(immediateParent->GetFirstChild(nsnull));
                               
   nsIFrame* currFrame = nsnull;
   nsIFrame* startFrame = nsnull;
@@ -532,11 +506,8 @@ nsMenuBarFrame::GetPreviousMenuItem(nsIMenuFrame* aStart, nsIMenuFrame** aResult
   else currFrame = frames.LastChild();
 
   while (currFrame) {
-    nsCOMPtr<nsIContent> current;
-    currFrame->GetContent(getter_AddRefs(current));
-
     // See if it's a menu item.
-    if (IsValidItem(current)) {
+    if (IsValidItem(currFrame->GetContent())) {
       nsCOMPtr<nsIMenuFrame> menuFrame = do_QueryInterface(currFrame);
       *aResult = menuFrame.get();
       NS_IF_ADDREF(*aResult);
@@ -549,11 +520,8 @@ nsMenuBarFrame::GetPreviousMenuItem(nsIMenuFrame* aStart, nsIMenuFrame** aResult
 
   // Still don't have anything. Try cycling from the end.
   while (currFrame && currFrame != startFrame) {
-    nsCOMPtr<nsIContent> current;
-    currFrame->GetContent(getter_AddRefs(current));
-    
     // See if it's a menu item.
-    if (IsValidItem(current)) {
+    if (IsValidItem(currFrame->GetContent())) {
       nsCOMPtr<nsIMenuFrame> menuFrame = do_QueryInterface(currFrame);
       *aResult = menuFrame.get();
       NS_IF_ADDREF(*aResult);
@@ -749,7 +717,8 @@ nsMenuBarFrame::GetWidget(nsIWidget **aWidget)
   if (!view)
     return NS_OK;
 
-  view->GetWidget(*aWidget);
+  *aWidget = view->GetWidget();
+  NS_IF_ADDREF(*aWidget);
 #endif
 }
 
@@ -796,14 +765,11 @@ nsMenuBarFrame::RemoveKeyboardNavigator()
 PRBool 
 nsMenuBarFrame::IsValidItem(nsIContent* aContent)
 {
-  nsCOMPtr<nsIAtom> tag;
-  aContent->GetTag(getter_AddRefs(tag));
-  if (tag && (tag.get() == nsXULAtoms::menu ||
-              tag.get() == nsXULAtoms::menuitem) &&
-      !IsDisabled(aContent))
-      return PR_TRUE;
+  nsIAtom *tag = aContent->Tag();
 
-  return PR_FALSE;
+  return ((tag == nsXULAtoms::menu ||
+           tag == nsXULAtoms::menuitem) &&
+          !IsDisabled(aContent));
 }
 
 PRBool 

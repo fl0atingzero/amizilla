@@ -20,7 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Adam Lock <adamlock@netscape.com>
+ *
+ *   Adam Lock <adamlock@eircom.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -43,23 +44,27 @@
 #include "IWebBrowserImpl.h"
 
 // Commands sent via WM_COMMAND
-#define ID_PRINT        1
-#define ID_PAGESETUP    2
-#define ID_VIEWSOURCE    3
-#define ID_SAVEAS        4
-#define ID_PROPERTIES    5
-#define ID_CUT            6
-#define ID_COPY            7
-#define ID_PASTE        8
-#define ID_SELECTALL    9
+enum {
+    ID_PRINT = 1,
+    ID_PAGESETUP,
+    ID_VIEWSOURCE,
+    ID_SAVEAS,
+    ID_PROPERTIES,
+    ID_CUT,
+    ID_COPY,
+    ID_PASTE,
+    ID_SELECTALL
+};
 
 // Command group and IDs exposed through IOleCommandTarget
 extern GUID CGID_IWebBrowser_Moz;
 extern GUID CGID_MSHTML_Moz;
 
-#define HTMLID_FIND 1
-#define HTMLID_VIEWSOURCE 2
-#define HTMLID_OPTIONS 3
+enum {
+    HTMLID_FIND = 1,
+    HTMLID_VIEWSOURCE,
+    HTMLID_OPTIONS
+};
 
 // A list of objects
 typedef CComPtr<IUnknown> CComUnkPtr;
@@ -175,10 +180,10 @@ BEGIN_MSG_MAP(CMozillaBrowser)
     COMMAND_ID_HANDLER(ID_SELECTALL, OnSelectAll)
     COMMAND_ID_HANDLER(ID_DOCUMENT_BACK, OnDocumentBack)
     COMMAND_ID_HANDLER(ID_DOCUMENT_FORWARD, OnDocumentForward)
-    COMMAND_ID_HANDLER(ID_DOCUMENT_SELECTALL, OnDocumentSelectAll)
     COMMAND_ID_HANDLER(ID_DOCUMENT_PRINT, OnDocumentPrint)
     COMMAND_ID_HANDLER(ID_DOCUMENT_REFRESH, OnDocumentRefresh)
     COMMAND_ID_HANDLER(ID_DOCUMENT_PROPERTIES, OnDocumentProperties)
+    COMMAND_ID_HANDLER(ID_DOCUMENT_VIEWSOURCE, OnViewSource)
     COMMAND_ID_HANDLER(ID_LINK_OPEN, OnLinkOpen)
     COMMAND_ID_HANDLER(ID_LINK_OPENINNEWWINDOW, OnLinkOpenInNewWindow)
     COMMAND_ID_HANDLER(ID_LINK_COPYSHORTCUT, OnLinkCopyShortcut)
@@ -209,7 +214,7 @@ BEGIN_OLECOMMAND_TABLE()
     OLECOMMAND_MESSAGE(OLECMDID_PROPERTIES, NULL, ID_PROPERTIES, L"Properties", L"Show page properties")
     // Unsupported IE 4.x command group
     OLECOMMAND_MESSAGE(HTMLID_FIND, &CGID_IWebBrowser_Moz, 0, L"Find", L"Find")
-    OLECOMMAND_MESSAGE(HTMLID_VIEWSOURCE, &CGID_IWebBrowser_Moz, 0, L"ViewSource", L"View Source")
+    OLECOMMAND_MESSAGE(HTMLID_VIEWSOURCE, &CGID_IWebBrowser_Moz, ID_VIEWSOURCE, L"ViewSource", L"View Source")
     OLECOMMAND_MESSAGE(HTMLID_OPTIONS, &CGID_IWebBrowser_Moz, 0, L"Options", L"Options")
     // DHTML editor command group
     OLECOMMAND_HANDLER(IDM_EDITMODE, &CGID_MSHTML_Moz, EditModeHandler, L"EditMode", L"Switch to edit mode")
@@ -328,7 +333,6 @@ END_OLECOMMAND_TABLE()
 
     LRESULT OnDocumentBack(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL& bHandled);
     LRESULT OnDocumentForward(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL& bHandled);
-    LRESULT OnDocumentSelectAll(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL& bHandled);
     LRESULT OnDocumentPrint(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL& bHandled);
     LRESULT OnDocumentRefresh(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL& bHandled);
     LRESULT OnDocumentProperties(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL& bHandled);
@@ -355,7 +359,10 @@ protected:
     // List of browsers
     static nsVoidArray sBrowserList;
 
-    // Pointer to web shell manager
+    // Name of profile to use
+    nsString mProfileName;
+
+    // Pointer to web browser manager
     CWebBrowserContainer    * mWebBrowserContainer;
     // CComObject to IHTMLDocument implementer
     CIEHtmlDocumentInstance * mIERootDocument;
@@ -363,15 +370,14 @@ protected:
     // Mozilla interfaces
     nsCOMPtr<nsIWebBrowser> mWebBrowser;
     nsCOMPtr<nsIBaseWindow> mWebBrowserAsWin;
+    nsCOMPtr<nsIEditingSession> mEditingSession;
+    nsCOMPtr<nsICommandManager> mCommandManager;
 
     // Context menu
     nsCOMPtr<nsIDOMNode>    mContextNode;
     
     // Prefs service
     nsCOMPtr<nsIPref>       mPrefs;
-
-    // Editor associated with this browser instance.
-    nsCOMPtr<nsIEditor>     mEditor;
 
     // Flag to indicate if browser is created or not
     BOOL                    mValidBrowserFlag;

@@ -43,7 +43,7 @@
 #include "nsIPrefBranch.h"
 #include "nsIMsgFilterList.h"
 #include "msgCore.h"
-#include "nsIFolder.h"
+#include "nsIMsgFolder.h"
 #include "nsCOMPtr.h"
 #include "nsWeakReference.h"
 #include "nsIMsgDatabase.h"
@@ -60,6 +60,9 @@ class nsIMsgProtocolInfo;
  * 
  * this particular implementation is not meant to be used directly.
  */
+
+#undef  IMETHOD_VISIBILITY
+#define IMETHOD_VISIBILITY NS_VISIBILITY_DEFAULT
 
 class NS_MSG_BASE nsMsgIncomingServer : public nsIMsgIncomingServer,
                                         public nsSupportsWeakReference
@@ -80,8 +83,9 @@ protected:
   // field. Callers should be using Get/Set Password
   NS_IMETHOD GetPrefPassword(char * *aPassword);
   NS_IMETHOD SetPrefPassword(const char * aPassword);
+  PRBool      PasswordProtectLocalCache();
   
-  nsCOMPtr <nsIFolder> m_rootFolder;
+  nsCOMPtr <nsIMsgFolder> m_rootFolder;
   nsCOMPtr <nsIMsgRetentionSettings> m_retentionSettings;
   nsCOMPtr <nsIMsgDownloadSettings> m_downloadSettings;
   nsresult getDefaultCharPref(const char *pref, char **);
@@ -90,7 +94,6 @@ protected:
   nsresult getDefaultIntPref(const char *pref, PRInt32 *);
   
   nsresult CreateRootFolder();
-  nsresult StorePassword();  // stuff the password in the single signon database
 
   nsresult InternalSetHostName(const char *aHostname, const char *prefName);
 
@@ -111,5 +114,8 @@ protected:
   PRPackedBool m_displayStartupPage;
   PRPackedBool mPerformingBiff;
 };
+
+#undef  IMETHOD_VISIBILITY
+#define IMETHOD_VISIBILITY NS_VISIBILITY_HIDDEN
 
 #endif // nsMsgIncomingServer_h__

@@ -48,6 +48,7 @@
 #include "nsString.h"
 #include "nsEditorUtils.h"
 #include "TypeInState.h"
+#include "nsReadableUtils.h"
 
 class nsVoidArray;
 class nsIDOMElement;
@@ -58,7 +59,7 @@ struct StyleCache : public PropItem
 {
   PRBool mPresent;
   
-  StyleCache() : PropItem(nsnull, nsString(), nsString()), mPresent(PR_FALSE){};
+  StyleCache() : PropItem(nsnull, EmptyString(), EmptyString()), mPresent(PR_FALSE){};
   StyleCache(nsIAtom *aTag, const nsAString &aAttr, const nsAString &aValue) : 
              PropItem(aTag, aAttr, aValue), mPresent(PR_FALSE) {};
   ~StyleCache() {};
@@ -91,6 +92,7 @@ public:
   NS_IMETHOD GetIndentState(PRBool *aCanIndent, PRBool *aCanOutdent);
   NS_IMETHOD GetAlignment(PRBool *aMixed, nsIHTMLEditor::EAlignment *aAlign);
   NS_IMETHOD GetParagraphState(PRBool *aMixed, nsAString &outFormat);
+  NS_IMETHOD MakeSureElemStartsOrEndsOnCR(nsIDOMNode *aNode);
 
   // nsIEditActionListener methods
   
@@ -164,12 +166,15 @@ protected:
   nsresult WillHTMLIndent(nsISelection *aSelection, PRBool *aCancel, PRBool *aHandled);
   nsresult WillOutdent(nsISelection *aSelection, PRBool *aCancel, PRBool *aHandled);
   nsresult WillAlign(nsISelection *aSelection, const nsAString *alignType, PRBool *aCancel, PRBool *aHandled);
+  nsresult WillAbsolutePosition(nsISelection *aSelection, PRBool *aCancel, PRBool * aHandled);
+  nsresult WillRemoveAbsolutePosition(nsISelection *aSelection, PRBool *aCancel, PRBool * aHandled);
+  nsresult WillRelativeChangeZIndex(nsISelection *aSelection, PRInt32 aChange, PRBool *aCancel, PRBool * aHandled);
   nsresult WillMakeDefListItem(nsISelection *aSelection, const nsAString *aBlockType, PRBool aEntireList, PRBool *aCancel, PRBool *aHandled);
   nsresult WillMakeBasicBlock(nsISelection *aSelection, const nsAString *aBlockType, PRBool *aCancel, PRBool *aHandled);
   nsresult DidMakeBasicBlock(nsISelection *aSelection, nsRulesInfo *aInfo, nsresult aResult);
+  nsresult DidAbsolutePosition();
   nsresult AlignInnerBlocks(nsIDOMNode *aNode, const nsAString *alignType);
   nsresult AlignBlockContents(nsIDOMNode *aNode, const nsAString *alignType);
-  PRBool   IsFormatNode(nsIDOMNode *aNode);
   nsresult AppendInnerFormatNodes(nsCOMArray<nsIDOMNode>& aArray,
                                   nsIDOMNode *aNode);
   nsresult GetFormatString(nsIDOMNode *aNode, nsAString &outFormat);
@@ -285,7 +290,6 @@ protected:
   PRBool   ListIsEmptyLine(nsCOMArray<nsIDOMNode> &arrayOfNodes);
   nsresult RemoveAlignment(nsIDOMNode * aNode, const nsAString & aAlignType, PRBool aChildrenOnly);
   nsresult MakeSureElemStartsOrEndsOnCR(nsIDOMNode *aNode, PRBool aStarts);
-  nsresult MakeSureElemStartsOrEndsOnCR(nsIDOMNode *aNode);
   nsresult AlignBlock(nsIDOMElement * aElement, const nsAString * aAlignType, PRBool aContentsOnly);
   nsresult RelativeChangeIndentationOfElementNode(nsIDOMNode *aNode, PRInt8 aRelativeChange);
 

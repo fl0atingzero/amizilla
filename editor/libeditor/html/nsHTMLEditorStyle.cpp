@@ -53,25 +53,18 @@
 #include "nsISelectionController.h"
 #include "nsICSSLoader.h"
 #include "nsICSSStyleSheet.h"
-#include "nsIHTMLContentContainer.h"
 #include "nsIDocumentObserver.h"
 #include "TypeInState.h"
 
 #include "nsIEnumerator.h"
 #include "nsIContent.h"
 #include "nsIContentIterator.h"
-#include "nsEditorCID.h"
-#include "nsLayoutCID.h"
-
-static NS_DEFINE_CID(kCContentIteratorCID, NS_CONTENTITERATOR_CID);
-static NS_DEFINE_IID(kSubtreeIteratorCID, NS_SUBTREEITERATOR_CID);
 
 
 NS_IMETHODIMP nsHTMLEditor::AddDefaultProperty(nsIAtom *aProperty, 
                                             const nsAString & aAttribute, 
                                             const nsAString & aValue)
 {
-  nsresult res = NS_OK;
   nsString outValue;
   PRInt32 index;
   nsString attr(aAttribute);
@@ -86,14 +79,13 @@ NS_IMETHODIMP nsHTMLEditor::AddDefaultProperty(nsIAtom *aProperty,
     PropItem *propItem = new PropItem(aProperty, attr, value);
     mDefaultStyles.AppendElement((void*)propItem);
   }
-  return res;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsHTMLEditor::RemoveDefaultProperty(nsIAtom *aProperty, 
                                    const nsAString & aAttribute, 
                                    const nsAString & aValue)
 {
-  nsresult res = NS_OK;
   nsString outValue;
   PRInt32 index;
   nsString attr(aAttribute);
@@ -103,7 +95,7 @@ NS_IMETHODIMP nsHTMLEditor::RemoveDefaultProperty(nsIAtom *aProperty,
     if (item) delete item;
     mDefaultStyles.RemoveElementAt(index);
   }
-  return res;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsHTMLEditor::RemoveAllDefaultProperties()
@@ -125,14 +117,12 @@ NS_IMETHODIMP nsHTMLEditor::SetCSSInlineProperty(nsIAtom *aProperty,
                             const nsAString & aAttribute, 
                             const nsAString & aValue)
 {
-  nsresult res = NS_OK;
   PRBool useCSS;
-
   GetIsCSSEnabled(&useCSS);
   if (useCSS) {
-    res = SetInlineProperty(aProperty, aAttribute, aValue);
+    return SetInlineProperty(aProperty, aAttribute, aValue);
   }
-  return res;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsHTMLEditor::SetInlineProperty(nsIAtom *aProperty, 
@@ -143,9 +133,8 @@ NS_IMETHODIMP nsHTMLEditor::SetInlineProperty(nsIAtom *aProperty,
   if (!mRules) { return NS_ERROR_NOT_INITIALIZED; }
   ForceCompositionEnd();
 
-  nsresult res;
   nsCOMPtr<nsISelection>selection;
-  res = GetSelection(getter_AddRefs(selection));
+  nsresult res = GetSelection(getter_AddRefs(selection));
   if (NS_FAILED(res)) return res;
   if (!selection) return NS_ERROR_NULL_POINTER;
   nsCOMPtr<nsISelectionPrivate> selPriv(do_QueryInterface(selection));
@@ -220,15 +209,12 @@ NS_IMETHODIMP nsHTMLEditor::SetInlineProperty(nsIAtom *aProperty,
         // a list of them (since doing operations on the document during
         // iteration would perturb the iterator).
 
-        nsCOMPtr<nsIContentIterator> iter;
-        res = nsComponentManager::CreateInstance(kSubtreeIteratorCID, nsnull,
-                                                  NS_GET_IID(nsIContentIterator), 
-                                                  getter_AddRefs(iter));
+        nsCOMPtr<nsIContentIterator> iter =
+          do_CreateInstance("@mozilla.org/content/subtree-content-iterator;1", &res);
         if (NS_FAILED(res)) return res;
         if (!iter)          return NS_ERROR_FAILURE;
 
         nsCOMArray<nsIDOMNode> arrayOfNodes;
-        nsCOMPtr<nsIContent> content;
         nsCOMPtr<nsIDOMNode> node;
         
         // iterate range and build up array
@@ -239,18 +225,18 @@ NS_IMETHODIMP nsHTMLEditor::SetInlineProperty(nsIAtom *aProperty,
         // any *whole* nodes.
         if (NS_SUCCEEDED(res))
         {
-          while (NS_ENUMERATOR_FALSE == iter->IsDone())
+          while (!iter->IsDone())
           {
-            res = iter->CurrentNode(getter_AddRefs(content));
-            if (NS_FAILED(res)) return res;
-            node = do_QueryInterface(content);
-            if (!node) return NS_ERROR_FAILURE;
+            node = do_QueryInterface(iter->GetCurrentNode());
+            if (!node)
+              return NS_ERROR_FAILURE;
+
             if (IsEditable(node))
             { 
               arrayOfNodes.AppendObject(node);
             }
-            res = iter->Next();
-            if (NS_FAILED(res)) return res;
+
+            iter->Next();
           }
         }
         // first check the start parent of the range to see if it needs to 
@@ -312,22 +298,21 @@ nsHTMLEditor::SetInlinePropertyOnTextNode( nsIDOMCharacterData *aTextNode,
                                             const nsAString *aValue)
 {
   if (!aTextNode) return NS_ERROR_NULL_POINTER;
-  nsresult res = NS_OK;
   nsCOMPtr<nsIDOMNode> parent;
-  res = aTextNode->GetParentNode(getter_AddRefs(parent));
+  nsresult res = aTextNode->GetParentNode(getter_AddRefs(parent));
   if (NS_FAILED(res)) return res;
+
   nsAutoString tagString;
   aProperty->ToString(tagString);
   if (!CanContainTag(parent, tagString)) return NS_OK;
   
-  // dont need to do anything if no characters actually selected
+  // don't need to do anything if no characters actually selected
   if (aStartOffset == aEndOffset) return NS_OK;
   
-  nsCOMPtr<nsIDOMNode> tmp, node = do_QueryInterface(aTextNode);
+  nsCOMPtr<nsIDOMNode> node = do_QueryInterface(aTextNode);
   
-  // dont need to do anything if property already set on node
+  // don't need to do anything if property already set on node
   PRBool bHasProp;
-  nsCOMPtr<nsIDOMNode> styleNode;
   PRBool useCSS;
   GetIsCSSEnabled(&useCSS);
 
@@ -342,13 +327,18 @@ nsHTMLEditor::SetInlinePropertyOnTextNode( nsIDOMCharacterData *aTextNode,
                                                        COMPUTED_STYLE_TYPE);
   }
   else
+  {
+    nsCOMPtr<nsIDOMNode> styleNode;
     IsTextPropertySetByContent(node, aProperty, aAttribute, aValue, bHasProp, getter_AddRefs(styleNode));
+  }
+
   if (bHasProp) return NS_OK;
   
   // do we need to split the text node?
   PRUint32 textLen;
   aTextNode->GetLength(&textLen);
   
+  nsCOMPtr<nsIDOMNode> tmp;
   if ( (PRUint32)aEndOffset != textLen )
   {
     // we need to split off back of text node
@@ -445,14 +435,14 @@ nsHTMLEditor::SetInlinePropertyOnNode( nsIDOMNode *aNode,
         res = tmp->GetParentNode(getter_AddRefs(mergeParent));
         if (NS_FAILED(res)) return res;
         if (previousSibling &&
-            nsTextEditUtils::NodeIsType(previousSibling, NS_LITERAL_STRING("span")) &&
+            nsEditor::NodeIsType(previousSibling, nsEditProperty::span) &&
             NodesSameType(tmp, previousSibling))
         {
           res = JoinNodes(previousSibling, tmp, mergeParent);
           if (NS_FAILED(res)) return res;
         }
         if (nextSibling &&
-            nsTextEditUtils::NodeIsType(nextSibling, NS_LITERAL_STRING("span")) &&
+            nsEditor::NodeIsType(nextSibling, nsEditProperty::span) &&
             NodesSameType(tmp, nextSibling))
         {
           res = JoinNodes(tmp, nextSibling, mergeParent);
@@ -695,7 +685,8 @@ nsresult nsHTMLEditor::RemoveStyleInside(nsIDOMNode *aNode,
       NS_NAMED_LITERAL_STRING(classAttr, "class");
       PRBool hasStyleAttr = HasAttr(aNode, &styleAttr);
       PRBool hasClassAtrr = HasAttr(aNode, &classAttr);
-      if (hasStyleAttr || hasClassAtrr) {
+      if (aProperty &&
+          (hasStyleAttr || hasClassAtrr)) {
         // aNode carries inline styles or a class attribute so we can't
         // just remove the element... We need to create above the element
         // a span that will carry those styles or class, then we can delete
@@ -711,6 +702,20 @@ nsresult nsHTMLEditor::RemoveStyleInside(nsIDOMNode *aNode,
         res = CloneAttribute(classAttr, spanNode, aNode);
         if (NS_FAILED(res))
           return res;
+        if (hasStyleAttr)
+        {
+          // we need to remove the styles property corresponding to
+          // aProperty (bug 215406)
+          nsAutoString propertyValue;
+          mHTMLCSSUtils->RemoveCSSEquivalentToHTMLStyle(spanNode,
+                                                        aProperty,
+                                                        aAttribute,
+                                                        &propertyValue,
+                                                        PR_FALSE);
+          // remove the span if it's useless
+          nsCOMPtr<nsIDOMElement> element = do_QueryInterface(spanNode);
+          res = RemoveElementIfNoStyleOrIdOrClass(element, nsEditProperty::span);
+        }
       }
       res = RemoveContainer(aNode);
     }
@@ -763,7 +768,7 @@ nsresult nsHTMLEditor::RemoveStyleInside(nsIDOMNode *aNode,
     }
   }  
   if ( aProperty == nsEditProperty::font &&    // or node is big or small and we are setting font size
-       (NodeIsType(aNode, nsEditProperty::big) || NodeIsType(aNode, nsEditProperty::small)) &&
+       (nsHTMLEditUtils::IsBig(aNode) || nsHTMLEditUtils::IsSmall(aNode)) &&
        aAttribute->Equals(NS_LITERAL_STRING("size"),nsCaseInsensitiveStringComparator()))       
   {
     res = RemoveContainer(aNode);  // if we are setting font size, remove any nested bigs and smalls
@@ -778,11 +783,12 @@ PRBool nsHTMLEditor::IsOnlyAttribute(nsIDOMNode *aNode,
   nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
   if (!content) return PR_FALSE;  // ooops
   
-  PRInt32 attrCount, i, nameSpaceID;
+  PRInt32 nameSpaceID;
   nsCOMPtr<nsIAtom> attrName, prefix;
-  content->GetAttrCount(attrCount);
+
+  PRUint32 i, attrCount = content->GetAttrCount();
   
-  for (i=0; i<attrCount; i++)
+  for (i = 0; i < attrCount; ++i)
   {
     content->GetAttrNameAt(i, &nameSpaceID, getter_AddRefs(attrName),
                            getter_AddRefs(prefix));
@@ -1089,22 +1095,23 @@ nsHTMLEditor::GetInlinePropertyBase(nsIAtom *aProperty,
     }
 
     // non-collapsed selection
-    nsCOMPtr<nsIContentIterator> iter;
-    iter = do_CreateInstance(kCContentIteratorCID);
+    nsCOMPtr<nsIContentIterator> iter =
+            do_CreateInstance("@mozilla.org/content/post-content-iterator;1");
     if (!iter) return NS_ERROR_NULL_POINTER;
 
     iter->Init(range);
-    nsCOMPtr<nsIContent> content;
     nsAutoString firstValue, theValue;
-    iter->CurrentNode(getter_AddRefs(content));
+
     nsCOMPtr<nsIDOMNode> endNode;
     PRInt32 endOffset;
     result = range->GetEndContainer(getter_AddRefs(endNode));
     if (NS_FAILED(result)) return result;
     result = range->GetEndOffset(&endOffset);
     if (NS_FAILED(result)) return result;
-    while (NS_ENUMERATOR_FALSE == iter->IsDone())
+    while (!iter->IsDone())
     {
+      nsIContent *content = iter->GetCurrentNode();
+
       nsCOMPtr<nsIDOMNode> node = do_QueryInterface(content);
 
       if (node && nsTextEditUtils::IsBody(node))
@@ -1139,14 +1146,9 @@ nsHTMLEditor::GetInlinePropertyBase(nsIAtom *aProperty,
           skipNode = PR_TRUE;
         }
       }
-      else
+      else if (content->IsContentOfType(nsIContent::eELEMENT))
       { // handle non-text leaf nodes here
-        PRBool canContainChildren;
-        content->CanContainChildren(canContainChildren);
-        if (canContainChildren)
-        {
-          skipNode = PR_TRUE;
-        }
+        skipNode = PR_TRUE;
       }
       if (!skipNode)
       {
@@ -1200,10 +1202,8 @@ nsHTMLEditor::GetInlinePropertyBase(nsIAtom *aProperty,
           }
         }
       }
-      result = iter->Next();
-      if (NS_FAILED(result))  
-        break;
-      iter->CurrentNode(getter_AddRefs(content));
+
+      iter->Next();
     }
   }
   if (!*aAny) 
@@ -1382,31 +1382,28 @@ nsresult nsHTMLEditor::RemoveInlinePropertyImpl(nsIAtom *aProperty, const nsAStr
       else
       {
         // not the easy case.  range not contained in single text node. 
-        nsCOMPtr<nsIContentIterator> iter;
-        res = nsComponentManager::CreateInstance(kSubtreeIteratorCID, nsnull,
-                                                  NS_GET_IID(nsIContentIterator), 
-                                                  getter_AddRefs(iter));
+        nsCOMPtr<nsIContentIterator> iter =
+          do_CreateInstance("@mozilla.org/content/subtree-content-iterator;1", &res);
         if (NS_FAILED(res)) return res;
         if (!iter)          return NS_ERROR_FAILURE;
 
         nsCOMArray<nsIDOMNode> arrayOfNodes;
-        nsCOMPtr<nsIContent> content;
         nsCOMPtr<nsIDOMNode> node;
         
         // iterate range and build up array
         iter->Init(range);
-        while (NS_ENUMERATOR_FALSE == iter->IsDone())
+        while (!iter->IsDone())
         {
-          res = iter->CurrentNode(getter_AddRefs(content));
-          if (NS_FAILED(res)) return res;
-          node = do_QueryInterface(content);
-          if (!node) return NS_ERROR_FAILURE;
+          node = do_QueryInterface(iter->GetCurrentNode());
+          if (!node)
+            return NS_ERROR_FAILURE;
+
           if (IsEditable(node))
           { 
             arrayOfNodes.AppendObject(node);
           }
-          res = iter->Next();
-          if (NS_FAILED(res)) return res;
+
+          iter->Next();
         }
         
         // loop through the list, remove the property on each node
@@ -1563,31 +1560,29 @@ nsHTMLEditor::RelativeFontChange( PRInt32 aSizeChange)
       // a list of them (since doing operations on the document during
       // iteration would perturb the iterator).
 
-      nsCOMPtr<nsIContentIterator> iter;
-      res = nsComponentManager::CreateInstance(kSubtreeIteratorCID, nsnull,
-                                                NS_GET_IID(nsIContentIterator), 
-                                                getter_AddRefs(iter));
+      nsCOMPtr<nsIContentIterator> iter =
+        do_CreateInstance("@mozilla.org/content/subtree-content-iterator;1", &res);
       if (NS_FAILED(res)) return res;
       if (!iter)          return NS_ERROR_FAILURE;
 
       nsCOMArray<nsIDOMNode> arrayOfNodes;
-      nsCOMPtr<nsIContent> content;
       nsCOMPtr<nsIDOMNode> node;
       
       // iterate range and build up array
       res = iter->Init(range);
       if (NS_SUCCEEDED(res))
       {
-        while (NS_ENUMERATOR_FALSE == iter->IsDone())
+        while (!iter->IsDone())
         {
-          res = iter->CurrentNode(getter_AddRefs(content));
-          if (NS_FAILED(res)) return res;
-          node = do_QueryInterface(content);
-          if (!node) return NS_ERROR_FAILURE;
+          node = do_QueryInterface(iter->GetCurrentNode());
+          if (!node)
+            return NS_ERROR_FAILURE;
+
           if (IsEditable(node))
           { 
             arrayOfNodes.AppendObject(node);
           }
+
           iter->Next();
         }
         
@@ -1679,7 +1674,7 @@ nsHTMLEditor::RelativeFontChangeOnTextNode( PRInt32 aSizeChange,
   // look for siblings that are correct type of node
   nsCOMPtr<nsIDOMNode> sibling;
   GetPriorHTMLSibling(node, address_of(sibling));
-  if (sibling && NodeIsType(sibling, nodeType))
+  if (sibling && NodeIsType(sibling, (aSizeChange==1) ? nsEditProperty::big : nsEditProperty::small))
   {
     // previous sib is already right kind of inline node; slide this over into it
     res = MoveNode(node, sibling, -1);
@@ -1687,7 +1682,7 @@ nsHTMLEditor::RelativeFontChangeOnTextNode( PRInt32 aSizeChange,
   }
   sibling = nsnull;
   GetNextHTMLSibling(node, address_of(sibling));
-  if (sibling && NodeIsType(sibling, nodeType))
+  if (sibling && NodeIsType(sibling, (aSizeChange==1) ? nsEditProperty::big : nsEditProperty::small))
   {
     // following sib is already right kind of inline node; slide this over into it
     res = MoveNode(node, sibling, 0);
@@ -1805,7 +1800,7 @@ nsHTMLEditor::RelativeFontChangeOnNode( PRInt32 aSizeChange,
     // if we find one, move aNode into it.
     nsCOMPtr<nsIDOMNode> sibling;
     GetPriorHTMLSibling(aNode, address_of(sibling));
-    if (sibling && NodeIsType(sibling, NS_ConvertASCIItoUCS2(aSizeChange==1 ? "big" : "small")))
+    if (sibling && nsEditor::NodeIsType(sibling, (aSizeChange==1 ? nsEditProperty::big : nsEditProperty::small)))
     {
       // previous sib is already right kind of inline node; slide this over into it
       res = MoveNode(aNode, sibling, -1);
@@ -1813,7 +1808,7 @@ nsHTMLEditor::RelativeFontChangeOnNode( PRInt32 aSizeChange,
     }
     sibling = nsnull;
     GetNextHTMLSibling(aNode, address_of(sibling));
-    if (sibling && NodeIsType(sibling, NS_ConvertASCIItoUCS2(aSizeChange==1 ? "big" : "small")))
+    if (sibling && nsEditor::NodeIsType(sibling, (aSizeChange==1 ? nsEditProperty::big : nsEditProperty::small)))
     {
       // following sib is already right kind of inline node; slide this over into it
       res = MoveNode(aNode, sibling, 0);
@@ -1855,7 +1850,7 @@ nsHTMLEditor::GetFontFaceState(PRBool *aMixed, nsAString &outFace)
   if (!aMixed)
       return NS_ERROR_FAILURE;
   *aMixed = PR_TRUE;
-  outFace.SetLength(0);
+  outFace.Truncate();
 
   nsresult res;
   PRBool first, any, all;
@@ -1883,7 +1878,7 @@ nsHTMLEditor::GetFontFaceState(PRBool *aMixed, nsAString &outFace)
   if (!any)
   {
     // there was no font face attrs of any kind.  We are in normal font.
-    outFace.SetLength(0);
+    outFace.Truncate();
     *aMixed = PR_FALSE;
   }
   return res;
@@ -1895,7 +1890,7 @@ nsHTMLEditor::GetFontColorState(PRBool *aMixed, nsAString &aOutColor)
   if (!aMixed)
       return NS_ERROR_NULL_POINTER;
   *aMixed = PR_TRUE;
-  aOutColor.SetLength(0);
+  aOutColor.Truncate();
   
   nsresult res;
   NS_NAMED_LITERAL_STRING(colorStr, "color");
@@ -1913,7 +1908,7 @@ nsHTMLEditor::GetFontColorState(PRBool *aMixed, nsAString &aOutColor)
   if (!any)
   {
     // there was no font color attrs of any kind..
-    aOutColor.SetLength(0);
+    aOutColor.Truncate();
     *aMixed = PR_FALSE;
   }
   return res;

@@ -26,10 +26,11 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= appcomps
+MODULE		= history
 LIBRARY_NAME	= history_s
 REQUIRES	= xpcom \
 		  string \
+		  docshell \
 		  rdf \
 		  mork \
 		  pref \
@@ -37,6 +38,7 @@ REQUIRES	= xpcom \
 		  intl \
 		  unicharutil \
 		  uconv \
+		  appcomps \
 		  $(NULL)
 
 CPPSRCS		= nsGlobalHistory.cpp  \

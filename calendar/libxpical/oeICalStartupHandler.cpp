@@ -35,11 +35,14 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* Derived from nsICmdLineHandler this file provides the "-calendar" option 
+for launching calendar */
+
 #include "plstr.h"
 #include "nsString.h"
 #include "oeICalStartupHandler.h"
 
-NS_IMPL_ISUPPORTS1(oeICalStartupHandler, nsICmdLineHandler);
+NS_IMPL_ISUPPORTS1(oeICalStartupHandler, nsICmdLineHandler)
 
 oeICalStartupHandler::oeICalStartupHandler()
 {
@@ -52,5 +55,5 @@ oeICalStartupHandler::~oeICalStartupHandler()
 CMDLINEHANDLER_IMPL(oeICalStartupHandler, "-calendar", "general.startup.calendar",
                     "chrome://calendar/content", 
                     "Start with calendar", OE_ICALSTARTUPHANDLER_CONTRACTID,
-                    "Calendar cmd line handler", PR_FALSE, "", PR_TRUE);
+                    "Calendar cmd line handler", PR_FALSE, "", PR_TRUE)
 

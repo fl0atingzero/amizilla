@@ -90,27 +90,26 @@ nsGrippyFrame::nsGrippyFrame(nsIPresShell* aShell):nsButtonBoxFrame(aShell),mCol
 void
 nsGrippyFrame::MouseClicked (nsIPresContext* aPresContext, nsGUIEvent* aEvent) 
 {
-    nsButtonBoxFrame::MouseClicked(aPresContext, aEvent);
-
+    // update the splitter first, in case someone's listening on the command event
     nsIFrame* splitter;
     nsScrollbarButtonFrame::GetParentWithTag(nsXULAtoms::splitter, this, splitter);
-    if (splitter == nsnull)
-       return;
+    if (splitter) {
 
-    // get the splitters content node
-    nsCOMPtr<nsIContent> content;
-    splitter->GetContent(getter_AddRefs(content));
+        // get the splitters content node
+        nsIContent* content = splitter->GetContent();
  
-	nsString a(NS_LITERAL_STRING("collapsed"));
-	nsString value;
-    if (NS_CONTENT_ATTR_HAS_VALUE == content->GetAttr(kNameSpaceID_None, nsXULAtoms::state, value))
-    {
-     if (value.Equals(NS_LITERAL_STRING("collapsed")))
-       a.Assign(NS_LITERAL_STRING("open"));
+        nsAutoString newState(NS_LITERAL_STRING("collapsed"));
+        nsAutoString oldState;
+        if (NS_CONTENT_ATTR_HAS_VALUE == content->GetAttr(kNameSpaceID_None, nsXULAtoms::state, oldState))
+        {
+            if (oldState.Equals(newState))
+                newState.Assign(NS_LITERAL_STRING("open"));
+        }
+
+        content->SetAttr(kNameSpaceID_None, nsXULAtoms::state, newState, PR_TRUE);
     }
 
-    content->SetAttr(kNameSpaceID_None, nsXULAtoms::state, a, PR_TRUE);
-
+    nsButtonBoxFrame::MouseClicked(aPresContext, aEvent);
 }
 
 /*
@@ -131,8 +130,7 @@ nsGrippyFrame::MouseClicked(nsIPresContext* aPresContext)
        return;
 
     // get the splitters content node
-    nsCOMPtr<nsIContent> content;
-    splitter->GetContent(getter_AddRefs(content));
+    nsIContent* content = splitter->GetContent();
 
     // get the collapse attribute. If the attribute is not set collapse
     // the child before otherwise collapse the child after
@@ -151,7 +149,7 @@ nsGrippyFrame::MouseClicked(nsIPresContext* aPresContext)
     if (child == nsnull)
       return;
 
-    child->GetContent(getter_AddRefs(mCollapsedChild));
+    mCollapsedChild = child->GetContent();
 
     style = "visibility: collapse";
     mCollapsedChildStyle = "";
@@ -169,9 +167,8 @@ nsGrippyFrame::MouseClicked(nsIPresContext* aPresContext)
 nsIFrame*
 nsGrippyFrame::GetChildBeforeAfter(nsIPresContext* aPresContext, nsIFrame* start, PRBool before)
 {
-   nsIFrame* parent = nsnull;
-   start->GetParent(&parent);
-   PRInt32 index = IndexOf(aPresContext, parent,start);
+   nsIFrame* parent = start->GetParent();
+   PRInt32 index = IndexOf(aPresContext, parent, start);
    PRInt32 count = CountFrames(aPresContext, parent);
 
    if (index == -1) 
@@ -198,15 +195,13 @@ nsGrippyFrame::IndexOf(nsIPresContext* aPresContext, nsIFrame* parent, nsIFrame*
 {
   PRInt32 count = 0;
 
-  nsIFrame* childFrame;
-  parent->FirstChild(aPresContext, nsnull, &childFrame); 
+  nsIFrame* childFrame = parent->GetFirstChild(nsnull); 
   while (nsnull != childFrame) 
   {    
     if (childFrame == child)
        return count;
 
-    nsresult rv = childFrame->GetNextSibling(&childFrame);
-    NS_ASSERTION(rv == NS_OK,"failed to get next child");
+    childFrame = childFrame->GetNextSibling();
     count++;
   }
 
@@ -218,12 +213,10 @@ nsGrippyFrame::CountFrames(nsIPresContext* aPresContext, nsIFrame* aFrame)
 {
   PRInt32 count = 0;
 
-  nsIFrame* childFrame;
-  aFrame->FirstChild(aPresContext, nsnull, &childFrame); 
+  nsIFrame* childFrame = aFrame->GetFirstChild(nsnull);
   while (nsnull != childFrame) 
   {    
-    nsresult rv = childFrame->GetNextSibling(&childFrame);
-    NS_ASSERTION(rv == NS_OK,"failed to get next child");
+    childFrame = childFrame->GetNextSibling();
     count++;
   }
 
@@ -235,15 +228,13 @@ nsGrippyFrame::GetChildAt(nsIPresContext* aPresContext, nsIFrame* parent, PRInt3
 {
   PRInt32 count = 0;
 
-  nsIFrame* childFrame;
-  parent->FirstChild(aPresContext, nsnull, &childFrame); 
+  nsIFrame* childFrame = parent->GetFirstChild(nsnull);
   while (nsnull != childFrame) 
   {    
     if (count == index)
        return childFrame;
 
-    nsresult rv = childFrame->GetNextSibling(&childFrame);
-    NS_ASSERTION(rv == NS_OK,"failed to get next child");
+    childFrame = childFrame->GetNextSibling();
     count++;
   }
 

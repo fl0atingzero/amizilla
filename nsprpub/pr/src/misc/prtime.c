@@ -637,6 +637,7 @@ PR_LocalTimeParameters(const PRExplodedTime *gmt)
     PRTime secs64;
     PRInt64 usecPerSec;
     PRInt64 maxInt32;
+    PRInt64 minInt32;
     PRInt32 dayOffset;
     PRInt32 offset2Jan1970;
     PRInt32 offsetNew;
@@ -682,9 +683,10 @@ PR_LocalTimeParameters(const PRExplodedTime *gmt)
     secs64 = PR_ImplodeTime(gmt);    /* This is still in microseconds */
     LL_I2L(usecPerSec, PR_USEC_PER_SEC);
     LL_DIV(secs64, secs64, usecPerSec);   /* Convert to seconds */
-    LL_I2L(maxInt32, 0x7fffffff);
-    if (LL_CMP(secs64, >, maxInt32)) {
-        /* secs64 is too large for time_t (32-bit integer) */
+    LL_I2L(maxInt32, PR_INT32_MAX);
+    LL_I2L(minInt32, PR_INT32_MIN);
+    if (LL_CMP(secs64, >, maxInt32) || LL_CMP(secs64, <, minInt32)) {
+        /* secs64 is too large or too small for time_t (32-bit integer) */
         retVal.tp_gmt_offset = offset2Jan1970;
         retVal.tp_dst_offset = 0;
         return retVal;
@@ -1666,7 +1668,8 @@ PR_FormatTime(char *buf, int buflen, const char *fmt, const PRExplodedTime *tm)
  */
 
 #if defined(SUNOS4) || (__GLIBC__ >= 2) || defined(XP_BEOS) \
-        || defined(NETBSD)
+        || defined(NETBSD) || defined(OPENBSD) || defined(FREEBSD) \
+        || defined(DARWIN)
     a.tm_zone = NULL;
     a.tm_gmtoff = tm->tm_params.tp_gmt_offset + tm->tm_params.tp_dst_offset;
 #endif

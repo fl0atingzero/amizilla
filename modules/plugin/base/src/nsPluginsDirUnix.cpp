@@ -140,7 +140,7 @@ static PRBool LoadExtraSharedLib(const char *name, char **soname, PRBool tryToGe
 
 #define PLUGIN_MAX_NUMBER_OF_EXTRA_LIBS 32
 #define PREF_PLUGINS_SONAME "plugin.soname.list"
-#ifdef SOLARIS
+#if defined(SOLARIS) || defined(HPUX)
 #define DEFAULT_EXTRA_LIBS_LIST "libXt" LOCAL_PLUGIN_DLL_SUFFIX ":libXext" LOCAL_PLUGIN_DLL_SUFFIX ":libXm" LOCAL_PLUGIN_DLL_SUFFIX
 #else
 #define DEFAULT_EXTRA_LIBS_LIST "libXt" LOCAL_PLUGIN_DLL_SUFFIX ":libXext" LOCAL_PLUGIN_DLL_SUFFIX
@@ -254,16 +254,15 @@ PRBool nsPluginsDir::IsPluginFile(nsIFile* file)
     if (NS_FAILED(file->GetNativeLeafName(filename)))
         return PR_FALSE;
 
-    int len = filename.Length();
-    nsCAutoString suffix (LOCAL_PLUGIN_DLL_SUFFIX);
-    int slen = suffix.Length();
-    if (len > slen && suffix.Equals(Substring(filename,len-slen,slen)))
+    NS_NAMED_LITERAL_CSTRING(dllSuffix, LOCAL_PLUGIN_DLL_SUFFIX);
+    if (filename.Length() > dllSuffix.Length() &&
+        StringEndsWith(filename, dllSuffix))
         return PR_TRUE;
     
 #ifdef LOCAL_PLUGIN_DLL_ALT_SUFFIX
-    suffix.Assign(LOCAL_PLUGIN_DLL_ALT_SUFFIX);
-    slen = suffix.Length();
-    if (len > slen && suffix.Equals(Substring(filename,len-slen,slen)))
+    NS_NAMED_LITERAL_CSTRING(dllAltSuffix, LOCAL_PLUGIN_DLL_ALT_SUFFIX);
+    if (filename.Length() > dllAltSuffix.Length() &&
+        StringEndsWith(filename, dllAltSuffix))
         return PR_TRUE;
 #endif
     return PR_FALSE;
@@ -304,8 +303,6 @@ nsresult nsPluginFile::LoadPlugin(PRLibrary* &outLibrary)
         return rv;
 
     libSpec.value.pathname = path.get();
- 
-    pLibrary = outLibrary = PR_LoadLibraryWithFlags(libSpec, 0);
 
 #if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_GTK2)
 
@@ -320,14 +317,25 @@ nsresult nsPluginFile::LoadPlugin(PRLibrary* &outLibrary)
     // at runtime.  Explicitly opening Xt/Xext into the global
     // namespace before attempting to load the plug-in seems to
     // work fine.
+
+
+#if defined(SOLARIS) || defined(HPUX)
+    // Acrobat/libXm: Lazy resolving might cause crash later (bug 211587)
+    pLibrary = outLibrary = PR_LoadLibraryWithFlags(libSpec, PR_LD_NOW);
+#else
+    // Some dlopen() doesn't recover from a failed PR_LD_NOW (bug 223744)
+    pLibrary = outLibrary = PR_LoadLibraryWithFlags(libSpec, 0);
+#endif
     if (!pLibrary) {
         LoadExtraSharedLibs();
-        // try reload plugin ones more
+        // try reload plugin once more
         pLibrary = outLibrary = PR_LoadLibraryWithFlags(libSpec, 0);
         if (!pLibrary)
             DisplayPR_LoadLibraryErrorMessage(libSpec.value.pathname);
     }
-#endif
+#else
+    pLibrary = outLibrary = PR_LoadLibraryWithFlags(libSpec, 0);
+#endif  // MOZ_WIDGET_GTK || MOZ_WIDGET_GTK2
 
 #ifdef NS_DEBUG
     printf("LoadPlugin() %s returned %lx\n", 

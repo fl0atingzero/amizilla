@@ -68,7 +68,6 @@ bin\jpeg3250.dll
 bin\mozilla.exe
 bin\regxpcom.exe
 bin\xpicleanup.exe
-bin\res\cmessage.txt
 bin\components\AcctIdl.dll
 bin\components\AcctIdl.xpt
 bin\components\appcomps.dll
@@ -87,7 +86,6 @@ bin\components\winhooks.xpt
 bin\components\alerts.xpt
 bin\components\related.xpt
 bin\components\search.xpt
-bin\components\timebomb.xpt
 bin\components\urlbarhistory.xpt
 bin\components\urlwidgt.xpt
 bin\components\chardetc.dll
@@ -191,6 +189,14 @@ bin\chrome\icons\default\findHistoryWindow.ico
 bin\chrome\icons\default\history-window.ico
 bin\chrome\icons\default\jsconsoleWindow.ico
 bin\chrome\icons\default\main-window.ico
+bin\chrome\icons\default\gif-file.ico
+bin\chrome\icons\default\html-file.ico
+bin\chrome\icons\default\misc-file.ico
+bin\chrome\icons\default\image-file.ico
+bin\chrome\icons\default\jpeg-file.ico
+bin\chrome\icons\default\script-file.ico
+bin\chrome\icons\default\xml-file.ico
+bin\chrome\icons\default\xul-file.ico
 ;-bin\chrome\comm\content\editor\EditorInitPage.html
 ;-bin\chrome\comm\editor\content\EditorInitPagePlain.html
 ;Include this for "debug" testing - remove for actual beta release:
@@ -209,20 +215,26 @@ bin\chrome\icons\default\main-window.ico
 ; to prevent migration bugs
 bin\defaults\pref\*
 bin\defaults\autoconfig\*
-bin\res\ua.css
-bin\res\html.css
-bin\res\quirk.css
-bin\res\forms.css
-bin\res\platform-forms.css
 bin\res\EditorOverride.css
-bin\res\viewsource.css
-bin\res\mathml.css
-bin\res\arrow.gif
-bin\res\loading-image.gif
-bin\res\broken-image.gif
-bin\res\html\*
-bin\res\fonts\*
-bin\res\dtd\*
+bin\res\grabber.gif
+bin\res\table-add-column-after-active.gif
+bin\res\table-add-column-after-hover.gif
+bin\res\table-add-column-after.gif
+bin\res\table-add-column-before-active.gif
+bin\res\table-add-column-before-hover.gif
+bin\res\table-add-column-before.gif
+bin\res\table-add-row-after-active.gif
+bin\res\table-add-row-after-hover.gif
+bin\res\table-add-row-after.gif
+bin\res\table-add-row-before-active.gif
+bin\res\table-add-row-before-hover.gif
+bin\res\table-add-row-before.gif
+bin\res\table-remove-column-active.gif
+bin\res\table-remove-column-hover.gif
+bin\res\table-remove-column.gif
+bin\res\table-remove-row-active.gif
+bin\res\table-remove-row-hover.gif
+bin\res\table-remove-row.gif
 bin\defaults\wallet\VcardSchema.tbl
 bin\defaults\wallet\FieldSchema.tbl
 bin\defaults\wallet\SchemaConcat.tbl
@@ -230,22 +242,12 @@ bin\defaults\wallet\DistinguishedSchema.tbl
 bin\defaults\wallet\SchemaStrings.tbl
 bin\defaults\wallet\PositionalSchema.tbl
 bin\defaults\wallet\StateSchema.tbl
-bin\res\wincharset.properties
-bin\res\charsetalias.properties
-bin\res\charsetData.properties
-bin\res\langGroups.properties
-bin\res\language.properties
-bin\res\entityTables\*
-bin\res\rdf\article.gif
-bin\res\rdf\document.gif
 bin\res\rdf\folder-closed.gif
 bin\res\rdf\folder-open.gif
 bin\res\rdf\loading.gif
 bin\res\throbber\*
 ;debug menus reference samples dir - remove for actual releases:
 bin\res\samples\*
-bin\res\builtin\htmlBindings.xml
-bin\res\builtin\platformHTMLBindings.xml
 
 ; download progress
 bin\components\nsProgressDialog.js
@@ -312,6 +314,7 @@ bin\components\palmsync.xpt
 bin\components\bayesflt.dll
 bin\components\mailview.dll
 bin\components\mailview.xpt
+bin\components\offlineStartup.js 
 bin\palm.html
 
 [chatzilla]
@@ -325,6 +328,17 @@ bin\components\venkman-service.js
 bin\chrome\venkman.jar
 bin\chrome\icons\default\venkman-window.ico
 
+[talkback]
+bin\components\qfaservices.dll
+bin\components\qfaservices.xpt
+bin\components\BrandRes.dll
+bin\components\fullsoft.dll
+bin\components\master.ini
+bin\components\talkback-l10n.ini
+bin\components\talkback.cnt
+bin\components\talkback.exe
+bin\components\talkback.hlp
+
 [inspector]
 bin\components\inspector-cmdline.js
 bin\components\inspector.dll
@@ -334,3 +348,9 @@ bin\chrome\icons\default\winInspectorMain.ico
 bin\defaults\pref\inspector.js
 bin\res\inspector\viewer-registry.rdf
 bin\res\inspector\search-registry.rdf
+
+[spellcheck]
+bin\components\myspell.dll
+bin\components\spellchk.dll
+bin\components\spellchecker.xpt
+bin\components\myspell\*

@@ -18,7 +18,7 @@
  * Rights Reserved.
  *
  * Contributors(s):
- *   Jan Varga <varga@utcru.sk>
+ *   Jan Varga <varga@nixcorp.com>
  *   Håkan Waara (hwaara@chello.se)
  */
 
@@ -117,11 +117,6 @@ var FolderPaneController =
 	
 	onEvent: function(event)
 	{
-		// on blur events set the menu item texts back to the normal values
-		if ( event == 'blur' )
-        {
-			goSetMenuValue('cmd_delete', 'valueDefault');
-        }
 	}
 };
 
@@ -193,9 +188,11 @@ var DefaultController =
 			case "cmd_markAsRead":
 			case "cmd_markAllRead":
 			case "cmd_markThreadAsRead":
+			case "cmd_markReadByDate":
 			case "cmd_markAsFlagged":
 			case "cmd_markAsJunk":
 			case "cmd_markAsNotJunk":
+      case "cmd_recalculateJunkScore":
       case "cmd_applyFilters":
       case "cmd_runJunkControls":
       case "cmd_deleteJunk":
@@ -209,7 +206,6 @@ var DefaultController =
 			case "cmd_file":
 			case "cmd_emptyTrash":
 			case "cmd_compactFolder":
-			case "cmd_sortByThread":
   	  case "cmd_settingsOffline":
       case "cmd_close":
       case "cmd_selectAll":
@@ -238,7 +234,6 @@ var DefaultController =
     if (IsFakeAccount()) 
       return false;
 
-    // note, all commands that get fired on a single key need to check MailAreaHasFocus() as well
     switch ( command )
     {
       case "cmd_delete":
@@ -258,23 +253,20 @@ var DefaultController =
           gDBView.getCommandStatus(nsMsgViewCommandType.junk, enabled, checkStatus);
         return enabled.value;
       case "cmd_killThread":
-        return ((GetNumSelectedMessages() == 1) && MailAreaHasFocus() && IsViewNavigationItemEnabled());
+        return GetNumSelectedMessages() == 1;
       case "cmd_watchThread":
-        if (MailAreaHasFocus() && (GetNumSelectedMessages() == 1) && gDBView)
+        if ((GetNumSelectedMessages() == 1) && gDBView)
           gDBView.getCommandStatus(nsMsgViewCommandType.toggleThreadWatched, enabled, checkStatus);
         return enabled.value;
       case "cmd_createFilterFromPopup":
+      case "cmd_createFilterFromMenu":
         var loadedFolder = GetLoadedMsgFolder();
         if (!(loadedFolder && loadedFolder.server.canHaveFilters))
-          return false;
-      case "cmd_createFilterFromMenu":
-        loadedFolder = GetLoadedMsgFolder();
-        if (!(loadedFolder && loadedFolder.server.canHaveFilters) || !(IsMessageDisplayedInMessagePane()))
-          return false;
+          return false;   // else fall thru
       case "cmd_saveAsFile":
       case "cmd_saveAsTemplate":
 	      if ( GetNumSelectedMessages() > 1)
-          return false;
+          return false;   // else fall thru
       case "cmd_reply":
       case "button_reply":
       case "cmd_replySender":
@@ -291,12 +283,12 @@ var DefaultController =
       case "cmd_print":
       case "cmd_viewPageSource":
       case "cmd_reload":
-	      if ( GetNumSelectedMessages() > 0)
+        if (GetNumSelectedMessages() > 0)
         {
           if (gDBView)
           {
-             gDBView.getCommandStatus(nsMsgViewCommandType.cmdRequiringMsgBody, enabled, checkStatus);
-              return enabled.value;
+            gDBView.getCommandStatus(nsMsgViewCommandType.cmdRequiringMsgBody, enabled, checkStatus);
+            return enabled.value;
           }
         }
         return false;
@@ -315,6 +307,7 @@ var DefaultController =
         return (GetNumSelectedMessages() > 0 );
       case "cmd_markAsJunk":
       case "cmd_markAsNotJunk":
+      case "cmd_recalculateJunkScore":
         // can't do news on junk yet.
         return (GetNumSelectedMessages() > 0 && !isNewsURI(GetFirstSelectedMessage()));
       case "cmd_applyFilters":
@@ -338,7 +331,7 @@ var DefaultController =
       case "cmd_label3":
       case "cmd_label4":
       case "cmd_label5":
-        return(MailAreaHasFocus() && GetNumSelectedMessages() > 0);
+        return GetNumSelectedMessages() > 0;
       case "button_next":
         return IsViewNavigationItemEnabled();
       case "cmd_nextMsg":
@@ -346,9 +339,10 @@ var DefaultController =
       case "cmd_nextUnreadThread":
       case "cmd_previousMsg":
       case "cmd_previousUnreadMsg":
-        return (MailAreaHasFocus() && IsViewNavigationItemEnabled());
+        return IsViewNavigationItemEnabled();
       case "cmd_markAllRead":
-        return (MailAreaHasFocus() && IsFolderSelected());
+      case "cmd_markReadByDate":
+        return IsFolderSelected();
       case "cmd_find":
       case "cmd_findAgain":
       case "cmd_findPrev":
@@ -365,13 +359,12 @@ var DefaultController =
       case "cmd_collapseAllThreads":
         if (!gDBView || !gDBView.supportsThreading) 
           return false;
-        return (gDBView.sortType == nsMsgViewSortType.byThread);
+        return (gDBView.viewFlags & nsMsgViewFlagsType.kThreadedDisplay);
         break;
       case "cmd_nextFlaggedMsg":
       case "cmd_previousFlaggedMsg":
         return IsViewNavigationItemEnabled();
       case "cmd_viewAllMsgs":
-      case "cmd_sortByThread":
       case "cmd_viewUnreadMsgs":
       case "cmd_viewThreadsWithUnread":
       case "cmd_viewWatchedThreadsWithUnread":
@@ -405,11 +398,11 @@ var DefaultController =
       case "cmd_downloadFlagged":
         return(CheckOnline());
       case "cmd_downloadSelected":
-        return(MailAreaHasFocus() && IsFolderSelected() && CheckOnline() && GetNumSelectedMessages() > 0);
+        return (IsFolderSelected() && CheckOnline() && GetNumSelectedMessages() > 0);
       case "cmd_synchronizeOffline":
         return CheckOnline() && IsAccountOfflineEnabled();       
       case "cmd_settingsOffline":
-        return (MailAreaHasFocus() && IsAccountOfflineEnabled());
+        return IsAccountOfflineEnabled();
       default:
         return false;
     }
@@ -463,15 +456,27 @@ var DefaultController =
 				break;
       case "cmd_createFilterFromMenu":
         MsgCreateFilter();
-        break;        
+        break;   
       case "cmd_createFilterFromPopup":
         break;// This does nothing because the createfilter is invoked from the popupnode oncommand.
 			case "button_delete":
 			case "cmd_delete":
+        // if the user deletes a message before its mark as read timer goes off, we should mark it as read
+        // this ensures that we clear the biff indicator from the system tray when the user deletes the new message
+        if (gMarkViewedMessageAsReadTimer) 
+        {
+          MarkCurrentMessageAsRead();
+          ClearPendingReadTimer();
+        }
         SetNextMessageAfterDelete();
         gDBView.doCommand(nsMsgViewCommandType.deleteMsg);
 				break;
 			case "cmd_shiftDelete":
+        if (gMarkViewedMessageAsReadTimer) 
+        {
+          MarkCurrentMessageAsRead();
+          ClearPendingReadTimer();
+        }
         SetNextMessageAfterDelete();
         gDBView.doCommand(nsMsgViewCommandType.deleteNoTrash);
 				break;
@@ -503,9 +508,6 @@ var DefaultController =
 				break;
 			case "cmd_previousFlaggedMsg":
 				MsgPreviousFlaggedMessage();
-				break;
-			case "cmd_sortByThread":
-				MsgSortByThread();
 				break;
 			case "cmd_viewAllMsgs":
       case "cmd_viewThreadsWithUnread":
@@ -584,6 +586,9 @@ var DefaultController =
 			case "cmd_markAllRead":
         gDBView.doCommand(nsMsgViewCommandType.markAllRead);
 				return;
+			case "cmd_markReadByDate":
+        MsgMarkReadByDate();
+        return;
       case "button_junk":
         MsgJunk();
         return;
@@ -599,6 +604,9 @@ var DefaultController =
 			case "cmd_markAsNotJunk":
         JunkSelectedMessages(false);
 				return;
+      case "cmd_recalculateJunkScore":
+        analyzeMessagesForJunk();
+        return;
       case "cmd_applyFilters":
         MsgApplyFilters(null);
         return;
@@ -665,37 +673,11 @@ var DefaultController =
 		// on blur events set the menu item texts back to the normal values
 		if ( event == 'blur' )
         {
-			goSetMenuValue('cmd_delete', 'valueDefault');
             goSetMenuValue('cmd_undo', 'valueDefault');
             goSetMenuValue('cmd_redo', 'valueDefault');
         }
 	}
 };
-
-function MailAreaHasFocus()
-{
-  //Input and TextAreas should get access to the keys that cause these commands.
-  //Currently if we don't do this then we will steal the key away and you can't type them
-  //in these controls. This is a bug that should be fixed and when it is we can get rid of
-  //this.
-  var focusedElement = top.document.commandDispatcher.focusedElement;
-  if (focusedElement) 
-  {
-    var name = focusedElement.localName.toLowerCase();
-    return ((name != "input") && (name != "textarea"));
-  }
-
-  // check if the message pane has focus 
-  // see bug #129988
-  if (GetMessagePane() == WhichPaneHasFocus())
-    return true;
-
-  // if there is no focusedElement,
-  // and the message pane doesn't have focus
-  // then a mail area can't be focused
-  // see bug #128101
-  return false;
-}
 
 function GetNumSelectedMessages()
 {

@@ -123,7 +123,7 @@ inline unsigned char mac_sort_tbl_search(const unsigned char ch, const unsigned 
 
 ////////////////////////////////////////////////////////////////////////////////
 
-NS_IMPL_ISUPPORTS1(nsCollationMac, nsICollation);
+NS_IMPL_ISUPPORTS1(nsCollationMac, nsICollation)
 
 
 nsCollationMac::nsCollationMac() 
@@ -150,45 +150,41 @@ nsresult nsCollationMac::Initialize(nsILocale* locale)
   // locale -> script code + charset name
   m_scriptcode = smRoman;
 
-  PRUnichar *aLocaleUnichar; 
-  nsAutoString aCategory(NS_LITERAL_STRING("NSILOCALE_COLLATE"));
+  nsAutoString localeStr;
 
   // get locale string, use app default if no locale specified
   if (locale == nsnull) {
     nsCOMPtr<nsILocaleService> localeService = 
              do_GetService(NS_LOCALESERVICE_CONTRACTID, &res);
     if (NS_SUCCEEDED(res)) {
-      nsILocale *appLocale;
-      res = localeService->GetApplicationLocale(&appLocale);
+      nsCOMPtr<nsILocale> appLocale;
+      res = localeService->GetApplicationLocale(getter_AddRefs(appLocale));
       if (NS_SUCCEEDED(res)) {
-        res = appLocale->GetCategory(aCategory.get(), &aLocaleUnichar);
-        appLocale->Release();
+        res = appLocale->GetCategory(NS_LITERAL_STRING("NSILOCALE_COLLATE"), 
+                                     localeStr);
       }
     }
   }
   else {
-    res = locale->GetCategory(aCategory.get(), &aLocaleUnichar);
+    res = locale->GetCategory(NS_LITERAL_STRING("NSILOCALE_COLLATE"), 
+                              localeStr);
   }
 
   if (NS_SUCCEEDED(res)) {
-    nsAutoString aLocale(aLocaleUnichar);
-    nsMemory::Free(aLocaleUnichar);
-
     short scriptcode, langcode, regioncode;
     nsCOMPtr <nsIMacLocale> macLocale = do_GetService(NS_MACLOCALE_CONTRACTID, &res);
     if (NS_SUCCEEDED(res)) {
-      if (NS_SUCCEEDED(res = macLocale->GetPlatformLocale(&aLocale, &scriptcode, &langcode, &regioncode))) {
+      if (NS_SUCCEEDED(res = macLocale->GetPlatformLocale(localeStr, &scriptcode, &langcode, &regioncode))) {
         m_scriptcode = scriptcode;
       }
     }
 
     nsCOMPtr <nsIPlatformCharset> platformCharset = do_GetService(NS_PLATFORMCHARSET_CONTRACTID, &res);
     if (NS_SUCCEEDED(res)) {
-      PRUnichar* mappedCharset = NULL;
-      res = platformCharset->GetDefaultCharsetForLocale(aLocale.get(), &mappedCharset);
-      if (NS_SUCCEEDED(res) && mappedCharset) {
-        res = mCollation->SetCharset(NS_LossyConvertUCS2toASCII(mappedCharset).get());
-        nsMemory::Free(mappedCharset);
+      nsCAutoString mappedCharset;
+      res = platformCharset->GetDefaultCharsetForLocale(localeStr, mappedCharset);
+      if (NS_SUCCEEDED(res)) {
+        res = mCollation->SetCharset(mappedCharset.get());
       }
     }
   }
@@ -201,17 +197,32 @@ nsresult nsCollationMac::Initialize(nsILocale* locale)
 
   return NS_OK;
 };
+
+
+nsresult nsCollationMac::CompareString(const nsCollationStrength strength, 
+                                       const nsAString& string1, const nsAString& string2, PRInt32* result)
+{
+  PRUint32 aLength1, aLength2;
+  PRUint8 *aKey1 = nsnull, *aKey2 = nsnull;
+  nsresult res;
+
+  res = AllocateRawSortKey(strength, string1, &aKey1, &aLength1);
+  if (NS_SUCCEEDED(res)) {
+    res = AllocateRawSortKey(strength, string2, &aKey2, &aLength2);
+    if (NS_SUCCEEDED(res))
+      *result = strcmp((const char *)aKey1, (const char *)aKey2); // compare keys
+  }
+
+  // delete keys
+  PR_FREEIF(aKey1);
+  PR_FREEIF(aKey2);
+
+  return res;
+}
  
 
-nsresult nsCollationMac::GetSortKeyLen(const nsCollationStrength strength, 
-                                       const nsAString& stringIn, PRUint32* outLen)
-{
-  *outLen = stringIn.Length() * sizeof(PRUnichar);
-  return NS_OK;
-}
-
-nsresult nsCollationMac::CreateRawSortKey(const nsCollationStrength strength, 
-                                          const nsAString& stringIn, PRUint8* key, PRUint32* outLen)
+nsresult nsCollationMac::AllocateRawSortKey(const nsCollationStrength strength, 
+                                            const nsAString& stringIn, PRUint8** key, PRUint32* outLen)
 {
   nsresult res = NS_OK;
 
@@ -229,42 +240,36 @@ nsresult nsCollationMac::CreateRawSortKey(const nsCollationStrength strength,
   res = mCollation->UnicodeToChar(stringNormalized, &str);
   if (NS_SUCCEEDED(res) && str != NULL) {
     str_len = strlen(str);
-    NS_ASSERTION(str_len <= int(*outLen), "output buffer too small");
+    *key = (PRUint8 *)str;
+    *outLen = str_len + 1;
     
     // If no CJK then generate a collation key
     if (smJapanese != m_scriptcode && smKorean != m_scriptcode && 
         smTradChinese != m_scriptcode && smSimpChinese != m_scriptcode) {
-      for (int i = 0; i < str_len; i++) {
-        *key++ = (PRUint8) mac_sort_tbl_search((const unsigned char) str[i], m_mac_sort_tbl);
+      while (*str) {
+        *str = (PRUint8) mac_sort_tbl_search((const unsigned char) *str, m_mac_sort_tbl);
+        ++str;
       }
     }
-    else {
-      // No CJK support, just copy the row string.
-      // Collation key is not a string, use memcpy instead of strcpy.
-      memcpy(key, str, str_len);
-      PRUint8 *end = key + str_len;
-      while (key < end) {
-        if ((unsigned char) *key < 128) {
-          key++;
+    // No CJK support, just copy the row string.
+    // ShiftJIS specific, shift hankaku kana in front of zenkaku.
+    else if (smJapanese == m_scriptcode) {
+      while (*str) {
+        if ((unsigned char) *str >= 0xA0 && (unsigned char) *str < 0xE0) {
+          *str -= (0xA0 - 0x81);
         }
-        else {
-          // ShiftJIS specific, shift hankaku kana in front of zenkaku.
-          if (smJapanese == m_scriptcode) {
-            if (*key >= 0xA0 && *key < 0xE0) {
-              *key -= (0xA0 - 0x81);
-            }
-            else if (*key >= 0x81 && *key < 0xA0) {
-              *key += (0xE0 - 0xA0);
-            } 
-          }
-          // advance 2 bytes if the API says so and not passing the end of the string
-          key += ((smFirstByte == CharacterByteType((Ptr) key, 0, m_scriptcode)) &&
-                  (*(key + 1))) ? 2 : 1;
+        else if ((unsigned char) *str >= 0x81 && (unsigned char) *str < 0xA0) {
+          *str += (0xE0 - 0xA0);
+        } 
+        // advance 2 bytes if the API says so and not passing the end of the string
+        if (CharacterByteType((Ptr) str, 0, m_scriptcode) == smFirstByte) {
+          ++str;
+          if (!*str)
+            break;
         }
+      ++str;
       }
     }
-    *outLen = str_len;
-    PR_Free(str);
   }
 
   return NS_OK;

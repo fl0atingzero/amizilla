@@ -45,6 +45,7 @@ REQUIRES	= xpcom \
 		  locale \
 		  necko \
 		  content \
+		  dom \
 		  layout \
 		  imglib2 \
 		  $(NULL)
@@ -149,7 +150,16 @@ EXTRA_DSO_LDOPTS += \
 		-lgtksuperwin \
 		$(MOZ_COMPONENT_LIBS) \
 		$(MOZ_JS_LIBS) \
+		$(MOZ_UNICHARUTIL_LIBS) \
 		$(NULL)
+endif
+
+ifdef MOZ_ENABLE_XFT
+libs:: fontEncoding.properties
+	$(INSTALL) $^ $(DIST)/bin/res/fonts
+ 
+install:: fontEncoding.properties
+	$(SYSINSTALL) $(IFLAGS1) $^ $(DESTDIR)$(mozappdir)/res/fonts
 endif
 
 ifdef MOZ_ENABLE_GTK2
@@ -158,6 +168,7 @@ EXTRA_DSO_LDOPTS += $(MOZ_COMPONENT_LIBS) \
 		-lgfxshared_s \
 		$(GFX_XINERAMA_LIBS) \
 		$(MOZ_JS_LIBS) \
+		$(MOZ_UNICHARUTIL_LIBS) \
 		$(NULL)
 endif
 

@@ -47,8 +47,8 @@
 #include "nsRecyclingAllocator.h"
 #include "nsIThread.h"
 #include "nsDeque.h"
-#include "nsObserver.h"
 #include "nsTraceRefcnt.h"
+#include "nsTraceRefcntImpl.h"
 #include "nsXPIDLString.h"
 #include "nsIEnumerator.h"
 #include "nsEnumeratorUtils.h"
@@ -59,14 +59,13 @@
 #include "nsArray.h"
 #include "nsArrayEnumerator.h"
 #include "nsProxyEventPrivate.h"
+#include "nsProxyRelease.h"
 #include "xpt_xdr.h"
 #include "xptcall.h"
 #include "nsILocalFile.h"
 #include "nsIGenericFactory.h"
-#include "nsHashtableEnumerator.h"
 #include "nsIPipe.h"
 #include "nsStreamUtils.h"
-#include "nsCWeakReference.h"
 #include "nsWeakReference.h"
 #include "nsTextFormatter.h"
 #include "nsIStorageStream.h"
@@ -77,7 +76,6 @@
 #include "nsReadableUtils.h"
 #include "nsStaticNameTable.h"
 #include "nsProcess.h"
-#include "nsSlidingString.h"
 #include "nsStringEnumerator.h"
 #include "nsIInputStreamTee.h"
 #include "nsCheapSets.h"
@@ -89,6 +87,10 @@
 #include "pldhash.h"
 #include "nsVariant.h"
 #include "nsEscape.h"
+#include "nsStreamUtils.h"
+
+#define NS_STRINGAPI_IMPL
+#include "nsStringAPI.h"
 
 void XXXNeverCalled()
 {
@@ -109,7 +111,7 @@ void XXXNeverCalled()
     NS_NewPipe2(nsnull, nsnull, PR_FALSE, PR_FALSE, 0, 0, nsnull);
     NS_NewInputStreamReadyEvent(nsnull, nsnull, nsnull);
     NS_NewOutputStreamReadyEvent(nsnull, nsnull, nsnull);
-    NS_AsyncCopy(nsnull, nsnull, PR_TRUE, PR_TRUE, 0, 0, nsnull);
+    NS_AsyncCopy(nsnull, nsnull, nsnull, NS_ASYNCCOPY_VIA_READSEGMENTS, 0, nsnull, nsnull);
     PL_DHashStubEnumRemove(nsnull, nsnull, nsnull, nsnull);
     nsIDHashKey::HashKey(nsnull);
     nsFixedSizeAllocator a;
@@ -119,13 +121,14 @@ void XXXNeverCalled()
     a.Free(0, 0);
     nsIThread::GetCurrent(nsnull);
     nsDeque(nsnull);
-    NS_NewObserver(nsnull, nsnull);
-    nsTraceRefcnt::DumpStatistics();
+    nsTraceRefcnt::LogAddCOMPtr(nsnull, nsnull);
+    nsTraceRefcntImpl::DumpStatistics();
     NS_NewEmptyEnumerator(nsnull);
-    nsArrayEnumerator(nsnull);
+    new nsArrayEnumerator(nsnull);
     NS_QuickSort(nsnull, 0, 0, nsnull, nsnull);
     nsString();
     nsProxyObject(nsnull, 0, nsnull);
+    NS_ProxyRelease(nsnull, nsnull, PR_FALSE);
     XPT_DoString(nsnull, nsnull, nsnull);
     XPT_DoHeader(nsnull, nsnull, nsnull);
 #ifdef DEBUG
@@ -137,9 +140,6 @@ void XXXNeverCalled()
     XPTI_GetInterfaceInfoManager();
     NS_NewGenericFactory(nsnull, nsnull);
     NS_NewGenericModule2(nsnull, nsnull);
-    NS_NewHashtableEnumerator(nsnull, nsnull, nsnull, nsnull);
-    nsCWeakProxy(0, 0);
-    nsCWeakReferent(0);
     NS_GetWeakReference(nsnull);
     nsCOMPtr<nsISupports> dummyFoo(do_GetInterface(nsnull));
     NS_NewByteArrayInputStream(nsnull, nsnull, 0);
@@ -150,22 +150,22 @@ void XXXNeverCalled()
     nsLinebreakConverter::eLinebreakAny, nsLinebreakConverter::eLinebreakContent);
     NS_NewLocalFile(nsString(), PR_FALSE, nsnull);
     NS_NewNativeLocalFile(nsCString(), PR_FALSE, nsnull);
-    nsProcess();
+    new nsProcess();
     nsStaticCaseInsensitiveNameTable();
     nsAutoString str1;
+    str1.AssignWithConversion(nsnull, 0);
     nsCAutoString str2;
     ToNewUnicode(str1);
     ToNewUnicode(str2);
     ToNewCString(str1);
     ToNewCString(str2);
     PL_DHashTableFinish(nsnull);
-    nsSlidingString sliding(nsnull, nsnull, nsnull);
     NS_NewInputStreamTee(nsnull, nsnull, nsnull);
     NS_NewArray(nsnull);
     nsCOMArray<nsISupports> dummyArray;
     NS_NewArray(nsnull, dummyArray);
     NS_NewArrayEnumerator(nsnull, dummyArray);
-    nsVariant();
+    new nsVariant();
     nsUnescape(nsnull);
     nsEscape(nsnull, url_XAlphas);
     nsStringArray array;
@@ -174,4 +174,29 @@ void XXXNeverCalled()
     nsCStringArray carray;
     NS_NewUTF8StringEnumerator(nsnull, &carray);
     NS_NewAdoptingUTF8StringEnumerator(nsnull, &carray);
+    nsVoidableString str3;
+    nsCStringContainer sc1;
+    NS_CStringContainerInit(sc1);
+    NS_CStringContainerFinish(sc1);
+    NS_CStringGetData(str2, nsnull, nsnull);
+    NS_CStringSetData(str2, nsnull, 0);
+    NS_CStringSetDataRange(str2, 0, 0, nsnull, 0);
+    NS_CStringCopy(str2, str2);
+    nsStringContainer sc2;
+    NS_StringContainerInit(sc2);
+    NS_StringContainerFinish(sc2);
+    NS_StringGetData(str1, nsnull, nsnull);
+    NS_StringSetData(str1, nsnull, 0);
+    NS_StringSetDataRange(str1, 0, 0, nsnull, 0);
+    NS_StringCopy(str1, str1);
+    {
+      nsAdoptingCString foo, bar;
+      foo = bar;
+    }
+    {
+      nsAdoptingString foo, bar;
+      foo = bar;
+    }
+    NS_UTF16ToCString(str1, NS_CSTRING_ENCODING_ASCII, str2);
+    NS_CStringToUTF16(str2, NS_CSTRING_ENCODING_ASCII, str1);
 }

@@ -62,10 +62,12 @@
 #include "nsIUnicodeDecodeHelper.h"
 #include "nsIUnicodeEncodeHelper.h"
 #include "nsCharsetConverterManager.h"
+
+#ifdef MOZ_USE_NATIVE_UCONV
 #include "nsNativeUConvService.h"
+#endif
 
 static NS_DEFINE_CID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
-static NS_DEFINE_CID(kLocaleServiceCID, NS_LOCALESERVICE_CID); 
 static NS_DEFINE_CID(kCharsetAliasCID, NS_CHARSETALIAS_CID);
 
 // Pattern of cached, commonly used, single byte decoder
@@ -101,7 +103,7 @@ nsresult nsCharsetConverterManager::RegisterConverterManagerData()
   RegisterConverterCategory(catman, NS_TITLE_BUNDLE_CATEGORY,
                             "chrome://global/locale/charsetTitles.properties");
   RegisterConverterCategory(catman, NS_DATA_BUNDLE_CATEGORY,
-                            "resource:/res/charsetData.properties");
+                            "resource://gre/res/charsetData.properties");
 
   return NS_OK;
 }
@@ -343,14 +345,14 @@ NS_IMETHODIMP
 nsCharsetConverterManager::GetDecoderList(nsIUTF8StringEnumerator ** aResult)
 {
   return GetList(NS_LITERAL_CSTRING(NS_UNICODEDECODER_NAME),
-                 NS_LITERAL_CSTRING(""), aResult);
+                 EmptyCString(), aResult);
 }
 
 NS_IMETHODIMP
 nsCharsetConverterManager::GetEncoderList(nsIUTF8StringEnumerator ** aResult)
 {
   return GetList(NS_LITERAL_CSTRING(NS_UNICODEENCODER_NAME),
-                 NS_LITERAL_CSTRING(""), aResult);
+                 EmptyCString(), aResult);
 }
 
 NS_IMETHODIMP
@@ -432,7 +434,9 @@ nsCharsetConverterManager::GetCharsetLangGroup(const char * aCharset,
 {
   // resolve the charset first
   nsCAutoString charset;
-  GetCharsetAlias(aCharset, charset);
+
+  nsresult rv = GetCharsetAlias(aCharset, charset);
+  if (NS_FAILED(rv)) return rv;
 
   // fully qualify to possibly avoid vtable call
   return nsCharsetConverterManager::GetCharsetLangGroupRaw(charset.get(),
@@ -453,17 +457,9 @@ nsCharsetConverterManager::GetCharsetLangGroupRaw(const char * aCharset,
     if (NS_FAILED(res)) return res;
   }
 
-  nsCAutoString alias;
-  res = GetCharsetAlias(aCharset, alias);
-
-  if (NS_FAILED(res)) return res;
-
   nsAutoString langGroup;
-  res = GetBundleValue(mDataBundle, alias.get(), NS_LITERAL_STRING(".LangGroup"), langGroup);
+  res = GetBundleValue(mDataBundle, aCharset, NS_LITERAL_STRING(".LangGroup"), langGroup);
 
-  nsCOMPtr<nsIAtom> langGroupAtom = NS_NewAtom(langGroup);
-
-  NS_ADDREF(*aResult = langGroupAtom);
-  
+  *aResult = NS_NewAtom(langGroup);
   return res;
 }

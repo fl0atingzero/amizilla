@@ -43,9 +43,10 @@
 
 #include "nsIEditor.h"
 #include "nsIHTMLEditor.h"
-#include "nsIEditingSession.h"
+#include "nsIHTMLAbsPosEditor.h"
 
 #include "nsIDOMElement.h"
+#include "nsIAtom.h"
 
 #include "nsIClipboard.h"
 
@@ -53,6 +54,7 @@
 
 #include "nsComposerCommands.h"
 #include "nsReadableUtils.h"
+#include "nsUnicharUtils.h"
 #include "nsICommandParams.h"
 #include "nsComponentManagerUtils.h"
 #include "nsCRT.h"
@@ -100,7 +102,7 @@ nsBaseStateUpdatingCommand::~nsBaseStateUpdatingCommand()
 {
 }
 
-NS_IMPL_ISUPPORTS_INHERITED0(nsBaseStateUpdatingCommand, nsBaseComposerCommand);
+NS_IMPL_ISUPPORTS_INHERITED0(nsBaseStateUpdatingCommand, nsBaseComposerCommand)
 
 NS_IMETHODIMP
 nsBaseStateUpdatingCommand::IsCommandEnabled(const char *aCommandName,
@@ -224,8 +226,8 @@ nsStyleUpdatingCommand::GetCurrentState(nsIEditor *aEditor,
   PRBool allOfSelectionHasProp = PR_FALSE;
 
   nsCOMPtr<nsIAtom> styleAtom = do_GetAtom(aTagName);
-  rv = htmlEditor->GetInlineProperty(styleAtom, NS_LITERAL_STRING(""), 
-                                     NS_LITERAL_STRING(""), 
+  rv = htmlEditor->GetInlineProperty(styleAtom, EmptyString(), 
+                                     EmptyString(), 
                                      &firstOfSelectionHasProp, 
                                      &anyOfSelectionHasProp, 
                                      &allOfSelectionHasProp);
@@ -352,8 +354,7 @@ nsListCommand::ToggleState(nsIEditor *aEditor, const char* aTagName)
     rv = editor->RemoveList(listType);    
   else
   {
-    nsString empty;
-    rv = editor->MakeOrChangeList(listType, PR_FALSE, empty);
+    rv = editor->MakeOrChangeList(listType, PR_FALSE, EmptyString());
   }
   
   return rv;
@@ -483,7 +484,7 @@ nsRemoveListCommand::DoCommand(const char *aCommandName, nsISupports *refCon)
   if (editor)
   {
     // This removes any list type
-    rv = editor->RemoveList(nsString());
+    rv = editor->RemoveList(EmptyString());
   }
 
   return rv;  
@@ -617,7 +618,7 @@ nsMultiStateCommand::~nsMultiStateCommand()
 {
 }
 
-NS_IMPL_ISUPPORTS_INHERITED0(nsMultiStateCommand, nsBaseComposerCommand);
+NS_IMPL_ISUPPORTS_INHERITED0(nsMultiStateCommand, nsBaseComposerCommand)
 
 NS_IMETHODIMP
 nsMultiStateCommand::IsCommandEnabled(const char * aCommandName,
@@ -748,7 +749,7 @@ nsFontFaceStateCommand::GetCurrentState(nsIEditor *aEditor,
   if (NS_SUCCEEDED(rv))
   {
     aParams->SetBooleanValue(STATE_MIXED,outMixed);
-    aParams->SetStringValue(STATE_ATTRIBUTE, outStateString);
+    aParams->SetCStringValue(STATE_ATTRIBUTE, NS_ConvertUTF16toUTF8(outStateString).get());
   }
   return rv;
 }
@@ -768,15 +769,15 @@ nsFontFaceStateCommand::SetState(nsIEditor *aEditor, nsString& newState)
   if (newState.Equals(NS_LITERAL_STRING("tt")))
   {
     // The old "teletype" attribute  
-    rv = htmlEditor->SetInlineProperty(ttAtom, NS_LITERAL_STRING(""), 
-                                       NS_LITERAL_STRING(""));  
+    rv = htmlEditor->SetInlineProperty(ttAtom, EmptyString(), 
+                                       EmptyString());  
     // Clear existing font face
     rv = htmlEditor->RemoveInlineProperty(fontAtom, NS_LITERAL_STRING("face"));
   }
   else
   {
     // Remove any existing TT nodes
-    rv = htmlEditor->RemoveInlineProperty(ttAtom, NS_LITERAL_STRING(""));  
+    rv = htmlEditor->RemoveInlineProperty(ttAtom, EmptyString());  
 
     if (newState.IsEmpty() || newState.Equals(NS_LITERAL_STRING("normal"))) {
       rv = htmlEditor->RemoveInlineProperty(fontAtom, NS_LITERAL_STRING("face"));
@@ -813,7 +814,7 @@ nsFontSizeStateCommand::GetCurrentState(nsIEditor *aEditor,
   PRBool firstHas, anyHas, allHas;
   nsresult rv = htmlEditor->GetInlinePropertyWithAttrValue(fontAtom,
                                          NS_LITERAL_STRING("size"),
-                                         NS_LITERAL_STRING(""),
+                                         EmptyString(),
                                          &firstHas, &anyHas, &allHas,
                                          outStateString);
   if (NS_FAILED(rv)) return rv;
@@ -854,11 +855,11 @@ nsFontSizeStateCommand::SetState(nsIEditor *aEditor, nsString& newState)
     if (NS_FAILED(rv)) return rv;
 
     nsCOMPtr<nsIAtom> bigAtom = do_GetAtom("big");
-    rv = htmlEditor->RemoveInlineProperty(bigAtom, NS_LITERAL_STRING(""));  
+    rv = htmlEditor->RemoveInlineProperty(bigAtom, EmptyString());  
     if (NS_FAILED(rv)) return rv;
 
     nsCOMPtr<nsIAtom> smallAtom = do_GetAtom("small");
-    rv = htmlEditor->RemoveInlineProperty(smallAtom, NS_LITERAL_STRING(""));  
+    rv = htmlEditor->RemoveInlineProperty(smallAtom, EmptyString());  
     if (NS_FAILED(rv)) return rv;
   } else {
     // set the size
@@ -1090,6 +1091,201 @@ nsAlignCommand::SetState(nsIEditor *aEditor, nsString& newState)
 #pragma mark -
 #endif
 
+
+nsAbsolutePositioningCommand::nsAbsolutePositioningCommand()
+: nsBaseStateUpdatingCommand("")
+{
+}
+
+NS_IMETHODIMP
+nsAbsolutePositioningCommand::IsCommandEnabled(const char * aCommandName,
+                                               nsISupports *aCommandRefCon,
+                                               PRBool *_retval)
+{
+  NS_ASSERTION(aCommandRefCon, "Need an editor here");
+  
+  nsCOMPtr<nsIHTMLAbsPosEditor> htmlEditor = do_QueryInterface(aCommandRefCon);
+  if (!htmlEditor) return NS_ERROR_FAILURE;
+
+  htmlEditor->GetAbsolutePositioningEnabled(_retval);
+  return NS_OK;
+}
+
+nsresult
+nsAbsolutePositioningCommand::GetCurrentState(nsIEditor *aEditor, const char* aTagName, nsICommandParams *aParams)
+{
+  NS_ASSERTION(aEditor, "Need an editor here");
+  
+  nsCOMPtr<nsIHTMLAbsPosEditor> htmlEditor = do_QueryInterface(aEditor);
+  if (!htmlEditor) return NS_ERROR_FAILURE;
+
+  PRBool isEnabled;
+  htmlEditor->GetAbsolutePositioningEnabled(&isEnabled);
+  if (!isEnabled) {
+    aParams->SetBooleanValue(STATE_MIXED,PR_FALSE);
+    aParams->SetCStringValue(STATE_ATTRIBUTE, "");
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIDOMElement>  elt;
+  nsresult rv = htmlEditor->GetAbsolutelyPositionedSelectionContainer(getter_AddRefs(elt));
+  if (NS_FAILED(rv)) 
+    return rv;
+
+  nsAutoString outStateString;
+  if (elt)
+    outStateString.Assign(NS_LITERAL_STRING("absolute"));
+
+  aParams->SetBooleanValue(STATE_MIXED,PR_FALSE);
+  aParams->SetCStringValue(STATE_ATTRIBUTE, NS_ConvertUCS2toUTF8(outStateString).get());
+  return NS_OK;
+}
+
+nsresult
+nsAbsolutePositioningCommand::ToggleState(nsIEditor *aEditor, const char* aTagName)
+{
+  NS_ASSERTION(aEditor, "Need an editor here");
+  
+  nsCOMPtr<nsIHTMLAbsPosEditor> htmlEditor = do_QueryInterface(aEditor);
+  if (!htmlEditor) return NS_ERROR_FAILURE;
+
+  nsCOMPtr<nsIDOMElement>  elt;
+  nsresult rv = htmlEditor->GetAbsolutelyPositionedSelectionContainer(getter_AddRefs(elt));
+  if (NS_FAILED(rv)) return rv;
+
+  if (elt) {
+    // we have to remove positioning on an element
+    rv = htmlEditor->AbsolutePositionSelection(PR_FALSE);
+  }
+  else {
+    rv = htmlEditor->AbsolutePositionSelection(PR_TRUE);
+  }
+  return rv;
+}
+
+
+#ifdef XP_MAC
+#pragma mark -
+#endif
+
+NS_IMETHODIMP
+nsDecreaseZIndexCommand::IsCommandEnabled(const char * aCommandName,
+                                          nsISupports *refCon,
+                                          PRBool *outCmdEnabled)
+{
+  nsCOMPtr<nsIHTMLAbsPosEditor> htmlEditor = do_QueryInterface(refCon);
+  if (!htmlEditor) return NS_ERROR_FAILURE;
+
+  htmlEditor->GetAbsolutePositioningEnabled(outCmdEnabled);
+  if (!(*outCmdEnabled))
+    return NS_OK;
+
+  nsCOMPtr<nsIDOMElement> positionedElement;
+  htmlEditor->GetPositionedElement(getter_AddRefs(positionedElement));
+  *outCmdEnabled = PR_FALSE;
+  if (positionedElement) {
+    PRInt32 z;
+    nsresult res = htmlEditor->GetElementZIndex(positionedElement, &z);
+    if (NS_FAILED(res)) return res;
+    *outCmdEnabled = (z > 0);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDecreaseZIndexCommand::DoCommand(const char *aCommandName,
+                                   nsISupports *refCon)
+{
+  nsCOMPtr<nsIHTMLAbsPosEditor> htmlEditor = do_QueryInterface(refCon);
+  if (!htmlEditor)
+    return NS_ERROR_NOT_IMPLEMENTED;
+
+  return htmlEditor->RelativeChangeZIndex(-1);
+}
+
+NS_IMETHODIMP
+nsDecreaseZIndexCommand::DoCommandParams(const char *aCommandName,
+                                         nsICommandParams *aParams, 
+                                         nsISupports *refCon)
+{
+  return DoCommand(aCommandName, refCon);
+}
+
+NS_IMETHODIMP
+nsDecreaseZIndexCommand::GetCommandStateParams(const char *aCommandName,
+                                               nsICommandParams *aParams,
+                                               nsISupports *refCon)
+{
+  NS_ENSURE_ARG_POINTER(aParams);
+
+  PRBool enabled = PR_FALSE;
+  nsresult rv = IsCommandEnabled(aCommandName, refCon, &enabled);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return aParams->SetBooleanValue(STATE_ENABLED, enabled);
+}
+
+#ifdef XP_MAC
+#pragma mark -
+#endif
+
+NS_IMETHODIMP
+nsIncreaseZIndexCommand::IsCommandEnabled(const char * aCommandName,
+                                          nsISupports *refCon,
+                                          PRBool *outCmdEnabled)
+{
+  nsCOMPtr<nsIHTMLAbsPosEditor> htmlEditor = do_QueryInterface(refCon);
+  if (!htmlEditor) return NS_ERROR_FAILURE;
+
+  htmlEditor->GetAbsolutePositioningEnabled(outCmdEnabled);
+  if (!(*outCmdEnabled))
+    return NS_OK;
+
+  nsCOMPtr<nsIDOMElement> positionedElement;
+  htmlEditor->GetPositionedElement(getter_AddRefs(positionedElement));
+  *outCmdEnabled = (nsnull != positionedElement);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsIncreaseZIndexCommand::DoCommand(const char *aCommandName,
+                                   nsISupports *refCon)
+{
+  nsCOMPtr<nsIHTMLAbsPosEditor> htmlEditor = do_QueryInterface(refCon);
+  if (!htmlEditor)
+    return NS_ERROR_NOT_IMPLEMENTED;
+
+  return htmlEditor->RelativeChangeZIndex(1);
+}
+
+NS_IMETHODIMP
+nsIncreaseZIndexCommand::DoCommandParams(const char *aCommandName,
+                                         nsICommandParams *aParams, 
+                                         nsISupports *refCon)
+{
+  return DoCommand(aCommandName, refCon);
+}
+
+NS_IMETHODIMP
+nsIncreaseZIndexCommand::GetCommandStateParams(const char *aCommandName,
+                                               nsICommandParams *aParams,
+                                               nsISupports *refCon)
+{
+  NS_ENSURE_ARG_POINTER(aParams);
+
+  PRBool enabled = PR_FALSE;
+  nsresult rv = IsCommandEnabled(aCommandName, refCon, &enabled);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return aParams->SetBooleanValue(STATE_ENABLED, enabled);
+}
+
+#ifdef XP_MAC
+#pragma mark -
+#endif
+
+
 NS_IMETHODIMP
 nsRemoveStylesCommand::IsCommandEnabled(const char * aCommandName,
                                         nsISupports *refCon,
@@ -1296,7 +1492,7 @@ nsInsertHTMLCommand::GetCommandStateParams(const char *aCommandName,
 #pragma mark -
 #endif
 
-NS_IMPL_ISUPPORTS_INHERITED0(nsInsertTagCommand, nsBaseComposerCommand);
+NS_IMPL_ISUPPORTS_INHERITED0(nsInsertTagCommand, nsBaseComposerCommand)
 
 nsInsertTagCommand::nsInsertTagCommand(const char* aTagName)
 : nsBaseComposerCommand()

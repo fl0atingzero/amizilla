@@ -206,7 +206,7 @@ NS_IMETHODIMP nsImapUrl::GetFolder(nsIMsgFolder **aMsgFolder)
 NS_IMETHODIMP nsImapUrl::SetFolder(nsIMsgFolder  * aMsgFolder)
 {
   nsresult rv;
-  m_imapFolder = getter_AddRefs(NS_GetWeakReference(aMsgFolder, &rv));
+  m_imapFolder = do_GetWeakReference(aMsgFolder, &rv);
   return rv;
 }
 
@@ -226,7 +226,7 @@ NS_IMETHODIMP nsImapUrl::GetImapMailFolderSink(nsIImapMailFolderSink **
 NS_IMETHODIMP nsImapUrl::SetImapMailFolderSink(nsIImapMailFolderSink  * aImapMailFolderSink)
 {
     nsresult rv;
-    m_imapMailFolderSink = getter_AddRefs(NS_GetWeakReference(aImapMailFolderSink, &rv));
+    m_imapMailFolderSink = do_GetWeakReference(aImapMailFolderSink, &rv);
     return rv;
 }
  
@@ -244,7 +244,7 @@ NS_IMETHODIMP nsImapUrl::GetImapMessageSink(nsIImapMessageSink ** aImapMessageSi
 NS_IMETHODIMP nsImapUrl::SetImapMessageSink(nsIImapMessageSink  * aImapMessageSink)
 {
   nsresult rv;
-  m_imapMessageSink = getter_AddRefs(NS_GetWeakReference(aImapMessageSink, &rv));
+  m_imapMessageSink = do_GetWeakReference(aImapMessageSink, &rv);
   return rv;
 }
 
@@ -262,7 +262,7 @@ NS_IMETHODIMP nsImapUrl::GetImapServerSink(nsIImapServerSink ** aImapServerSink)
 NS_IMETHODIMP nsImapUrl::SetImapServerSink(nsIImapServerSink  * aImapServerSink)
 {
   nsresult rv;
-  m_imapServerSink = getter_AddRefs(NS_GetWeakReference(aImapServerSink, &rv));
+  m_imapServerSink = do_GetWeakReference(aImapServerSink, &rv);
   return rv;
 }
 
@@ -280,7 +280,7 @@ NS_IMETHODIMP nsImapUrl::GetImapExtensionSink(nsIImapExtensionSink ** aImapExten
 NS_IMETHODIMP nsImapUrl::SetImapExtensionSink(nsIImapExtensionSink  * aImapExtensionSink)
 {
   nsresult rv;
-  m_imapExtensionSink = getter_AddRefs(NS_GetWeakReference(aImapExtensionSink, &rv));
+  m_imapExtensionSink = do_GetWeakReference(aImapExtensionSink, &rv);
   return rv;
 }
 
@@ -300,7 +300,7 @@ NS_IMETHODIMP nsImapUrl::SetImapMiscellaneousSink(nsIImapMiscellaneousSink  *
                                               aImapMiscellaneousSink)
 {
   nsresult rv;
-  m_imapMiscellaneousSink = getter_AddRefs(NS_GetWeakReference(aImapMiscellaneousSink, &rv));
+  m_imapMiscellaneousSink = do_GetWeakReference(aImapMiscellaneousSink, &rv);
   return rv;
 }
 
@@ -336,7 +336,7 @@ nsresult nsImapUrl::ParseUrl()
   NS_UnescapeURL(imapPartOfUrl);
   if (NS_SUCCEEDED(rv) && !imapPartOfUrl.IsEmpty())
   {
-    ParseImapPart((char*)imapPartOfUrl.get()+1);  // GetPath leaves leading '/' in the path!!!
+    ParseImapPart(imapPartOfUrl.BeginWriting()+1);  // GetPath leaves leading '/' in the path!!!
   }
   
   return NS_OK;
@@ -816,99 +816,119 @@ void nsImapUrl::ParseImapPart(char *imapPartOfUrl)
 // Otherwise, returns a newly allocated name.
 NS_IMETHODIMP nsImapUrl::AddOnlineDirectoryIfNecessary(const char *onlineMailboxName, char ** directory)
 {
-    nsresult rv;
-    nsXPIDLCString serverKey;
-    nsString aString;
-    nsCOMPtr<nsIMsgIncomingServer> server;
-    char *newOnlineName = nsnull;
+  nsresult rv;
+  nsXPIDLCString serverKey;
+  nsString aString;
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  char *newOnlineName = nsnull;
+  
+  nsCOMPtr<nsIImapHostSessionList> hostSessionList = 
+    do_GetService(kCImapHostSessionListCID, &rv);
+  if (NS_FAILED(rv)) return rv;
+  rv = GetServer(getter_AddRefs(server));
+  if (NS_FAILED(rv)) return rv;
+  rv = server->GetKey(getter_Copies(serverKey));
+  if (NS_FAILED(rv)) return rv;
+  rv = hostSessionList->GetOnlineDirForHost(serverKey, aString);
+  nsCAutoString onlineDir;
+  onlineDir.AssignWithConversion(aString);
+  
+  // If this host has an online server directory configured
+  if (onlineMailboxName && !onlineDir.IsEmpty())
+  {
+    nsIMAPNamespace *ns = nsnull;
+    rv = hostSessionList->GetNamespaceForMailboxForHost(serverKey,
+      onlineMailboxName, ns); 
+    if (!ns)
+       hostSessionList->GetDefaultNamespaceOfTypeForHost(serverKey, kPersonalNamespace, ns);
     
-    nsCOMPtr<nsIImapHostSessionList> hostSessionList = 
-             do_GetService(kCImapHostSessionListCID, &rv);
-    if (NS_FAILED(rv)) return rv;
-    rv = GetServer(getter_AddRefs(server));
-    if (NS_FAILED(rv)) return rv;
-    rv = server->GetKey(getter_Copies(serverKey));
-    if (NS_FAILED(rv)) return rv;
-    rv = hostSessionList->GetOnlineDirForHost(serverKey, aString);
-    char *onlineDir = !aString.IsEmpty() ? ToNewCString(aString) : nsnull;
-
-	// If this host has an online server directory configured
-	if (onlineMailboxName && onlineDir)
-	{
-        nsIMAPNamespace *ns = nsnull;
-		rv = hostSessionList->GetNamespaceForMailboxForHost(serverKey,
-                                                            onlineMailboxName,
-                                                            ns); 
-
-		NS_ASSERTION(ns, "couldn't find namespace for host");
-		if (ns && (PL_strlen(ns->GetPrefix()) == 0) &&
-            PL_strcasecmp(onlineMailboxName, "INBOX"))
-		{
-                        // Make sure onlineDir have the namespace delimiter
-                        char delimiter = ns->GetDelimiter();
-                        nsCAutoString onlineDirWithDelimiter(onlineDir);
-                        if ( delimiter && delimiter != kOnlineHierarchySeparatorUnknown )
-                        {
-                            // try to change the canonical online dir name to real dir name first
-                            onlineDirWithDelimiter.ReplaceChar('/', delimiter);
-                            // make sure the last character is the delimiter
-                            if ( onlineDirWithDelimiter.Last() != delimiter )
-		  	        onlineDirWithDelimiter += delimiter;
-                            if ( !*onlineMailboxName )
-                                onlineDirWithDelimiter.SetLength(
-                                           onlineDirWithDelimiter.Length()-1);
-                        }
-
-			// The namespace for this mailbox is the root ("").
-			// Prepend the online server directory
-			int finalLen = onlineDirWithDelimiter.Length() +
-			               strlen(onlineMailboxName) + 1;
-			newOnlineName = (char *)PR_Malloc(finalLen);
-			if (newOnlineName)
-			{
-				PL_strcpy(newOnlineName, onlineDirWithDelimiter.get());
-				PL_strcat(newOnlineName, onlineMailboxName);
-			}
-		}
-	}
-	if (directory)
-		*directory = newOnlineName;
-	else if (newOnlineName)
-		nsCRT::free(newOnlineName);
-	return rv;
+    if (PL_strcasecmp(onlineMailboxName, "INBOX"))
+    {
+      NS_ASSERTION(ns, "couldn't find namespace for host");
+      nsCAutoString onlineDirWithDelimiter(onlineDir);
+      // make sure the onlineDir ends with the hierarchy delimiter
+      if (ns)
+      {
+        char delimiter = ns->GetDelimiter();
+        if ( delimiter && delimiter != kOnlineHierarchySeparatorUnknown )
+        {
+          // try to change the canonical online dir name to real dir name first
+          onlineDirWithDelimiter.ReplaceChar('/', delimiter);
+          // make sure the last character is the delimiter
+          if ( onlineDirWithDelimiter.Last() != delimiter )
+            onlineDirWithDelimiter += delimiter;
+          if ( !*onlineMailboxName )
+            onlineDirWithDelimiter.SetLength(onlineDirWithDelimiter.Length()-1);
+        }
+      }
+      if (ns && (PL_strlen(ns->GetPrefix()) != 0) && !onlineDirWithDelimiter.Equals(ns->GetPrefix()))
+      {
+        // check that onlineMailboxName doesn't start with the namespace. If that's the case,
+        // we don't want to prepend the online dir.
+        if (PL_strncmp(onlineMailboxName, ns->GetPrefix(), PL_strlen(ns->GetPrefix())))
+        {
+          // The namespace for this mailbox is the root ("").
+          // Prepend the online server directory
+          int finalLen = onlineDirWithDelimiter.Length() +
+            strlen(onlineMailboxName) + 1;
+          newOnlineName = (char *)PR_Malloc(finalLen);
+          if (newOnlineName)
+          {
+            PL_strcpy(newOnlineName, onlineDirWithDelimiter.get());
+            PL_strcat(newOnlineName, onlineMailboxName);
+          }
+        }
+      }
+      // just prepend the online server directory if it doesn't start with it already
+      else if (strncmp(onlineMailboxName, onlineDirWithDelimiter.get(), onlineDirWithDelimiter.Length()))
+      {
+        newOnlineName = (char *)PR_Malloc(strlen(onlineMailboxName) + onlineDirWithDelimiter.Length() + 1);
+        if (newOnlineName)
+        {
+          PL_strcpy(newOnlineName, onlineDirWithDelimiter.get());
+          PL_strcat(newOnlineName, onlineMailboxName);
+        }
+      }
+    }
+  }
+  if (directory)
+    *directory = newOnlineName;
+  else if (newOnlineName)
+    nsCRT::free(newOnlineName);
+  return rv;
 }
 
 // Converts from canonical format (hierarchy is indicated by '/' and all real slashes ('/') are escaped)
 // to the real online name on the server.
 NS_IMETHODIMP nsImapUrl::AllocateServerPath(const char * canonicalPath, char onlineDelimiter, char ** aAllocatedPath)
 {
-	nsresult retVal = NS_OK;
-	char *rv = NULL;
-	char delimiterToUse = onlineDelimiter;
-	if (onlineDelimiter == kOnlineHierarchySeparatorUnknown)
-		GetOnlineSubDirSeparator(&delimiterToUse);
-	NS_ASSERTION(delimiterToUse != kOnlineHierarchySeparatorUnknown, "hierarchy separator unknown");
-	if (canonicalPath)
-		rv = ReplaceCharsInCopiedString(canonicalPath, '/', delimiterToUse);
-	else
+  nsresult retVal = NS_OK;
+  char *rv = NULL;
+  char delimiterToUse = onlineDelimiter;
+  if (onlineDelimiter == kOnlineHierarchySeparatorUnknown)
+    GetOnlineSubDirSeparator(&delimiterToUse);
+  NS_ASSERTION(delimiterToUse != kOnlineHierarchySeparatorUnknown, "hierarchy separator unknown");
+  if (canonicalPath)
+    rv = ReplaceCharsInCopiedString(canonicalPath, '/', delimiterToUse);
+  else
     rv = nsCRT::strdup("");
-
+  
   if (delimiterToUse != '/')
     UnescapeSlashes(rv);
-	char *onlineNameAdded = nsnull;
-	AddOnlineDirectoryIfNecessary(rv, &onlineNameAdded);
-	if (onlineNameAdded)
-	{
+  char *onlineNameAdded = nsnull;
+  AddOnlineDirectoryIfNecessary(rv, &onlineNameAdded);
+  if (onlineNameAdded)
+  {
     nsCRT::free(rv);
-		rv = onlineNameAdded;
-	}
-
-	if (aAllocatedPath)
-		*aAllocatedPath = rv;
-	else
-		nsCRT::free(rv);
-
-	return retVal;
+    rv = onlineNameAdded;
+  }
+  
+  if (aAllocatedPath)
+    *aAllocatedPath = rv;
+  else
+    nsCRT::free(rv);
+  
+  return retVal;
 }
 
 // escape '/' as ^, ^ -> ^^ - use UnescapeSlashes to revert
@@ -986,14 +1006,13 @@ NS_IMETHODIMP nsImapUrl::AllocateServerPath(const char * canonicalPath, char onl
     nsXPIDLCString escapedPath;
 
     EscapeSlashes(folderName, getter_Copies(escapedPath));
-	  canonicalPath = ReplaceCharsInCopiedString(escapedPath, onlineDelimiter ,
-                                                 '/');
+    canonicalPath = ReplaceCharsInCopiedString(escapedPath, onlineDelimiter , '/');
   }
   else
   {
     canonicalPath = nsCRT::strdup(folderName);
   }
-	if (canonicalPath)
+  if (canonicalPath)
     *resultingCanonicalPath = canonicalPath;
 
   return (canonicalPath) ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
@@ -1006,72 +1025,72 @@ NS_IMETHODIMP nsImapUrl::AllocateServerPath(const char * canonicalPath, char onl
 NS_IMETHODIMP nsImapUrl::AllocateCanonicalPath(const char *serverPath, char onlineDelimiter, char **allocatedPath ) 
 {
   nsresult rv = NS_ERROR_NULL_POINTER;
-	char delimiterToUse = onlineDelimiter;
-	char *serverKey = nsnull;
+  char delimiterToUse = onlineDelimiter;
+  char *serverKey = nsnull;
   nsString aString;
-	char *currentPath = (char *) serverPath;
+  char *currentPath = (char *) serverPath;
   nsCAutoString onlineDir;
-	nsCOMPtr<nsIMsgIncomingServer> server;
-
-    nsCOMPtr<nsIImapHostSessionList> hostSessionList = 
-             do_GetService(kCImapHostSessionListCID, &rv);
-
-    *allocatedPath = nsnull;
-
-	if (onlineDelimiter == kOnlineHierarchySeparatorUnknown ||
-		onlineDelimiter == 0)
-		GetOnlineSubDirSeparator(&delimiterToUse);
-
-	NS_ASSERTION (serverPath, "Oops... null serverPath");
-
-	if (!serverPath || NS_FAILED(rv))
-		goto done;
-
-	rv = GetServer(getter_AddRefs(server));
-	if (NS_FAILED(rv))
-		goto done;
-
-	server->GetKey(&serverKey);
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  
+  nsCOMPtr<nsIImapHostSessionList> hostSessionList = 
+    do_GetService(kCImapHostSessionListCID, &rv);
+  
+  *allocatedPath = nsnull;
+  
+  if (onlineDelimiter == kOnlineHierarchySeparatorUnknown ||
+    onlineDelimiter == 0)
+    GetOnlineSubDirSeparator(&delimiterToUse);
+  
+  NS_ASSERTION (serverPath, "Oops... null serverPath");
+  
+  if (!serverPath || NS_FAILED(rv))
+    goto done;
+  
+  rv = GetServer(getter_AddRefs(server));
+  if (NS_FAILED(rv))
+    goto done;
+  
+  server->GetKey(&serverKey);
   hostSessionList->GetOnlineDirForHost(serverKey, aString); 
   // First we have to check to see if we should strip off an online server
   // subdirectory 
-	// If this host has an online server directory configured
-	onlineDir = (char *)(!aString.IsEmpty() ? ToNewCString(aString) : nsnull);
-
-	if (currentPath && !onlineDir.IsEmpty())
-	{
-		// By definition, the online dir must be at the root.
-		if (delimiterToUse && delimiterToUse != kOnlineHierarchySeparatorUnknown)
-		{
-			// try to change the canonical online dir name to real dir name first
-			onlineDir.ReplaceChar('/', delimiterToUse);
-			// Add the delimiter
-			if (onlineDir.Last() != delimiterToUse)
-				onlineDir += delimiterToUse;
-		}
-		int len = onlineDir.Length();
-		if (!PL_strncmp(onlineDir.get(), currentPath, len))
-		{
-			// This online path begins with the server sub directory
-			currentPath += len;
-
-			// This might occur, but it's most likely something not good.
-			// Basically, it means we're doing something on the online sub directory itself.
-			NS_ASSERTION (*currentPath, "Oops ... null currentPath");
-			// Also make sure that the first character in the mailbox name is not '/'.
-			NS_ASSERTION (*currentPath != '/', 
-                          "Oops ... currentPath starts with a slash");
-		}
-	}
-
-
-	if (!currentPath)
-		goto done;
-
+  // If this host has an online server directory configured
+  onlineDir = (char *)(!aString.IsEmpty() ? ToNewCString(aString) : nsnull);
+  
+  if (currentPath && !onlineDir.IsEmpty())
+  {
+    // By definition, the online dir must be at the root.
+    if (delimiterToUse && delimiterToUse != kOnlineHierarchySeparatorUnknown)
+    {
+      // try to change the canonical online dir name to real dir name first
+      onlineDir.ReplaceChar('/', delimiterToUse);
+      // Add the delimiter
+      if (onlineDir.Last() != delimiterToUse)
+        onlineDir += delimiterToUse;
+    }
+    int len = onlineDir.Length();
+    if (!PL_strncmp(onlineDir.get(), currentPath, len))
+    {
+      // This online path begins with the server sub directory
+      currentPath += len;
+      
+      // This might occur, but it's most likely something not good.
+      // Basically, it means we're doing something on the online sub directory itself.
+      NS_ASSERTION (*currentPath, "Oops ... null currentPath");
+      // Also make sure that the first character in the mailbox name is not '/'.
+      NS_ASSERTION (*currentPath != '/', 
+        "Oops ... currentPath starts with a slash");
+    }
+  }
+  
+  
+  if (!currentPath)
+    goto done;
+  
   rv = ConvertToCanonicalFormat(currentPath, delimiterToUse, allocatedPath);
-
+  
 done:
-	PR_FREEIF(serverKey);
+  PR_Free(serverKey);
   return rv;
 }
 
@@ -1079,7 +1098,7 @@ done:
 NS_IMETHODIMP  nsImapUrl::CreateServerSourceFolderPathString(char **result)
 {
   NS_ENSURE_ARG_POINTER(result);
-	AllocateServerPath(m_sourceCanonicalFolderPathSubString, kOnlineHierarchySeparatorUnknown, result);
+  AllocateServerPath(m_sourceCanonicalFolderPathSubString, kOnlineHierarchySeparatorUnknown, result);
   return NS_OK;
 }
 
@@ -1089,7 +1108,7 @@ NS_IMETHODIMP nsImapUrl::CreateCanonicalSourceFolderPathString(char **result)
   NS_ENSURE_ARG_POINTER(result);
   nsAutoCMonitor mon(this);
   *result = nsCRT::strdup(m_sourceCanonicalFolderPathSubString ? m_sourceCanonicalFolderPathSubString : "");
-	return (*result) ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+  return (*result) ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
 // this method is called from the imap thread AND the UI thread...
@@ -1320,50 +1339,15 @@ NS_IMETHODIMP nsImapUrl::GetUri(char** aURI)
   return rv;
 }
 
-NS_IMPL_GETSET(nsImapUrl, AddDummyEnvelope, PRBool, m_addDummyEnvelope);
-NS_IMPL_GETSET(nsImapUrl, CanonicalLineEnding, PRBool, m_canonicalLineEnding);
-NS_IMPL_GETTER(nsImapUrl::GetMsgLoadingFromCache, PRBool, m_msgLoadingFromCache);
-NS_IMPL_GETSET(nsImapUrl, ExternalLinkUrl, PRBool, m_externalLinkUrl);
+NS_IMPL_GETSET(nsImapUrl, AddDummyEnvelope, PRBool, m_addDummyEnvelope)
+NS_IMPL_GETSET(nsImapUrl, CanonicalLineEnding, PRBool, m_canonicalLineEnding)
+NS_IMPL_GETTER(nsImapUrl::GetMsgLoadingFromCache, PRBool, m_msgLoadingFromCache)
+NS_IMPL_GETSET(nsImapUrl, ExternalLinkUrl, PRBool, m_externalLinkUrl)
 
 NS_IMETHODIMP nsImapUrl::SetMsgLoadingFromCache(PRBool loadingFromCache)
 {
   nsresult rv = NS_OK;
   m_msgLoadingFromCache = loadingFromCache;
-  if (loadingFromCache)
-  {
-    nsCOMPtr<nsIMsgFolder> folder;
-    nsMsgKey key;
-
-    nsCAutoString folderURI;
-    rv = nsParseImapMessageURI(mURI.get(), folderURI, &key, nsnull);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    if (m_imapAction != nsImapMsgFetch) // only do this on msg fetch, i.e., if user is reading msg.
-      return rv;
-    rv = GetMsgFolder(getter_AddRefs(folder));
-
-    nsCOMPtr <nsIMsgDatabase> database;
-    if (folder && NS_SUCCEEDED(folder->GetMsgDatabase(nsnull, getter_AddRefs(database))) && database)
-    {
-      PRBool msgRead = PR_TRUE;
-      database->IsRead(key, &msgRead);
-      if (!msgRead)
-      {
-        nsCOMPtr<nsISupportsArray> messages;
-        rv = NS_NewISupportsArray(getter_AddRefs(messages));
-        if (NS_FAILED(rv)) 
-          return rv;
-        nsCOMPtr<nsIMsgDBHdr> message;
-        GetMsgDBHdrFromURI(mURI.get(), getter_AddRefs(message));
-        nsCOMPtr<nsISupports> msgSupport(do_QueryInterface(message, &rv));
-        if (msgSupport)
-        {
-          messages->AppendElement(msgSupport);
-          folder->MarkMessagesRead(messages, PR_TRUE);
-        }
-      }
-    }
-  }
   return rv;
 }
 

@@ -73,7 +73,6 @@ static PRLogModuleInfo *gTestLog = nsnull;
 
 static NS_DEFINE_CID(kSocketTransportServiceCID, NS_SOCKETTRANSPORTSERVICE_CID);
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
-static NS_DEFINE_CID(kEventQueueCID, NS_EVENTQUEUE_CID);
 
 PRBool gDone = PR_FALSE;
 nsIEventQueue* gEventQ = nsnull;
@@ -109,8 +108,8 @@ PostDoneEvent()
 
 ////////////////////////////////////////////////////////////////////////////////
 
-class MyHandler : public nsIOutputStreamNotify
-                , public nsIInputStreamNotify
+class MyHandler : public nsIOutputStreamCallback
+                , public nsIInputStreamCallback
 {
 public:
     NS_DECL_ISUPPORTS
@@ -143,14 +142,14 @@ public:
         if (NS_FAILED(rv) || (n == 0)) {
             if (rv != NS_BASE_STREAM_WOULD_BLOCK) {
                 LOG(("  done writing; starting to read\n"));
-                mInput->AsyncWait(this, 0, nsnull);
+                mInput->AsyncWait(this, 0, 0, nsnull);
                 return NS_OK;
             }
         }
 
         mWriteOffset += n;
 
-        return out->AsyncWait(this, 0, nsnull);
+        return out->AsyncWait(this, 0, 0, nsnull);
     }
 
     // called on any thread
@@ -173,7 +172,7 @@ public:
             }
         }
 
-        return in->AsyncWait(this, 0, nsnull);
+        return in->AsyncWait(this, 0, 0, nsnull);
     }
 
 private:
@@ -184,8 +183,8 @@ private:
 };
 
 NS_IMPL_THREADSAFE_ISUPPORTS2(MyHandler,
-                              nsIOutputStreamNotify,
-                              nsIInputStreamNotify)
+                              nsIOutputStreamCallback,
+                              nsIInputStreamCallback)
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -258,7 +257,7 @@ RunTest(nsISocketTransportService *sts,
         return NS_ERROR_OUT_OF_MEMORY;
     NS_ADDREF(handler);
 
-    rv = asyncOut->AsyncWait(handler, 0, nsnull);
+    rv = asyncOut->AsyncWait(handler, 0, 0, nsnull);
 
     if (NS_SUCCEEDED(rv)) {
         PLEvent* event;

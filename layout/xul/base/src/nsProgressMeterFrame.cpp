@@ -97,37 +97,30 @@ nsProgressMeterFrame::SetInitialChildList(nsIPresContext* aPresContext,
 { 
   // Set up our initial flexes.
   nsresult rv = nsBoxFrame::SetInitialChildList(aPresContext, aListName, aChildList);
-  AttributeChanged(aPresContext, mContent, kNameSpaceID_None, nsHTMLAtoms::value, 0, 0);
+  AttributeChanged(aPresContext, mContent, kNameSpaceID_None, nsHTMLAtoms::value, 0);
   return rv;
 }
 
 NS_IMETHODIMP
 nsProgressMeterFrame::AttributeChanged(nsIPresContext* aPresContext,
-                               nsIContent* aChild,
-                               PRInt32 aNameSpaceID,
-                               nsIAtom* aAttribute,
-                               PRInt32 aModType, 
-                               PRInt32 aHint)
+                                       nsIContent* aChild,
+                                       PRInt32 aNameSpaceID,
+                                       nsIAtom* aAttribute,
+                                       PRInt32 aModType)
 {
   nsresult rv = nsBoxFrame::AttributeChanged(aPresContext, aChild,
-                                             aNameSpaceID, aAttribute, aModType, aHint);
+                                             aNameSpaceID, aAttribute,
+                                             aModType);
   if (NS_OK != rv) {
     return rv;
   }
 
   // did the progress change?
   if (nsHTMLAtoms::value == aAttribute) {
-    nsIFrame* barChild = nsnull;
-    FirstChild(aPresContext, nsnull, &barChild);
+    nsIFrame* barChild = GetFirstChild(nsnull);
     if (!barChild) return NS_OK;
-    nsIFrame* remainderChild = nsnull;
-    barChild->GetNextSibling(&remainderChild);
+    nsIFrame* remainderChild = barChild->GetNextSibling();
     if (!remainderChild) return NS_OK;
-
-    nsCOMPtr<nsIContent> progressBar;
-    barChild->GetContent(getter_AddRefs(progressBar));
-    nsCOMPtr<nsIContent> progressRemainder;
-    remainderChild->GetContent(getter_AddRefs(progressRemainder));
 
     nsAutoString value;
     mContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::value, value);
@@ -142,8 +135,8 @@ nsProgressMeterFrame::AttributeChanged(nsIPresContext* aPresContext,
     nsAutoString leftFlex, rightFlex;
     leftFlex.AppendInt(flex);
     rightFlex.AppendInt(remainder);
-    progressBar->SetAttr(kNameSpaceID_None, nsXULAtoms::flex, leftFlex, PR_TRUE);
-    progressRemainder->SetAttr(kNameSpaceID_None, nsXULAtoms::flex, rightFlex, PR_TRUE);
+    barChild->GetContent()->SetAttr(kNameSpaceID_None, nsXULAtoms::flex, leftFlex, PR_TRUE);
+    remainderChild->GetContent()->SetAttr(kNameSpaceID_None, nsXULAtoms::flex, rightFlex, PR_TRUE);
   }
   return NS_OK;
 }

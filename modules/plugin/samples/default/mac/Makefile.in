@@ -19,7 +19,7 @@
 # the Initial Developer. All Rights Reserved.
 #
 # Contributor(s):
-#  Brian Ryner <bryner@netscape.com>
+#  Brian Ryner <bryner@brianryner.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -42,6 +42,8 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
+MODULE      = plugin
+
 ifdef MOZ_DEBUG
 BUILDSTYLE	= Development
 else
@@ -53,6 +55,8 @@ endif
 endif
 
 TARGET		= "Default Plugin"
+
+PACKAGE_FILE = npnul.pkg
 
 include $(topsrcdir)/config/rules.mk
 
@@ -77,11 +81,12 @@ libs install:: install-plugin
 
 install-plugin: build-plugin
 	$(INSTALL) "build/Default Plugin.plugin" $(DIST)/bin/plugins
+	$(INSTALL) "build/DefaultPlugin.build/Default Plugin.build/PkgInfo" "$(DIST)/bin/plugins/Default Plugin.plugin/Contents"
 
 resources: $(RESOURCE_FILES)
 
 build-plugin: resources
-	pbxbuild -target $(TARGET) -buildstyle $(BUILDSTYLE)
+	$(PBBUILD) -target $(TARGET) -buildstyle $(BUILDSTYLE)
 
 _%.rsrc: %.rsrc
 	$(ASDECODE) $< $@

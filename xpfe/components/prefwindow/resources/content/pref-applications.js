@@ -18,7 +18,6 @@
  * Contributor(s):
  */
 
-var gNewTypeRV    = null;
 var gUpdateTypeRV = null;
 var gList   = null;
 var gDS     = null;
@@ -35,17 +34,12 @@ function newType()
 {
   var handlerOverride = new HandlerOverride();
   window.openDialog("chrome://communicator/content/pref/pref-applications-edit.xul", "appEdit", "chrome,modal=yes,resizable=no", handlerOverride);
-  if (gNewTypeRV) {
-    //gList.builder.rebuild();
-    gList.setAttribute("ref", "urn:mimetypes");
-    gNewTypeRV = null;
-  }
 }
 
 function removeType()
 {
   // Only prompt if setting is "useHelperApp".
-  var uri = gList.selectedItems[0].id;
+  var uri = gList.view.getResourceAtIndex(gList.currentIndex).Value;
   var handlerOverride = new HandlerOverride(uri);
   if ( !handlerOverride.useSystemDefault && !handlerOverride.saveToDisk ) {
     var titleMsg = gPrefApplicationsBundle.getString("removeHandlerTitle");
@@ -58,14 +52,13 @@ function removeType()
     }
   }
   removeOverride(handlerOverride.mimeType);
-  gList.setAttribute("ref", "urn:mimetypes");
   selectApplication();
 }
 
 function editType()
 {
-  if (gList.selectedItems && gList.selectedItems[0]) {
-    var uri = gList.selectedItems[0].id;
+  if (gList.currentIndex >= 0) {
+    var uri = gList.view.getResourceAtIndex(gList.currentIndex).Value;
     var handlerOverride = new HandlerOverride(uri);
     window.openDialog("chrome://communicator/content/pref/pref-applications-edit.xul", "appEdit", "chrome,modal=yes,resizable=no", handlerOverride);
     selectApplication();
@@ -90,7 +83,7 @@ const xmlSinkObserver = {
 
     // Convert old "don't ask" pref info to helper app pref entries
     try {
-      var prefService = Components.classes["@mozilla.org/preferences;1"].getService(Components.interfaces.nsIPrefService);
+      var prefService = Components.classes["@mozilla.org/preferences-service;1"].getService(Components.interfaces.nsIPrefService);
       var prefBranch = prefService.getBranch("browser.helperApps.neverAsk.");
       if (!prefBranch) return;
     } catch(e) { return; }
@@ -109,7 +102,7 @@ const xmlSinkObserver = {
     var newEntries = {};
     for ( i = 0; i < neverAskSave.length; i++ ) {
       // See if mime type is in data source.
-      type = unescape(neverAskSave[i]);
+      type = decodeURIComponent(neverAskSave[i]);
       if (type != "" && !mimeHandlerExists(type)) {
         // Not in there, need to create an entry now so user can edit it.
         newEntries[type] = "saveToDisk";
@@ -118,7 +111,7 @@ const xmlSinkObserver = {
     
     for ( i = 0; i < neverAskOpen.length; i++ ) {
       // See if mime type is in data source.
-      type = unescape(neverAskOpen[i]);
+      type = decodeURIComponent(neverAskOpen[i]);
       if (type != "" && !mimeHandlerExists(type)) {
         // Not in there, need to create an entry now so user can edit it.
         newEntries[type] = "useSystemDefault";
@@ -184,7 +177,7 @@ function Startup()
 
   // intialize the listbox
   gList.database.AddDataSource(gDS);
-  gList.setAttribute("ref", "urn:mimetypes");
+  gList.builder.rebuild();
 
   // Test whether the data source is already loaded.
   if (gDS.QueryInterface(Components.interfaces.nsIRDFRemoteDataSource).loaded) {
@@ -198,8 +191,8 @@ function Startup()
 
 function selectApplication()
 {
-  if (gList.selectedItems && gList.selectedItems.length && gList.selectedItems[0]) {
-    var uri = gList.selectedItems[0].id;
+  if (gList.currentIndex >= 0) {
+    var uri = gList.view.getResourceAtIndex(gList.currentIndex).Value;
     var handlerOverride = new HandlerOverride(uri);
     gExtensionField.setAttribute("value", handlerOverride.extensions);
     gMIMEDescField.setAttribute("value", handlerOverride.description);

@@ -25,7 +25,7 @@
  *   David Hyatt              <hyatt@netscape.com>
  *   Ben Goodger              <ben@netscape.com>
  *   Andreas Otte             <andreas.otte@debitel.net>
- *   Jan Varga                <varga@netscape.com>
+ *   Jan Varga                <varga@nixcorp.com>
  *   Benjamin Smedberg        <bsmedberg@covad.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
@@ -83,7 +83,9 @@
 #include "nsICharsetConverterManager.h"
 #include "nsICharsetAlias.h"
 #include "nsIPlatformCharset.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
+#include "nsIPrefBranchInternal.h"
 
 #include "nsIParser.h"          // for kCharsetFromBookmarks
 
@@ -93,13 +95,15 @@
 #include "nsICollation.h"
 #include "nsVoidArray.h"
 #include "nsUnicharUtils.h"
+#include "nsAutoBuffer.h"
 
 
 #include "nsIParser.h"          // for kCharsetFromBookmarks
 
+
 #ifdef XP_WIN
-#include <SHLOBJ.H>
-#include <INTSHCUT.H>
+#include <shlobj.h>
+#include <intshcut.h>
 #ifdef CompareString
 #undef CompareString
 #endif
@@ -164,7 +168,6 @@ static NS_DEFINE_CID(kRDFContainerCID,            NS_RDFCONTAINER_CID);
 static NS_DEFINE_CID(kRDFContainerUtilsCID,       NS_RDFCONTAINERUTILS_CID);
 static NS_DEFINE_CID(kIOServiceCID,               NS_IOSERVICE_CID);
 static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
-static NS_DEFINE_CID(kPrefCID,                    NS_PREF_CID);
 static NS_DEFINE_IID(kSoundCID,                   NS_SOUND_CID);
 static NS_DEFINE_CID(kStringBundleServiceCID,     NS_STRINGBUNDLESERVICE_CID);
 static NS_DEFINE_CID(kPlatformCharsetCID,         NS_PLATFORMCHARSET_CID);
@@ -193,7 +196,6 @@ nsIRDFService        *gRDF;
 nsIRDFContainerUtils *gRDFC;
 nsICharsetAlias      *gCharsetAlias;
 nsICollation         *gCollation;
-PRBool                gLoadedBookmarks = PR_FALSE;
 PRBool                gImportedSystemBookmarks = PR_FALSE;
 
 static nsresult
@@ -307,7 +309,7 @@ bm_AddRefGlobals()
 
         gRDF->GetLiteral(NS_LITERAL_STRING("true").get(), &kTrueLiteral);
 
-        gRDF->GetLiteral(NS_LITERAL_STRING("").get(), &kEmptyLiteral);
+        gRDF->GetLiteral(EmptyString().get(), &kEmptyLiteral);
 
         gRDF->GetDateLiteral(0, &kEmptyDate);
 
@@ -413,67 +415,6 @@ bm_ReleaseGlobals()
         NS_IF_RELEASE(kNC_BookmarkCommand_Export);
     }
 }
-
-
-class nsSpillableStackBuffer
-{
-protected:
-
-    enum {
-        kStackBufferSize = 256
-    };
-
-public:
-
-    nsSpillableStackBuffer() :
-        mBufferPtr(mBuffer),
-        mCurCapacity(kStackBufferSize)
-    { }
-
-    ~nsSpillableStackBuffer()
-    {
-        DeleteBuffer();
-    }
-
-    PRBool EnsureCapacity(PRInt32 inCharsCapacity)
-    {
-        if (inCharsCapacity < mCurCapacity)
-            return PR_TRUE;
-    
-        if (inCharsCapacity > kStackBufferSize)
-        {
-            DeleteBuffer();
-            mBufferPtr = (PRUnichar*)nsMemory::Alloc(inCharsCapacity * sizeof(PRUnichar));
-            mCurCapacity = inCharsCapacity;
-            return (mBufferPtr != NULL);
-        }
-    
-        mCurCapacity = kStackBufferSize;
-        return PR_TRUE;
-    }
-                
-    PRUnichar*  GetBuffer()     { return mBufferPtr;    }
-    PRInt32     GetCapacity()   { return mCurCapacity;  }
-
-protected:
-
-    void DeleteBuffer()
-    {
-        if (mBufferPtr != mBuffer)
-        {
-            nsMemory::Free(mBufferPtr);
-            mBufferPtr = mBuffer;
-        }                
-    }
-  
-protected:
-
-    PRUnichar     *mBufferPtr;
-    PRUnichar     mBuffer[kStackBufferSize];
-    PRInt32       mCurCapacity;
-
-};
-
 
 ////////////////////////////////////////////////////////////////////////
 
@@ -785,17 +726,17 @@ BookmarkParser::DecodeBuffer(nsString &line, char *buf, PRUint32 aLength)
         PRInt32     unicharBufLen = 0;
         mUnicodeDecoder->GetMaxLength(aBuffer, aLength, &unicharBufLen);
         
-        nsSpillableStackBuffer    stackBuffer;
-        if (!stackBuffer.EnsureCapacity(unicharBufLen + 1))
+        nsAutoBuffer<PRUnichar, 256> stackBuffer;
+        if (!stackBuffer.EnsureElemCapacity(unicharBufLen + 1))
           return NS_ERROR_OUT_OF_MEMORY;
         
         do
         {
             PRInt32     srcLength = aLength;
             PRInt32     unicharLength = unicharBufLen;
-            PRUnichar *unichars = stackBuffer.GetBuffer();
+            PRUnichar *unichars = stackBuffer.get();
             
-            rv = mUnicodeDecoder->Convert(aBuffer, &srcLength, stackBuffer.GetBuffer(), &unicharLength);
+            rv = mUnicodeDecoder->Convert(aBuffer, &srcLength, stackBuffer.get(), &unicharLength);
             unichars[unicharLength]=0;  //add this since the unicode converters can't be trusted to do so.
 
             // Move the nsParser.cpp 00 -> space hack to here so it won't break UCS2 file
@@ -1675,7 +1616,6 @@ ElementArray::Clear()
 nsBookmarksService::nsBookmarksService() :
     mInner(nsnull),
     mUpdateBatchNest(0),
-    mBookmarksAvailable(PR_FALSE),
     mDirty(PR_FALSE)
 
 #if defined(XP_MAC) || defined(XP_MACOSX)
@@ -1743,24 +1683,25 @@ nsBookmarksService::Init()
         }
     }
 
-    nsCOMPtr<nsIPref> prefServ(do_GetService(kPrefCID, &rv));
-    if (NS_SUCCEEDED(rv) && (prefServ))
+    nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
+    if (NS_SUCCEEDED(rv))
     {
-        // get browser icon pref
-        prefServ->GetBoolPref("browser.chrome.site_icons", &mBrowserIcons);
+        // get browser icon prefs
+        PRInt32 toolbarIcons = 0;
+        prefBranch->GetIntPref("browser.chrome.load_toolbar_icons", &toolbarIcons);
+        if (toolbarIcons > 0) {
+              prefBranch->GetBoolPref("browser.chrome.site_icons", &mBrowserIcons);
+              mAlwaysLoadIcons = (toolbarIcons > 1);
+        } else
+              mAlwaysLoadIcons = mBrowserIcons = PR_FALSE;
         
         // determine what the name of the Personal Toolbar Folder is...
         // first from user preference, then string bundle, then hard-coded default
-        char    *prefVal = nsnull;
-        if (NS_SUCCEEDED(rv = prefServ->CopyCharPref("custtoolbar.personal_toolbar_folder",
-            &prefVal)) && (prefVal))
+        nsXPIDLCString prefValue;
+        rv = prefBranch->GetCharPref("custtoolbar.personal_toolbar_folder", getter_Copies(prefValue));
+        if (NS_SUCCEEDED(rv) && !prefValue.IsEmpty())
         {
-            if (*prefVal)
-            {
-                mPersonalToolbarName = NS_ConvertUTF8toUCS2(prefVal);
-            }
-            nsCRT::free(prefVal);
-            prefVal = nsnull;
+            CopyUTF8toUTF16(prefValue, mPersonalToolbarName);
         }
 
         if (mPersonalToolbarName.IsEmpty())
@@ -1779,31 +1720,39 @@ nsBookmarksService::Init()
     // if the user has more than one profile: always include the profile name
     // otherwise, include the profile name only if it is not named 'default'
     // the profile "default" is not localizable and arises when there is no ns4.x install
-    nsCOMPtr<nsIProfile> profileService(do_GetService(NS_PROFILE_CONTRACTID,&rv));
-    nsXPIDLString        currentProfileName;
     nsresult             useProfile;
-
-    useProfile = profileService->GetCurrentProfile(getter_Copies(currentProfileName));
+    nsCOMPtr<nsIProfile> profileService(do_GetService(NS_PROFILE_CONTRACTID,&useProfile));
     if (NS_SUCCEEDED(useProfile))
     {
-        const PRUnichar *param[1] = {currentProfileName.get()};
-        useProfile = mBundle->FormatStringFromName(NS_LITERAL_STRING("bookmarks_root").get(),
-                                                 param, 1, getter_Copies(mBookmarksRootName));
+        nsXPIDLString        currentProfileName;
+    
+        useProfile = profileService->GetCurrentProfile(getter_Copies(currentProfileName));
         if (NS_SUCCEEDED(useProfile))
         {
-            PRInt32 profileCount;
-            useProfile = profileService->GetProfileCount(&profileCount);
-            if (NS_SUCCEEDED(useProfile) && profileCount == 1)
+            const PRUnichar *param[1] = {currentProfileName.get()};
+            useProfile = mBundle->FormatStringFromName(NS_LITERAL_STRING("bookmarks_root").get(),
+                                                    param, 1, getter_Copies(mBookmarksRootName));
+            if (NS_SUCCEEDED(useProfile))
             {
-                ToLowerCase(currentProfileName);
-                if (currentProfileName.Equals(NS_LITERAL_STRING("default")))
-                    useProfile = NS_ERROR_FAILURE;
+                PRInt32 profileCount;
+                useProfile = profileService->GetProfileCount(&profileCount);
+                if (NS_SUCCEEDED(useProfile) && profileCount == 1)
+                {
+                    ToLowerCase(currentProfileName);
+                    if (currentProfileName.Equals(NS_LITERAL_STRING("default")))
+                        useProfile = NS_ERROR_FAILURE;
+                }
             }
         }
     }
 
-    if (NS_FAILED(useProfile)) {
-        mBookmarksRootName.Assign(NS_LITERAL_STRING("Bookmarks"));
+    if (NS_FAILED(useProfile))
+    {
+        rv = mBundle->GetStringFromName(NS_LITERAL_STRING("bookmarks_default_root").get(),
+                                        getter_Copies(mBookmarksRootName));
+        if (NS_FAILED(rv) || mBookmarksRootName.IsEmpty()) {
+            mBookmarksRootName.Assign(NS_LITERAL_STRING("Bookmarks"));
+        }
     }
 
     // Register as an observer of profile changes
@@ -1813,9 +1762,6 @@ nsBookmarksService::Init()
     if (observerService) {
         observerService->AddObserver(this, "profile-before-change", PR_TRUE);
         observerService->AddObserver(this, "profile-after-change", PR_TRUE);
-#ifdef MOZ_PHOENIX
-        observerService->AddObserver(this, "quit-application", PR_TRUE);
-#endif
     }
 
     rv = initDatasource();
@@ -2090,7 +2036,7 @@ nsBookmarksService::FireTimer(nsITimer* aTimer, void* aClosure)
     if (!bmks)  return;
     nsresult            rv;
 
-    if ((bmks->mBookmarksAvailable == PR_TRUE) && (bmks->mDirty == PR_TRUE))
+    if (bmks->mDirty)
     {
         bmks->Flush();
     }
@@ -2557,27 +2503,23 @@ NS_IMETHODIMP nsBookmarksService::Observe(nsISupports *aSubject, const char *aTo
     
         if (!nsCRT::strcmp(someData, NS_LITERAL_STRING("shutdown-cleanse").get()))
         {
-            nsCOMPtr<nsIFile> bookmarksFile;
-
-            rv = GetBookmarksFile(getter_AddRefs(bookmarksFile));
-
-            if (bookmarksFile)
+            if (mBookmarksFile)
             {
-                bookmarksFile->Remove(PR_FALSE);
+                mBookmarksFile->Remove(PR_FALSE);
             }
         }
     }    
-    else if (!nsCRT::strcmp(aTopic, "profile-after-change"))
+    else if (mBookmarksFile && !nsCRT::strcmp(aTopic, "profile-after-change"))
     {
-        // The profile has aleady changed.
+        // The profile has already changed.
         rv = LoadBookmarks();
     }
-#ifdef MOZ_PHOENIX
-    else if (!nsCRT::strcmp(aTopic, "quit-application"))
+    else if (!nsCRT::strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID))
     {
         rv = Flush();
+        if (NS_SUCCEEDED(rv))
+            rv = LoadBookmarks();
     }
-#endif
 
     return rv;
 }
@@ -2586,7 +2528,7 @@ NS_IMETHODIMP nsBookmarksService::Observe(nsISupports *aSubject, const char *aTo
 ////////////////////////////////////////////////////////////////////////
 // nsISupports methods
 
-NS_IMPL_ADDREF(nsBookmarksService);
+NS_IMPL_ADDREF(nsBookmarksService)
 
 NS_IMETHODIMP_(nsrefcnt)
 nsBookmarksService::Release()
@@ -2646,6 +2588,8 @@ nsBookmarksService::InsertResource(nsIRDFResource* aResource,
             rv = container->InsertElementAt(aResource, aIndex, PR_TRUE);
         else
             rv = container->AppendElement(aResource);
+
+        mDirty = PR_TRUE;
     }
     return rv;
 }
@@ -3138,7 +3082,7 @@ nsBookmarksService::SetNewPersonalToolbarFolder(nsIRDFResource* aFolder)
 
 NS_IMETHODIMP
 nsBookmarksService::CreateBookmark(const PRUnichar* aName,
-                                   const char* aURL, 
+                                   const PRUnichar* aURL, 
                                    const PRUnichar* aShortcutURL,
                                    const PRUnichar* aDescription,
                                    const PRUnichar* aDocCharSet, 
@@ -3175,7 +3119,7 @@ nsBookmarksService::CreateBookmark(const PRUnichar* aName,
 
     // Resource: URL
     nsAutoString url;
-    url.AssignWithConversion(aURL);
+    url.Assign(aURL);
     nsCOMPtr<nsIRDFLiteral> urlLiteral;
     rv = gRDF->GetLiteral(url.get(), getter_AddRefs(urlLiteral));
     if (NS_FAILED(rv)) 
@@ -3237,7 +3181,7 @@ nsBookmarksService::CreateBookmark(const PRUnichar* aName,
 
 NS_IMETHODIMP
 nsBookmarksService::CreateBookmarkInContainer(const PRUnichar* aName,
-                                              const char* aURL, 
+                                              const PRUnichar* aURL, 
                                               const PRUnichar* aShortcutURL, 
                                               const PRUnichar* aDescription, 
                                               const PRUnichar* aDocCharSet, 
@@ -3331,7 +3275,7 @@ nsBookmarksService::CloneResource(nsIRDFResource* aSource,
 }
 
 NS_IMETHODIMP
-nsBookmarksService::AddBookmarkImmediately(const char *aURI,
+nsBookmarksService::AddBookmarkImmediately(const PRUnichar *aURI,
                                            const PRUnichar *aTitle, 
                                            PRInt32 aBookmarkType, 
                                            const PRUnichar *aCharset)
@@ -3574,6 +3518,8 @@ nsBookmarksService::RemoveBookmarkIcon(const char *aURL, const PRUnichar *aIconU
 
             if (hasThisIconURL) {
                 (void)mInner->Unassert(bookmark, kNC_Icon, iconLiteral);
+
+                mDirty = PR_TRUE;
             }
         }
     }
@@ -3675,7 +3621,7 @@ nsBookmarksService::UpdateLastVisitedDate(const char *aURL,
                     NS_ASSERTION(rv == NS_RDF_ASSERTION_ACCEPTED, "unable to Unassert changed status");
                 }
 
-//              mDirty = PR_TRUE;
+                mDirty = PR_TRUE;
             }
         }
     }
@@ -3862,9 +3808,63 @@ nsBookmarksService::ParseFavoritesFolder(nsIFile* aDirectory, nsIRDFResource* aP
         nsAutoString bookmarkName;
         currFile->GetLeafName(bookmarkName);
 
+        PRBool isSymlink = PR_FALSE;
         PRBool isDir = PR_FALSE;
+
+        currFile->IsSymlink(&isSymlink);
         currFile->IsDirectory(&isDir);
-        if (isDir)
+
+        if (isSymlink)
+        {
+            // It's a .lnk file.  Get the native path and check to see if it's
+            // a dir.  If so, create a bookmark for the dir.  If not, then
+            // simply do nothing and continue.
+
+            // Get the native path that the .lnk file is pointing to.
+            nsCAutoString path;
+            rv = currFile->GetNativeTarget(path);
+            if (NS_FAILED(rv)) 
+                continue;
+
+            nsCOMPtr<nsILocalFile> localFile;
+            rv = NS_NewNativeLocalFile(path, PR_TRUE, getter_AddRefs(localFile));
+            if (NS_FAILED(rv)) 
+                continue;
+
+            // Check for dir here.  If path is not a dir, just continue with
+            // next import.
+            rv = localFile->IsDirectory(&isDir);
+            NS_ENSURE_SUCCESS(rv, rv);
+            if (!isDir)
+                continue;
+
+            nsCAutoString spec;
+            nsCOMPtr<nsIFile> filePath(localFile);
+            // Get the file url format (file:///...) of the native file path.
+            rv = NS_GetURLSpecFromFile(filePath, spec);
+            if (NS_FAILED(rv)) 
+                continue;
+
+            // Look for and strip out the .lnk extension.
+            NS_NAMED_LITERAL_STRING(lnkExt, ".lnk");
+            PRInt32 lnkExtStart = bookmarkName.Length() - lnkExt.Length();
+            if (StringEndsWith(bookmarkName, lnkExt,
+                  nsCaseInsensitiveStringComparator()))
+                bookmarkName.Truncate(lnkExtStart);
+
+            nsCOMPtr<nsIRDFResource> bookmark;
+            // NS_GetURLSpecFromFile on Windows returns url-escaped URL in 
+            // pure ASCII. However, in the future, we may return 'hostpart'
+            // of a remote file in UTF-8. Therefore, using UTF-8 in place of
+            // ASCII is not a bad idea.
+            CreateBookmarkInContainer(bookmarkName.get(),
+                                      NS_ConvertUTF8toUTF16(spec).get(),
+                                      nsnull, nsnull, nsnull, aParentResource,
+                                      -1, getter_AddRefs(bookmark));
+            if (NS_FAILED(rv)) 
+                continue;
+        }
+        else if (isDir)
         {
             nsCOMPtr<nsIRDFResource> folder;
             rv = CreateFolderInContainer(bookmarkName.get(), aParentResource, -1, getter_AddRefs(folder));
@@ -3878,11 +3878,11 @@ nsBookmarksService::ParseFavoritesFolder(nsIFile* aDirectory, nsIRDFResource* aP
         else
         {
             nsCOMPtr<nsIURL> url(do_QueryInterface(uri));
-
             nsCAutoString extension;
+
             url->GetFileExtension(extension);
-            ToLowerCase(extension);
-            if (!extension.Equals(NS_LITERAL_CSTRING("url"))) 
+            if (!extension.Equals(NS_LITERAL_CSTRING("url"),
+                                  nsCaseInsensitiveCStringComparator()))
                 continue;
 
             nsAutoString name(Substring(bookmarkName, 0, 
@@ -3895,7 +3895,15 @@ nsBookmarksService::ParseFavoritesFolder(nsIFile* aDirectory, nsIRDFResource* aP
             ResolveShortcut(path, getter_Copies(resolvedURL));
 
             nsCOMPtr<nsIRDFResource> bookmark;
-            rv = CreateBookmarkInContainer(name.get(), resolvedURL.get(), nsnull, nsnull, nsnull, aParentResource, -1, getter_AddRefs(bookmark));
+            // As far as I can tell, IUniformResourceLocator::GetURL()
+            // returns the URL in pure ASCII. However, it could be UTF-8 (I'm
+            // almost sure that it's not in any legacy encoding) so that I'm
+            // assuming it's in UTF-8.
+            // http://msdn.microsoft.com/library/default.asp?url=/workshop/misc/shortcuts/reference/iuniformresourcelocator.asp
+            rv = CreateBookmarkInContainer(name.get(),
+                 NS_ConvertUTF8toUTF16(resolvedURL).get(),
+                 nsnull, nsnull, nsnull, aParentResource, -1,
+                 getter_AddRefs(bookmark));
             if (NS_FAILED(rv)) 
                 continue;
         }
@@ -4113,6 +4121,8 @@ nsBookmarksService::ProcessCachedBookmarkIcon(nsIRDFResource* aSource,
             (void)mInner->Unassert(aSource, kNC_Icon, oldIconNode);
         }
         (void)mInner->Assert(aSource, kNC_Icon, iconLiteral, PR_TRUE);
+
+        mDirty = PR_TRUE;
     }
     else
     {
@@ -4131,10 +4141,13 @@ nsBookmarksService::ProcessCachedBookmarkIcon(nsIRDFResource* aSource,
         }
     }
 
+    PRBool forceLoad = mAlwaysLoadIcons;
+
     // if no internal icon reference, try and synthesize a URL
     if (path.IsEmpty())
     {
         const char  *uri;
+        forceLoad = PR_FALSE;
         if (NS_FAILED(rv = aSource->GetValueConst( &uri )))
         {
             return rv;
@@ -4167,27 +4180,29 @@ nsBookmarksService::ProcessCachedBookmarkIcon(nsIRDFResource* aSource,
         path.Append("/favicon.ico");
     }
 
-    // only return favicon reference if its in the cache
-    // (that is, never go out onto the net)
-    if (!mCacheSession)
-    {
-        return NS_RDF_NO_VALUE;
+    if (!forceLoad) {
+        // only return favicon reference if its in the cache
+        // (that is, never go out onto the net)
+        if (!mCacheSession)
+        {
+            return NS_RDF_NO_VALUE;
+        }
+        nsCOMPtr<nsICacheEntryDescriptor> entry;
+        rv = mCacheSession->OpenCacheEntry(path.get(), nsICache::ACCESS_READ,
+                                           nsICache::NON_BLOCKING, getter_AddRefs(entry));
+        if (NS_FAILED(rv) || (!entry))
+        {
+            return NS_RDF_NO_VALUE;
+        }
+        if (entry) 
+        {
+            PRUint32 expTime;
+            entry->GetExpirationTime(&expTime);
+            if (expTime != PR_UINT32_MAX)
+                entry->SetExpirationTime(PR_UINT32_MAX);
+        }
+        entry->Close();
     }
-    nsCOMPtr<nsICacheEntryDescriptor> entry;
-    rv = mCacheSession->OpenCacheEntry(path.get(), nsICache::ACCESS_READ,
-                                       nsICache::NON_BLOCKING, getter_AddRefs(entry));
-    if (NS_FAILED(rv) || (!entry))
-    {
-        return NS_RDF_NO_VALUE;
-    }
-    if (entry) 
-    {
-        PRUint32 expTime;
-        entry->GetExpirationTime(&expTime);
-        if (expTime != PR_UINT32_MAX)
-            entry->SetExpirationTime(PR_UINT32_MAX);
-    }
-    entry->Close();
 
     // ok, have a cached icon entry, so return the URL's associated favicon
     nsAutoString litStr;
@@ -4704,7 +4719,6 @@ nsBookmarksService::setFolderHint(nsIRDFResource *newSource, nsIRDFResource *obj
         return rv;
 
     mDirty = PR_TRUE;
-    Flush();
 
     return NS_OK;
 }
@@ -4950,17 +4964,14 @@ nsBookmarksService::Flush()
 {
     nsresult    rv = NS_OK;
 
-    if (mBookmarksAvailable == PR_TRUE)
+    // Note: we cannot check mDirty here because consumers from script
+    // (e.g. the BookmarksTransaction code in bookmarks.js) rely on
+    // flushing us directly, as it has no way to set our mDirty flag.
+    if (mBookmarksFile)
     {
-        nsCOMPtr<nsIFile> bookmarksFile;
-        rv = GetBookmarksFile(getter_AddRefs(bookmarksFile));
-
-        // Oh well, couldn't get the bookmarks file. Guess there
-        // aren't any bookmarks for us to write out.
-        if (NS_FAILED(rv))  return NS_OK;
-
-        rv = WriteBookmarks(bookmarksFile, mInner, kNC_BookmarksRoot);
+        rv = WriteBookmarks(mBookmarksFile, mInner, kNC_BookmarksRoot);
     }
+
     return rv;
 }
 
@@ -4994,28 +5005,24 @@ nsBookmarksService::SetPropagateChanges(PRBool aPropagateChanges)
 // Implementation methods
 
 nsresult
-nsBookmarksService::GetBookmarksFile(nsIFile* *aResult)
+nsBookmarksService::EnsureBookmarksFile()
 {
     nsresult rv;
-    nsCOMPtr<nsIFile> bookmarksFile;
 
     // First we see if the user has set a pref for the location of the 
     // bookmarks file.
-    nsCOMPtr<nsIPref> prefServ(do_GetService(kPrefCID, &rv));
+    nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
     if (NS_SUCCEEDED(rv))
     {
         nsXPIDLCString prefVal;
-        rv = prefServ->CopyCharPref("browser.bookmarks.file",
-                                    getter_Copies(prefVal));      
+        rv = prefBranch->GetCharPref("browser.bookmarks.file",
+                                     getter_Copies(prefVal));      
         if (NS_SUCCEEDED(rv))
         {
-            rv = NS_NewNativeLocalFile(prefVal, PR_TRUE,
-                                       (nsILocalFile**)(nsIFile**) getter_AddRefs(bookmarksFile));
+            rv = NS_NewNativeLocalFile(prefVal, PR_TRUE, getter_AddRefs(mBookmarksFile));
 
             if (NS_SUCCEEDED(rv))
             {
-                *aResult = bookmarksFile;
-                NS_ADDREF(*aResult);
                 return NS_OK;
             }
         }
@@ -5024,7 +5031,7 @@ nsBookmarksService::GetBookmarksFile(nsIFile* *aResult)
 
     // Otherwise, we look for bookmarks.html in the current profile
     // directory using the magic directory service.
-    rv = NS_GetSpecialDirectory(NS_APP_BOOKMARKS_50_FILE, aResult);
+    rv = NS_GetSpecialDirectory(NS_APP_BOOKMARKS_50_FILE, (nsIFile **)(nsILocalFile **)getter_AddRefs(mBookmarksFile));
     NS_ENSURE_SUCCESS(rv, rv);
 
     return NS_OK;
@@ -5096,13 +5103,16 @@ nsBookmarksService::ReadFavorites()
 NS_IMETHODIMP
 nsBookmarksService::ReadBookmarks(PRBool *didLoadBookmarks)
 {
-    if (!gLoadedBookmarks)
+    *didLoadBookmarks = PR_FALSE;
+    if (!mBookmarksFile)
     {
         LoadBookmarks();
-        gLoadedBookmarks = PR_TRUE;
-        *didLoadBookmarks = PR_TRUE;
-    } else {
-        *didLoadBookmarks = PR_FALSE;
+        if (mBookmarksFile) {
+            *didLoadBookmarks = PR_TRUE;
+            nsCOMPtr<nsIPrefBranchInternal> prefBranchInt(do_GetService(NS_PREFSERVICE_CONTRACTID));
+            if (prefBranchInt)
+                prefBranchInt->AddObserver("browser.bookmarks.file", this, true);
+        }
     }
     return NS_OK;
 }
@@ -5154,15 +5164,14 @@ nsBookmarksService::LoadBookmarks()
     rv = initDatasource();
     if (NS_FAILED(rv)) return NS_OK;
 
-    nsCOMPtr<nsIFile> bookmarksFile;
-    rv = GetBookmarksFile(getter_AddRefs(bookmarksFile));
+    rv = EnsureBookmarksFile();
 
     // Lack of Bookmarks file is non-fatal
     if (NS_FAILED(rv)) return NS_OK;
 
     PRBool foundIERoot = PR_FALSE;
 
-    nsCOMPtr<nsIPrefService> prefSvc(do_GetService(NS_PREF_CONTRACTID));
+    nsCOMPtr<nsIPrefService> prefSvc(do_GetService(NS_PREFSERVICE_CONTRACTID));
     nsCOMPtr<nsIPrefBranch> bookmarksPrefs;
     if (prefSvc)
         prefSvc->GetBranch("browser.bookmarks.", getter_AddRefs(bookmarksPrefs));
@@ -5230,7 +5239,7 @@ nsBookmarksService::LoadBookmarks()
 #endif
     {
         BookmarkParser parser;
-        parser.Init(bookmarksFile, mInner);
+        parser.Init(mBookmarksFile, mInner);
         if (useDynamicSystemBookmarks)
         {
 #if defined(XP_MAC) || defined(XP_MACOSX)
@@ -5244,7 +5253,6 @@ nsBookmarksService::LoadBookmarks()
         BeginUpdateBatch();
         parser.Parse(kNC_BookmarksRoot, kNC_Bookmark);
         EndUpdateBatch();
-        mBookmarksAvailable = PR_TRUE;
         
         PRBool foundPTFolder = PR_FALSE;
         parser.ParserFoundPersonalToolbarFolder(&foundPTFolder);
@@ -5411,14 +5419,14 @@ nsBookmarksService::LoadBookmarks()
 }
 
 static char kFileIntro[] = 
-    "<!DOCTYPE NETSCAPE-Bookmark-file-1>\n"
-    "<!-- This is an automatically generated file.\n"
-    "     It will be read and overwritten.\n"
-    "     DO NOT EDIT! -->\n"
+    "<!DOCTYPE NETSCAPE-Bookmark-file-1>" NS_LINEBREAK
+    "<!-- This is an automatically generated file." NS_LINEBREAK
+    "     It will be read and overwritten." NS_LINEBREAK
+    "     DO NOT EDIT! -->" NS_LINEBREAK
     // Note: we write bookmarks in UTF-8
-    "<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">\n"
-    "<TITLE>Bookmarks</TITLE>\n"
-    "<H1>Bookmarks</H1>\n\n";
+    "<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">" NS_LINEBREAK
+    "<TITLE>Bookmarks</TITLE>" NS_LINEBREAK
+    "<H1>Bookmarks</H1>" NS_LINEBREAK NS_LINEBREAK;
 
 nsresult
 nsBookmarksService::WriteBookmarks(nsIFile* aBookmarksFile,
@@ -5428,102 +5436,119 @@ nsBookmarksService::WriteBookmarks(nsIFile* aBookmarksFile,
     if (!aBookmarksFile || !aDataSource || !aRoot)
         return NS_ERROR_NULL_POINTER;
 
+    nsresult rv;
+    nsCOMPtr<nsIFile> bookmarksFile (do_CreateInstance("@mozilla.org/file/local;1", &rv));
+    NS_ENSURE_SUCCESS(rv, rv);
+    {
+        nsCOMPtr<nsILocalFile> localBookmarksFile 
+           (do_QueryInterface(bookmarksFile, &rv));
+        localBookmarksFile->SetFollowLinks(PR_TRUE);
+        nsCOMPtr<nsILocalFile> originalBookmarksFile(do_QueryInterface(aBookmarksFile, &rv));
+        NS_ENSURE_SUCCESS(rv, rv);
+        rv = localBookmarksFile->InitWithFile(originalBookmarksFile);
+        NS_ENSURE_SUCCESS(rv, rv);
+    }
+    // Unix ignores followSymlinks, so we have to normalize.
+    rv = bookmarksFile->Normalize();
+    NS_ENSURE_SUCCESS(rv, rv);
     nsCOMPtr<nsIFile> tempFile;
-    nsresult rv = aBookmarksFile->Clone(getter_AddRefs(tempFile));
+    rv = bookmarksFile->Clone(getter_AddRefs(tempFile));
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = tempFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, /*octal*/ 0600);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIOutputStream> out;
-    rv = NS_NewLocalFileOutputStream(getter_AddRefs(out),
-                                     tempFile,
-                                     PR_WRONLY,
-                                     /*octal*/ 0600,
-                                     0);
-    if (NS_FAILED(rv))
-    {
-        tempFile->Remove(PR_FALSE);
-        return rv;
-    }
+    nsCOMPtr<nsIFile> bookmarkParentDir;
+    nsAutoString bookmarkLeafName;
+    do {
+        nsCOMPtr<nsIOutputStream> out;
+        rv = NS_NewLocalFileOutputStream(getter_AddRefs(out),
+                                         tempFile,
+                                         PR_WRONLY,
+                                         /*octal*/ 0600,
+                                         0);
+        if (NS_FAILED(rv))
+            break;
 
-    // We need a buffered output stream for performance.
-    // See bug 202477.
-    nsCOMPtr<nsIOutputStream> strm;
-    rv = NS_NewBufferedOutputStream(getter_AddRefs(strm),
-                                    out,
-                                    4096);
-    if (NS_FAILED(rv))
-    {
-        tempFile->Remove(PR_FALSE);
-        return rv;
-    }
+        // We need a buffered output stream for performance.
+        // See bug 202477.
+        nsCOMPtr<nsIOutputStream> strm;
+        rv = NS_NewBufferedOutputStream(getter_AddRefs(strm),
+                                        out,
+                                        4096);
+        if (NS_FAILED(rv))
+            break;
 
-    PRUint32 dummy;
-    rv = strm->Write(kFileIntro, sizeof(kFileIntro)-1, &dummy);
+        PRUint32 dummy;
+        rv = strm->Write(kFileIntro, sizeof(kFileIntro)-1, &dummy);
 
-    nsCOMArray<nsIRDFResource> parentArray;
-    rv |= WriteBookmarksContainer(aDataSource, strm, aRoot, 0, parentArray);
+        nsCOMArray<nsIRDFResource> parentArray;
+        rv |= WriteBookmarksContainer(aDataSource, strm, aRoot, 0, parentArray);
 
-    strm->Close();
-    out->Close();
+        rv |= strm->Close();
+        rv |= out->Close();
 
-    if (NS_FAILED(rv))
-    {
-        tempFile->Remove(PR_FALSE);
-        return rv;
-    }
+        if (NS_FAILED(rv))
+            break;
 
-    // If we wrote to the file successfully (i.e. if the disk wasn't full) 
-    // then move the temp file to the bookmarks file so it takes its place. 
-    PRBool equals;
-    rv = tempFile->Equals(aBookmarksFile, &equals);
+        PRBool equals;
+        rv = tempFile->Equals(bookmarksFile, &equals);
+        if (NS_FAILED(rv))
+            break;
+        if (equals) {
+            // There was no old bookmarks file, so having written the new file,
+            // we're done.
+            mDirty = PR_FALSE;
+            return NS_OK;
+        }
+
+        // If we wrote to the file successfully (i.e. if the disk wasn't full) 
+        // then move the temp file to the bookmarks file so it takes its place. 
+        rv = bookmarksFile->GetParent(getter_AddRefs(bookmarkParentDir));
+        if (NS_FAILED(rv))
+            break;
+
+        rv = bookmarksFile->GetLeafName(bookmarkLeafName);
+    } while (0);
     if (NS_FAILED(rv)) {
         tempFile->Remove(PR_FALSE);
         return rv;
     }
-    if (!equals) {
-        nsCOMPtr<nsIFile> bookmarkParentDir;
-        rv = aBookmarksFile->GetParent(getter_AddRefs(bookmarkParentDir));
-        if (NS_FAILED(rv)) {
-            tempFile->Remove(PR_FALSE);
-            return rv;
-        }
 
-        nsAutoString bookmarkLeafName;
-        rv = aBookmarksFile->GetLeafName(bookmarkLeafName);
-        if (NS_FAILED(rv)) {
-            tempFile->Remove(PR_FALSE);
-            return rv;
-        }
+    PRUint32 oldPermissions = 0600;
+    rv = bookmarksFile->GetPermissions(&oldPermissions);
+    if (NS_FAILED(rv))
+        oldPermissions = 0600;
 
-        rv = tempFile->MoveTo(bookmarkParentDir, bookmarkLeafName);
-        if (NS_FAILED(rv))
-        {
-            tempFile->Remove(PR_FALSE);
-            return rv;
-        }
+    rv = tempFile->MoveTo(bookmarkParentDir, bookmarkLeafName);
+    if (NS_FAILED(rv))
+    {
+#ifdef DESTROY_THE_ONLY_COMPLETE_BOOKMARKS_FILE
+        tempFile->Remove(PR_FALSE);
+#endif
+        return rv;
     }
+    bookmarksFile->SetPermissions(oldPermissions);
 
     mDirty = PR_FALSE;
 
     return NS_OK;
 }
 
-static const char kBookmarkIntro[] = "<DL><p>\n";
+static const char kBookmarkIntro[] = "<DL><p>" NS_LINEBREAK;
 static const char kIndent[] = "    ";
 static const char kContainerIntro[] = "<DT><H3";
 static const char kSpaceStr[] = " ";
 static const char kTrueEnd[] = "true\"";
 static const char kQuoteStr[] = "\"";
 static const char kCloseAngle[] = ">";
-static const char kCloseH3[] = "</H3>\n";
+static const char kCloseH3[] = "</H3>" NS_LINEBREAK;
 static const char kHROpen[] = "<HR";
-static const char kAngleNL[] = ">\n";
+static const char kAngleNL[] = ">" NS_LINEBREAK;
 static const char kDTOpen[] = "<DT><A";
-static const char kAClose[] = "</A>\n";
-static const char kBookmarkClose[] = "</DL><p>\n";
-static const char kNL[] = "\n";
+static const char kAClose[] = "</A>" NS_LINEBREAK;
+static const char kBookmarkClose[] = "</DL><p>" NS_LINEBREAK;
+static const char kNL[] = NS_LINEBREAK;
 
 nsresult
 nsBookmarksService::WriteBookmarksContainer(nsIRDFDataSource *ds,

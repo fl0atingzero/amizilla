@@ -76,7 +76,7 @@ nsTreeUtils::TokenizeProperties(const nsAString& aProperties, nsISupportsArray* 
     if (iter == first)
       break;
 
-    nsCOMPtr<nsIAtom> atom = dont_AddRef(NS_NewAtom(Substring(first, iter)));
+    nsCOMPtr<nsIAtom> atom = do_GetAtom(Substring(first, iter));
     aPropertiesArray->AppendElement(atom);
   } while (iter != end);
 
@@ -84,14 +84,14 @@ nsTreeUtils::TokenizeProperties(const nsAString& aProperties, nsISupportsArray* 
 }
 
 nsresult
-nsTreeUtils::GetImmediateChild(nsIContent* aContainer, nsIAtom* aTag, nsIContent** aResult)
+nsTreeUtils::GetImmediateChild(nsIContent* aContainer, nsIAtom* aTag,
+                               nsIContent** aResult)
 {
   ChildIterator iter, last;
   for (ChildIterator::Init(aContainer, &iter, &last); iter != last; ++iter) {
     nsCOMPtr<nsIContent> child = *iter;
-    nsCOMPtr<nsIAtom> tag;
-    child->GetTag(getter_AddRefs(tag));
-    if (tag == aTag) {
+
+    if (child->Tag() == aTag) {
       NS_ADDREF(*aResult = child);
       return NS_OK;
     }

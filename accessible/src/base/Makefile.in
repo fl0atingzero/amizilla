@@ -34,7 +34,6 @@ REQUIRES	= commandhandler \
 		  dom \
 		  editor \
 		  gfx \
-		  htmlparser \
 		  intl \
 		  layout \
 		  locale \

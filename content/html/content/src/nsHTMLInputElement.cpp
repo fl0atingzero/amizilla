@@ -57,7 +57,7 @@
 #include "nsHTMLAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsIPresContext.h"
-#include "nsHTMLAttributes.h"
+#include "nsMappedAttributes.h"
 #include "nsIFormControl.h"
 #include "nsIForm.h"
 #include "nsIFormSubmission.h"
@@ -76,6 +76,7 @@
 #include "nsGUIEvent.h"
 
 #include "nsIPresState.h"
+#include "nsLayoutErrors.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMNSEvent.h"
 #include "nsIDOMNodeList.h"
@@ -115,7 +116,7 @@ static NS_DEFINE_CID(kXULControllersCID,  NS_XULCONTROLLERS_CID);
 //
 // Accessors for mBitField
 //
-// #define BF_SKIP_FOCUS_EVENT 0 no longer used
+#define BF_DISABLED_CHANGED 0
 #define BF_HANDLING_CLICK 1
 #define BF_VALUE_CHANGED 2
 #define BF_CHECKED_CHANGED 3
@@ -130,7 +131,7 @@ static NS_DEFINE_CID(kXULControllersCID,  NS_XULCONTROLLERS_CID);
                                         ? ((bitfield) |=  (0x01 << (field))) \
                                         : ((bitfield) &= ~(0x01 << (field))))
 
-class nsHTMLInputElement : public nsGenericHTMLLeafFormElement,
+class nsHTMLInputElement : public nsGenericHTMLFormElement,
                            public nsImageLoadingContent,
                            public nsIDOMHTMLInputElement,
                            public nsIDOMNSHTMLInputElement,
@@ -146,13 +147,13 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLLeafFormElement::)
+  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLFormElement::)
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLLeafFormElement::)
+  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLFormElement::)
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLLeafFormElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLFormElement::)
 
   // nsIDOMHTMLInputElement
   NS_DECL_NSIDOMHTMLINPUTELEMENT
@@ -170,67 +171,73 @@ public:
                                nsIContent* aSubmitElement);
   NS_IMETHOD SaveState();
   NS_IMETHOD RestoreState(nsIPresState* aState);
+  virtual PRBool AllowDrop();
 
   // nsIContent
-  NS_IMETHOD SetFocus(nsIPresContext* aPresContext);
-  NS_IMETHOD RemoveFocus(nsIPresContext* aPresContext);
+  virtual void SetFocus(nsIPresContext* aPresContext);
+  virtual void RemoveFocus(nsIPresContext* aPresContext);
 
-  NS_IMETHOD StringToAttribute(nsIAtom* aAttribute,
-                               const nsAString& aValue,
-                               nsHTMLValue& aResult);
+  virtual PRBool ParseAttribute(nsIAtom* aAttribute,
+                                const nsAString& aValue,
+                                nsAttrValue& aResult);
   NS_IMETHOD AttributeToString(nsIAtom* aAttribute,
                                const nsHTMLValue& aValue,
                                nsAString& aResult) const;
-  NS_IMETHOD GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                      nsChangeHint& aHint) const;
+  NS_IMETHOD GetAttributeChangeHint(const nsIAtom* aAttribute,
+                                    PRInt32 aModType,
+                                    nsChangeHint& aHint) const;
+  NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
   NS_IMETHOD GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const;
-  NS_IMETHOD HandleDOMEvent(nsIPresContext* aPresContext, nsEvent* aEvent,
-                            nsIDOMEvent** aDOMEvent, PRUint32 aFlags,
-                            nsEventStatus* aEventStatus);
-                            
-  NS_IMETHOD SetDocument(nsIDocument* aDocument, PRBool aDeep,
-                         PRBool aCompileEventHandlers);
+  virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext,
+                                  nsEvent* aEvent, nsIDOMEvent** aDOMEvent,
+                                  PRUint32 aFlags,
+                                  nsEventStatus* aEventStatus);
+  virtual void SetDocument(nsIDocument* aDocument, PRBool aDeep,
+                           PRBool aCompileEventHandlers);
+  virtual void SetParent(nsIContent* aParent);
 
-  NS_IMETHOD SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
-                     const nsAString& aValue, PRBool aNotify) {
+  nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                   const nsAString& aValue, PRBool aNotify)
+  {
+    return SetAttr(aNameSpaceID, aName, nsnull, aValue, aNotify);
+  }
+  virtual nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                           nsIAtom* aPrefix, const nsAString& aValue,
+                           PRBool aNotify)
+  {
     BeforeSetAttr(aNameSpaceID, aName, &aValue, aNotify);
 
-    nsresult rv = nsGenericHTMLLeafFormElement::SetAttr(aNameSpaceID, aName,
-                                                        aValue, aNotify);
+    nsresult rv = nsGenericHTMLFormElement::SetAttr(aNameSpaceID, aName,
+                                                    aPrefix, aValue, aNotify);
 
     AfterSetAttr(aNameSpaceID, aName, &aValue, aNotify);
     return rv;
   }
-  NS_IMETHOD SetAttr(nsINodeInfo* aNodeInfo, const nsAString& aValue,
-                     PRBool aNotify) {
-    // This will end up calling the other SetAttr().
-    return nsGenericHTMLLeafFormElement::SetAttr(aNodeInfo, aValue, aNotify);
-  }
 
-  NS_IMETHOD UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
-                       PRBool aNotify) {
+  virtual nsresult UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
+                             PRBool aNotify)
+  {
     BeforeSetAttr(aNameSpaceID, aAttribute, nsnull, aNotify);
 
-    nsresult rv = nsGenericHTMLLeafElement::UnsetAttr(aNameSpaceID,
-                                                      aAttribute,
+    nsresult rv = nsGenericHTMLFormElement::UnsetAttr(aNameSpaceID, aAttribute,
                                                       aNotify);
 
     AfterSetAttr(aNameSpaceID, aAttribute, nsnull, aNotify);
     return rv;
   }
 
-  NS_IMETHOD DoneCreatingElement();
+  virtual void DoneCreatingElement();
 
   // nsITextControlElement
   NS_IMETHOD TakeTextFrameValue(const nsAString& aValue);
   NS_IMETHOD SetValueChanged(PRBool aValueChanged);
 
   // nsIRadioControlElement
-  NS_IMETHOD RadioSetChecked();
+  NS_IMETHOD RadioSetChecked(PRBool aNotify);
   NS_IMETHOD SetCheckedChanged(PRBool aCheckedChanged);
   NS_IMETHOD SetCheckedChangedInternal(PRBool aCheckedChanged);
   NS_IMETHOD GetCheckedChanged(PRBool* aCheckedChanged);
-  NS_IMETHOD AddedToRadioGroup();
+  NS_IMETHOD AddedToRadioGroup(PRBool aNotify = PR_TRUE);
   NS_IMETHOD WillRemoveFromRadioGroup();
 
 protected:
@@ -288,10 +295,16 @@ protected:
   nsresult VisitGroup(nsIRadioVisitor* aVisitor);
 
   /**
+   * Do all the work that |SetChecked| does (radio button handling, etc.), but
+   * take an |aNotify| parameter.
+   */
+  nsresult DoSetChecked(PRBool aValue, PRBool aNotify = PR_TRUE);
+
+  /**
    * Actually set checked and notify the frame of the change.
    * @param aValue the value of checked to set
    */
-  nsresult SetCheckedInternal(PRBool aValue);
+  nsresult SetCheckedInternal(PRBool aValue, PRBool aNotify);
 
   /**
    * Get the radio group container for this button (form or document)
@@ -299,6 +312,12 @@ protected:
    */
   already_AddRefed<nsIRadioGroupContainer> GetRadioGroupContainer();
 
+  /**
+   * MaybeSubmitForm looks for a submit input or a single text control
+   * and submits the form if either is present.
+   */
+  nsresult MaybeSubmitForm(nsIPresContext* aPresContext);
+  
   nsCOMPtr<nsIControllers> mControllers;
 
   /**
@@ -334,7 +353,7 @@ NS_NewHTMLInputElement(nsIHTMLContent** aInstancePtrResult,
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  nsresult rv = NS_STATIC_CAST(nsGenericHTMLElement *, it)->Init(aNodeInfo);
+  nsresult rv = it->Init(aNodeInfo);
 
   if (NS_FAILED(rv)) {
     delete it;
@@ -373,7 +392,7 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLInputElement, nsGenericElement)
 
 // QueryInterface implementation for nsHTMLInputElement
 NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLInputElement,
-                                    nsGenericHTMLLeafFormElement)
+                                    nsGenericHTMLFormElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLInputElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNSHTMLInputElement)
   NS_INTERFACE_MAP_ENTRY(nsITextControlElement)
@@ -401,12 +420,40 @@ nsHTMLInputElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
 
   nsCOMPtr<nsIDOMNode> kungFuDeathGrip(it);
 
-  nsresult rv = NS_STATIC_CAST(nsGenericHTMLElement *, it)->Init(mNodeInfo);
+  nsresult rv = it->Init(mNodeInfo);
 
   if (NS_FAILED(rv))
     return rv;
 
-  CopyInnerTo(this, it, aDeep);
+  CopyInnerTo(it, aDeep);
+
+  switch (mType) {
+    case NS_FORM_INPUT_TEXT:
+    case NS_FORM_INPUT_PASSWORD:
+    case NS_FORM_INPUT_FILE:
+      if (GET_BOOLBIT(mBitField, BF_VALUE_CHANGED)) {
+        // We don't have our default value anymore.  Set our value on
+        // the clone.
+        nsAutoString value;
+        GetValue(value);
+        // SetValueInternal handles setting the VALUE_CHANGED bit for us
+        it->SetValueInternal(value, nsnull);
+      }
+      break;
+    case NS_FORM_INPUT_RADIO:
+    case NS_FORM_INPUT_CHECKBOX:
+      if (GET_BOOLBIT(mBitField, BF_CHECKED_CHANGED)) {
+        // We no longer have our original checked state.  Set our
+        // checked state on the clone.
+        PRBool checked;
+        GetChecked(&checked);
+        it->DoSetChecked(checked, PR_FALSE);
+      }
+      break;
+    default:
+      break;
+  }
+          
 
   *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
 
@@ -421,6 +468,10 @@ nsHTMLInputElement::BeforeSetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
                                   const nsAString* aValue,
                                   PRBool aNotify)
 {
+  if (aNameSpaceID != kNameSpaceID_None) {
+    return;
+  }
+
   //
   // When name or type changes, radio should be removed from radio group.
   // (type changes are handled in the form itself currently)
@@ -430,10 +481,12 @@ nsHTMLInputElement::BeforeSetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
       mType == NS_FORM_INPUT_RADIO &&
       (mForm || !(GET_BOOLBIT(mBitField, BF_PARSER_CREATING)))) {
     WillRemoveFromRadioGroup();
-  } else if (aName == nsHTMLAtoms::src && aNameSpaceID == kNameSpaceID_None &&
+  } else if (aNotify && aName == nsHTMLAtoms::src &&
              aValue && mType == NS_FORM_INPUT_IMAGE) {
     // Null value means the attr got unset; don't trigger on that
     ImageURIChanged(*aValue);
+  } else if (aNotify && aName == nsHTMLAtoms::disabled) {
+    SET_BOOLBIT(mBitField, BF_DISABLED_CHANGED, PR_TRUE);
   }
 }
 
@@ -442,6 +495,10 @@ nsHTMLInputElement::AfterSetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
                                  const nsAString* aValue,
                                  PRBool aNotify)
 {
+  if (aNameSpaceID != kNameSpaceID_None) {
+    return;
+  }
+
   //
   // When name or type changes, radio should be added to radio group.
   // (type changes are handled in the form itself currently)
@@ -482,7 +539,7 @@ nsHTMLInputElement::AfterSetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
     } else {
       PRBool defaultChecked;
       GetDefaultChecked(&defaultChecked);
-      SetChecked(defaultChecked);
+      DoSetChecked(defaultChecked);
       SetCheckedChanged(PR_FALSE);
     }
   }
@@ -502,30 +559,13 @@ nsHTMLInputElement::AfterSetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
       }
     }
 
-    if (mType == NS_FORM_INPUT_IMAGE && !mCurrentRequest) {
+    if (aNotify && mType == NS_FORM_INPUT_IMAGE && !mCurrentRequest) {
       // We just got switched to be an image input; we should see
       // whether we have an image to load;
       nsAutoString src;
-      GetAttr(kNameSpaceID_None, nsHTMLAtoms::src, src);
-      ImageURIChanged(src);
-    }
-
-    // If the type of the input has changed we might need to change the type
-    // of the size attribute.
-    nsHTMLValue value;
-    if (NS_CONTENT_ATTR_HAS_VALUE ==
-        GetHTMLAttribute(nsHTMLAtoms::size, value)) {
-      if (value.GetUnit() == eHTMLUnit_Pixel &&
-          (mType == NS_FORM_INPUT_TEXT ||
-           mType == NS_FORM_INPUT_PASSWORD)) {
-        nsHTMLValue newValue(value.GetPixelValue(), eHTMLUnit_Integer);
-        SetHTMLAttribute(nsHTMLAtoms::size, newValue, PR_FALSE);
-      }
-      else if (value.GetUnit() == eHTMLUnit_Integer &&
-               mType != NS_FORM_INPUT_TEXT &&
-               mType != NS_FORM_INPUT_PASSWORD) {
-        nsHTMLValue newValue(value.GetIntValue(), eHTMLUnit_Pixel);
-        SetHTMLAttribute(nsHTMLAtoms::size, newValue, PR_FALSE);
+      nsresult rv = GetAttr(kNameSpaceID_None, nsHTMLAtoms::src, src);
+      if (rv == NS_CONTENT_ATTR_HAS_VALUE) {
+        ImageURIChanged(src);
       }
     }
   }
@@ -536,51 +576,11 @@ nsHTMLInputElement::AfterSetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
 NS_IMETHODIMP
 nsHTMLInputElement::GetForm(nsIDOMHTMLFormElement** aForm)
 {
-  return nsGenericHTMLLeafFormElement::GetForm(aForm);
+  return nsGenericHTMLFormElement::GetForm(aForm);
 }
 
-NS_IMETHODIMP 
-nsHTMLInputElement::GetDefaultValue(nsAString& aDefaultValue)
-{
-  return GetAttr(kNameSpaceID_None, nsHTMLAtoms::value, aDefaultValue);
-}
-
-NS_IMETHODIMP 
-nsHTMLInputElement::SetDefaultValue(const nsAString& aDefaultValue)
-{
-  return SetAttr(kNameSpaceID_None, nsHTMLAtoms::value, aDefaultValue,
-                 PR_TRUE); 
-}
-
-NS_IMETHODIMP 
-nsHTMLInputElement::GetDefaultChecked(PRBool* aDefaultChecked)
-{
-  nsHTMLValue val;
-  nsresult rv;
-  rv = GetHTMLAttribute(nsHTMLAtoms::checked, val);       
-
-  *aDefaultChecked = (NS_CONTENT_ATTR_NOT_THERE != rv);                        
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLInputElement::SetDefaultChecked(PRBool aDefaultChecked)
-{
-  nsresult rv;
-
-  if (aDefaultChecked) {
-    rv = SetAttr(kNameSpaceID_None, nsHTMLAtoms::checked,
-                 NS_LITERAL_STRING(""), PR_TRUE);
-  } else {
-    rv = UnsetAttr(kNameSpaceID_None, nsHTMLAtoms::checked, PR_TRUE);
-  }
-  
-  return rv;
-}
-  
-//NS_IMPL_STRING_ATTR(nsHTMLInputElement, DefaultValue, defaultvalue)
-//NS_IMPL_BOOL_ATTR(nsHTMLInputElement, DefaultChecked, defaultchecked)
+NS_IMPL_STRING_ATTR(nsHTMLInputElement, DefaultValue, value)
+NS_IMPL_BOOL_ATTR(nsHTMLInputElement, DefaultChecked, checked)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, Accept, accept)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, AccessKey, accesskey)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, Align, align)
@@ -594,6 +594,8 @@ NS_IMPL_STRING_ATTR(nsHTMLInputElement, Src, src)
 NS_IMPL_INT_ATTR(nsHTMLInputElement, TabIndex, tabindex)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, UseMap, usemap)
 //NS_IMPL_STRING_ATTR(nsHTMLInputElement, Value, value)
+//NS_IMPL_INT_ATTR_DEFAULT_VALUE(nsHTMLInputElement, Size, size, 0)
+NS_IMPL_STRING_ATTR_DEFAULT_VALUE(nsHTMLInputElement, Type, type, "text")
 
 NS_IMETHODIMP
 nsHTMLInputElement::GetSize(PRUint32* aValue)
@@ -602,13 +604,9 @@ nsHTMLInputElement::GetSize(PRUint32* aValue)
 
   nsHTMLValue value;
   if (NS_CONTENT_ATTR_HAS_VALUE ==
-      GetHTMLAttribute(nsHTMLAtoms::size, value)) {
-    if (value.GetUnit() == eHTMLUnit_Integer) {
-      *aValue = value.GetIntValue();
-    }
-    else if (value.GetUnit() == eHTMLUnit_Pixel) {
-      *aValue = value.GetPixelValue();
-    }
+      GetHTMLAttribute(nsHTMLAtoms::size, value) &&
+      value.GetUnit() == eHTMLUnit_Integer) {
+    *aValue = value.GetIntValue();
   }
 
   return NS_OK;
@@ -617,34 +615,10 @@ nsHTMLInputElement::GetSize(PRUint32* aValue)
 NS_IMETHODIMP
 nsHTMLInputElement::SetSize(PRUint32 aValue)
 {
-  nsHTMLUnit unit = eHTMLUnit_Pixel;
+  nsAutoString val;
+  val.AppendInt(aValue);
 
-  if (mType == NS_FORM_INPUT_TEXT ||
-      mType == NS_FORM_INPUT_PASSWORD) {
-    unit = eHTMLUnit_Integer;
-  }
-
-  nsHTMLValue value(aValue, unit);
-  return SetHTMLAttribute(nsHTMLAtoms::size, value, PR_TRUE);
-}
-
-NS_IMETHODIMP
-nsHTMLInputElement::GetType(nsAString& aValue)
-{
-  nsresult rv = GetAttr(kNameSpaceID_None, nsHTMLAtoms::type, aValue);
-
-  if (rv == NS_CONTENT_ATTR_NOT_THERE)
-    aValue.Assign(NS_LITERAL_STRING("text"));
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLInputElement::SetType(const nsAString& aValue)
-{
-  return SetAttr(kNameSpaceID_None,
-                 nsHTMLAtoms::type, aValue,
-                 PR_TRUE);
+  return SetAttr(kNameSpaceID_None, nsHTMLAtoms::size, val, PR_TRUE);
 }
 
 NS_IMETHODIMP 
@@ -702,13 +676,12 @@ nsHTMLInputElement::SetValue(const nsAString& aValue)
 {
   //check secuity
   if (mType == NS_FORM_INPUT_FILE) {
-    nsresult rv;
-    nsCOMPtr<nsIScriptSecurityManager> securityManager =
-             do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsIScriptSecurityManager *securityManager =
+      nsContentUtils::GetSecurityManager();
 
     PRBool enabled;
-    rv = securityManager->IsCapabilityEnabled("UniversalFileRead", &enabled);
+    nsresult rv =
+      securityManager->IsCapabilityEnabled("UniversalFileRead", &enabled);
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (!enabled) {
@@ -790,9 +763,9 @@ nsHTMLInputElement::SetValueInternal(const nsAString& aValue,
   }
 
   // Treat value == defaultValue for other input elements.
-  return nsGenericHTMLLeafFormElement::SetAttr(kNameSpaceID_None,
-                                               nsHTMLAtoms::value,
-                                               aValue, PR_TRUE);
+  return nsGenericHTMLFormElement::SetAttr(kNameSpaceID_None,
+                                           nsHTMLAtoms::value, aValue,
+                                           PR_TRUE);
 }
 
 NS_IMETHODIMP
@@ -849,6 +822,12 @@ nsHTMLInputElement::GetCheckedChanged(PRBool* aCheckedChanged)
 NS_IMETHODIMP
 nsHTMLInputElement::SetChecked(PRBool aChecked)
 {
+  return DoSetChecked(aChecked);
+}
+
+nsresult
+nsHTMLInputElement::DoSetChecked(PRBool aChecked, PRBool aNotify)
+{
   nsresult rv = NS_OK;
 
   //
@@ -877,9 +856,9 @@ nsHTMLInputElement::SetChecked(PRBool aChecked)
     // For radio button, we need to do some extra fun stuff
     //
     if (aChecked) {
-      rv = RadioSetChecked();
+      rv = RadioSetChecked(aNotify);
     } else {
-      rv = SetCheckedInternal(PR_FALSE);
+      rv = SetCheckedInternal(PR_FALSE, aNotify);
       nsCOMPtr<nsIRadioGroupContainer> container = GetRadioGroupContainer();
       if (container) {
         nsAutoString name;
@@ -889,14 +868,14 @@ nsHTMLInputElement::SetChecked(PRBool aChecked)
       }
     }
   } else {
-    rv = SetCheckedInternal(aChecked);
+    rv = SetCheckedInternal(aChecked, aNotify);
   }
 
   return rv;
 }
 
 NS_IMETHODIMP
-nsHTMLInputElement::RadioSetChecked()
+nsHTMLInputElement::RadioSetChecked(PRBool aNotify)
 {
   nsresult rv = NS_OK;
 
@@ -919,16 +898,18 @@ nsHTMLInputElement::RadioSetChecked()
   // Deselect the currently selected radio button
   //
   if (currentlySelected) {
+    // Pass PR_TRUE for the aNotify parameter since the currently selected
+    // button is already in the document.
     rv = NS_STATIC_CAST(nsHTMLInputElement*,
                         NS_STATIC_CAST(nsIDOMHTMLInputElement*, currentlySelected)
-         )->SetCheckedInternal(PR_FALSE);
+         )->SetCheckedInternal(PR_FALSE, PR_TRUE);
   }
 
   //
   // Actually select this one
   //
   if (NS_SUCCEEDED(rv)) {
-    rv = SetCheckedInternal(PR_TRUE);
+    rv = SetCheckedInternal(PR_TRUE, aNotify);
   }
 
   //
@@ -948,14 +929,79 @@ nsHTMLInputElement::GetRadioGroupContainer()
   nsIRadioGroupContainer* retval = nsnull;
   if (mForm) {
     CallQueryInterface(mForm, &retval);
-  } else if (mDocument) {
+  } else if (mDocument && GetParent()) {
     CallQueryInterface(mDocument, &retval);
   }
   return retval;
 }
 
 nsresult
-nsHTMLInputElement::SetCheckedInternal(PRBool aChecked)
+nsHTMLInputElement::MaybeSubmitForm(nsIPresContext* aPresContext)
+{
+  if (!mForm) {
+    // Nothing to do here.
+    return NS_OK;
+  }
+  
+  // Find the first submit control in elements[]
+  // and also check how many text controls we have in the form
+  nsCOMPtr<nsIContent> submitControl;
+  PRInt32 numTextControlsFound = 0;
+
+  nsCOMPtr<nsISimpleEnumerator> formControls;
+  mForm->GetControlEnumerator(getter_AddRefs(formControls));
+
+  nsCOMPtr<nsISupports> currentControlSupports;
+  nsCOMPtr<nsIFormControl> currentControl;
+  PRBool hasMoreElements;
+  nsresult rv;
+  while (NS_SUCCEEDED(rv = formControls->HasMoreElements(&hasMoreElements)) &&
+         hasMoreElements) {
+    rv = formControls->GetNext(getter_AddRefs(currentControlSupports));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    currentControl = do_QueryInterface(currentControlSupports);
+    if (currentControl) {
+      PRInt32 type = currentControl->GetType();
+      if (!submitControl &&
+          (type == NS_FORM_INPUT_SUBMIT ||
+           type == NS_FORM_BUTTON_SUBMIT ||
+           type == NS_FORM_INPUT_IMAGE)) {
+        submitControl = do_QueryInterface(currentControl);
+        // We know as soon as we find a submit control that it no
+        // longer matters how many text controls there are--we are
+        // going to fire the onClick handler.
+        break;
+      } else if (type == NS_FORM_INPUT_TEXT ||
+                 type == NS_FORM_INPUT_PASSWORD) {
+        numTextControlsFound++;
+      }
+    }
+  }
+  NS_ENSURE_SUCCESS(rv, rv);
+            
+  nsIPresShell* shell = aPresContext->GetPresShell();
+  if (shell) {
+    if (submitControl) {
+      // Fire the button's onclick handler and let the button handle
+      // submitting the form.
+      nsGUIEvent event(NS_MOUSE_LEFT_CLICK);
+      nsEventStatus status = nsEventStatus_eIgnore;
+      shell->HandleDOMEventWithTarget(submitControl, &event, &status);
+    } else if (numTextControlsFound == 1) {
+      // If there's only one text control, just submit the form
+      nsCOMPtr<nsIContent> form = do_QueryInterface(mForm);
+      nsFormEvent event(NS_FORM_SUBMIT);
+      nsEventStatus status  = nsEventStatus_eIgnore;
+      shell->HandleDOMEventWithTarget(form, &event, &status);
+    }
+  }
+
+  return NS_OK;
+}
+
+nsresult
+nsHTMLInputElement::SetCheckedInternal(PRBool aChecked, PRBool aNotify)
 {
   //
   // Set the value
@@ -966,34 +1012,29 @@ nsHTMLInputElement::SetCheckedInternal(PRBool aChecked)
   // Notify the frame
   //
   nsIFrame* frame = GetPrimaryFrame(PR_FALSE);
-  if (!frame) {
-    return NS_OK;
-  }
+  if (frame) {
+    nsCOMPtr<nsIPresContext> presContext;
+    GetPresContext(this, getter_AddRefs(presContext));
 
-  nsCOMPtr<nsIPresContext> presContext;
-  GetPresContext(this, getter_AddRefs(presContext));
-
-  if (mType == NS_FORM_INPUT_CHECKBOX) {
-    nsICheckboxControlFrame* checkboxFrame = nsnull;
-    CallQueryInterface(frame, &checkboxFrame);
-    if (checkboxFrame) {
-      checkboxFrame->OnChecked(presContext, aChecked);
-    }
-  } else if (mType == NS_FORM_INPUT_RADIO) {
-    nsIRadioControlFrame* radioFrame = nsnull;
-    CallQueryInterface(frame, &radioFrame);
-    if (radioFrame) {
-      radioFrame->OnChecked(presContext, aChecked);
+    if (mType == NS_FORM_INPUT_CHECKBOX) {
+      nsICheckboxControlFrame* checkboxFrame = nsnull;
+      CallQueryInterface(frame, &checkboxFrame);
+      if (checkboxFrame) {
+        checkboxFrame->OnChecked(presContext, aChecked);
+      }
+    } else if (mType == NS_FORM_INPUT_RADIO) {
+      nsIRadioControlFrame* radioFrame = nsnull;
+      CallQueryInterface(frame, &radioFrame);
+      if (radioFrame) {
+        radioFrame->OnChecked(presContext, aChecked);
+      }
     }
   }
 
   // Notify the document that the CSS :checked pseudoclass for this element
   // has changed state.
-  // XXX HACK Only do this if there is a frame.  Otherwise for some reason
-  // ContentStatesChanged() is creating an extra bogus frame at this point.
-  // Probably ContentStatesChanged() needs to be told not to worry if there is
-  // no frame in some cases.  Bug 134560.
-  if (mDocument && frame) {
+  if (mDocument && aNotify) {
+    mozAutoDocUpdate(mDocument, UPDATE_CONTENT_STATE, aNotify);
     mDocument->ContentStatesChanged(this, nsnull, NS_EVENT_STATE_CHECKED);
   }
 
@@ -1010,64 +1051,61 @@ nsHTMLInputElement::FireOnChange()
   nsCOMPtr<nsIPresContext> presContext;
   GetPresContext(this, getter_AddRefs(presContext));
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsEvent event;
-  event.eventStructType = NS_EVENT;
-  event.message = NS_FORM_CHANGE;
+  nsEvent event(NS_FORM_CHANGE);
   HandleDOMEvent(presContext, &event, nsnull, NS_EVENT_FLAG_INIT, &status);
 }
 
 NS_IMETHODIMP
 nsHTMLInputElement::Blur()
 {
-  return SetElementFocus(PR_FALSE);
+  SetElementFocus(PR_FALSE);
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
 nsHTMLInputElement::Focus()
 {
-  return SetElementFocus(PR_TRUE);
+  SetElementFocus(PR_TRUE);
+
+  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsHTMLInputElement::SetFocus(nsIPresContext* aPresContext)
 {
-  NS_ENSURE_ARG_POINTER(aPresContext);
+  if (!aPresContext)
+    return;
 
   // We can't be focus'd if we don't have a document
-  if (! mDocument)
-    return NS_OK;
+  if (!mDocument)
+    return;
 
   // first see if we are disabled or not. If disabled then do nothing.
   nsAutoString disabled;
   if (NS_CONTENT_ATTR_HAS_VALUE == GetAttr(kNameSpaceID_None,
                                            nsHTMLAtoms::disabled, disabled)) {
-    return NS_OK;
+    return;
   }
  
   // If the window is not active, do not allow the focus to bring the
   // window to the front.  We update the focus controller, but do
   // nothing else.
   nsCOMPtr<nsIFocusController> focusController;
-  nsCOMPtr<nsIScriptGlobalObject> globalObj;
-  mDocument->GetScriptGlobalObject(getter_AddRefs(globalObj));
-  nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(globalObj));
+  nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(mDocument->GetScriptGlobalObject()));
   win->GetRootFocusController(getter_AddRefs(focusController));
   PRBool isActive = PR_FALSE;
   focusController->GetActive(&isActive);
   if (!isActive) {
-    nsCOMPtr<nsIDOMWindowInternal> domWin(do_QueryInterface(globalObj));
+    nsCOMPtr<nsIDOMWindowInternal> domWin(do_QueryInterface(win));
     focusController->SetFocusedWindow(domWin);
     focusController->SetFocusedElement(this);
-    return NS_OK;
+
+    return;
   }
 
-  nsCOMPtr<nsIEventStateManager> esm;
-
-  aPresContext->GetEventStateManager(getter_AddRefs(esm));
-
-  if (esm) {
-    esm->SetContentState(this, NS_EVENT_STATE_FOCUS);
-  }
+  aPresContext->EventStateManager()->SetContentState(this,
+                                                     NS_EVENT_STATE_FOCUS);
 
   nsIFormControlFrame* formControlFrame = GetFormControlFrame(PR_TRUE);
 
@@ -1077,17 +1115,16 @@ nsHTMLInputElement::SetFocus(nsIPresContext* aPresContext)
     // Could call SelectAll(aPresContext) here to automatically
     // select text when we receive focus - only for text and password!
   }
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsHTMLInputElement::RemoveFocus(nsIPresContext* aPresContext)
 {
-  NS_ENSURE_ARG_POINTER(aPresContext);
+  if (!aPresContext)
+    return;
+
   // If we are disabled, we probably shouldn't have focus in the
   // first place, so allow it to be removed.
-  nsresult rv = NS_OK;
 
   nsIFormControlFrame* formControlFrame = GetFormControlFrame(PR_TRUE);
 
@@ -1095,25 +1132,10 @@ nsHTMLInputElement::RemoveFocus(nsIPresContext* aPresContext)
     formControlFrame->SetFocus(PR_FALSE, PR_FALSE);
   }
 
-  nsCOMPtr<nsIEventStateManager> esm;
-  aPresContext->GetEventStateManager(getter_AddRefs(esm));
-
-  if (esm) {
-    nsCOMPtr<nsIDocument> doc;
-
-    GetDocument(getter_AddRefs(doc));
-
-    if (!doc)
-      return NS_ERROR_NULL_POINTER;
-
-    nsCOMPtr<nsIContent> rootContent;
-
-    doc->GetRootContent(getter_AddRefs(rootContent));
-
-    rv = esm->SetContentState(rootContent, NS_EVENT_STATE_FOCUS);
+  if (mDocument) {
+    aPresContext->EventStateManager()->SetContentState(nsnull,
+                                                       NS_EVENT_STATE_FOCUS);
   }
-
-  return rv;
 }
 
 NS_IMETHODIMP
@@ -1140,15 +1162,13 @@ nsHTMLInputElement::Select()
     // If the window is not active, do not allow the select to bring the
     // window to the front.  We update the focus controller, but do
     // nothing else.
-    nsCOMPtr<nsIScriptGlobalObject> globalObj;
-    mDocument->GetScriptGlobalObject(getter_AddRefs(globalObj));
-    nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(globalObj));
+    nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(mDocument->GetScriptGlobalObject()));
     nsCOMPtr<nsIFocusController> focusController;
     win->GetRootFocusController(getter_AddRefs(focusController));
     PRBool isActive = PR_FALSE;
     focusController->GetActive(&isActive);
     if (!isActive) {
-      nsCOMPtr<nsIDOMWindowInternal> domWin(do_QueryInterface(globalObj));
+      nsCOMPtr<nsIDOMWindowInternal> domWin(do_QueryInterface(win));
       focusController->SetFocusedWindow(domWin);
       focusController->SetFocusedElement(this);
       SelectAll(presContext);
@@ -1160,9 +1180,7 @@ nsHTMLInputElement::Select()
     
     //If already handling select event, don't dispatch a second.
     if (!GET_BOOLBIT(mBitField, BF_HANDLING_SELECT_EVENT)) {
-      nsEvent event;
-      event.eventStructType = NS_EVENT;
-      event.message = NS_FORM_SELECTED;
+      nsEvent event(NS_FORM_SELECTED);
   
       SET_BOOLBIT(mBitField, BF_HANDLING_SELECT_EVENT, PR_TRUE);
       rv = HandleDOMEvent(presContext, &event, nsnull, NS_EVENT_FLAG_INIT,
@@ -1174,18 +1192,15 @@ nsHTMLInputElement::Select()
     // returning false)
     if (status == nsEventStatus_eIgnore) {
       if (presContext) {
-        nsCOMPtr<nsIEventStateManager> esm;
-        presContext->GetEventStateManager(getter_AddRefs(esm));
-        if (esm) {
-          // XXX Fix for bug 135345 - ESM currently does not check to see if we
-          // have focus before attempting to set focus again and may cause
-          // infinite recursion.  For now check if we have focus and do not set
-          // focus again if already focused.
-          PRInt32 currentState;
-          esm->GetContentState(this, currentState);
-          if (!(currentState & NS_EVENT_STATE_FOCUS)) {
-            esm->SetContentState(this, NS_EVENT_STATE_FOCUS);
-          }
+        nsIEventStateManager *esm = presContext->EventStateManager();
+        // XXX Fix for bug 135345 - ESM currently does not check to see if we
+        // have focus before attempting to set focus again and may cause
+        // infinite recursion.  For now check if we have focus and do not set
+        // focus again if already focused.
+        PRInt32 currentState;
+        esm->GetContentState(this, currentState);
+        if (!(currentState & NS_EVENT_STATE_FOCUS)) {
+          esm->SetContentState(this, NS_EVENT_STATE_FOCUS);
         }
       }
 
@@ -1231,43 +1246,32 @@ nsHTMLInputElement::Click()
 
   // see what type of input we are.  Only click button, checkbox, radio,
   // reset, submit, & image
-  if (mType == NS_FORM_INPUT_BUTTON || mType == NS_FORM_INPUT_CHECKBOX ||
-      mType == NS_FORM_INPUT_RADIO || mType == NS_FORM_INPUT_RESET ||
-      mType == NS_FORM_INPUT_SUBMIT) {
+  if (mDocument &&
+      (mType == NS_FORM_INPUT_BUTTON   ||
+       mType == NS_FORM_INPUT_CHECKBOX ||
+       mType == NS_FORM_INPUT_RADIO    ||
+       mType == NS_FORM_INPUT_RESET    ||
+       mType == NS_FORM_INPUT_SUBMIT   ||
+       mType == NS_FORM_INPUT_IMAGE)) {
 
-    nsCOMPtr<nsIDocument> doc; // Strong
-    rv = GetDocument(getter_AddRefs(doc));
+    nsCOMPtr<nsIDocument> doc = mDocument; // Strong in case the event kills it
+    nsCOMPtr<nsIPresContext> context;
 
-    if (doc) {
-      PRInt32 numShells = doc->GetNumberOfShells();
-      nsCOMPtr<nsIPresContext> context;
-      for (PRInt32 i=0; i<numShells; i++) {
-        nsCOMPtr<nsIPresShell> shell;
-        doc->GetShellAt(i, getter_AddRefs(shell));
+    nsIPresShell *shell = doc->GetShellAt(0);
 
-        if (shell) {
-          shell->GetPresContext(getter_AddRefs(context));
+    if (shell) {
+      shell->GetPresContext(getter_AddRefs(context));
 
-          if (context) {
-            nsEventStatus status = nsEventStatus_eIgnore;
-            nsMouseEvent event;
-            event.eventStructType = NS_MOUSE_EVENT;
-            event.message = NS_MOUSE_LEFT_CLICK;
-            event.isShift = PR_FALSE;
-            event.isControl = PR_FALSE;
-            event.isAlt = PR_FALSE;
-            event.isMeta = PR_FALSE;
-            event.clickCount = 0;
-            event.widget = nsnull;
-            
-            SET_BOOLBIT(mBitField, BF_HANDLING_CLICK, PR_TRUE);
+      if (context) {
+        nsEventStatus status = nsEventStatus_eIgnore;
+        nsMouseEvent event(NS_MOUSE_LEFT_CLICK);
 
-            rv = HandleDOMEvent(context, &event, nsnull, NS_EVENT_FLAG_INIT,
-                                &status);
+        SET_BOOLBIT(mBitField, BF_HANDLING_CLICK, PR_TRUE);
 
-            SET_BOOLBIT(mBitField, BF_HANDLING_CLICK, PR_FALSE);
-          }
-        }
+        rv = HandleDOMEvent(context, &event, nsnull, NS_EVENT_FLAG_INIT,
+                            &status);
+
+        SET_BOOLBIT(mBitField, BF_HANDLING_CLICK, PR_FALSE);
       }
     }
   }
@@ -1275,7 +1279,7 @@ nsHTMLInputElement::Click()
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
                                    nsEvent* aEvent,
                                    nsIDOMEvent** aDOMEvent,
@@ -1310,54 +1314,6 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
     }
   }
 
-  // If we're a file input we have anonymous content underneath
-  // that we need to hide.  We need to set the event target now
-  // to ourselves and the original target to the previous target.
-
-  nsCOMPtr<nsIDOMEventTarget> oldTarget;
-  if (mType == NS_FORM_INPUT_FILE || mType == NS_FORM_INPUT_TEXT ) {
-    // If the event is starting here that's fine.  If it's not
-    // init'ing here it started beneath us and needs modification.
-    // XXX This happens twice (unnecessarily) since there is both a capture
-    // and a bubble stage.
-    if (!(NS_EVENT_FLAG_INIT & aFlags)) {
-      // Create the DOM event.
-      if (!*aDOMEvent) {
-        // We haven't made a DOMEvent yet.  Force making one now.
-        nsCOMPtr<nsIEventListenerManager> listenerManager;
-        rv = GetListenerManager(getter_AddRefs(listenerManager));
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        nsAutoString empty;
-        rv = listenerManager->CreateEvent(aPresContext, aEvent, empty,
-                                          aDOMEvent);
-        NS_ENSURE_SUCCESS(rv, rv);
-      }
-
-      // See if there is an original target already.  If not, set it to the
-      // current event target.
-      nsCOMPtr<nsIDOMEventTarget> originalTarget;
-      nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(*aDOMEvent));
-      if (nsevent) {
-        nsevent->GetOriginalTarget(getter_AddRefs(originalTarget));
-      }
-
-      nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(*aDOMEvent));
-      NS_ENSURE_TRUE(privateEvent, NS_ERROR_FAILURE);
-
-      (*aDOMEvent)->GetTarget(getter_AddRefs(oldTarget));
-      if (!originalTarget) {
-        privateEvent->SetOriginalTarget(oldTarget);
-      }
-
-      // Set the target to us now.
-      nsCOMPtr<nsIDOMEventTarget>
-        target(do_QueryInterface((nsIDOMHTMLInputElement*)this));
-
-      privateEvent->SetTarget(target);
-    }
-  }
-
   //
   // Web pages expect the value of a radio button or checkbox to be set
   // *before* onclick fires, and they expect that if they set the value
@@ -1381,7 +1337,7 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
       case NS_FORM_INPUT_CHECKBOX:
         {
           GetChecked(&originalCheckedValue);
-          SetChecked(!originalCheckedValue);
+          DoSetChecked(!originalCheckedValue);
           checkWasSet = PR_TRUE;
         }
         break;
@@ -1399,7 +1355,7 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
 
           GetChecked(&originalCheckedValue);
           if (!originalCheckedValue) {
-            SetChecked(PR_TRUE);
+            DoSetChecked(PR_TRUE);
             checkWasSet = PR_TRUE;
           }
         }
@@ -1435,11 +1391,9 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
 
   // Try script event handlers first if its not a focus/blur event
   //we dont want the doc to get these
-  rv = nsGenericHTMLLeafFormElement::HandleDOMEvent(aPresContext,
-                                                    aEvent,
-                                                    aDOMEvent,
-                                                    aFlags,
-                                                    aEventStatus);
+  rv = nsGenericHTMLFormElement::HandleDOMEvent(aPresContext, aEvent,
+                                                aDOMEvent, aFlags,
+                                                aEventStatus);
 
   if (!(aFlags & NS_EVENT_FLAG_CAPTURE) && !(aFlags & NS_EVENT_FLAG_SYSTEM_EVENT) &&
       aEvent->message == NS_MOUSE_LEFT_CLICK) {
@@ -1471,10 +1425,10 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
         // If this one is no longer a radio button we must reset it back to
         // false to cancel the action.  See how the web of hack grows?
         if (mType != NS_FORM_INPUT_RADIO) {
-          SetChecked(PR_FALSE);
+          DoSetChecked(PR_FALSE);
         }
       } else if (oldType == NS_FORM_INPUT_CHECKBOX) {
-        SetChecked(originalCheckedValue);
+        DoSetChecked(originalCheckedValue);
       }
     } else {
       FireOnChange();
@@ -1488,26 +1442,6 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
                                   NS_LITERAL_STRING("RadioStateChange"));
       }
 #endif
-    }
-  }
-
-  // Finish the special file control processing...
-  if (oldTarget) {
-    // If the event is starting here that's fine.  If it's not
-    // init'ing here it started beneath us and needs modification.
-    if (!(NS_EVENT_FLAG_INIT & aFlags)) {
-      if (!*aDOMEvent) {
-        return NS_ERROR_FAILURE;
-      }
-      nsCOMPtr<nsIPrivateDOMEvent> privateEvent =
-        do_QueryInterface(*aDOMEvent);
-
-      if (!privateEvent) {
-        return NS_ERROR_FAILURE;
-      }
-
-      // This will reset the target to its original value
-      privateEvent->SetTarget(oldTarget);
     }
   }
 
@@ -1545,23 +1479,8 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
               {
                 // Checkbox and Radio try to submit on Enter press
                 if (keyEvent->keyCode != NS_VK_SPACE) {
-                  // Generate a submit event targeted at the form content
-                  nsCOMPtr<nsIContent> form(do_QueryInterface(mForm));
+                  MaybeSubmitForm(aPresContext);
 
-                  if (form) {
-                    nsCOMPtr<nsIPresShell> shell;
-                    aPresContext->GetShell(getter_AddRefs(shell));
-                    if (shell) {
-                      nsCOMPtr<nsIContent> formControl = this; // kungFuDeathGrip
-
-                      nsFormEvent event;
-                      event.eventStructType = NS_FORM_EVENT;
-                      event.message         = NS_FORM_SUBMIT;
-                      event.originator      = formControl;
-                      nsEventStatus status  = nsEventStatus_eIgnore;
-                      shell->HandleDOMEventWithTarget(form, &event, &status);
-                    }
-                  }
                   break;  // If we are submitting, do not send click event
                 }
                 // else fall through and treat Space like click...
@@ -1572,15 +1491,7 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
               case NS_FORM_INPUT_IMAGE: // Bug 34418
               {
                 nsEventStatus status = nsEventStatus_eIgnore;
-                nsMouseEvent event;
-                event.eventStructType = NS_MOUSE_EVENT;
-                event.message = NS_MOUSE_LEFT_CLICK;
-                event.isShift = PR_FALSE;
-                event.isControl = PR_FALSE;
-                event.isAlt = PR_FALSE;
-                event.isMeta = PR_FALSE;
-                event.clickCount = 0;
-                event.widget = nsnull;
+                nsMouseEvent event(NS_MOUSE_LEFT_CLICK);
                 rv = HandleDOMEvent(aPresContext, &event, nsnull,
                                     NS_EVENT_FLAG_INIT, &status);
               } // case
@@ -1604,80 +1515,22 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
               (keyEvent->keyCode == NS_VK_RETURN ||
                keyEvent->keyCode == NS_VK_ENTER) &&
               (mType == NS_FORM_INPUT_TEXT ||
-               mType == NS_FORM_INPUT_PASSWORD)) {
+               mType == NS_FORM_INPUT_PASSWORD ||
+               mType == NS_FORM_INPUT_FILE)) {
 
-            if (mForm) {
-              nsIFrame* primaryFrame = GetPrimaryFrame(PR_FALSE);
-              if (primaryFrame) {
-                nsITextControlFrame* textFrame = nsnull;
-                CallQueryInterface(primaryFrame, &textFrame);
-
-                // Fire onChange (if necessary)
-                if (textFrame) {
-                  textFrame->CheckFireOnChange();
-                }
-              }
-
-              // Find the first submit control in elements[]
-              // and also check how many text controls we have in the form
-              nsCOMPtr<nsIContent> submitControl;
-              PRInt32 numTextControlsFound = 0;
-
-              nsCOMPtr<nsISimpleEnumerator> formControls;
-              mForm->GetControlEnumerator(getter_AddRefs(formControls));
-
-              nsCOMPtr<nsISupports> currentControlSupports;
-              nsCOMPtr<nsIFormControl> currentControl;
-              PRBool hasMoreElements;
-              while (NS_SUCCEEDED(rv = formControls->HasMoreElements(&hasMoreElements)) &&
-                     hasMoreElements) {
-                rv = formControls->GetNext(getter_AddRefs(currentControlSupports));
-                NS_ENSURE_SUCCESS(rv, rv);
-
-                currentControl = do_QueryInterface(currentControlSupports);
-                if (currentControl) {
-                  PRInt32 type = currentControl->GetType();
-                  if (!submitControl &&
-                      (type == NS_FORM_INPUT_SUBMIT ||
-                       type == NS_FORM_BUTTON_SUBMIT ||
-                       type == NS_FORM_INPUT_IMAGE)) {
-                    submitControl = do_QueryInterface(currentControl);
-                    // We know as soon as we find a submit control that it no
-                    // longer matters how many text controls there are--we are
-                    // going to fire the onClick handler.
-                    break;
-                  } else if (type == NS_FORM_INPUT_TEXT ||
-                             type == NS_FORM_INPUT_PASSWORD) {
-                    numTextControlsFound++;
-                  }
-                }
-              }
-              NS_ENSURE_SUCCESS(rv, rv);
-            
-              nsCOMPtr<nsIPresShell> shell;
-              aPresContext->GetShell(getter_AddRefs(shell));
-              if (shell) {
-                if (submitControl) {
-                 // Fire the button's onclick handler and let the button handle
-                 // submitting the form.
-                  nsGUIEvent event;
-                  event.eventStructType = NS_MOUSE_EVENT;
-                  event.message = NS_MOUSE_LEFT_CLICK;
-                  event.widget = nsnull;
-                  nsEventStatus status = nsEventStatus_eIgnore;
-                  shell->HandleDOMEventWithTarget(submitControl, &event, &status);
-                } else if (numTextControlsFound == 1) {
-                  // If there's only one text control, just submit the form
-                  nsCOMPtr<nsIContent> form = do_QueryInterface(mForm);
-                  nsFormEvent event;
-                  event.eventStructType = NS_FORM_EVENT;
-                  event.message         = NS_FORM_SUBMIT;
-                  event.originator      = nsnull;
-                  nsEventStatus status  = nsEventStatus_eIgnore;
-                  shell->HandleDOMEventWithTarget(form, &event, &status);
-                }
+            nsIFrame* primaryFrame = GetPrimaryFrame(PR_FALSE);
+            if (primaryFrame) {
+              nsITextControlFrame* textFrame = nsnull;
+              CallQueryInterface(primaryFrame, &textFrame);
+              
+              // Fire onChange (if necessary)
+              if (textFrame) {
+                textFrame->CheckFireOnChange();
               }
             }
+
+            rv = MaybeSubmitForm(aPresContext);
+            NS_ENSURE_SUCCESS(rv, rv);
           }
 
         } break; // NS_KEY_PRESS || NS_KEY_UP
@@ -1725,14 +1578,13 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
             case NS_FORM_INPUT_IMAGE:
               {
                 if (mForm) {
-                  nsFormEvent event;
-                  event.eventStructType = NS_FORM_EVENT;
-                  event.message         = (mType == NS_FORM_INPUT_RESET) ? NS_FORM_RESET : NS_FORM_SUBMIT;
+                  nsFormEvent event((mType == NS_FORM_INPUT_RESET) ?
+                                    NS_FORM_RESET : NS_FORM_SUBMIT);
                   event.originator      = this;
                   nsEventStatus status  = nsEventStatus_eIgnore;
 
-                  nsCOMPtr<nsIPresShell> presShell;
-                  aPresContext->GetShell(getter_AddRefs(presShell));
+                  nsIPresShell *presShell = aPresContext->GetPresShell();
+
                   // If |nsIPresShell::Destroy| has been called due to
                   // handling the event (base class HandleDOMEvent, above),
                   // the pres context will return a null pres shell.  See
@@ -1767,27 +1619,38 @@ nsHTMLInputElement::HandleDOMEvent(nsIPresContext* aPresContext,
 }
 
 
-NS_IMETHODIMP
+void
 nsHTMLInputElement::SetDocument(nsIDocument* aDocument, PRBool aDeep,
                                 PRBool aCompileEventHandlers)
 {
+  PRBool documentChanging = (aDocument != mDocument);
+
   // SetDocument() sets the form and that takes care of form's WillRemove
   // so we just have to take care of the case where we're removing from the
   // document and we don't have a form
-  if (!aDocument && !mForm && mType == NS_FORM_INPUT_RADIO) {
+  if (documentChanging && !mForm && mType == NS_FORM_INPUT_RADIO) {
     WillRemoveFromRadioGroup();
   }
 
-  nsresult rv = nsGenericHTMLLeafFormElement::SetDocument(aDocument, aDeep,
-                                                          aCompileEventHandlers);
+  nsGenericHTMLFormElement::SetDocument(aDocument, aDeep,
+                                        aCompileEventHandlers);
 
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (mType == NS_FORM_INPUT_IMAGE &&
+      documentChanging && aDocument && GetParent()) {
+    // Our base URI may have changed; claim that our URI changed, and the
+    // nsImageLoadingContent will decide whether a new image load is warranted.
+    nsAutoString uri;
+    nsresult result = GetAttr(kNameSpaceID_None, nsHTMLAtoms::src, uri);
+    if (result == NS_CONTENT_ATTR_HAS_VALUE) {
+      ImageURIChanged(uri);
+    }
+  }
   
   // If this is radio button which is in a form,
   // and the parser is still creating the element.
   if (mForm || mType != NS_FORM_INPUT_RADIO ||
       GET_BOOLBIT(mBitField, BF_PARSER_CREATING)) {
-    return NS_OK;
+    return;
   }
   
   // Add radio to document if we don't have a form already (if we do it's
@@ -1795,9 +1658,23 @@ nsHTMLInputElement::SetDocument(nsIDocument* aDocument, PRBool aDeep,
   if (aDocument && !mForm && mType == NS_FORM_INPUT_RADIO) {
     AddedToRadioGroup();
   }
-
-  return NS_OK;
 }
+
+void
+nsHTMLInputElement::SetParent(nsIContent* aParent)
+{
+  nsGenericHTMLFormElement::SetParent(aParent);
+  if (mType == NS_FORM_INPUT_IMAGE && aParent && mDocument) {
+    // Our base URI may have changed; claim that our URI changed, and the
+    // nsImageLoadingContent will decide whether a new image load is warranted.
+    nsAutoString uri;
+    nsresult result = GetAttr(kNameSpaceID_None, nsHTMLAtoms::src, uri);
+    if (result == NS_CONTENT_ATTR_HAS_VALUE) {
+      ImageURIChanged(uri);
+    }
+  }
+}
+
 
 // nsIHTMLContent
 
@@ -1816,90 +1693,60 @@ static const nsHTMLValue::EnumTable kInputTypeTable[] = {
   { 0 }
 };
 
-NS_IMETHODIMP
-nsHTMLInputElement::StringToAttribute(nsIAtom* aAttribute,
-                                      const nsAString& aValue,
-                                      nsHTMLValue& aResult)
+PRBool
+nsHTMLInputElement::ParseAttribute(nsIAtom* aAttribute,
+                                   const nsAString& aValue,
+                                   nsAttrValue& aResult)
 {
   if (aAttribute == nsHTMLAtoms::type) {
-    const nsHTMLValue::EnumTable *table = kInputTypeTable;
-    nsAutoString valueStr(aValue);
-    while (nsnull != table->tag) { 
-      if (valueStr.EqualsIgnoreCase(table->tag)) {
-        // If the type is being changed to file, set the element value
-        // to the empty string. This is for security.
-        if (table->value == NS_FORM_INPUT_FILE) {
-          SetValue(NS_LITERAL_STRING(""));
-        }
-        aResult.SetIntValue(table->value, eHTMLUnit_Enumerated);
-        mType = table->value;  // set the type of this input
-        return NS_CONTENT_ATTR_HAS_VALUE;
-      }
-      table++;
+    // XXX ARG!! This is major evilness. ParseAttribute
+    // shouldn't set members. Override SetAttr instead
+    if (!aResult.ParseEnumValue(aValue, kInputTypeTable)) {
+      mType = NS_FORM_INPUT_TEXT;
+      return PR_FALSE;
     }
-  }
-  else if (aAttribute == nsHTMLAtoms::checked) {
-    aResult.SetEmptyValue();
-    return NS_CONTENT_ATTR_HAS_VALUE;
-  }
-  else if (aAttribute == nsHTMLAtoms::disabled) {
-    aResult.SetEmptyValue();
-    return NS_CONTENT_ATTR_HAS_VALUE;
-  }
-  else if (aAttribute == nsHTMLAtoms::readonly) {
-    aResult.SetEmptyValue();
-    return NS_CONTENT_ATTR_HAS_VALUE;
-  }
-  else if (aAttribute == nsHTMLAtoms::width) {
-    if (aResult.ParseSpecialIntValue(aValue, eHTMLUnit_Pixel, PR_TRUE, PR_FALSE)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
+
+    mType = aResult.GetEnumValue();
+    if (mType == NS_FORM_INPUT_FILE) {
+      // If the type is being changed to file, set the element value
+      // to the empty string. This is for security.
+      // Call SetValueInternal so that this doesn't accidentally get caught
+      // in the security checks in SetValue.
+      SetValueInternal(EmptyString(), nsnull);
     }
+
+    return PR_TRUE;
   }
-  else if (aAttribute == nsHTMLAtoms::height) {
-    if (aResult.ParseSpecialIntValue(aValue, eHTMLUnit_Pixel, PR_TRUE, PR_FALSE)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+  if (aAttribute == nsHTMLAtoms::width) {
+    return aResult.ParseSpecialIntValue(aValue, PR_TRUE, PR_FALSE);
   }
-  else if (aAttribute == nsHTMLAtoms::maxlength) {
-    if (aResult.ParseIntWithBounds(aValue, eHTMLUnit_Integer, 0)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+  if (aAttribute == nsHTMLAtoms::height) {
+    return aResult.ParseSpecialIntValue(aValue, PR_TRUE, PR_FALSE);
   }
-  else if (aAttribute == nsHTMLAtoms::size) {
-    if (mType == NS_FORM_INPUT_TEXT ||
-        mType == NS_FORM_INPUT_PASSWORD) {
-      if (aResult.ParseIntWithBounds(aValue, eHTMLUnit_Integer, 0)) {
-        return NS_CONTENT_ATTR_HAS_VALUE;
-      }
-    }
-    else {
-      if (aResult.ParseIntWithBounds(aValue, eHTMLUnit_Pixel, 0)) {
-        return NS_CONTENT_ATTR_HAS_VALUE;
-      }
-    }
+  if (aAttribute == nsHTMLAtoms::maxlength) {
+    return aResult.ParseIntWithBounds(aValue, 0);
   }
-  else if (aAttribute == nsHTMLAtoms::tabindex) {
-    if (aResult.ParseIntWithBounds(aValue, eHTMLUnit_Integer, 0)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+  if (aAttribute == nsHTMLAtoms::size) {
+    return aResult.ParseIntWithBounds(aValue, 0);
   }
-  else if (aAttribute == nsHTMLAtoms::border) {
-    if (aResult.ParseIntWithBounds(aValue, eHTMLUnit_Pixel, 0)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+  if (aAttribute == nsHTMLAtoms::tabindex) {
+    return aResult.ParseIntWithBounds(aValue, 0, 32767);
   }
-  else if (aAttribute == nsHTMLAtoms::align) {
-    if (ParseAlignValue(aValue, aResult)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+  if (aAttribute == nsHTMLAtoms::border) {
+    return aResult.ParseIntWithBounds(aValue, 0);
   }
-  else if (IsImage()) {
-    if (ParseImageAttribute(aAttribute, aValue, aResult)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+  if (aAttribute == nsHTMLAtoms::align) {
+    return ParseAlignValue(aValue, aResult);
+  }
+  if (ParseImageAttribute(aAttribute, aValue, aResult)) {
+    // We have to call |ParseImageAttribute| unconditionally since we
+    // don't know if we're going to have a type="image" attribute yet,
+    // (or could have it set dynamically in the future).  See bug
+    // 214077.
+    return PR_TRUE;
   }
 
-  return NS_CONTENT_ATTR_NOT_THERE;
+  return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
 }
 
 NS_IMETHODIMP
@@ -1929,71 +1776,70 @@ nsHTMLInputElement::AttributeToString(nsIAtom* aAttribute,
       return NS_CONTENT_ATTR_HAS_VALUE;
     }
   }
-  else if (aAttribute == nsHTMLAtoms::checked) {
-    aResult.Assign(NS_LITERAL_STRING("checked"));
-    return NS_CONTENT_ATTR_HAS_VALUE;
-  }
-  else if (IsImage() && ImageAttributeToString(aAttribute, aValue,
-                                               aResult)) {
-    return NS_CONTENT_ATTR_HAS_VALUE;
-  }
 
-  return nsGenericHTMLLeafFormElement::AttributeToString(aAttribute, aValue,
-                                                         aResult);
+  return nsGenericHTMLFormElement::AttributeToString(aAttribute, aValue,
+                                                     aResult);
 }
 
 static void
-MapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes,
+MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
                       nsRuleData* aData)
 {
-  if (!aData)
-    return;
-
   nsHTMLValue value;
   aAttributes->GetAttribute(nsHTMLAtoms::type, value);
   if (value.GetUnit() == eHTMLUnit_Enumerated &&
       value.GetIntValue() == NS_FORM_INPUT_IMAGE) {
-    nsGenericHTMLElement::MapImageBorderAttributeInto(aAttributes, aData);
-    nsGenericHTMLElement::MapImageMarginAttributeInto(aAttributes, aData);
-    nsGenericHTMLElement::MapImagePositionAttributeInto(aAttributes, aData);
+    nsGenericHTMLFormElement::MapImageBorderAttributeInto(aAttributes, aData);
+    nsGenericHTMLFormElement::MapImageMarginAttributeInto(aAttributes, aData);
+    nsGenericHTMLFormElement::MapImageSizeAttributesInto(aAttributes, aData);
     // Images treat align as "float"
-    nsGenericHTMLElement::MapAlignAttributeInto(aAttributes, aData);
+    nsGenericHTMLFormElement::MapImageAlignAttributeInto(aAttributes, aData);
   } else {
     // Everything else treats align as "text-align"
-    nsGenericHTMLElement::MapDivAlignAttributeInto(aAttributes, aData);
+    nsGenericHTMLFormElement::MapDivAlignAttributeInto(aAttributes, aData);
   }
 
-  nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aData);
+  nsGenericHTMLFormElement::MapCommonAttributesInto(aAttributes, aData);
 }
 
 NS_IMETHODIMP
-nsHTMLInputElement::GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                             nsChangeHint& aHint) const
+nsHTMLInputElement::GetAttributeChangeHint(const nsIAtom* aAttribute,
+                                           PRInt32 aModType,
+                                           nsChangeHint& aHint) const
 {
-  nsChangeHint valueHint = (mType == NS_FORM_INPUT_BUTTON ||
-                            mType == NS_FORM_INPUT_RESET ||
-                            mType == NS_FORM_INPUT_SUBMIT) ?
-    NS_STYLE_HINT_CONTENT : NS_STYLE_HINT_ATTRCHANGE;
+  nsresult rv =
+    nsGenericHTMLFormElement::GetAttributeChangeHint(aAttribute, aModType,
+                                                     aHint);
+  if (aAttribute == nsHTMLAtoms::type) {
+    NS_UpdateHint(aHint, NS_STYLE_HINT_FRAMECHANGE);
+  } else if (aAttribute == nsHTMLAtoms::value) {
+    NS_UpdateHint(aHint, NS_STYLE_HINT_REFLOW);
+  } else if (aAttribute == nsHTMLAtoms::size &&
+             (mType == NS_FORM_INPUT_TEXT ||
+              mType == NS_FORM_INPUT_PASSWORD)) {
+    NS_UpdateHint(aHint, NS_STYLE_HINT_REFLOW);
+  }
+  return rv;
+}
 
-  const AttributeImpactEntry attributes[] = {
-    { &nsHTMLAtoms::value, valueHint },
-    { &nsHTMLAtoms::align, NS_STYLE_HINT_FRAMECHANGE },
-    { &nsHTMLAtoms::type, NS_STYLE_HINT_FRAMECHANGE },
-    { nsnull, NS_STYLE_HINT_NONE },
+NS_IMETHODIMP_(PRBool)
+nsHTMLInputElement::IsAttributeMapped(const nsIAtom* aAttribute) const
+{
+  static const MappedAttributeEntry attributes[] = {
+    { &nsHTMLAtoms::align },
+    { &nsHTMLAtoms::type },
+    { nsnull },
   };
 
-  const AttributeImpactEntry* const map[] = {
+  static const MappedAttributeEntry* const map[] = {
     attributes,
     sCommonAttributeMap,
-    sImageAttributeMap,
+    sImageMarginSizeAttributeMap,
     sImageBorderAttributeMap,
   };
 
-  FindAttributeImpact(aAttribute, aHint, map, NS_ARRAY_LENGTH(map));
-  
-  return NS_OK;
+  return FindAttributeDependence(aAttribute, map, NS_ARRAY_LENGTH(map));
 }
-
 
 NS_IMETHODIMP
 nsHTMLInputElement::GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const
@@ -2163,13 +2009,11 @@ nsHTMLInputElement::FireEventForAccessibility(nsIPresContext* aPresContext,
   if (manager &&
       NS_SUCCEEDED(manager->CreateEvent(aPresContext, nsnull, NS_LITERAL_STRING("Events"), getter_AddRefs(event)))) {
     event->InitEvent(aEventType, PR_TRUE, PR_TRUE);
+
     PRBool noDefault;
-    nsCOMPtr<nsIEventStateManager> esm;
-    aPresContext->GetEventStateManager(getter_AddRefs(esm));
-    if (esm) {
-      nsCOMPtr<nsISupports> target(do_QueryInterface(NS_STATIC_CAST(nsIDOMHTMLInputElement *, this)));
-      esm->DispatchNewEvent(target, event, &noDefault);
-    }
+    nsISupports *target = NS_STATIC_CAST(nsIDOMHTMLInputElement*, this);
+    aPresContext->EventStateManager()->DispatchNewEvent(target, event,
+                                                        &noDefault);
   }
 
   return NS_OK;
@@ -2189,7 +2033,7 @@ nsHTMLInputElement::Reset()
     {
       PRBool resetVal;
       GetDefaultChecked(&resetVal);
-      rv = SetChecked(resetVal);
+      rv = DoSetChecked(resetVal);
       SetCheckedChanged(PR_FALSE);
       break;
     }
@@ -2209,7 +2053,7 @@ nsHTMLInputElement::Reset()
     case NS_FORM_INPUT_FILE:
     {
       // Resetting it to blank should not perform security check
-      rv = SetValueInternal(NS_LITERAL_STRING(""), nsnull);
+      rv = SetValueInternal(EmptyString(), nsnull);
       break;
     }
     // Value is the same as defaultValue for hidden inputs
@@ -2294,29 +2138,30 @@ nsHTMLInputElement::SubmitNamesValues(nsIFormSubmission* aFormSubmission,
     nsIImageControlFrame* imageControlFrame = nsnull;
     if (formControlFrame) {
       CallQueryInterface(formControlFrame, &imageControlFrame);
-      if (imageControlFrame) {
-        imageControlFrame->GetClickedX(&clickedX);
-        imageControlFrame->GetClickedY(&clickedY);
+    }
+    
+    nsAutoString xVal;
+    nsAutoString yVal;
+    
+    if (imageControlFrame) {
+      imageControlFrame->GetClickedX(&clickedX);
+      imageControlFrame->GetClickedY(&clickedY);
 
-        // Convert the values to strings for submission
-        char buf[20];
-        sprintf(&buf[0], "%d", clickedX);
-        nsAutoString xVal = NS_ConvertASCIItoUCS2(buf);
-        sprintf(&buf[0], "%d", clickedY);
-        nsAutoString yVal = NS_ConvertASCIItoUCS2(buf);
-
-        if (!name.IsEmpty()) {
-          aFormSubmission->AddNameValuePair(this,
-                                            name + NS_LITERAL_STRING(".x"), xVal);
-          aFormSubmission->AddNameValuePair(this,
-                                            name + NS_LITERAL_STRING(".y"), yVal);
-        } else {
-          // If the Image Element has no name, simply return x and y
-          // to Nav and IE compatability.
-          aFormSubmission->AddNameValuePair(this, NS_LITERAL_STRING("x"), xVal);
-          aFormSubmission->AddNameValuePair(this, NS_LITERAL_STRING("y"), yVal);
-        }
-      }
+      // Convert the values to strings for submission
+      xVal.AppendInt(clickedX);
+      yVal.AppendInt(clickedY);
+    }
+    
+    if (!name.IsEmpty()) {
+      aFormSubmission->AddNameValuePair(this,
+                                        name + NS_LITERAL_STRING(".x"), xVal);
+      aFormSubmission->AddNameValuePair(this,
+                                        name + NS_LITERAL_STRING(".y"), yVal);
+    } else {
+      // If the Image Element has no name, simply return x and y
+      // to Nav and IE compatability.
+      aFormSubmission->AddNameValuePair(this, NS_LITERAL_STRING("x"), xVal);
+      aFormSubmission->AddNameValuePair(this, NS_LITERAL_STRING("y"), yVal);
     }
   }
 
@@ -2345,8 +2190,8 @@ nsHTMLInputElement::SubmitNamesValues(nsIFormSubmission* aFormSubmission,
     //
     nsCOMPtr<nsIFile> file;
  
-    if (Substring(value, 0, 5).Equals(NS_LITERAL_STRING("file:"),
-                                      nsCaseInsensitiveStringComparator())) {
+    if (StringBeginsWith(value, NS_LITERAL_STRING("file:"),
+                         nsCaseInsensitiveStringComparator())) {
       // Converts the URL string into the corresponding nsIFile if possible.
       // A local file will be created if the URL string begins with file://.
       rv = NS_GetFileFromURLSpec(NS_ConvertUCS2toUTF8(value),
@@ -2367,11 +2212,9 @@ nsHTMLInputElement::SubmitNamesValues(nsIFormSubmission* aFormSubmission,
       //
       nsAutoString filename;
       rv = file->GetLeafName(filename);
-      NS_ENSURE_SUCCESS(rv, rv);
 
-      if (!filename.IsEmpty()) {
-        PRBool acceptsFiles = PR_FALSE;
-        aFormSubmission->AcceptsFiles(&acceptsFiles);
+      if (NS_SUCCEEDED(rv) && !filename.IsEmpty()) {
+        PRBool acceptsFiles = aFormSubmission->AcceptsFiles();
 
         if (acceptsFiles) {
           //
@@ -2426,6 +2269,9 @@ nsHTMLInputElement::SubmitNamesValues(nsIFormSubmission* aFormSubmission,
             nsnull, NS_LITERAL_CSTRING("application/octet-stream"),
             PR_FALSE);
         return rv;
+      } else {
+        // Ignore error returns from GetLeafName.  See bug 199053
+        rv = NS_OK;
       }
     }
     
@@ -2506,11 +2352,27 @@ nsHTMLInputElement::SaveState()
         break;
       }
   }
+  
+  if (GET_BOOLBIT(mBitField, BF_DISABLED_CHANGED)) {
+    rv |= GetPrimaryPresState(this, getter_AddRefs(state));
+    if (state) {
+      PRBool disabled;
+      GetDisabled(&disabled);
+      if (disabled) {
+        rv |= state->SetStateProperty(NS_LITERAL_STRING("disabled"),
+                                     NS_LITERAL_STRING("t"));
+      } else {
+        rv |= state->SetStateProperty(NS_LITERAL_STRING("disabled"),
+                                     NS_LITERAL_STRING("f"));
+      }
+      NS_ASSERTION(NS_SUCCEEDED(rv), "disabled save failed!");
+    }
+  }
 
   return rv;
 }
 
-NS_IMETHODIMP
+void
 nsHTMLInputElement::DoneCreatingElement()
 {
   SET_BOOLBIT(mBitField, BF_PARSER_CREATING, PR_FALSE);
@@ -2536,7 +2398,7 @@ nsHTMLInputElement::DoneCreatingElement()
   if (!restored && GET_BOOLBIT(mBitField, BF_SHOULD_INIT_CHECKED)) {
     PRBool resetVal;
     GetDefaultChecked(&resetVal);
-    SetChecked(resetVal);
+    DoSetChecked(resetVal, PR_FALSE);
     SetCheckedChanged(PR_FALSE);
   }
 
@@ -2547,9 +2409,7 @@ nsHTMLInputElement::DoneCreatingElement()
   // radio group in document here, otherwise we will miss it.
   //
   if (!mForm && mType == NS_FORM_INPUT_RADIO)
-    AddedToRadioGroup();
-
-  return NS_OK;
+    AddedToRadioGroup(PR_FALSE);
 }
 
 NS_IMETHODIMP
@@ -2563,10 +2423,9 @@ nsHTMLInputElement::RestoreState(nsIPresState* aState)
       {
         nsAutoString checked;
         rv = aState->GetStateProperty(NS_LITERAL_STRING("checked"), checked);
-        // We assume that we are the only ones who saved the state.  Thus we
-        // know the exact value that would have been saved.
-        SetChecked(checked.Equals(NS_LITERAL_STRING("t")));
-
+        if (rv == NS_STATE_PROPERTY_EXISTS) {
+          DoSetChecked(checked.Equals(NS_LITERAL_STRING("t")), PR_FALSE);
+        }
         break;
       }
 
@@ -2577,27 +2436,50 @@ nsHTMLInputElement::RestoreState(nsIPresState* aState)
         nsAutoString value;
         rv = aState->GetStateProperty(NS_LITERAL_STRING("v"), value);
         NS_ASSERTION(NS_SUCCEEDED(rv), "value restore failed!");
-        SetValueInternal(value, nsnull);
+        if (rv == NS_STATE_PROPERTY_EXISTS) {
+          SetValueInternal(value, nsnull);
+        }
         break;
       }
   }
+  
+  nsAutoString disabled;
+  nsresult rv2 = aState->GetStateProperty(NS_LITERAL_STRING("disabled"), disabled);
+  NS_ASSERTION(NS_SUCCEEDED(rv2), "disabled restore failed!");
+  if (rv2 == NS_STATE_PROPERTY_EXISTS) {
+    SetDisabled(disabled.Equals(NS_LITERAL_STRING("t")));
+  }
 
-  return rv;
+  if (NS_FAILED(rv|rv2)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return NS_OK;
 }
 
+PRBool
+nsHTMLInputElement::AllowDrop()
+{
+  // Allow drop on anything other than file inputs.
+
+  return mType != NS_FORM_INPUT_FILE;
+}
 
 /*
  * Radio group stuff
  */
 
 NS_IMETHODIMP
-nsHTMLInputElement::AddedToRadioGroup()
+nsHTMLInputElement::AddedToRadioGroup(PRBool aNotify)
 {
+  if (aNotify)
+    aNotify = GET_BOOLBIT(mBitField, BF_PARSER_CREATING) != 0;
+
   //
   //  If the input element is not in a form and
   //  not in a document, we just need to return.
   //
-  if (!mForm && !mDocument) {
+  if (!mForm && !(mDocument && GetParent())) {
     return NS_OK;
   }
 
@@ -2615,7 +2497,7 @@ nsHTMLInputElement::AddedToRadioGroup()
     // should not be that common an occurrence, I think we can live with
     // that.
     //
-    RadioSetChecked();
+    RadioSetChecked(aNotify);
   }
 
   //
@@ -2652,7 +2534,7 @@ nsHTMLInputElement::WillRemoveFromRadioGroup()
   // If the input element is not in a form and
   // not in a document, we just need to return.
   //
-  if (!mForm && !mDocument) {
+  if (!mForm && !(mDocument && GetParent())) {
     return NS_OK;
   }
 

@@ -60,35 +60,30 @@ public:
     nsImapServerResponseParser(nsImapProtocol &imapConnection);
     virtual ~nsImapServerResponseParser();
 
-	// Overridden from the base parser class
-	virtual PRBool     LastCommandSuccessful();
+  // Overridden from the base parser class
+  virtual PRBool     LastCommandSuccessful();
   virtual void		HandleMemoryFailure();
 
   // aignoreBadAndNOResponses --> don't throw a error dialog if this command results in a NO or Bad response
   // from the server..in other words the command is "exploratory" and we don't really care if it succeeds or fails.
   // This value is typically FALSE for almost all cases. 
   virtual void		ParseIMAPServerResponse(const char *currentCommand, PRBool aIgnoreBadAndNOResponses);
-	virtual void		InitializeState();
-  PRBool				CommandFailed();
+  virtual void		InitializeState();
+  PRBool		CommandFailed();
     
     enum eIMAPstate {
         kNonAuthenticated,
         kAuthenticated,
-#if 0
-        kFolderSelected,
-        kWaitingForMoreClientInput	// This shouldn't be a server state. It should only be a status.
-#else
-		kFolderSelected
-#endif
+        kFolderSelected
     } ;
 
   virtual eIMAPstate GetIMAPstate();
-	virtual PRBool WaitingForMoreClientInput() { return fWaitingForMoreClientInput; };
+  virtual PRBool WaitingForMoreClientInput() { return fWaitingForMoreClientInput; };
     
   const char *GetSelectedMailboxName();   // can be NULL
 
-	// if we get a PREAUTH greeting from the server, initialize the parser to begin in
-	// the kAuthenticated state
+  // if we get a PREAUTH greeting from the server, initialize the parser to begin in
+  // the kAuthenticated state
   void		PreauthSetAuthenticatedState();
 
   // these functions represent the state of the currently selected
@@ -97,23 +92,23 @@ public:
   PRInt32    NumberOfMessages();
   PRInt32    NumberOfRecentMessages();
   PRInt32    NumberOfUnseenMessages();
-  PRInt32       FolderUID();
-  PRUint32      CurrentResponseUID();
-  PRUint32      HighestRecordedUID();
-  void          SetCurrentResponseUID(PRUint32 uid);
-  void          CopyResponseUID(nsMsgKeyArray& keyArray);
-  void          ClearCopyResponseUID();
-	PRBool		IsNumericString(const char *string);
-  PRInt32       SizeOfMostRecentMessage();
-	void		SetTotalDownloadSize(PRInt32 newSize) { fTotalDownloadSize = newSize; }
-  void    SetFetchingEverythingRFC822(PRBool fetchingEverythingRFC822) { fFetchEverythingRFC822 = fetchingEverythingRFC822;}
+  PRInt32    FolderUID();
+  PRUint32   CurrentResponseUID();
+  PRUint32   HighestRecordedUID();
+  void       SetCurrentResponseUID(PRUint32 uid);
+  void       CopyResponseUID(nsMsgKeyArray& keyArray);
+  void       ClearCopyResponseUID();
+  PRBool     IsNumericString(const char *string);
+  PRInt32    SizeOfMostRecentMessage();
+  void       SetTotalDownloadSize(PRInt32 newSize) { fTotalDownloadSize = newSize; }
+  void       SetFetchingEverythingRFC822(PRBool fetchingEverythingRFC822) { fFetchEverythingRFC822 = fetchingEverythingRFC822;}
   
   nsImapSearchResultIterator *CreateSearchResultIterator();
   void ResetSearchResultSequence() {fSearchResults->ResetSequence();}
   
   // create a struct mailbox_spec from our info, used in
   // libmsg c interface
-  nsImapMailboxSpec *CreateCurrentMailboxSpec(const char *mailboxName = NULL);
+  nsImapMailboxSpec *CreateCurrentMailboxSpec(const char *mailboxName = nsnull);
   
   // zero stops a list recording of flags and causes the flags for
   // each individual message to be sent back to libmsg 
@@ -152,7 +147,6 @@ public:
   virtual PRUint16	SupportsUserFlags() { return fSupportsUserDefinedFlags; };
   virtual PRUint16  SettablePermanentFlags() { return fSettablePermanentFlags;};
   void SetFlagState(nsIImapFlagAndUidState *state);
-
   PRBool GetDownloadingHeaders();
   PRBool GetFillingInShell();
   void	UseCachedShell(nsIMAPBodyShell *cachedShell);
@@ -168,7 +162,7 @@ protected:
   virtual void	  internal_date();
   virtual nsresult BeginMessageDownload(const char *content_type);
 
-  virtual void    response_data();
+  virtual void    response_data(PRBool advanceToNextLine);
   virtual void    resp_text();
   virtual void    resp_cond_state();
   virtual void    text_mime2();
@@ -198,8 +192,8 @@ protected:
   virtual void    msg_obsolete();
   virtual void	  msg_fetch_headers(const char *partNum);
   virtual void    msg_fetch_content(PRBool chunk, PRInt32 origin, const char *content_type);
-  virtual PRBool	msg_fetch_quoted(PRBool chunk, PRInt32 origin);
-  virtual PRBool	msg_fetch_literal(PRBool chunk, PRInt32 origin);
+  virtual PRBool  msg_fetch_quoted(PRBool chunk, PRInt32 origin);
+  virtual PRBool  msg_fetch_literal(PRBool chunk, PRInt32 origin);
   virtual void    mailbox_list(PRBool discoveredFromLsub);
   virtual void    mailbox(nsImapMailboxSpec *boxSpec);
   
@@ -207,7 +201,7 @@ protected:
   virtual void    ProcessBadCommand(const char *commandToken);
   virtual void    PreProcessCommandToken(const char *commandToken,
                                              const char *currentCommand);
-  virtual void		PostProcessEndOfLine();
+  virtual void    PostProcessEndOfLine();
 
   // Overridden from the nsIMAPGenericParser, to retrieve the next line
   // from the open socket.
@@ -247,7 +241,12 @@ private:
   PRUint32          fHighestRecordedUID;
   PRInt32           fSizeOfMostRecentMessage;
   PRInt32           fTotalDownloadSize;
-    
+  
+  PRInt32           fStatusUnseenMessages;
+  PRInt32           fStatusRecentMessages;
+  PRUint32          fStatusNextUID;
+  PRUint32          fStatusExistingMessages;
+
   int               fNumberOfTaggedResponsesExpected;
 
   char              *fCurrentCommandTag;

@@ -21,7 +21,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Brian Ryner <bryner@netscape.com>
+ *  Brian Ryner <bryner@brianryner.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -279,9 +279,16 @@ GtkPromptService::GetGtkWindowForDOMWindow(nsIDOMWindow* aDOMWindow)
 {
     nsCOMPtr<nsIWindowWatcher> wwatch = do_GetService("@mozilla.org/embedcomp/window-watcher;1");
 
+    if (!aDOMWindow)
+        return NULL;
+
     nsCOMPtr<nsIWebBrowserChrome> chrome;
     wwatch->GetChromeForWindow(aDOMWindow, getter_AddRefs(chrome));
     nsCOMPtr<nsIEmbeddingSiteWindow> siteWindow = do_QueryInterface(chrome);
+
+    if (!siteWindow)
+        return NULL;
+
     GtkWidget* parentWidget;
     siteWindow->GetSiteWindow((void**)&parentWidget);
 

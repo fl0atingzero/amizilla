@@ -42,7 +42,6 @@
 #include "prprf.h"
 
 #include "nsIFileSpec.h"
-#include "nsIPref.h"
 #include "nsXPIDLString.h"
 
 #include "nsNoIncomingServer.h"
@@ -56,7 +55,7 @@
 NS_IMPL_ISUPPORTS_INHERITED2(nsNoIncomingServer,
                             nsMsgIncomingServer,
                             nsINoIncomingServer,
-			    nsILocalMailIncomingServer);
+			    nsILocalMailIncomingServer)
 
                             
 
@@ -81,7 +80,7 @@ nsNoIncomingServer::SetFlagsOnDefaultMailboxes()
 {
     nsresult rv;
     
-    nsCOMPtr<nsIFolder> rootFolder;
+    nsCOMPtr<nsIMsgFolder> rootFolder;
     rv = GetRootFolder(getter_AddRefs(rootFolder));
     NS_ENSURE_SUCCESS(rv, rv);
 

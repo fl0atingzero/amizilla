@@ -101,18 +101,11 @@ public:
     return mMetrics.mMaximumWidth;
   }
 
-  PRBool BlockShouldInvalidateItself() const {
-    return mBlockShouldInvalidateItself;
-  }
-
   static void ComputeCollapsedTopMargin(nsIPresContext* aPresContext,
                                         nsHTMLReflowState& aRS,
                            /* inout */  nsCollapsingMargin& aMargin);
 
 protected:
-  nsStyleUnit GetRealMarginLeftUnit();
-  nsStyleUnit GetRealMarginRightUnit();
-
   nsIPresContext* mPresContext;
   const nsHTMLReflowState& mOuterReflowState;
 
@@ -129,9 +122,7 @@ protected:
   nscoord mX, mY;
   nsHTMLReflowMetrics mMetrics;
   nsCollapsingMargin mTopMargin;
-  PRPackedBool mIsTable;
   PRPackedBool mComputeMaximumWidth;
-  PRPackedBool mBlockShouldInvalidateItself;
 };
 
 #endif /* nsBlockReflowContext_h___ */

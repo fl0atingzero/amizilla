@@ -56,6 +56,11 @@ NS_IMPL_ISUPPORTS1(nsFilePicker, nsIFilePicker)
 
 char nsFilePicker::mLastUsedDirectory[MAX_PATH+1] = { 0 };
 
+
+static char* gpszFDSaveCaption = 0;
+static char* gpszFDFileExists = 0;
+static char* gpszFDFileReadOnly = 0;
+
 MRESULT EXPENTRY DirDialogProc( HWND hwndDlg, ULONG msg, MPARAM mp1, MPARAM mp2);
 MRESULT EXPENTRY FileDialogProc( HWND hwndDlg, ULONG msg, MPARAM mp1, MPARAM mp2);
 
@@ -71,7 +76,6 @@ nsFilePicker::nsFilePicker()
   mUnicodeDecoder = nsnull;
   mSelectedType   = 0;
   mDisplayDirectory = do_CreateInstance("@mozilla.org/file/local;1");
-  pszFDFileExists[0] = '\0';
 }
 
 //-------------------------------------------------------------------------
@@ -86,6 +90,16 @@ nsFilePicker::~nsFilePicker()
 
   NS_IF_RELEASE(mUnicodeEncoder);
   NS_IF_RELEASE(mUnicodeDecoder);
+}
+
+/* static */ void
+nsFilePicker::ReleaseGlobals()
+{
+  if (gpszFDSaveCaption) {
+     free(gpszFDSaveCaption);
+     free(gpszFDFileExists);
+     free(gpszFDFileReadOnly);
+  }
 }
 
 //-------------------------------------------------------------------------
@@ -117,7 +131,7 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
   if(initialDir.IsEmpty())
     initialDir = mLastUsedDirectory;
 
-  mFile.SetLength(0);
+  mFile.Truncate();
 
   FILEDLG filedlg;
   memset(&filedlg, 0, sizeof(FILEDLG));
@@ -138,7 +152,7 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
     if (filedlg.lReturn == DID_OK) {
       result = PR_TRUE;
       mDisplayDirectory->InitWithNativePath(nsDependentCString(filedlg.szFullFile));
-      mFile.Append(filedlg.szFullFile);
+      mFile.Assign(filedlg.szFullFile);
     }
   }
   else {
@@ -165,16 +179,11 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
     for (i = 0; i < mTitles.Count(); i++)
     {
       const nsString& typeWide = *mTitles[i];
-      PRInt32 l = (typeWide.Length()+2)*2;
-      char *filterBuffer = (char*) nsMemory::Alloc(l);
-      int len = WideCharToMultiByte(0,
-                                    typeWide.get(),
-                                    typeWide.Length(),
-                                    filterBuffer,
-                                    l);
-      filterBuffer[len] = NULL;
-      filterBuffer[len+1] = NULL;
-      apszTypeList[i] = filterBuffer;
+      nsAutoCharBuffer buffer;
+      PRInt32 bufLength;
+      WideCharToMultiByte(0, typeWide.get(), typeWide.Length(),
+                          buffer, bufLength);
+      apszTypeList[i] = ToNewCString(nsDependentCString(buffer.get()));
     }
     apszTypeList[i] = 0;
     filedlg.papszITypeList = (PAPSZ)apszTypeList;
@@ -205,16 +214,31 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
             fileExists = PR_FALSE;
          }
          if (fileExists) {
-            if (!pszFDFileExists[0]) {
+            if (!gpszFDSaveCaption) {
               HMODULE hmod;
               char LoadError[CCHMAXPATH];
+              char loadedString[256];
+              int length;
               DosLoadModule(LoadError, CCHMAXPATH, "PMSDMRI", &hmod);
-              WinLoadString((HAB)0, hmod, 1110, 256, pszFDSaveCaption);
-              WinLoadString((HAB)0, hmod, 1135, 256, pszFDFileExists);
+              length = WinLoadString((HAB)0, hmod, 1110, 256, loadedString);
+              gpszFDSaveCaption = (char*)malloc(length+1);
+              strcpy(gpszFDSaveCaption, loadedString);
+              length = WinLoadString((HAB)0, hmod, 1135, 256, loadedString);
+              gpszFDFileExists = (char*)malloc(length+1);
+              strcpy(gpszFDFileExists, loadedString);
+              length = WinLoadString((HAB)0, hmod, 1136, 256, loadedString);
+              gpszFDFileReadOnly = (char*)malloc(length+1);
+              strcpy(gpszFDFileReadOnly, loadedString);
               int i;
-              for (i=0;i<256 && pszFDFileExists[i];i++ ) {
-                if (pszFDFileExists[i] == '%') {
-                  pszFDFileExists[i+1] = 's';
+              for (i=0;i<256 && gpszFDFileExists[i];i++ ) {
+                if (gpszFDFileExists[i] == '%') {
+                  gpszFDFileExists[i+1] = 's';
+                  break;
+                }
+              }
+              for (i=0;i<256 && gpszFDFileReadOnly[i];i++ ) {
+                if (gpszFDFileReadOnly[i] == '%') {
+                  gpszFDFileReadOnly[i+1] = 's';
                   break;
                 }
               }
@@ -222,10 +246,21 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
 
             }
             char pszFullText[256+CCHMAXPATH];
-            sprintf(pszFullText, pszFDFileExists, filedlg.szFullFile);
-            ULONG ulResponse = WinMessageBox(HWND_DESKTOP, mWnd, pszFullText,
-                                             pszFDSaveCaption, 0,
-                                             MB_YESNO | MB_MOVEABLE | MB_WARNING);
+            FILESTATUS3 fsts3;
+            ULONG ulResponse;
+            DosQueryPathInfo( filedlg.szFullFile, FIL_STANDARD, &fsts3, sizeof(FILESTATUS3));
+            if (fsts3.attrFile & FILE_READONLY) {
+              sprintf(pszFullText, gpszFDFileReadOnly, filedlg.szFullFile);
+              ulResponse = WinMessageBox(HWND_DESKTOP, mWnd, pszFullText,
+                                               gpszFDSaveCaption, 0,
+                                               MB_OK | MB_MOVEABLE | MB_WARNING);
+            } else {
+              sprintf(pszFullText, gpszFDFileExists, filedlg.szFullFile);
+              ulResponse = WinMessageBox(HWND_DESKTOP, mWnd, pszFullText,
+                                               gpszFDSaveCaption, 0,
+                                               MB_YESNO | MB_MOVEABLE | MB_WARNING);
+            }
+
             if (ulResponse == MBID_YES) {
                fileExists = PR_FALSE;
             }
@@ -262,7 +297,7 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
           NS_ENSURE_SUCCESS(rv,rv);
         }
       } else {
-        mFile.Append(filedlg.szFullFile);
+        mFile.Assign(filedlg.szFullFile);
       }
       mSelectedType = (PRInt16)pmydata->ulCurExt;
     }
@@ -482,8 +517,7 @@ NS_IMETHODIMP nsFilePicker::InitNative(nsIWidget *aParent,
                                        PRInt16 aMode)
 {
   mWnd = (HWND) ((aParent) ? aParent->GetNativeData(NS_NATIVE_WINDOW) : 0); 
-  mTitle.SetLength(0);
-  mTitle.Append(aTitle);
+  mTitle.Assign(aTitle);
   mMode = aMode;
   return NS_OK;
 }

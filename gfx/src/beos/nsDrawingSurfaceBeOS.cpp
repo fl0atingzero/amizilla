@@ -156,6 +156,7 @@ NS_IMETHODIMP nsDrawingSurfaceBeOS :: Unlock(void)
 #ifdef CHEAP_PERFORMANCE_MEASUREMENT 
   printf("Time taken to unlock: %d\n", PR_Now() - mUnlockTime);
 #endif
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsDrawingSurfaceBeOS :: GetDimensions(PRUint32 *aWidth, PRUint32 *aHeight)
@@ -240,7 +241,9 @@ NS_IMETHODIMP nsDrawingSurfaceBeOS :: Init(BView *aView, PRUint32 aWidth,
       
       return NS_ERROR_FAILURE;
     }
-
+    //Setting ViewColor transparent noticeably decreases AppServer load in DrawBitmp()
+    //Applicable here, because Mozilla paints backgrounds explicitly, with images or filling areas.
+	mView->SetViewColor(B_TRANSPARENT_32_BIT);
     mBitmap->AddChild(mView);
   }
   return NS_OK;

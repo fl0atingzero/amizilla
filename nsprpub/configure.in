@@ -43,7 +43,7 @@ dnl ========================================================
 dnl = Defaults
 dnl ========================================================
 MOD_MAJOR_VERSION=4
-MOD_MINOR_VERSION=3
+MOD_MINOR_VERSION=5
 MOD_PATCH_VERSION=0
 NSPR_MODNAME=nspr20
 _HAVE_PTHREADS=
@@ -252,9 +252,9 @@ if test -z "$CC"; then
 
     *-aix*)
         if test -z "$USE_NSPR_THREADS"; then
-            CC=xlC_r
+            CC=xlc_r
         else
-            CC=xlC
+            CC=xlc
         fi
     ;;
 
@@ -367,18 +367,16 @@ if test "$target" != "$host"; then
     _SAVE_LDFLAGS="$LDFLAGS"
 
     AC_MSG_CHECKING([for $host compiler])
+    AC_CHECK_PROGS(HOST_CC, $HOST_CC gcc cc /usr/ucb/cc, "")
     if test -z "$HOST_CC"; then
-	    AC_CHECK_PROGS(HOST_CC, gcc cc /usr/ucb/cc, "")
-	    if test -z "$HOST_CC"; then
-	        AC_MSG_ERROR([no acceptable cc found in \$PATH])
-	    fi
+        AC_MSG_ERROR([no acceptable cc found in \$PATH])
     fi
     AC_MSG_RESULT([$HOST_CC])
     if test -z "$HOST_CFLAGS"; then
-	    HOST_CFLAGS="$CFLAGS"
+        HOST_CFLAGS="$CFLAGS"
     fi
     if test -z "$HOST_LDFLAGS"; then
-	    HOST_LDFLAGS="$LDFLAGS"
+        HOST_LDFLAGS="$LDFLAGS"
     fi
 
     CC="$HOST_CC"
@@ -387,41 +385,25 @@ if test "$target" != "$host"; then
 
     AC_MSG_CHECKING([whether the $host compiler ($HOST_CC $HOST_CFLAGS $HOST_LDFLAGS) works])
     AC_TRY_COMPILE([], [return(0);], 
-	[ac_cv_prog_host_cc_works=1 AC_MSG_RESULT([yes])],
-	AC_MSG_ERROR([installation or configuration problem: $host compiler $HOST_CC cannot create executables.]) )
-    
+        [ac_cv_prog_host_cc_works=1 AC_MSG_RESULT([yes])],
+        AC_MSG_ERROR([installation or configuration problem: $host compiler $HOST_CC cannot create executables.]) )
+
     CC=$_SAVE_CC
     CFLAGS=$_SAVE_CFLAGS
     LDFLAGS=$_SAVE_LDFLAGS
 
-    if test -z "$CC"; then
-	    AC_CHECK_PROGS(CC, "${target_alias}-gcc" "${target}-gcc", echo)
-    fi
+    AC_CHECK_PROGS(CC, $CC "${target_alias}-gcc" "${target}-gcc", echo)
     unset ac_cv_prog_CC
     AC_PROG_CC
-    if test -z "$CXX"; then
-	    AC_CHECK_PROGS(CXX, "${target_alias}-g++" "${target}-g++", echo)
-    fi
+    AC_CHECK_PROGS(CXX, $CXX "${target_alias}-g++" "${target}-g++", echo)
     unset ac_cv_prog_CXX
     AC_PROG_CXX
-    if test -z "$RANLIB"; then
-	    AC_CHECK_PROGS(RANLIB, "${target_alias}-ranlib" "${target}-ranlib", echo)
-    fi
-    if test -z "$AR"; then
-	    AC_CHECK_PROGS(AR, "${target_alias}-ar" "${target}-ar", echo)
-    fi
-    if test -z "$AS"; then
-	    AC_CHECK_PROGS(AS, "${target_alias}-as" "${target}-as", echo)
-    fi
-    if test -z "$LD"; then
-	    AC_CHECK_PROGS(LD, "${target_alias}-ld" "${target}-ld", echo)
-    fi
-    if test -z "$STRIP"; then
-	    AC_CHECK_PROGS(STRIP, "${target_alias}-strip" "${target}-strip", echo)
-    fi
-    if test -z "$WINDRES"; then
-	    AC_CHECK_PROGS(WINDRES, "${target_alias}-windres" "${target}-windres", echo)
-    fi
+    AC_CHECK_PROGS(RANLIB, $RANLIB "${target_alias}-ranlib" "${target}-ranlib", echo)
+    AC_CHECK_PROGS(AR, $AR "${target_alias}-ar" "${target}-ar", echo)
+    AC_CHECK_PROGS(AS, $AS "${target_alias}-as" "${target}-as", echo)
+    AC_CHECK_PROGS(LD, $LD "${target_alias}-ld" "${target}-ld", echo)
+    AC_CHECK_PROGS(STRIP, $STRIP "${target_alias}-strip" "${target}-strip", echo)
+    AC_CHECK_PROGS(WINDRES, $WINDRES "${target_alias}-windres" "${target}-windres", echo)
 
 else
     AC_PROG_CXX
@@ -438,10 +420,10 @@ else
     AC_PATH_PROGS(STRIP, strip, echo not_strip)
     AC_PATH_PROGS(WINDRES, windres, echo not_windres)
     if test -z "$HOST_CC"; then
-	    HOST_CC="$CC"
+        HOST_CC="$CC"
     fi
     if test -z "$HOST_CFLAGS"; then
-	    HOST_CFLAGS="$CFLAGS"
+        HOST_CFLAGS="$CFLAGS"
     fi
 fi
 
@@ -524,9 +506,20 @@ AR_FLAGS='cr $@'
 AS='$(CC)'
 ASFLAGS='$(CFLAGS)'
 
-OS_ARCH=`uname -s | sed -e 's|/|_|g'`
-OS_RELEASE=`uname -r`
-OS_TEST=`uname -m`
+if test -n "$CROSS_COMPILE"; then
+    OS_ARCH=`echo $target_os | sed -e 's|/|_|g'`
+    OS_RELEASE=
+    OS_TEST="${target_cpu}"
+    case "${target_os}" in
+        linux*)       OS_ARCH=Linux ;;
+        solaris*)     OS_ARCH=SunOS OS_RELEASE=5 ;;
+        mingw*)       OS_ARCH=WINNT ;;
+    esac
+else
+    OS_ARCH=`uname -s | sed -e 's|/|_|g'`
+    OS_RELEASE=`uname -r`
+    OS_TEST=`uname -m`
+fi
 
 if test "$OS_ARCH" = "IRIX64"; then
     OS_ARCH=IRIX
@@ -677,6 +670,10 @@ dnl Override of system specific host options
 dnl ========================================================
 case "$host" in
 *-mingw*|*-cygwin*|*-msvc*|*-mks*)
+    NSINSTALL='$(CYGWIN_WRAPPER) nsinstall'
+    if test `echo "${PATH}" | grep -c \;` = 0; then
+        CYGWIN_WRAPPER='sh $(topsrcdir)/build/cygwin-wrapper'
+    fi
     ;;
 *-beos*)
     HOST_CFLAGS="$HOST_CFLAGS -DXP_BEOS -DBeOS -DBEOS -D_POSIX_SOURCE"
@@ -697,7 +694,7 @@ case "$target" in
     AC_DEFINE(XP_UNIX)
     AC_DEFINE(AIX)
     AC_DEFINE(SYSV)
-    DSO_LDOPTS='-brtl -bM:SRE -bnoentry -bexpall'
+    DSO_LDOPTS='-brtl -bnortllib -bM:SRE -bnoentry -bexpall -blibpath:/usr/lib:/lib'
     AC_CHECK_HEADER(sys/atomic_op.h, AC_DEFINE(AIX_HAVE_ATOMIC_OP_H))
     case "${target_os}" in
     aix3.2*)
@@ -741,9 +738,6 @@ case "$target" in
         ;;
     esac
     CFLAGS="$CFLAGS -qro -qroconst"
-    if echo "$CC" | grep -c xlC_r; then
-        CFLAGS="$CFLAGS -qarch=com"
-    fi
     AIX_WRAP='$(DIST)/lib/aixwrap.o'
     AIX_TMP='./_aix_tmp.o'
     if test -n "$USE_64"; then
@@ -862,7 +856,7 @@ case "$target" in
         AC_DEFINE(ppc)
         CPU_ARCH=ppc
     fi
-    DSO_LDOPTS='-dynamiclib -compatibility_version 1 -current_version 1 -all_load -install_name @executable_path/$@'
+    DSO_LDOPTS='-dynamiclib -compatibility_version 1 -current_version 1 -all_load -install_name @executable_path/$@ -headerpad_max_install_names'
     # Use the standard preprocessor (cpp)
     CFLAGS="$CFLAGS -no-cpp-precomp"
     MKSHLIB='$(CC) -arch $(CPU_ARCH) $(DSO_LDOPTS) -o $@'
@@ -896,6 +890,12 @@ case "$target" in
         MACOS_DEPLOYMENT_TARGET=`printf "%02d%02d%02d" "$MACOS_VERSION_MAJOR" "$MACOS_VERSION_MINOR" "$MACOS_VERSION_MICRO"`
         AC_DEFINE_UNQUOTED(MACOS_DEPLOYMENT_TARGET, $MACOS_DEPLOYMENT_TARGET)
     fi
+
+    # do the right thing for panther SDK support
+    if test "$NEXT_ROOT"; then
+        CFLAGS="-I${NEXT_ROOT}/usr/include $CFLAGS"
+        CXXFLAGS="-I${NEXT_ROOT}/usr/include $CXXFLAGS"
+    fi
     ;;
 
 *-dgux*)
@@ -920,6 +920,7 @@ case "$target" in
     AC_DEFINE(XP_UNIX)
     AC_DEFINE(FREEBSD)
     AC_DEFINE(HAVE_BSD_FLOCK)
+    AC_DEFINE(HAVE_SOCKLEN_T)
     CFLAGS="$CFLAGS $(DSO_CFLAGS) -ansi -Wall"
     MOZ_OBJFORMAT=`test -x /usr/bin/objformat && /usr/bin/objformat || echo aout`
     if test "$MOZ_OBJFORMAT" = "elf"; then
@@ -1218,6 +1219,9 @@ case "$target" in
     ia64)
         PR_MD_ASFILES=os_Linux_ia64.s
         ;;
+    x86_64)
+        PR_MD_ASFILES=os_Linux_x86_64.s
+        ;;
     m68k)
         CFLAGS="$CFLAGS -m68020-60"
         CXXFLAGS="$CXXFLAGS -m68020-60"
@@ -1230,10 +1234,6 @@ case "$target" in
     AC_DEFINE(WIN32)
     PR_MD_ARCH_DIR=windows
     RESOLVE_LINK_SYMBOLS=1
-    NSINSTALL='$(CYGWIN_WRAPPER) nsinstall'
-    if test `echo "${PATH}" | grep -c \;` = 0; then
-        CYGWIN_WRAPPER='sh $(topsrcdir)/build/cygwin-wrapper'
-    fi
 
     if test -n "$GNU_CC"; then
         CC="$CC -mno-cygwin"
@@ -1241,7 +1241,8 @@ case "$target" in
         DLL_SUFFIX=dll
         MKSHLIB='$(CC) -shared -Wl,--export-all-symbols -Wl,--out-implib -Wl,$(IMPORT_LIBRARY) $(DLLBASE) -o $(subst $(OBJDIR)/,,$(SHARED_LIBRARY))'
         RC=$WINDRES
-        RCFLAGS='-O coff'
+        # Use temp file for windres (bug 213281)
+        RCFLAGS='-O coff --use-temp-file'
     else
         CC=cl
         CXX=cl
@@ -1483,6 +1484,7 @@ mips-sony-newsos*)
     AC_DEFINE(XP_UNIX)
     AC_DEFINE(OPENBSD)
     AC_DEFINE(HAVE_BSD_FLOCK)
+    AC_DEFINE(HAVE_SOCKLEN_T)
     CFLAGS="$CFLAGS -ansi -Wall"
     CXXFLAGS="$CXXFLAGS -ansi -Wall"
     DLL_SUFFIX=so.1.0
@@ -1490,12 +1492,8 @@ mips-sony-newsos*)
     MDCPUCFG_H=_openbsd.cfg
     PR_MD_CSRCS=openbsd.c
     USE_NSPR_THREADS=1
-    case "$OS_TEST" in
-    alpha|mips|pmax)
-        DSO_LDOPTS=-shared ;;
-    *)
-        DSO_LDOPTS=-Bshareable ;;
-    esac
+    DSO_LDOPTS='-shared -fPIC'
+    MKSHLIB='$(CC) $(DSO_LDOPTS) -o $@'
     ;;
 
 *-openvms*)
@@ -1689,9 +1687,14 @@ mips-sony-newsos*)
         fi
         _OPTIMIZE_FLAGS=-xO4
     fi
-    if test -n "$USE_64" && test -z "$GNU_CC"; then
-        CC="$CC -xarch=v9"
-        CXX="$CXX -xarch=v9"
+    if test -n "$USE_64"; then
+        if test -n "$GNU_CC"; then
+            CC="$CC -m64"
+            CXX="$CXX -m64"
+        else
+            CC="$CC -xarch=v9"
+            CXX="$CXX -xarch=v9"
+        fi
     fi
     if test "$OS_TEST" = "i86pc"; then
         AC_DEFINE(i386)
@@ -1729,6 +1732,22 @@ mips-sony-newsos*)
         if test -n "$GNU_CC"; then
             AC_DEFINE(_LARGEFILE64_SOURCE)
         fi
+        ;;
+    esac
+    case "${target_os}" in
+    solaris2.3*)
+        ;;
+    solaris2.4*)
+        ;;
+    solaris2.5*)
+        ;;
+    solaris2.6*)
+        ;;
+    solaris2.7*)
+        ;;
+    *)
+        # Solaris 8 or higher has IPv6.
+        AC_DEFINE(_PR_INET6)
         ;;
     esac
     if test "$OS_TEST" = "sun4u"; then
@@ -1770,8 +1789,6 @@ mips-sony-newsos*)
 *-os2*)
     AC_DEFINE(XP_OS2)
     AC_DEFINE(XP_PC)
-    AC_DEFINE(BSD_SELECT)
-    AC_DEFINE(_PR_GLOBAL_THREADS_ONLY)
     LIB_SUFFIX=lib
     DLL_SUFFIX=dll
     RC=rc.exe
@@ -1786,25 +1803,21 @@ mips-sony-newsos*)
         AC_DEFINE(XP_OS2_EMX)
         AC_DEFINE(OS2)
         AR=emxomfar
-        AR_FLAGS='-p256 r $@'
-        CFLAGS="$CFLAGS -Wall -Zmtd -Zomf"
-        CXXFLAGS="$CFLAGS -Wall -Zmtd -Zomf"
+        AR_FLAGS='r $@'
+        CFLAGS="$CFLAGS -Wall -Zomf"
+        CXXFLAGS="$CFLAGS -Wall -Zomf"
         MKSHLIB='$(CC) $(DSO_LDOPTS) -o $@'
         DSO_CFLAGS=
-        DSO_LDOPTS='-Zomf -Zdll -Zmtd'
+        DSO_LDOPTS='-Zomf -Zdll -Zmap'
+        LDFLAGS='-Zmap'
         _OPTIMIZE_FLAGS="-O2 -s"
         _DEBUG_FLAGS="-g -fno-inline"
         if test -n "$MOZ_OPTIMIZE"; then
           DSO_LDOPTS="$DSO_LDOPTS -Zlinker /EXEPACK:2 -Zlinker /PACKCODE -Zlinker /PACKDATA"
         fi
-        OS_LIBS="-lsocket -lemxio"
+        OS_LIBS="-lsocket"
         IMPLIB='emximp -o'
         FILTER='emxexp -o'
-
-        if test -z "$EMXOMFLD_LINKER"; then
-          # using LINK386.EXE
-          DSO_LDOPTS="$DSO_LDOPTS -Zlinker /NOO"
-        fi
 
         # GCC for OS/2 currently predefines these, but we don't want them
         DEFINES="$DEFINES -Uunix -U__unix -U__unix__"
@@ -1813,7 +1826,6 @@ mips-sony-newsos*)
     elif test "$VACPP" = "yes"; then
         AC_DEFINE(XP_OS2_VACPP)
         AC_DEFINE(OS2,4)
-        AC_DEFINE(TCPV40HDRS)
         AC_DEFINE(_X86_)
         OBJ_SUFFIX=obj
         AS=alp
@@ -1885,9 +1897,20 @@ dnl AC_CHECK_LIB(svld, main)
 dnl AC_CHECK_LIB(thread, main)
 dnl AC_CHECK_LIB(vms_jackets, main)
 
-AC_CHECK_FUNC(dlopen,,[
-    AC_CHECK_LIB(dl, dlopen, [OS_LIBS="-ldl $OS_LIBS"])
-])
+
+dnl We don't want anything to link with libdl even if it's present on OS X, 
+dnl since it's not used and not part of the default installation.
+
+case $target in
+*-darwin*)
+    ;;
+*)
+    AC_CHECK_LIB(dl, dlopen,
+        AC_CHECK_HEADER(dlfcn.h,
+            OS_LIBS="-ldl $OS_LIBS"))
+    ;;
+esac
+
 
 dnl ========================================================
 dnl Check for system header files.
@@ -1939,8 +1962,10 @@ dnl = Enable stripping of libs and executables
 dnl = 
 dnl ========================================================
 AC_ARG_ENABLE(strip,
-[  --enable-strip          Enable stripping of shared libs and programs],
-  [ ENABLE_STRIP=1 ])
+    [  --enable-strip          Enable stripping of shared libs and programs],
+    [ if test "$enableval" = "yes"; then
+	    ENABLE_STRIP=1
+      fi ])
 
 dnl Check for hpux options
 case "${target_os}" in
@@ -2164,13 +2189,24 @@ if test -n "$USE_PTHREADS"; then
 	        _PTHREAD_LDFLAGS="-lc_r"
 	    fi
 	    ;;
-    *-openbsd*|*-bsdi*|*-netbsd*)
+    *-netbsd*)
+	    if test "$ac_cv_have_dash_pthread" = "yes"; then
+	        _PTHREAD_LDFLAGS="-pthread"
+	    fi
+	    ;;
+    *-bsdi*)
 	    AC_DEFINE(_THREAD_SAFE)
 	    dnl -pthread links in -lc_r, so don't specify it explicitly.
 	    if test "$ac_cv_have_dash_pthread" = "yes"; then
 	        _PTHREAD_LDFLAGS=
 	    fi
 	    ;;
+    *-openbsd*)
+        AC_DEFINE(_THREAD_SAFE)
+        if test "$ac_cv_have_dash_pthread" = "yes"; then
+            _PTHREAD_LDFLAGS=-pthread
+        fi
+        ;;
     *-linux*)
         AC_DEFINE(_REENTRANT)
         ;;

@@ -48,7 +48,6 @@
 #include "nsCRT.h" 
 #include "nsScanner.h"
 #include "plstr.h"
-#include "nsViewSourceHTML.h" 
 #include "nsIStringStream.h"
 #include "nsIChannel.h"
 #include "nsICachingChannel.h"
@@ -67,6 +66,10 @@
 #include "nsIServiceManager.h"
 //#define rickgdebug 
 
+#ifdef MOZ_VIEW_SOURCE
+#include "nsViewSourceHTML.h" 
+#endif
+
 #define NS_PARSER_FLAG_DTD_VERIFICATION       0x00000001
 #define NS_PARSER_FLAG_PARSER_ENABLED         0x00000002
 #define NS_PARSER_FLAG_OBSERVERS_ENABLED      0x00000004
@@ -79,9 +82,6 @@ static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);
 static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID); 
 static NS_DEFINE_IID(kIParserIID, NS_IPARSER_IID);
 
-static NS_DEFINE_IID(kExpatDriverCID, NS_EXPAT_DRIVER_CID);
-static NS_DEFINE_CID(kNavDTDCID, NS_CNAVDTD_CID);
-static NS_DEFINE_CID(kViewSourceDTDCID, NS_VIEWSOURCE_DTD_CID);
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 
 //-------------------------------------------------------------------
@@ -219,40 +219,30 @@ For more details @see bugzilla bug 76722
 
 struct nsParserContinueEvent : public PLEvent {
 
-  nsParserContinueEvent(nsIParser* aParser); 
-  ~nsParserContinueEvent() { }
+  nsParserContinueEvent(nsParser* aParser)
+  {
+    NS_ADDREF(aParser); 
+    PL_InitEvent(this, aParser, HandleEvent, DestroyEvent);  
+  }
 
-  void HandleEvent() {  
-    if (mParser) {
-      nsParser* parser = NS_STATIC_CAST(nsParser*, mParser);
-      parser->HandleParserContinueEvent();
-      NS_RELEASE(mParser);
-    }
-  };
- 
-  nsIParser* mParser; 
+  ~nsParserContinueEvent()
+  {
+    nsParser *parser = (nsParser*) owner;
+    NS_RELEASE(parser);
+  }
+
+  PR_STATIC_CALLBACK(void*) HandleEvent(PLEvent* aEvent)
+  {
+    nsParser *parser = (nsParser*) aEvent->owner;
+    parser->HandleParserContinueEvent();
+    return nsnull;
+  }
+
+  PR_STATIC_CALLBACK(void) DestroyEvent(PLEvent* aEvent)
+  {
+    delete (nsParserContinueEvent*) aEvent;
+  }
 };
-
-static void PR_CALLBACK HandlePLEvent(nsParserContinueEvent* aEvent)
-{
-  NS_ASSERTION(nsnull != aEvent,"Event is null");
-  aEvent->HandleEvent();
-}
-
-static void PR_CALLBACK DestroyPLEvent(nsParserContinueEvent* aEvent)
-{
-  NS_ASSERTION(nsnull != aEvent,"Event is null");
-  delete aEvent;
-}
-
-nsParserContinueEvent::nsParserContinueEvent(nsIParser* aParser)
-{
-  NS_ASSERTION(aParser, "null parameter");  
-  mParser = aParser; 
-  PL_InitEvent(this, aParser,
-               (PLHandleEventProc) ::HandlePLEvent,
-               (PLDestroyEventProc) ::DestroyPLEvent);  
-}
 
 //-------------- End ParseContinue Event Definition ------------------------
 
@@ -417,11 +407,14 @@ nsresult
 nsParser::PostContinueEvent()
 {
   if (!(mFlags & NS_PARSER_FLAG_PENDING_CONTINUE_EVENT) && mEventQueue) {
-    nsParserContinueEvent* ev = new nsParserContinueEvent(NS_STATIC_CAST(nsIParser*, this));
-    NS_ENSURE_TRUE(ev,NS_ERROR_OUT_OF_MEMORY);
-    NS_ADDREF(this);
-    mEventQueue->PostEvent(ev);
-    mFlags |= NS_PARSER_FLAG_PENDING_CONTINUE_EVENT;
+    nsParserContinueEvent* ev = new nsParserContinueEvent(this);
+    NS_ENSURE_TRUE(ev, NS_ERROR_OUT_OF_MEMORY);
+    if (NS_FAILED(mEventQueue->PostEvent(ev))) {
+        NS_ERROR("failed to post parser continuation event");
+        PL_DestroyEvent(ev);
+    }
+    else
+        mFlags |= NS_PARSER_FLAG_PENDING_CONTINUE_EVENT;
   }
   return NS_OK;
 }
@@ -1009,7 +1002,8 @@ static void DetermineHTMLParseMode(const nsString& aBuffer,
       if (!(resultFlags & PARSE_DTD_HAVE_INTERNAL_SUBSET) &&
           sysIDUCS2 == NS_LITERAL_STRING(
                "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd")) {
-        aParseMode = eDTDMode_almost_standards;
+        aParseMode = eDTDMode_quirks;
+        aDocType = eHTML_Quirks;
       }
 
     } else {
@@ -1157,6 +1151,7 @@ FindSuitableDTD(CParserContext& aParserContext,
         sharedObjects->mDTDDeque.Push(theDTD);
         sharedObjects->mHasXMLDTD = PR_TRUE;
       }
+#ifdef MOZ_VIEW_SOURCE
       else if (!sharedObjects->mHasViewSourceDTD) {
         rv = NS_NewViewSourceHTML(&theDTD);  //do this so all non-html files can be viewed...
         NS_ENSURE_SUCCESS(rv, rv);
@@ -1164,6 +1159,7 @@ FindSuitableDTD(CParserContext& aParserContext,
         sharedObjects->mDTDDeque.Push(theDTD);
         sharedObjects->mHasViewSourceDTD = PR_TRUE;
       }
+#endif
     }
   }
 
@@ -1188,11 +1184,6 @@ nsParser::CancelParsingEvents()
     } 
 
     mFlags &= ~NS_PARSER_FLAG_PENDING_CONTINUE_EVENT;
-    /* Since we are taking this off of the queue, we need to do the NS_RELEASE
-     * that nsParserContinueEvent::HandleEvent would have done.
-     */
-    nsParser* me = this; 
-    NS_RELEASE(me);
   }
   return NS_OK;
 }
@@ -1763,7 +1754,7 @@ nsresult nsParser::ResumeParse(PRBool allowIteration, PRBool aIsFinalChunk, PRBo
           }
         }
 
-        //Only allow parsing to be interuptted in the subsequent call
+        //Only allow parsing to be interrupted in the subsequent call
         //to build model.
         SetCanInterrupt(aCanInterrupt); 
         nsresult theTokenizerResult = mFlags & NS_PARSER_FLAG_CAN_TOKENIZE ? Tokenize(aIsFinalChunk) : NS_OK;   // kEOF==2152596456
@@ -2412,7 +2403,7 @@ NS_PRECONDITION((eOnStart == mParserContext->mStreamListenerState ||
 
     if(eInvalidDetect==theContext->mAutoDetectStatus) { 
       if(theContext->mScanner) { 
-        nsReadingIterator<PRUnichar> iter;
+        nsScannerIterator iter;
         theContext->mScanner->EndReading(iter);
         theContext->mScanner->SetPosition(iter, PR_TRUE);
       } 

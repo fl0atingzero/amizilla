@@ -40,7 +40,7 @@
 // are still running in their own thread, and reference counting takes place within
 // that thread, we need to reference and de-reference outselves atomically.
 // See BugZilla Bug# 92793
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsPlatformCharset, nsIPlatformCharset);
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsPlatformCharset, nsIPlatformCharset)
 
 nsPlatformCharset::nsPlatformCharset()
 {
@@ -59,9 +59,9 @@ nsPlatformCharset::GetCharset(nsPlatformCharsetSel selector, nsACString& aResult
 }
 
 NS_IMETHODIMP
-nsPlatformCharset::GetDefaultCharsetForLocale(const PRUnichar* localeName, PRUnichar** _retValue)
+nsPlatformCharset::GetDefaultCharsetForLocale(const nsAString& localeName, nsACString& aResult)
 {
-  *_retValue = ToNewUnicode(mCharset);
+  aResult = mCharset;
   return NS_OK;
 }
 
@@ -90,9 +90,9 @@ nsPlatformCharset::InitGetCharset(nsACString &aString)
 }
 
 nsresult
-nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAutoString& locale, nsAString& aResult)
+nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAString& locale, nsACString& aResult)
 {
-  CopyASCIItoUCS2(mCharset, aResult);
+  aResult = mCharset;
   return NS_OK;
 }
 

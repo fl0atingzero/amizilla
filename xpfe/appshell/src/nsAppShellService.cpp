@@ -58,7 +58,6 @@
 #include "nsIWebShellWindow.h"
 #include "nsWebShellWindow.h"
 
-#include "nsIRegistry.h"
 #include "nsIEnumerator.h"
 #include "nsICmdLineService.h"
 #include "nsCRT.h"
@@ -86,6 +85,9 @@ static PRBool OnMacOSX();
 
 #include "nsAppShellService.h"
 #include "nsIProfileInternal.h"
+#ifdef MOZ_PHOENIX
+#include "nsIProfileMigrator.h"
+#endif
 #include "nsIProfileChangeStatus.h"
 #include "nsICloseAllWindows.h"
 #include "nsISupportsPrimitives.h"
@@ -97,7 +99,6 @@ static PRBool OnMacOSX();
 static NS_DEFINE_CID(kAppShellCID,          NS_APPSHELL_CID);
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 static NS_DEFINE_CID(kWindowMediatorCID, NS_WINDOWMEDIATOR_CID);
-static NS_DEFINE_CID(kXPConnectCID, NS_XPCONNECT_CID);
 
 #define gEQActivatedNotification       "nsIEventQueueActivated"
 #define gEQDestroyedNotification       "nsIEventQueueDestroyed"
@@ -269,18 +270,53 @@ nsAppShellService::DoProfileStartup(nsICmdLineService *aCmdLineService, PRBool c
 
     EnterLastWindowClosingSurvivalArea();
 
+#ifdef MOZ_PHOENIX
+    // This will eventually change to MOZ_XULAPP
+
+    // Profile Manager has a number of command line arguments... most of which relate to
+    // management UI or options for starting a specific profile. The migration code we're
+    // about to execute occurs ONLY in the situation when there are NO profiles. 
+    // 
+    // In this case there are only TWO profile manager flags that are of concern to us - 
+    // -CreateProfile (used by various automation processes) and -ProfileWizard - these
+    // are the only two commands valid in the no-profile case - users of these commands
+    // do NOT want the automigration UI to appear, so we explicitly check for these flags
+    // before invoking anything.
+    nsXPIDLCString isCreateProfile, isCreateProfileWizard;
+    aCmdLineService->GetCmdLineValue("-CreateProfile", getter_Copies(isCreateProfile));
+    aCmdLineService->GetCmdLineValue("-ProfileWizard", getter_Copies(isCreateProfileWizard));
+
+    if (isCreateProfile.IsEmpty() && isCreateProfileWizard.IsEmpty()) {
+      PRInt32 numProfiles = 0;
+      profileMgr->GetProfileCount(&numProfiles);
+
+      if (numProfiles == 0) {
+        nsCOMPtr<nsIProfileMigrator> pm(do_CreateInstance("@mozilla.org/profile/migrator;1", &rv));
+        if (NS_SUCCEEDED(rv))
+          rv = pm->Migrate();
+        if (NS_FAILED(rv)) {
+          // Migration failed for some reason, or there was no profile migrator. 
+          // Create a generic default profile. 
+          rv = profileMgr->CreateDefaultProfile();
+        }
+      }
+    }
+#endif
+
     // If we are being launched in turbo mode, profile mgr cannot show UI
     rv = profileMgr->StartupWithArgs(aCmdLineService, canInteract);
     if (!canInteract && rv == NS_ERROR_PROFILE_REQUIRES_INTERACTION) {
         NS_WARNING("nsIProfileInternal::StartupWithArgs returned NS_ERROR_PROFILE_REQUIRES_INTERACTION");       
         rv = NS_OK;
     }
-    
+
+#ifndef MOZ_PHOENIX
     if (NS_SUCCEEDED(rv)) {
         rv = CheckAndRemigrateDefunctProfile();
         NS_ASSERTION(NS_SUCCEEDED(rv), "failed to check and remigrate profile");
         rv = NS_OK;
     }
+#endif
 
     ExitLastWindowClosingSurvivalArea();
 
@@ -290,6 +326,7 @@ nsAppShellService::DoProfileStartup(nsICmdLineService *aCmdLineService, PRBool c
     return rv;
 }
 
+#ifndef MOZ_PHOENIX
 nsresult
 nsAppShellService::CheckAndRemigrateDefunctProfile()
 {
@@ -421,15 +458,23 @@ nsAppShellService::CheckAndRemigrateDefunctProfile()
   }
   return NS_OK;
 }   
+#endif
 
 NS_IMETHODIMP
 nsAppShellService::CreateHiddenWindow()
 {
   nsresult rv;
   PRInt32 initialHeight = 100, initialWidth = 100;
+    
 #if defined(XP_MAC) || defined(XP_MACOSX)
-  const char* hiddenWindowURL = "chrome://global/content/hiddenWindow.xul";
+  const char* defaultHiddenWindowURL = "chrome://global/content/hiddenWindow.xul";
   PRUint32    chromeMask = 0;
+  nsCOMPtr<nsIPrefBranch> prefBranch;
+  nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
+  prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
+  nsXPIDLCString prefVal;
+  rv = prefBranch->GetCharPref("browser.hiddenWindowChromeURL", getter_Copies(prefVal));
+  const char* hiddenWindowURL = prefVal.get() ? prefVal.get() : defaultHiddenWindowURL;
 #else
   const char* hiddenWindowURL = "about:blank";
   PRUint32    chromeMask =  nsIWebBrowserChrome::CHROME_ALL;
@@ -494,8 +539,10 @@ nsAppShellService::Quit(PRUint32 aFerocity)
   /* eForceQuit doesn't actually work; it can cause a subtle crash if
      there are windows open which have unload handlers which open
      new windows. Use eAttemptQuit for now. */
-  if (aFerocity == eForceQuit)
-    return NS_ERROR_FAILURE;
+  if (aFerocity == eForceQuit) {
+    NS_WARNING("attempted to force quit");
+    // it will be treated the same as eAttemptQuit, below
+  }
 
   mShuttingDown = PR_TRUE;
 
@@ -578,9 +625,21 @@ nsAppShellService::Quit(PRUint32 aFerocity)
         mWindowMediator->GetEnumerator(nsnull, getter_AddRefs(windowEnumerator));
         if (windowEnumerator) {
           PRBool more;
-          if (NS_SUCCEEDED(windowEnumerator->HasMoreElements(&more)) && more) {
+          while (windowEnumerator->HasMoreElements(&more), more) {
+            /* we can't quit immediately. we'll try again as the last window
+               finally closes. */
             aFerocity = eAttemptQuit;
-            rv = NS_ERROR_FAILURE;
+            nsCOMPtr<nsISupports> window;
+            windowEnumerator->GetNext(getter_AddRefs(window));
+            nsCOMPtr<nsIDOMWindowInternal> domWindow(do_QueryInterface(window));
+            if (domWindow) {
+              PRBool closed = PR_FALSE;
+              domWindow->GetClosed(&closed);
+              if (!closed) {
+                rv = NS_ERROR_FAILURE;
+                break;
+              }
+            }
           }
         }
       }
@@ -619,27 +678,24 @@ nsAppShellService::Quit(PRUint32 aFerocity)
       rv = svc->GetThreadEventQueue(NS_CURRENT_THREAD, getter_AddRefs(queue));
       if (NS_SUCCEEDED(rv)) {
 
-        ExitEvent* event = new ExitEvent;
+        PLEvent* event = new PLEvent;
         if (event) {
-          PL_InitEvent(NS_REINTERPRET_CAST(PLEvent*, event),
-                       nsnull,
+          NS_ADDREF_THIS();
+          PL_InitEvent(event,
+                       this,
                        HandleExitEvent,
                        DestroyExitEvent);
 
-          event->mService = this;
-          NS_ADDREF(event->mService);
-
+          // XXXdf why enter the queue's critical section?
           rv = queue->EnterMonitor();
           if (NS_SUCCEEDED(rv))
-            rv = queue->PostEvent(NS_REINTERPRET_CAST(PLEvent*, event));
+            rv = queue->PostEvent(event);
           if (NS_SUCCEEDED(rv))
             postedExitEvent = PR_TRUE;
           queue->ExitMonitor();
 
-          if (NS_FAILED(rv)) {
-            NS_RELEASE(event->mService);
-            delete event;
-          }
+          if (NS_FAILED(rv))
+            PL_DestroyEvent(event);
         } else
           rv = NS_ERROR_OUT_OF_MEMORY;
       }
@@ -656,13 +712,14 @@ nsAppShellService::Quit(PRUint32 aFerocity)
 void* PR_CALLBACK
 nsAppShellService::HandleExitEvent(PLEvent* aEvent)
 {
-  ExitEvent* event = NS_REINTERPRET_CAST(ExitEvent*, aEvent);
+  nsAppShellService *service =
+    NS_REINTERPRET_CAST(nsAppShellService*, aEvent->owner);
 
   // Tell the appshell to exit
-  event->mService->mAppShell->Exit();
+  service->mAppShell->Exit();
 
   // We're done "shutting down".
-  event->mService->mShuttingDown = PR_FALSE;
+  service->mShuttingDown = PR_FALSE;
 
   return nsnull;
 }
@@ -670,9 +727,10 @@ nsAppShellService::HandleExitEvent(PLEvent* aEvent)
 void PR_CALLBACK
 nsAppShellService::DestroyExitEvent(PLEvent* aEvent)
 {
-  ExitEvent* event = NS_REINTERPRET_CAST(ExitEvent*, aEvent);
-  NS_RELEASE(event->mService);
-  delete event;
+  nsAppShellService *service =
+    NS_REINTERPRET_CAST(nsAppShellService*, aEvent->owner);
+  NS_RELEASE(service);
+  delete aEvent;
 }
 
 /*
@@ -693,13 +751,53 @@ nsAppShellService::CreateTopLevelWindow(nsIXULWindow *aParent,
                                  aChromeMask, aInitialWidth, aInitialHeight,
                                  PR_FALSE, aResult);
 
-  if (NS_SUCCEEDED(rv))
+  if (NS_SUCCEEDED(rv)) {
     // the addref resulting from this is the owning addref for this window
     RegisterTopLevelWindow(*aResult);
+    (*aResult)->SetZLevel(CalculateWindowZLevel(aParent, aChromeMask));
+  }
 
   return rv;
 }
 
+PRUint32
+nsAppShellService::CalculateWindowZLevel(nsIXULWindow *aParent,
+                                         PRUint32      aChromeMask)
+{
+  PRUint32 zLevel;
+
+  zLevel = nsIXULWindow::normalZ;
+  if (aChromeMask & nsIWebBrowserChrome::CHROME_WINDOW_RAISED)
+    zLevel = nsIXULWindow::raisedZ;
+  else if (aChromeMask & nsIWebBrowserChrome::CHROME_WINDOW_LOWERED)
+    zLevel = nsIXULWindow::loweredZ;
+
+#if defined(XP_MAC) || defined(XP_MACOSX)
+  /* Platforms on which modal windows are always application-modal, not
+     window-modal (that's just the Mac, right?) want modal windows to
+     be stacked on top of everyone else.
+
+     On Mac OS X, bind modality to parent window instead of app (ala Mac OS 9)
+  */
+  PRUint32 modalDepMask = nsIWebBrowserChrome::CHROME_MODAL |
+                          nsIWebBrowserChrome::CHROME_DEPENDENT;
+  if (aParent && (aChromeMask & modalDepMask)) {
+    if (::OnMacOSX())
+      aParent->GetZLevel(&zLevel);
+    else
+      zLevel = nsIXULWindow::highestZ;
+  }
+#else
+  /* Platforms with native support for dependent windows (that's everyone
+      but pre-Mac OS X, right?) know how to stack dependent windows. On these
+      platforms, give the dependent window the same level as its parent,
+      so we won't try to override the normal platform behaviour. */
+  if ((aChromeMask & nsIWebBrowserChrome::CHROME_DEPENDENT) && aParent)
+    aParent->GetZLevel(&zLevel);
+#endif
+
+  return zLevel;
+}
 
 /*
  * Just do the window-making part of CreateTopLevelWindow
@@ -715,7 +813,6 @@ nsAppShellService::JustCreateTopWindow(nsIXULWindow *aParent,
   nsresult rv;
   nsWebShellWindow* window;
   PRBool intrinsicallySized;
-  PRUint32 zlevel;
 
   *aResult = nsnull;
   intrinsicallySized = PR_FALSE;
@@ -727,11 +824,9 @@ nsAppShellService::JustCreateTopWindow(nsIXULWindow *aParent,
   else {
     nsWidgetInitData widgetInitData;
 
-#if TARGET_CARBON
     if (aIsHiddenWindow)
       widgetInitData.mWindowType = eWindowType_invisible;
     else
-#endif
       widgetInitData.mWindowType = aChromeMask & nsIWebBrowserChrome::CHROME_OPENAS_DIALOG ?
                                     eWindowType_dialog : eWindowType_toplevel;
 
@@ -779,35 +874,6 @@ nsAppShellService::JustCreateTopWindow(nsIXULWindow *aParent,
     }
 #endif
 
-    zlevel = nsIXULWindow::normalZ;
-    if (aChromeMask & nsIWebBrowserChrome::CHROME_WINDOW_RAISED)
-      zlevel = nsIXULWindow::raisedZ;
-    else if (aChromeMask & nsIWebBrowserChrome::CHROME_WINDOW_LOWERED)
-      zlevel = nsIXULWindow::loweredZ;
-
-#if defined(XP_MAC) || defined(XP_MACOSX)
-    /* Platforms on which modal windows are always application-modal, not
-       window-modal (that's just the Mac, right?) want modal windows to
-       be stacked on top of everyone else.
-
-       On Mac OS X, bind modality to parent window instead of app (ala Mac OS 9)
-    */
-    PRUint32 modalDepMask = nsIWebBrowserChrome::CHROME_MODAL |
-                            nsIWebBrowserChrome::CHROME_DEPENDENT;
-    if (aParent && (aChromeMask & modalDepMask))
-    {
-      if (::OnMacOSX()) aParent->GetZlevel(&zlevel);
-      else  zlevel = nsIXULWindow::highestZ;
-    }
-#else
-    /* Platforms with native support for dependent windows (that's everyone
-       but pre-Mac OS X, right?) know how to stack dependent windows. On these
-       platforms, give the dependent window the same level as its parent,
-       so we won't try to override the normal platform behaviour. */
-    if ((aChromeMask & nsIWebBrowserChrome::CHROME_DEPENDENT) && aParent)
-      aParent->GetZlevel(&zlevel);
-#endif
-
     if (aInitialWidth == nsIAppShellService::SIZE_TO_CONTENT ||
         aInitialHeight == nsIAppShellService::SIZE_TO_CONTENT) {
       aInitialWidth = 1;
@@ -817,7 +883,7 @@ nsAppShellService::JustCreateTopWindow(nsIXULWindow *aParent,
     }
 
     rv = window->Initialize(aParent, mAppShell, aUrl,
-                            aShowWindow, aLoadDefaultPage, zlevel,
+                            aShowWindow, aLoadDefaultPage,
                             aInitialWidth, aInitialHeight, aIsHiddenWindow, widgetInitData);
       
     if (NS_SUCCEEDED(rv)) {
@@ -899,8 +965,7 @@ nsAppShellService::GetHiddenWindowAndJSContext(nsIDOMWindowInternal **aWindow,
                 if (!sgo) { rv = NS_ERROR_FAILURE; break; }
 
                 // 4. Get script context from that.
-                nsCOMPtr<nsIScriptContext> scriptContext;
-                sgo->GetContext( getter_AddRefs( scriptContext ) );
+                nsIScriptContext *scriptContext = sgo->GetContext();
                 if (!scriptContext) { rv = NS_ERROR_FAILURE; break; }
 
                 // 5. Get JSContext from the script context.
@@ -1114,10 +1179,36 @@ nsAppShellService::LaunchTask(const char *aParam, PRInt32 height, PRInt32 width,
   PRBool handlesArgs = PR_FALSE;
   rv = handler->GetHandlesArgs(&handlesArgs);
   if (handlesArgs) {
+#ifndef MOZ_THUNDERBIRD
     nsXPIDLString defaultArgs;
     rv = handler->GetDefaultArgs(getter_Copies(defaultArgs));
     if (NS_FAILED(rv)) return rv;
     rv = OpenWindow(chromeUrlForTask, defaultArgs, SIZE_TO_CONTENT, SIZE_TO_CONTENT);
+#else
+    // XXX horibble thunderbird hack. Don't pass in the default args if the cmd line service
+    // says we have real arguments! Use those instead.
+    nsXPIDLCString args;
+    nsXPIDLCString cmdLineArgument; // -mail, -compose, etc. 
+    rv = handler->GetCommandLineArgument(getter_Copies(cmdLineArgument));
+    if (NS_SUCCEEDED(rv)) {
+      rv = cmdLine->GetCmdLineValue(cmdLineArgument, getter_Copies(args));
+      if (NS_SUCCEEDED(rv) && args.get() && strcmp(args.get(), "1")) {
+        nsAutoString cmdArgs; cmdArgs.AssignWithConversion(args);
+        rv = OpenWindow(chromeUrlForTask, cmdArgs, height, width);
+      }
+      else
+        rv = NS_ERROR_FAILURE;
+    }
+    
+    // any failure case, do what we used to do:
+    if (NS_FAILED(rv)) {
+      nsXPIDLString defaultArgs;
+      rv = handler->GetDefaultArgs(getter_Copies(defaultArgs));
+      if (NS_FAILED(rv)) return rv;
+      rv = OpenWindow(chromeUrlForTask, defaultArgs, SIZE_TO_CONTENT, SIZE_TO_CONTENT);
+    }
+#endif
+
   }
   else {
     rv = OpenWindow(chromeUrlForTask, nsString(), width, height);
@@ -1233,10 +1324,11 @@ nsAppShellService::Ensure1Window(nsICmdLineService *aCmdLineService)
 
 #ifdef MOZ_THUNDERBIRD
       PRBool windowOpened = PR_FALSE;
+      
       rv = LaunchTask(NULL, height, width, &windowOpened); 
+      
       if (NS_FAILED(rv) || !windowOpened)
         rv = LaunchTask("mail", height, width, &windowOpened);
-
 #else
       rv = OpenBrowserWindow(height, width);
 #endif

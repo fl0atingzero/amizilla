@@ -67,10 +67,6 @@
 // PSM2 includes
 #include "nsISecureBrowserUI.h"
 
-#ifdef MOZ_PHOENIX
-#include "nsToolkitCompsCID.h"
-#endif
-
 #if (defined(XP_MAC) || defined(XP_MACOSX)) && !defined(MOZ_WIDGET_COCOA)
 #include <MacWindows.h>
 #include "nsWidgetSupport.h"
@@ -339,13 +335,11 @@ NS_IMETHODIMP nsWebBrowser::EnableGlobalHistory(PRBool aEnable)
     if (NS_FAILED(rv)) return rv;
     
     if (aEnable) {
-       nsCOMPtr<nsIGlobalHistory> history = 
-                do_GetService(NS_GLOBALHISTORY_CONTRACTID, &rv);
-       if (NS_FAILED(rv)) return rv;  
-       rv = dsHistory->SetGlobalHistory(history);
+        rv = dsHistory->SetUseGlobalHistory(PR_TRUE);
     }
-    else
-       rv = dsHistory->SetGlobalHistory(nsnull);
+    else {
+        rv = dsHistory->SetUseGlobalHistory(PR_FALSE);
+    }
        
     return rv;
 }

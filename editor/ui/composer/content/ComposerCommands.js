@@ -59,6 +59,8 @@ function SetupHTMLEditorCommands()
 
   commandTable.registerCommand("cmd_renderedHTMLEnabler", nsDummyHTMLCommand);
 
+  commandTable.registerCommand("cmd_grid",  nsGridCommand);
+
   commandTable.registerCommand("cmd_listProperties",  nsListPropertiesCommand);
   commandTable.registerCommand("cmd_pageProperties",  nsPagePropertiesCommand);
   commandTable.registerCommand("cmd_colorProperties", nsColorPropertiesCommand);
@@ -178,7 +180,7 @@ function SetupComposerWindowCommands()
   commandTable.registerCommand("cmd_save",           nsSaveCommand);
   commandTable.registerCommand("cmd_saveAs",         nsSaveAsCommand);
   commandTable.registerCommand("cmd_exportToText",   nsExportToTextCommand);
-  commandTable.registerCommand("cmd_saveAsCharset",  nsSaveAsCharsetCommand);
+  commandTable.registerCommand("cmd_saveAndChangeEncoding",  nsSaveAndChangeEncodingCommand);
   commandTable.registerCommand("cmd_publish",        nsPublishCommand);
   commandTable.registerCommand("cmd_publishAs",      nsPublishAsCommand);
   commandTable.registerCommand("cmd_publishSettings",nsPublishSettingsCommand);
@@ -286,14 +288,18 @@ function goUpdateCommandState(command)
       case "cmd_fontColor":
       case "cmd_fontFace":
       case "cmd_fontSize":
+      case "cmd_absPos":
         pokeMultiStateUI(command, params);
         break;
 
+      case "cmd_decreaseZIndex":
+      case "cmd_increaseZIndex":
       case "cmd_indent":
       case "cmd_outdent":
       case "cmd_increaseFont":
       case "cmd_decreaseFont":
       case "cmd_removeStyles":
+      case "cmd_smiley":
         break;
 
       default: dump("no update for command: " +command+"\n");
@@ -608,7 +614,7 @@ var nsExportToTextCommand =
   }
 }
 
-var nsSaveAsCharsetCommand =
+var nsSaveAndChangeEncodingCommand =
 {
   isCommandEnabled: function(aCommand, dummy)
   {
@@ -736,7 +742,7 @@ var nsPublishAsCommand =
       FinishHTMLSource();
 
       window.ok = false;
-      publishData = {};
+      var publishData = {};
       var oldTitle = GetDocumentTitle();
       window.openDialog("chrome://editor/content/EditorPublish.xul","_blank", 
                         "chrome,close,titlebar,modal", "", "", publishData);
@@ -761,10 +767,7 @@ function GetExtensionBasedOnMimeType(aMIMEType)
     mimeService = Components.classes["@mozilla.org/mime;1"].getService();
     mimeService = mimeService.QueryInterface(Components.interfaces.nsIMIMEService);
 
-    var mimeInfo = mimeService.GetFromMIMEType(aMIMEType);
-    if (!mimeInfo) return "";
-
-    var fileExtension = mimeInfo.primaryExtension;
+    var fileExtension = mimeService.getPrimaryExtension(aMIMEType, null);
 
     // the MIME service likes to give back ".htm" for text/html files,
     // so do a special-case fix here.
@@ -802,18 +805,8 @@ function GetSuggestedFileName(aDocumentURLString, aMIMEType)
 
   // check if there is a title we can use
   var title = GetDocumentTitle();
-  if (title) // we have a title; let's see if it's usable
-  {
-    // clean up the title to make it a usable filename
-    title = title.replace(/\"/g, "");  // Strip out quote character: "
-    title = TrimString(title); // trim whitespace from beginning and end
-    title = title.replace(/[ \.\\@\/:]/g, "_");  //Replace "bad" filename characters with "_"
-    if (title.length > 0)
-      return title + extension;
-  }
-
-  // if we still don't have a file name, let's just go with "untitled"
-  return GetString("untitled") + extension;
+  // generate a valid filename, if we can't just go with "untitled"
+  return GenerateValidFilename(title, extension) || GetString("untitled") + extension;
 }
 
 // returns file picker result
@@ -2885,6 +2878,25 @@ var nsInsertBreakAllCommand =
 };
 
 //-----------------------------------------------------------------------------------
+var nsGridCommand =
+{
+  isCommandEnabled: function(aCommand, dummy)
+  {
+    return (IsDocumentEditable() && IsEditingRenderedHTML());
+  },
+
+  getCommandStateParams: function(aCommand, aParams, aRefCon) {},
+  doCommandParams: function(aCommand, aParams, aRefCon) {},
+
+  doCommand: function(aCommand)
+  {
+    window.openDialog("chrome://editor/content/EdSnapToGrid.xul","_blank", "chrome,close,titlebar,modal");
+    window.content.focus();
+  }
+};
+
+
+//-----------------------------------------------------------------------------------
 var nsListPropertiesCommand =
 {
   isCommandEnabled: function(aCommand, dummy)
@@ -3037,26 +3049,29 @@ var nsSetSmiley =
   doCommandParams: function(aCommand, aParams, aRefCon)
   {
     var smileyCode = aParams.getCStringValue("state_attribute");
-    
+
     var strSml;
     switch(smileyCode)
     {
-        case ":-)": strSml="s1"; 
+        case ":-)": strSml="s1";
         break;
         case ":-(": strSml="s2";
         break;
         case ";-)": strSml="s3";
         break;
-        case ":-P": strSml="s4";
+        case ":-P":
+        case ":-p":
+        case ":-b": strSml="s4";
         break;
         case ":-D": strSml="s5";
         break;
         case ":-[": strSml="s6";
         break;
-        case ":-\\": 
+        case ":-\\":
         case ":\\": strSml="s7";
         break;
-        case "=-O": strSml="s8";
+        case "=-O":
+        case "=-o": strSml="s8";
         break;
         case ":-*": strSml="s9";
         break;
@@ -3069,17 +3084,19 @@ var nsSetSmiley =
         break;
         case ":-!": strSml="s13";
         break;
-        case "O:-)": strSml="s14";
+        case "O:-)":
+        case "o:-)": strSml="s14";
         break;
         case ":'(": strSml="s15";
         break;
-        case ":-X": strSml="s16";
+        case ":-X":
+        case ":-x": strSml="s16";
         break;
         default:	strSml="";
         break;
     }
 
-    try 
+    try
     {
       var editor = GetCurrentEditor();
       var selection = editor.selection;
@@ -3654,7 +3671,7 @@ var nsDeleteTableCellContentsCommand =
   doCommand: function(aCommand)
   {
     try {
-      GetCurrentTableEditor().deleteTableCellContents();   
+      GetCurrentTableEditor().deleteTableCellContents();
     } catch (e) {}
     window.content.focus();
   }

@@ -1,39 +1,44 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   John Bandhauer <jband@netscape.com> (original author)
  *   Mike Shaver <shaver@mozilla.org>
  *   Mark Hammond <MarkH@ActiveState.com>
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* All the XPConnect private declarations - only include locally. */
 
@@ -73,6 +78,7 @@
 #include "jsinterp.h"
 #include "jscntxt.h"
 #include "jsdbgapi.h"
+#include "jsgc.h"
 #include "xptinfo.h"
 #include "xpcforwards.h"
 #include "xpclog.h"
@@ -181,13 +187,6 @@ void DEBUG_CheckWrapperThreadSafety(const XPCWrappedNative* wrapper);
 // Defeat possible Windows macro-mangling of the name
 #ifdef GetClassInfo
 #undef GetClassInfo
-#endif
-
-// To kill #define index(a,b) strchr(a,b) macro in Toolkit types.h
-#ifdef XP_OS2_VACPP
-#ifdef index
-#undef index
-#endif
 #endif
 
 /***************************************************************************/
@@ -2174,6 +2173,9 @@ private:
     nsXPCWrappedJS* mRoot;
     nsXPCWrappedJS* mNext;
     nsISupports* mOuter;    // only set in root
+#ifdef GC_MARK_DEBUG
+    char *mGCRootName;
+#endif
 };
 
 /***************************************************************************/
@@ -2325,104 +2327,19 @@ private:
 
 /***************************************************************************/
 
-// class to export a JSString as an const nsAString, including refcounting
+// class to export a JSString as an const nsAString, no refcounting :(
 class XPCReadableJSStringWrapper : public nsDependentString
 {
 public:
-    static PRUnichar sEmptyString;
+    typedef nsDependentString::char_traits char_traits;
 
-    XPCReadableJSStringWrapper(JSString *str, PRUnichar *chars,
-                               size_t length) :
-        nsDependentString(chars, length), mStr(str), mSharedBufferHandle(0),
-        mBufferHandle(chars, chars + length)
+    XPCReadableJSStringWrapper(PRUnichar *chars, size_t length) :
+        nsDependentString(chars, length)
     { }
 
     XPCReadableJSStringWrapper() :
-        nsDependentString(&sEmptyString, &sEmptyString), mStr(nsnull),
-        mSharedBufferHandle(nsnull),
-        mBufferHandle(&sEmptyString, &sEmptyString)
-    { }
-
-    ~XPCReadableJSStringWrapper();
-
-    // buffer-handle accessors (virtual)
-    const nsBufferHandle<PRUnichar>* GetBufferHandle() const;
-    const nsBufferHandle<PRUnichar>* GetFlatBufferHandle() const;
-    const nsSharedBufferHandle<PRUnichar>* GetSharedBufferHandle() const;
-
-    // Override Length() to avoid multiple virtual calls to access the
-    // length
-    virtual size_type Length() const
-    {
-        return mStr ? JS_GetStringLength(mStr) : 0;
-    }
-
-    PRBool IsVoid() const
-    {
-        return mStr == nsnull;
-    }
-
-protected:
-    class SharedWrapperBufferHandle :
-        public nsSharedBufferHandleWithDestroy<PRUnichar>
-    {
-    public:
-        SharedWrapperBufferHandle(JSString *str, PRUnichar *chars,
-                                  size_t length) :
-            nsSharedBufferHandleWithDestroy<PRUnichar>(chars, chars + length,
-                                                       length + 1),
-            mStr(OBJECT_TO_JSVAL(str))
-        { }
-
-        virtual void Destroy();
-
-        JSBool RootString();
-
-        jsval mStr;
-    };
-
-    JSString *mStr;
-
-    // Pointer to shared buffer handle
-    SharedWrapperBufferHandle *mSharedBufferHandle;
-
-    // Inline non-shared buffer handle
-    nsBufferHandle<PRUnichar> mBufferHandle;
-};
-
-// "voidable" nsAString implementation
-class XPCVoidableString : public nsAutoString
-{
-public:
-    XPCVoidableString() :
-        nsAutoString(), mIsVoid(PR_FALSE)
-    { }
-
-    char_type* GetWritableFragment(nsWritableFragment<char_type>& aFragment,
-                                   nsFragmentRequest aRequest,
-                                   PRUint32 aOffset)
-    {
-        mIsVoid = PR_FALSE;
-
-        return nsAutoString::GetWritableFragment(aFragment, aRequest, aOffset);
-    }
-
-    PRBool IsVoid() const
-    {
-        return mIsVoid;
-    }
-
-    void SetIsVoid(PRBool aVoid)
-    {
-        if(aVoid && !mIsVoid) {
-            Truncate();
-        }
-
-        mIsVoid = aVoid;
-    }
-
-protected:
-    PRBool mIsVoid;
+        nsDependentString(char_traits::sEmptyBuffer, char_traits::sEmptyBuffer)
+    { SetIsVoid(PR_TRUE); }
 };
 
 // readable string conversions, static methods only
@@ -2434,8 +2351,6 @@ public:
                                         const nsAString &readable);
 
     static XPCReadableJSStringWrapper *JSStringToReadable(JSString *str);
-
-    static void ShutdownDOMStringFinalizer();
 
 private:
     XPCStringConvert();         // not implemented
@@ -2895,13 +2810,14 @@ private:
     void ClearMembers();
 
 private:
-    nsXPCComponents_Interfaces*  mInterfaces;
-    nsXPCComponents_Classes*     mClasses;
-    nsXPCComponents_ClassesByID* mClassesByID;
-    nsXPCComponents_Results*     mResults;
-    nsXPCComponents_ID*          mID;
-    nsXPCComponents_Exception*   mException;
-    nsXPCComponents_Constructor* mConstructor;
+    nsXPCComponents_Interfaces*     mInterfaces;
+    nsXPCComponents_InterfacesByID* mInterfacesByID;
+    nsXPCComponents_Classes*        mClasses;
+    nsXPCComponents_ClassesByID*    mClassesByID;
+    nsXPCComponents_Results*        mResults;
+    nsXPCComponents_ID*             mID;
+    nsXPCComponents_Exception*      mException;
+    nsXPCComponents_Constructor*    mConstructor;
 };
 
 /***************************************************************************/

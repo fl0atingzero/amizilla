@@ -53,7 +53,6 @@
 #include "mozXMLTermStream.h"
 
 static NS_DEFINE_CID(kSimpleURICID, NS_SIMPLEURI_CID);
-static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID);
 
 /////////////////////////////////////////////////////////////////////////
 // mozXMLTermStream implementation
@@ -61,7 +60,7 @@ static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID);
 
 NS_IMPL_THREADSAFE_ISUPPORTS2(mozXMLTermStream, 
                               mozIXMLTermStream,
-                              nsIInputStream);
+                              nsIInputStream)
 
 mozXMLTermStream::mozXMLTermStream() :
   mUTF8Buffer(""),
@@ -211,7 +210,7 @@ NS_IMETHODIMP mozXMLTermStream::Open(nsIDOMWindowInternal* aDOMWindow,
                                     uri,
                                     inputStream,
                                     nsDependentCString(contentType),
-                                    NS_LITERAL_CSTRING(""));
+                                    EmptyCString());
   if (NS_FAILED(result))
     return result;
 
@@ -378,7 +377,7 @@ NS_IMETHODIMP mozXMLTermStream::SizeToContentHeight(PRInt32 maxHeight)
 
   // Determine twips to pixels conversion factor
   float pixelScale;
-  presContext->GetTwipsToPixels(&pixelScale);
+  pixelScale = presContext->TwipsToPixels();
 
   // Get scrollbar dimensions in pixels
   float sbWidth, sbHeight;
@@ -387,10 +386,7 @@ NS_IMETHODIMP mozXMLTermStream::SizeToContentHeight(PRInt32 maxHeight)
   PRInt32 scrollBarHeight = PRInt32(sbHeight*pixelScale);
 
   // Determine docshell size in pixels
-  nsRect shellArea;
-  result = presContext->GetVisibleArea(shellArea);
-  if (NS_FAILED(result))
-    return result;
+  nsRect shellArea = presContext->GetVisibleArea();
 
   PRInt32 shellWidth = PRInt32((float)shellArea.width * pixelScale);
   PRInt32 shellHeight = PRInt32((float)shellArea.height * pixelScale);

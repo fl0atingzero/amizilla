@@ -67,8 +67,7 @@ public:
                               nsIContent* aChild,
                               PRInt32 aNameSpaceID,
                               nsIAtom* aAttribute,
-                              PRInt32 aModType, 
-                              PRInt32 aHint);
+                              PRInt32 aModType);
 
   NS_IMETHOD QueryInterface(const nsIID& aIID, void** aInstancePtr);
   NS_IMETHOD_(nsrefcnt) AddRef() { return NS_OK; }
@@ -96,7 +95,12 @@ public:
               nsStyleContext*  aContext,
               nsIFrame*        aPrevInFlow);
 
-  NS_IMETHOD  IsPercentageBase(PRBool& aBase) const;
+  NS_IMETHOD Reflow(nsIPresContext*          aPresContext,
+                    nsHTMLReflowMetrics&     aDesiredSize,
+                    const nsHTMLReflowState& aReflowState,
+                    nsReflowStatus&          aStatus);
+
+  virtual PRBool IsContainingBlock() const;
 
   // nsIScrollbarFrame
   NS_IMETHOD SetScrollbarMediator(nsIScrollbarMediator* aMediator) { mScrollbarMediator = aMediator; return NS_OK; };

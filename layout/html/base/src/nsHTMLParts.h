@@ -41,7 +41,6 @@
 #include "nsISupports.h"
 #include "nsReflowType.h"
 class nsHTMLReflowCommand;
-class nsIArena;
 class nsIAtom;
 class nsINodeInfo;
 class nsIContent;
@@ -69,6 +68,7 @@ class nsIChannel;
 #define NS_BLOCK_NO_AUTO_MARGINS            0x00200000
 #define NS_BLOCK_MARGIN_ROOT                0x00400000
 #define NS_BLOCK_SPACE_MGR                  0x00800000
+#define NS_BLOCK_HAS_LINE_CURSOR            0x01000000
 #define NS_BLOCK_FLAGS_MASK                 0xFFF00000
 
 // Factory method for creating a content iterator for generated
@@ -101,7 +101,8 @@ NS_NewBlockFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame,
 
 // Special Generated Content Frame
 nsresult
-NS_NewAttributeContent(nsIContent ** aResult);
+NS_NewAttributeContent(nsIContent* aContent, PRInt32 aNameSpaceID,
+                       nsIAtom* aAttrName, nsIContent** aResult);
 
 // Create a basic area frame but the GetFrameForPoint is overridden to always
 // return the option frame 
@@ -154,12 +155,10 @@ NS_NewBRFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
 
 nsresult
 NS_NewCommentFrame(nsIPresShell* aPresShell, nsIFrame** aFrameResult);
-nsresult
-NS_NewHRFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
 
 // <frame> and <iframe> 
 nsresult
-NS_NewHTMLFrameOuterFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
+NS_NewSubDocumentFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
 // <frameset>
 nsresult
 NS_NewHTMLFramesetFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);

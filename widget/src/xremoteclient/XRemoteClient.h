@@ -42,13 +42,15 @@ class XRemoteClient
 
 private:
 
-  Window         FindWindow       (void);
   Window         CheckWindow      (Window aWindow);
   Window         CheckChildren    (Window aWindow);
   nsresult       GetLock          (Window aWindow, PRBool *aDestroyed);
   nsresult       FreeLock         (Window aWindow);
+  Window         FindBestWindow   (const char *aProgram, const char *aUsername,
+				   const char *aProfile);
   nsresult       DoSendCommand    (Window aWindow,
 				   const char *aCommand,
+				   char **aResponse,
 				   PRBool *aDestroyed);
 
   Display       *mDisplay;
@@ -59,9 +61,10 @@ private:
   Atom           mMozResponseAtom;
   Atom           mMozWMStateAtom;
   Atom           mMozUserAtom;
+  Atom           mMozProfileAtom;
+  Atom           mMozProgramAtom;
 
   char          *mLockData;
 
   PRBool         mInitialized;
-
 };

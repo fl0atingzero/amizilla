@@ -26,7 +26,6 @@
 
 #include "nsCWebBrowser.h"
 #include "nsIComponentManager.h"
-#include "nsWidgetsCID.h"
 #include "nsRepeater.h"
 #include "nsString.h"
 #include "nsXPIDLString.h"
@@ -90,8 +89,6 @@
 
 // ToolBox
 #include <InternetConfig.h>
-
-static NS_DEFINE_IID(kWindowCID, NS_WINDOW_CID);
 
 const nsCString CBrowserShell::kEmptyCString;
 nsCOMPtr<nsIDragHelperService> CBrowserShell::sDragHelper;
@@ -360,7 +357,7 @@ void CBrowserShell::FinishCreateSelf()
     ThrowIfNil_(mEventSink);
         
     // Hook up our progress listener
-    nsWeakPtr weakling(dont_AddRef(NS_GetWeakReference((nsIWebProgressListener *)mProgressListener)));
+    nsWeakPtr weakling(do_GetWeakReference((nsIWebProgressListener *)mProgressListener));
     rv = mWebBrowser->AddWebBrowserListener(weakling, NS_GET_IID(nsIWebProgressListener));
     NS_ASSERTION(NS_SUCCEEDED(rv), "Call to AddWebBrowserListener failed");
       

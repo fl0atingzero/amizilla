@@ -105,17 +105,12 @@ typedef short JSAMPLE;
 
 typedef short JCOEF;
 
-/* Defines for MMX support. */
+/* Defines for MMX/SSE2 support. */
 
-#if defined(XP_WIN32) && defined(_M_IX86)
+#if defined(XP_WIN32) && defined(_M_IX86) && !defined(__GNUC__)
 #define HAVE_MMX_INTEL_MNEMONICS 
-#endif
-
-/* Defines for SSE2 support. */
-#if defined(XP_WIN32) && defined(_M_IX86) && defined(__m128i)
 #define HAVE_SSE2_INTEL_MNEMONICS 
 #endif
-
 
 /* Compressed datastreams are represented as arrays of JOCTET.
  * These must be EXACTLY 8 bits wide, at least once they are written to
@@ -208,17 +203,15 @@ typedef unsigned int JDIMENSION;
 #include "prtypes.h"
 
 /* a function called through method pointers: */
-#define METHODDEF(type)		static type
+#define METHODDEF(type)		static type PR_CALLBACK
 /* a function used only in its module: */
 #define LOCAL(type)		static type
 /* a function referenced thru EXTERNs: */
-#define GLOBAL(type)		PR_PUBLIC_API(type)
+#define GLOBAL(type)		PR_IMPLEMENT(type)
 /* a reference to a GLOBAL function: */
-#ifdef __cplusplus
-#define EXTERN(type)		extern "C" PR_PUBLIC_API(type)
-#else
-#define EXTERN(type)		extern PR_PUBLIC_API(type)
-#endif
+PR_BEGIN_EXTERN_C
+#define EXTERN(type)		PR_EXTERN(type)
+PR_END_EXTERN_C
 
 
 /* This macro is used to declare a "method", that is, a function pointer.

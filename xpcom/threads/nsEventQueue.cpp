@@ -47,6 +47,10 @@
 
 #include "prlog.h"
 
+#ifdef NS_DEBUG
+#include "prprf.h"
+#endif
+
 #if defined(PR_LOGGING) && defined(DEBUG_danm)
 /* found these logs useful in conjunction with netlibStreamEvent logging
    from netwerk. */
@@ -185,8 +189,9 @@ nsEventQueueImpl::InitFromPLQueue(PLEventQueue* aQueue)
 }
 
 /* nsISupports interface implementation... */
-NS_IMPL_THREADSAFE_ISUPPORTS2(nsEventQueueImpl,
+NS_IMPL_THREADSAFE_ISUPPORTS3(nsEventQueueImpl,
                               nsIEventQueue,
+                              nsIEventTarget,
                               nsPIEventQueueChain)
 
 /* nsIEventQueue interface implementation... */
@@ -236,8 +241,7 @@ nsEventQueueImpl::InitEvent(PLEvent* aEvent,
 }
 
 
-
-NS_IMETHODIMP_(PRStatus)
+NS_IMETHODIMP
 nsEventQueueImpl::PostEvent(PLEvent* aEvent)
 {
   if (!mAcceptingEvents) {
@@ -247,7 +251,7 @@ nsEventQueueImpl::PostEvent(PLEvent* aEvent)
          (long)mEventQueue,(int)mAcceptingEvents,(int)mCouldHaveEvents));
   ++gEventQueueLogCount;
 #endif
-    PRStatus rv = PR_FAILURE;
+    nsresult rv = NS_ERROR_FAILURE;
     NS_ASSERTION(mElderQueue, "event dropped because event chain is dead");
     if (mElderQueue) {
       nsCOMPtr<nsIEventQueue> elder(do_QueryInterface(mElderQueue));
@@ -261,7 +265,7 @@ nsEventQueueImpl::PostEvent(PLEvent* aEvent)
          ("EventQueue: Posting event [queue=%lx]", (long)mEventQueue));
   ++gEventQueueLogCount;
 #endif
-  return PL_PostEvent(mEventQueue, aEvent);
+  return PL_PostEvent(mEventQueue, aEvent) == PR_SUCCESS ? NS_OK : NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP
@@ -336,7 +340,7 @@ nsEventQueueImpl::GetPLEventQueue(PLEventQueue** aEventQueue)
 }
 
 NS_IMETHODIMP
-nsEventQueueImpl::IsQueueOnCurrentThread(PRBool *aResult)
+nsEventQueueImpl::IsOnCurrentThread(PRBool *aResult)
 {
     *aResult = PL_IsQueueOnCurrentThread( mEventQueue );
     return NS_OK;
@@ -508,6 +512,21 @@ nsEventQueueImpl::AppendQueue(nsIEventQueue *aQueue)
                "event queue repeatedly appended to queue chain");
 */
   rv = NS_ERROR_NO_INTERFACE;
+
+#ifdef NS_DEBUG
+  int depth = 0;
+  nsEventQueueImpl *next = this;
+  while (next && depth < 100) {
+    next = NS_STATIC_CAST(nsEventQueueImpl *, next->mYoungerQueue);
+    ++depth;
+  }
+  if (depth > 5) {
+    char warning[80];
+    PR_snprintf(warning, sizeof(warning),
+      "event queue chain length is %d. this is almost certainly a leak.", depth);
+    NS_WARNING(warning);
+  }
+#endif
 
   // (be careful doing this outside nsEventQueueService's mEventQMonitor)
 

@@ -60,7 +60,6 @@
 #include "nsIViewManager.h"
 #include "nsIPresContext.h"
 #include "nsILookAndFeel.h"
-#include "nsWidgetsCID.h"     // for NS_LOOKANDFEEL_CID
 #include "nsBlockFrame.h"
 #include "nsISelectionController.h"
 
@@ -78,8 +77,6 @@
 #include "nsLayoutAtoms.h"
 //------------------------------END OF IBM BIDI--------------------------------
 #endif //IBMBIDI
-
-static NS_DEFINE_CID(kLookAndFeelCID,  NS_LOOKANDFEEL_CID);
 
 //-----------------------------------------------------------------------------
 
@@ -113,16 +110,16 @@ NS_IMETHODIMP nsCaret::Init(nsIPresShell *inPresShell)
 {
   NS_ENSURE_ARG(inPresShell);
   
-  mPresShell = getter_AddRefs(NS_GetWeakReference(inPresShell));    // the presshell owns us, so no addref
+  mPresShell = do_GetWeakReference(inPresShell);    // the presshell owns us, so no addref
   NS_ASSERTION(mPresShell, "Hey, pres shell should support weak refs");
 
   // get nsILookAndFeel from the pres context, which has one cached.
-  nsCOMPtr<nsILookAndFeel> lookAndFeel;
+  nsILookAndFeel *lookAndFeel = nsnull;
   
   nsCOMPtr<nsIPresContext> presContext;
   inPresShell->GetPresContext(getter_AddRefs(presContext));
   if (presContext)
-    presContext->GetLookAndFeel(getter_AddRefs(lookAndFeel));
+    lookAndFeel = presContext->LookAndFeel();
   if (lookAndFeel)
   {
     PRInt32 tempInt;
@@ -151,7 +148,7 @@ NS_IMETHODIMP nsCaret::Init(nsIPresShell *inPresShell)
   nsCOMPtr<nsISelectionPrivate> privateSelection = do_QueryInterface(domSelection);
   if (privateSelection)
     privateSelection->AddSelectionListener(this);
-  mDomSelectionWeak = getter_AddRefs(NS_GetWeakReference(domSelection));
+  mDomSelectionWeak = do_GetWeakReference(domSelection);
   
   // set up the blink timer
   if (mVisible)
@@ -203,7 +200,7 @@ NS_IMETHODIMP nsCaret::Terminate()
 
 
 //-----------------------------------------------------------------------------
-NS_IMPL_ISUPPORTS2(nsCaret, nsICaret, nsISelectionListener);
+NS_IMPL_ISUPPORTS2(nsCaret, nsICaret, nsISelectionListener)
 
 //-----------------------------------------------------------------------------
 NS_IMETHODIMP nsCaret::GetCaretDOMSelection(nsISelection **aDOMSel)
@@ -220,7 +217,7 @@ NS_IMETHODIMP nsCaret::GetCaretDOMSelection(nsISelection **aDOMSel)
 NS_IMETHODIMP nsCaret::SetCaretDOMSelection(nsISelection *aDOMSel)
 {
   NS_ENSURE_ARG_POINTER(aDOMSel);
-  mDomSelectionWeak = getter_AddRefs( NS_GetWeakReference(aDOMSel) );   // weak reference to pres shell
+  mDomSelectionWeak = do_GetWeakReference(aDOMSel);   // weak reference to pres shell
   return NS_OK;
 }
 
@@ -346,17 +343,10 @@ NS_IMETHODIMP nsCaret::GetCaretCoordinates(EViewCoordinates aRelativeToType, nsI
   if (NS_FAILED(err))
     return err;
   
-  // ... then get a device context
-  nsCOMPtr<nsIDeviceContext>    dx;
-  err = presContext->GetDeviceContext(getter_AddRefs(dx));
-  if (NS_FAILED(err))
-    return err;
-  if (!dx)
-    return NS_ERROR_UNEXPECTED;
-
   // ... then tell it to make a rendering context
   nsCOMPtr<nsIRenderingContext> rendContext;  
-  err = dx->CreateRenderingContext(drawingView, *getter_AddRefs(rendContext));            
+  err = presContext->DeviceContext()->
+    CreateRenderingContext(drawingView, *getter_AddRefs(rendContext));
   if (NS_FAILED(err))
     return err;
   if (!rendContext)
@@ -366,9 +356,6 @@ NS_IMETHODIMP nsCaret::GetCaretCoordinates(EViewCoordinates aRelativeToType, nsI
   nsPoint   framePos(0, 0);
   theFrame->GetPointFromOffset(presContext, rendContext, theFrameOffset, &framePos);
 
-  nsRect          frameRect;
-  theFrame->GetRect(frameRect);
-  
   // we don't need drawingView anymore so reuse that; reset viewOffset values for our purposes
   if (aRelativeToType == eClosestViewCoordinates)
   {
@@ -380,7 +367,7 @@ NS_IMETHODIMP nsCaret::GetCaretCoordinates(EViewCoordinates aRelativeToType, nsI
   viewOffset += framePos;
   outCoordinates->x = viewOffset.x;
   outCoordinates->y = viewOffset.y;
-  outCoordinates->height = frameRect.height;
+  outCoordinates->height = theFrame->GetSize().height;
   outCoordinates->width  = mCaretTwipsWidth;
   
   return NS_OK;
@@ -754,10 +741,7 @@ PRBool nsCaret::SetupDrawingFrameAndOffset(nsIDOMNode* aNode, PRInt32 aOffset, n
   // mark the frame, so we get notified on deletion.
   // frames are never unmarked, which means that we'll touch every frame we visit.
   // this is not ideal.
-  nsFrameState frameState;
-  theFrame->GetFrameState(&frameState);
-  frameState |= NS_FRAME_EXTERNAL_REFERENCE;
-  theFrame->SetFrameState(frameState);
+  theFrame->AddStateBits(NS_FRAME_EXTERNAL_REFERENCE);
 
   mLastCaretFrame = theFrame;
   mLastContentOffset = theFrameOffset;
@@ -806,8 +790,6 @@ void nsCaret::GetViewForRendering(nsIFrame *caretFrame, EViewCoordinates coordTy
 
   nsIView*    returnView = nsnull;    // views are not refcounted
   
-  nscoord   x, y;
-  
   // coorinates relative to the view we are going to use for drawing
   if (coordType == eRenderingViewCoordinates)
   {
@@ -817,23 +799,17 @@ void nsCaret::GetViewForRendering(nsIFrame *caretFrame, EViewCoordinates coordTy
     
     // walk up to the first view with a widget
     do {
-      theView->GetPosition(&x, &y);
-
       //is this a scrollable view?
       if (!scrollableView)
         theView->QueryInterface(NS_GET_IID(nsIScrollableView), (void **)&scrollableView);
 
-      PRBool hasWidget;
-      theView->HasWidget(&hasWidget);
-      if (hasWidget)
+      if (theView->HasWidget())
       {
         returnView = theView;
         break;
       }
-      drawViewOffset.x += x;
-      drawViewOffset.y += y;
-      
-      theView->GetParent(theView);
+      drawViewOffset += theView->GetPosition();
+      theView = theView->GetParent();
     } while (theView);
     
     viewOffset = withinViewOffset;
@@ -845,8 +821,7 @@ void nsCaret::GetViewForRendering(nsIFrame *caretFrame, EViewCoordinates coordTy
       scrollableView->GetClipView(&clipView);
       if (!clipView) return;      // should always have one
       
-      nsRect  bounds;
-      clipView->GetBounds(bounds);
+      nsRect  bounds = clipView->GetBounds();
       scrollableView->GetScrollPosition(bounds.x, bounds.y);
       
       bounds += drawViewOffset;   // offset to coords of returned view
@@ -854,7 +829,9 @@ void nsCaret::GetViewForRendering(nsIFrame *caretFrame, EViewCoordinates coordTy
     }
     else
     {
-      returnView->GetBounds(outClipRect);
+      NS_ASSERTION(returnView, "bulletproofing, see bug #24329");
+      if (returnView)
+        outClipRect = returnView->GetBounds();
     }
 
     if (outRelativeView)
@@ -867,28 +844,17 @@ void nsCaret::GetViewForRendering(nsIFrame *caretFrame, EViewCoordinates coordTy
     viewOffset = withinViewOffset;
 
     do {
-      theView->GetPosition(&x, &y);
-
-      if (!returnView)
-      {
-        PRBool hasWidget;
-        theView->HasWidget(&hasWidget);
-        
-        if (hasWidget)
-          returnView = theView;
-      }
+      if (!returnView && theView->HasWidget())
+        returnView = theView;
       // is this right?
-      viewOffset.x += x;
-      viewOffset.y += y;
+      viewOffset += theView->GetPosition();
       
       if (outRelativeView && coordType == eTopLevelWindowCoordinates)
         *outRelativeView = theView;
 
-      theView->GetParent(theView);
+      theView = theView->GetParent();
     } while (theView);
-  
   }
-  
   
   *outRenderingView = returnView;
 }
@@ -981,8 +947,7 @@ void nsCaret::GetCaretRectAndInvert()
 {
   NS_ASSERTION(mLastCaretFrame != nsnull, "Should have a frame here");
   
-  nsRect    frameRect;
-  mLastCaretFrame->GetRect(frameRect);
+  nsRect    frameRect = mLastCaretFrame->GetRect();
   
   frameRect.x = 0;      // the origin is accounted for in GetViewForRendering()
   frameRect.y = 0;
@@ -992,7 +957,7 @@ void nsCaret::GetCaretRectAndInvert()
   nsIView   *drawingView;
   GetViewForRendering(mLastCaretFrame, eRenderingViewCoordinates, viewOffset, clipRect, &drawingView, nsnull);
   
-  if (drawingView == nsnull)
+  if (!drawingView)
     return;
   
   frameRect += viewOffset;
@@ -1014,11 +979,10 @@ void nsCaret::GetCaretRectAndInvert()
   {
     mRendContext = nsnull;    // free existing one if we have one
     
-    nsCOMPtr<nsIDeviceContext>    dx;
-    if (NS_FAILED(presContext->GetDeviceContext(getter_AddRefs(dx))) || !dx)
-      return;
-      
-    if (NS_FAILED(dx->CreateRenderingContext(drawingView, *getter_AddRefs(mRendContext))) || !mRendContext)
+    nsresult rv = presContext->DeviceContext()->
+      CreateRenderingContext(drawingView, *getter_AddRefs(mRendContext));
+
+    if (NS_FAILED(rv) || !mRendContext)
       return;      
   }
 
@@ -1067,11 +1031,8 @@ void nsCaret::GetCaretRectAndInvert()
 
     if (mCaretTwipsWidth < 0)    // need to re-compute the pixel width
     {
-      float tDevUnitsToTwips = 15;
-      nsCOMPtr<nsIDeviceContext> dx;
-      presContext->GetDeviceContext(getter_AddRefs(dx));
-      if (dx)
-        dx->GetDevUnitsToTwips(tDevUnitsToTwips);
+      float tDevUnitsToTwips;
+      tDevUnitsToTwips = presContext->DeviceContext()->DevUnitsToTwips();
       mCaretTwipsWidth  = (nscoord)(tDevUnitsToTwips * (float)mCaretPixelsWidth);
     }
     caretRect.width = mCaretTwipsWidth;

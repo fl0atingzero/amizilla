@@ -215,6 +215,30 @@ PRBool URIUtils::CanCallerAccess(nsIDOMNode *aNode)
         return PR_TRUE;
     }
 
+    // Check whether the subject principal is the system principal.
+    // For performance, we will avoid calling SubjectPrincipalIsChrome()
+    // since it calls GetSubjectPrincipal() which causes us to walk
+    // the JS frame stack.  We already did that above, so just get the
+    // system principal from the security manager, and do a raw comparison.
+    nsCOMPtr<nsIPrincipal> systemPrincipal;
+    gTxSecurityManager->GetSystemPrincipal(getter_AddRefs(systemPrincipal));
+
+    if (subjectPrincipal == systemPrincipal) {
+        // we're running as system, grant access to the node.
+
+        return PR_TRUE;
+    }
+
+    // Ask the securitymanager if we have "UniversalBrowserRead"
+    PRBool caps = PR_FALSE;
+    nsresult rv =
+        gTxSecurityManager->IsCapabilityEnabled("UniversalBrowserRead",
+                                                &caps);
+    NS_ENSURE_SUCCESS(rv, PR_FALSE);
+    if (caps) {
+        return PR_TRUE;
+    }
+
     // Make sure that this is a real node. We do this by first QI'ing to
     // nsIContent (which is important performance wise) and if that QI
     // fails we QI to nsIDocument. If both those QI's fail we won't let
@@ -244,12 +268,12 @@ PRBool URIUtils::CanCallerAccess(nsIDOMNode *aNode)
         nsCOMPtr<nsIDOMDocument> domDoc;
         aNode->GetOwnerDocument(getter_AddRefs(domDoc));
         if (!domDoc) {
-            nsCOMPtr<nsINodeInfo> ni;
+            nsINodeInfo *ni;
             if (content) {
-                content->GetNodeInfo(getter_AddRefs(ni));
+                ni = content->GetNodeInfo();
             }
             else {
-                attr->GetNodeInfo(getter_AddRefs(ni));
+                ni = attr->NodeInfo();
             }
 
             if (!ni) {
@@ -274,7 +298,7 @@ PRBool URIUtils::CanCallerAccess(nsIDOMNode *aNode)
     }
 
     if (!principal) {
-        doc->GetPrincipal(getter_AddRefs(principal));
+        principal = doc->GetPrincipal();
     }
 
     if (!principal) {
@@ -285,10 +309,50 @@ PRBool URIUtils::CanCallerAccess(nsIDOMNode *aNode)
         return PR_TRUE;
     }
 
-    nsresult rv = gTxSecurityManager->CheckSameOriginPrincipal(subjectPrincipal,
-                                                               principal);
+    rv = gTxSecurityManager->CheckSameOriginPrincipal(subjectPrincipal,
+                                                      principal);
 
     return NS_SUCCEEDED(rv);
+}
+
+// static
+void
+URIUtils::ResetWithSource(nsIDocument *aNewDoc, nsIDOMNode *aSourceNode)
+{
+    if (!aSourceNode) {
+        aNewDoc->Reset(nsnull, nsnull);
+        return;
+    }
+
+    nsCOMPtr<nsIDocument> sourceDoc = do_QueryInterface(aSourceNode);
+    if (!sourceDoc) {
+        nsCOMPtr<nsIDOMDocument> sourceDOMDocument;
+        aSourceNode->GetOwnerDocument(getter_AddRefs(sourceDOMDocument));
+        sourceDoc = do_QueryInterface(sourceDOMDocument);
+    }
+    if (!sourceDoc) {
+        NS_ASSERTION(0, "no source document found");
+        aNewDoc->Reset(nsnull, nsnull);
+        return;
+    }
+
+    nsCOMPtr<nsIChannel> channel;
+    nsCOMPtr<nsILoadGroup> loadGroup = sourceDoc->GetDocumentLoadGroup();
+    nsCOMPtr<nsIIOService> serv = do_GetService(NS_IOSERVICE_CONTRACTID);
+    if (serv) {
+        // Create a temporary channel to get nsIDocument->Reset to
+        // do the right thing. We want the output document to get
+        // much of the input document's characteristics.
+        serv->NewChannelFromURI(sourceDoc->GetDocumentURI(),
+                                getter_AddRefs(channel));
+    }
+    aNewDoc->Reset(channel, loadGroup);
+    aNewDoc->SetBaseURI(sourceDoc->GetBaseURI());
+
+    // Copy charset
+    aNewDoc->SetDocumentCharacterSet(sourceDoc->GetDocumentCharacterSet());
+    aNewDoc->SetDocumentCharacterSetSource(
+          sourceDoc->GetDocumentCharacterSetSource());
 }
 
 #endif /* TX_EXE */

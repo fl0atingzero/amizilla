@@ -20,7 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Adam Lock <adamlock@netscape.com>
+ *
+ *   Adam Lock <adamlock@eircom.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -237,8 +238,7 @@ public:
             {
                 pCI->pfnCommandProc(pT, pCI->pCmdGUID, pCI->nCmdID, nCmdexecopt, pvaIn, pvaOut);
             }
-            else if (pCI->nWindowsCmdID != 0 &&
-                     !(nCmdexecopt & OLECMDEXECOPT_SHOWHELP))
+            else if (pCI->nWindowsCmdID != 0 && nCmdexecopt != OLECMDEXECOPT_SHOWHELP)
             {
                 HWND hwndTarget = pT->GetCommandTargetWindow();
                 if (hwndTarget)

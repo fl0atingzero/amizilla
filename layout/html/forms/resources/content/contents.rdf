@@ -20,7 +20,7 @@
    - the Initial Developer. All Rights Reserved.
    -
    - Contributor(s):
-   -  Brian Ryner <bryner@netscape.com>
+   -  Brian Ryner <bryner@brianryner.com>
    -
    - Alternatively, the contents of this file may be used under the terms of
    - either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -47,7 +47,7 @@
         chrome:displayName="Forms"
         chrome:author="mozilla.org"
         chrome:name="forms"
-        chrome:skinVersion="1.2">
+#expand         chrome:skinVersion="__MOZILLA_SKIN_VERSION__">
 </RDF:Description>
 
 </RDF:RDF>

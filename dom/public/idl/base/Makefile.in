@@ -31,13 +31,14 @@ XPIDL_MODULE	= dom_base
 GRE_MODULE	= 1
 
 SDK_XPIDLSRCS =                                 \
+	domstubs.idl				\
 	nsIDOMBarProp.idl			\
 	nsIDOMWindow.idl			\
+	nsIDOMWindow2.idl			\
 	nsIDOMWindowCollection.idl		\
 	$(NULL)
 
 XPIDLSRCS =					\
-	domstubs.idl				\
 	nsIDOMCRMFObject.idl			\
 	nsIDOMCrypto.idl			\
 	nsIDOMHistory.idl			\

@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Brian Ryner <bryner@netscape.com>  (Original Author)
+ *  Brian Ryner <bryner@brianryner.com>  (Original Author)
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -69,19 +69,21 @@ nsNativeTheme::nsNativeTheme()
   mSortDirectionAtom = do_GetAtom("sortDirection");
 }
 
-void
-nsNativeTheme::GetPrimaryPresShell(nsIFrame* aFrame, nsIPresShell** aResult)
+nsIPresShell *
+nsNativeTheme::GetPrimaryPresShell(nsIFrame* aFrame)
 {
-  *aResult = nsnull;
   if (!aFrame)
-    return;
+    return nsnull;
 
-  nsCOMPtr<nsIDocument> doc;
-  nsCOMPtr<nsIContent> content;
-  aFrame->GetContent(getter_AddRefs(content));
-  content->GetDocument(getter_AddRefs(doc));
-  if (doc)
-    doc->GetShellAt(0, aResult); // addrefs
+  nsIDocument *doc = aFrame->GetContent()->GetDocument();
+
+  nsIPresShell *shell = nsnull;
+
+  if (doc) {
+    shell = doc->GetShellAt(0);
+  }
+
+  return shell;
 }
 
 PRInt32
@@ -91,27 +93,18 @@ nsNativeTheme::GetContentState(nsIFrame* aFrame, PRUint8 aWidgetType)
     return 0;
 
   PRBool isXULCheckboxRadio = PR_FALSE;
-  if (aWidgetType == NS_THEME_CHECKBOX || aWidgetType == NS_THEME_RADIO) {
-    nsCOMPtr<nsIContent> checkboxRadioContent;
-    aFrame->GetContent(getter_AddRefs(checkboxRadioContent));
-    isXULCheckboxRadio = checkboxRadioContent->IsContentOfType(nsIContent::eXUL);
-    if (isXULCheckboxRadio)
-      aFrame->GetParent(&aFrame);
-  }
+  if ((aWidgetType == NS_THEME_CHECKBOX || aWidgetType == NS_THEME_RADIO)
+      && aFrame->GetContent()->IsContentOfType(nsIContent::eXUL))
+    aFrame = aFrame->GetParent();
 
-  nsCOMPtr<nsIPresShell> shell;
-  GetPrimaryPresShell(aFrame, getter_AddRefs(shell));
+  nsIPresShell *shell = GetPrimaryPresShell(aFrame);
   if (!shell)
     return 0;
 
   nsCOMPtr<nsIPresContext> context;
   shell->GetPresContext(getter_AddRefs(context));
-  nsCOMPtr<nsIEventStateManager> esm;
-  context->GetEventStateManager(getter_AddRefs(esm));
   PRInt32 flags = 0;
-  nsCOMPtr<nsIContent> content;
-  aFrame->GetContent(getter_AddRefs(content));
-  esm->GetContentState(content, flags);
+  context->EventStateManager()->GetContentState(aFrame->GetContent(), flags);
   
   if (isXULCheckboxRadio && aWidgetType == NS_THEME_RADIO) {
     if (IsFocused(aFrame))
@@ -127,25 +120,18 @@ nsNativeTheme::CheckBooleanAttr(nsIFrame* aFrame, nsIAtom* aAtom)
   if (!aFrame)
     return PR_FALSE;
 
-  nsCOMPtr<nsIContent> content;
-  aFrame->GetContent(getter_AddRefs(content));
-  nsAutoString attr;
-  nsresult res = content->GetAttr(kNameSpaceID_None, aAtom, attr);
+  nsIContent* content = aFrame->GetContent();
+  if (content->IsContentOfType(nsIContent::eHTML))
+    return content->HasAttr(kNameSpaceID_None, aAtom);
 
-  // For HTML elements, boolean attributes will return NOT_THERE if they
-  // are not present and HAS_VALUE + a string (possibly empty)
-  // if they are present.
+  nsAutoString attr;
+  content->GetAttr(kNameSpaceID_None, aAtom, attr);
 
   // For XML/XUL elements, an attribute must be equal to the literal
   // string "true" to be counted as true.  An empty string should _not_
   // be counted as true.
 
-  PRBool isHTML = content->IsContentOfType(nsIContent::eHTML);
-  if (isHTML && (res == NS_CONTENT_ATTR_NO_VALUE ||
-                 res != NS_CONTENT_ATTR_NOT_THERE && attr.IsEmpty()))
-    return PR_TRUE;
-
-  return attr.EqualsIgnoreCase("true");
+  return attr.Equals(NS_LITERAL_STRING("true"));
 }
 
 PRInt32
@@ -154,10 +140,8 @@ nsNativeTheme::CheckIntAttr(nsIFrame* aFrame, nsIAtom* aAtom)
   if (!aFrame)
     return 0;
 
-  nsCOMPtr<nsIContent> content;
-  aFrame->GetContent(getter_AddRefs(content));
   nsAutoString attr;
-  content->GetAttr(kNameSpaceID_None, aAtom, attr);
+  aFrame->GetContent()->GetAttr(kNameSpaceID_None, aAtom, attr);
   PRInt32 err, value = attr.ToInteger(&err);
   if (NS_FAILED(err))
     return 0;
@@ -171,9 +155,7 @@ nsNativeTheme::GetAttr(nsIFrame* aFrame, nsIAtom* aAtom, nsAString& attrValue)
   if (!aFrame)
     return PR_FALSE;
 
-  nsCOMPtr<nsIContent> content;
-  aFrame->GetContent(getter_AddRefs(content));
-  nsresult res = content->GetAttr(kNameSpaceID_None, aAtom, attrValue);
+  nsresult res = aFrame->GetContent()->GetAttr(kNameSpaceID_None, aAtom, attrValue);
   return ((res != NS_CONTENT_ATTR_NOT_THERE) &&
 	  !(res != NS_CONTENT_ATTR_NO_VALUE && attrValue.IsEmpty()));
 }
@@ -184,13 +166,12 @@ nsNativeTheme::GetCheckedOrSelected(nsIFrame* aFrame, PRBool aCheckSelected)
   if (!aFrame)
     return PR_FALSE;
 
-  nsCOMPtr<nsIContent> content;
-  aFrame->GetContent(getter_AddRefs(content));
+  nsIContent* content = aFrame->GetContent();
 
   if (content->IsContentOfType(nsIContent::eXUL)) {
     // For a XUL checkbox or radio button, the state of the parent determines
     // the checked state
-    aFrame->GetParent(&aFrame);
+    aFrame = aFrame->GetParent();
   } else {
     // Check for an HTML input element
     nsCOMPtr<nsIDOMHTMLInputElement> inputElt = do_QueryInterface(content);
@@ -221,22 +202,16 @@ nsNativeTheme::IsWidgetStyled(nsIPresContext* aPresContext, nsIFrame* aFrame,
   if (aFrame && (aWidgetType == NS_THEME_BUTTON ||
                  aWidgetType == NS_THEME_TEXTFIELD)) {
 
-    nsCOMPtr<nsIContent> content;
-    aFrame->GetContent(getter_AddRefs(content));
-    if (content->IsContentOfType(nsIContent::eHTML)) {
-
+    if (aFrame->GetContent()->IsContentOfType(nsIContent::eHTML)) {
       nscolor defaultBGColor, defaultBorderColor;
       PRUint8 defaultBorderStyle;
       nsMargin defaultBorderSize;
       PRBool defaultBGTransparent = PR_FALSE;
 
       float p2t;
-      aPresContext->GetPixelsToTwips(&p2t);
+      p2t = aPresContext->PixelsToTwips();
 
-      nsCOMPtr<nsILookAndFeel> lookAndFeel;
-      aPresContext->GetLookAndFeel(getter_AddRefs(lookAndFeel));
-      if (!lookAndFeel)
-        return PR_TRUE;
+      nsILookAndFeel *lookAndFeel = aPresContext->LookAndFeel();
 
       switch (aWidgetType) {
       case NS_THEME_BUTTON:

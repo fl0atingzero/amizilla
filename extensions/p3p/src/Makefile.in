@@ -47,16 +47,15 @@ EXPORT_LIBRARY = 1
 IS_COMPONENT   = 1
 MODULE_NAME	   = nsP3PModule
 
-REQUIRES = xpcom  \
-	string     \
-	necko      \
-	pref       \
-	cookie     \
-	xmlextras  \
-	dom        \
-	content    \
-	widget     \
-	$(NULL)
+PACKAGE_FILE = p3p.pkg
+
+REQUIRES	= xpcom \
+		  string \
+		  necko \
+		  xmlextras \
+		  dom \
+		  pref \
+		  $(NULL)
 
 CPPSRCS =                 \
 		nsP3PService.cpp      \

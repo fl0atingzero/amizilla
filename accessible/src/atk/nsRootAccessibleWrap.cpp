@@ -59,16 +59,22 @@ nsRootAccessibleWrap::~nsRootAccessibleWrap()
         root->RemoveRootAccessible(this);
 }
 
-NS_IMETHODIMP nsRootAccessibleWrap::GetAccParent(nsIAccessible **  aAccParent)
+NS_IMETHODIMP nsRootAccessibleWrap::GetParent(nsIAccessible **  aParent)
 {
     nsAppRootAccessible *root = nsAppRootAccessible::Create();
     nsresult rv = NS_OK;
     if (root) {
-        NS_IF_ADDREF(*aAccParent = root);
+        NS_IF_ADDREF(*aParent = root);
     }
     else {
-        *aAccParent = nsnull;
+        *aParent = nsnull;
         rv = NS_ERROR_FAILURE;
     }
     return rv;
+}
+
+NS_IMETHODIMP nsRootAccessibleWrap::GetRole(PRUint32 *_retval)
+{
+    *_retval = ROLE_FRAME;
+    return NS_OK;
 }

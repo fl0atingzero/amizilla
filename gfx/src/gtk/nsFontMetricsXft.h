@@ -45,13 +45,15 @@
 #include "nsIFontMetricsGTK.h"
 
 #include <X11/Xlib.h>
-#include <X11/Xdefs.h>
 #include <X11/Xft/Xft.h>
 
 class nsFontXft;
+class nsFontMetricsXft;
 
-typedef void (*GlyphEnumeratorCallback) (FcChar32 aChar, nsFontXft *aFont,
-                                        void *aData);
+typedef nsresult (nsFontMetricsXft::*GlyphEnumeratorCallback)
+                                            (const FcChar32 *aString, 
+                                             PRUint32 aLen, nsFontXft *aFont, 
+                                             void *aData);
 
 class nsFontMetricsXft : public nsIFontMetricsGTK
 {
@@ -207,36 +209,54 @@ public:
     static nsresult FamilyExists (nsIDeviceContext *aDevice,
                                   const nsString &aName);
 
-    void        DrawStringCallback     (FcChar32 aChar, nsFontXft *aFont,
-                                        void *aData);
-    void        TextDimensionsCallback (FcChar32 aChar, nsFontXft *aFont,
-                                        void *aData);
-    void        GetWidthCallback       (FcChar32 aChar, nsFontXft *aFont,
-                                        void *aData);
+    nsresult    DrawStringCallback      (const FcChar32 *aString, PRUint32 aLen,
+                                         nsFontXft *aFont, void *aData);
+    nsresult    TextDimensionsCallback  (const FcChar32 *aString, PRUint32 aLen,
+                                         nsFontXft *aFont, void *aData);
+    nsresult    GetWidthCallback        (const FcChar32 *aString, PRUint32 aLen,
+                                         nsFontXft *aFont, void *aData);
+#ifdef MOZ_MATHML
+    nsresult    BoundingMetricsCallback (const FcChar32 *aString, PRUint32 aLen,
+                                         nsFontXft *aFont, void *aData);
+#endif /* MOZ_MATHML */
 
 private:
-    // local methods
-    nsresult    RealizeFont      (void);
-    nsresult    CacheFontMetrics (void);
-    nsFontXft  *FindFont         (PRUnichar);
-    void        SetupFCPattern   (void);
-    void        DoMatch          (void);
+    enum FontMatch {
+        eNoMatch,
+        eBestMatch,
+        eAllMatching
+    };
 
-    gint        RawGetWidth      (const PRUnichar* aString,
-                                  PRUint32         aLength);
-    nsresult    SetupMiniFont    (void);
-    nsresult    DrawUnknownGlyph (FcChar32   aChar,
-                                  nscoord    aX,
-                                  nscoord    aY,
-                                  XftColor  *aColor,
-                                  XftDraw   *aDraw);
-    void        EnumerateGlyphs  (FcChar32 *aChars,
-                                  PRUint32  aLen,
-                                  GlyphEnumeratorCallback aCallback,
-                                  void     *aCallbackData);
-    void        PrepareToDraw    (nsRenderingContextGTK *aContext,
-                                  nsDrawingSurfaceGTK *aSurface,
-                                  XftDraw **aDraw, XftColor &aColor);
+    // local methods
+    nsresult    RealizeFont        (void);
+    nsresult    CacheFontMetrics   (void);
+    nsFontXft  *FindFont           (PRUint32);
+    void        SetupFCPattern     (void);
+    void        DoMatch            (PRBool aMatchAll);
+
+    gint        RawGetWidth        (const PRUnichar* aString,
+                                    PRUint32         aLength);
+    nsresult    SetupMiniFont      (void);
+    nsresult    DrawUnknownGlyph   (FcChar32   aChar,
+                                    nscoord    aX,
+                                    nscoord    aY,
+                                    XftColor  *aColor,
+                                    XftDraw   *aDraw);
+    nsresult    EnumerateXftGlyphs (const FcChar32 *aString,
+                                    PRUint32  aLen,
+                                    GlyphEnumeratorCallback aCallback,
+                                    void     *aCallbackData);
+    nsresult    EnumerateGlyphs    (const char *aString,
+                                    PRUint32  aLen,
+                                    GlyphEnumeratorCallback aCallback,
+                                    void     *aCallbackData);
+    nsresult    EnumerateGlyphs    (const PRUnichar *aString,
+                                    PRUint32  aLen,
+                                    GlyphEnumeratorCallback aCallback,
+                                    void     *aCallbackData);
+    void        PrepareToDraw      (nsRenderingContextGTK *aContext,
+                                    nsDrawingSurfaceGTK *aSurface,
+                                    XftDraw **aDraw, XftColor &aColor);
 
     // called when enumerating font families
     static PRBool   EnumFontCallback (const nsString &aFamily,
@@ -251,7 +271,7 @@ private:
     nsCOMPtr<nsIAtom>    mLangGroup;
     nsCString           *mGenericFont;
     nsFont              *mFont;
-    PRUint16             mPointSize;
+    float                mPixelSize;
 
     nsCAutoString        mDefaultFont;
 
@@ -260,7 +280,7 @@ private:
     // Xft-related items
     nsFontXft           *mWesternFont;
     FcPattern           *mPattern;
-    PRBool               mMatched;
+    FontMatch            mMatchType;
 
     // for rendering unknown fonts
     XftFont                 *mMiniFont;

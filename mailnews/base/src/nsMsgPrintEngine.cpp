@@ -87,7 +87,7 @@ NS_IMPL_ISUPPORTS4(nsMsgPrintEngine,
                          nsIMsgPrintEngine, 
                          nsIWebProgressListener, 
                          nsIObserver,
-                         nsISupportsWeakReference);
+                         nsISupportsWeakReference)
 
 // nsIWebProgressListener implementation
 NS_IMETHODIMP
@@ -249,10 +249,8 @@ nsMsgPrintEngine::SetWindow(nsIDOMWindowInternal *aWin)
   nsCOMPtr<nsIScriptGlobalObject> globalObj( do_QueryInterface(aWin) );
   NS_ENSURE_TRUE(globalObj, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIDocShell> docShell;
-  globalObj->GetDocShell(getter_AddRefs(docShell));
-
-  nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(do_QueryInterface(docShell));
+  nsCOMPtr<nsIDocShellTreeItem> docShellAsItem =
+    do_QueryInterface(globalObj->GetDocShell());
   NS_ENSURE_TRUE(docShellAsItem, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsIDocShellTreeItem> rootAsItem;
@@ -291,12 +289,9 @@ nsMsgPrintEngine::ShowWindow(PRBool aShow)
   nsCOMPtr <nsIScriptGlobalObject> globalScript = do_QueryInterface(mWindow, &rv);
 
   NS_ENSURE_SUCCESS(rv,rv);
-  nsCOMPtr <nsIDocShell> docShell;
 
-  rv = globalScript->GetDocShell(getter_AddRefs(docShell));
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  nsCOMPtr <nsIWebShell> webShell = do_QueryInterface(docShell, &rv);
+  nsCOMPtr <nsIWebShell> webShell =
+    do_QueryInterface(globalScript->GetDocShell(), &rv);
   NS_ENSURE_SUCCESS(rv,rv);
 
   nsCOMPtr <nsIWebShellContainer> webShellContainer;
@@ -307,7 +302,7 @@ nsMsgPrintEngine::ShowWindow(PRBool aShow)
     nsCOMPtr <nsIWebShellWindow> webShellWindow = do_QueryInterface(webShellContainer, &rv);
     NS_ENSURE_SUCCESS(rv,rv);
 
-    nsCOMPtr<nsIDocShellTreeItem>  treeItem(do_QueryInterface(docShell, &rv));
+    nsCOMPtr<nsIDocShellTreeItem>  treeItem(do_QueryInterface(webShell, &rv));
     NS_ENSURE_SUCCESS(rv,rv);
 
     nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
@@ -345,6 +340,7 @@ nsMsgPrintEngine::SetPrintURICount(PRInt32 aCount)
 NS_IMETHODIMP
 nsMsgPrintEngine::StartPrintOperation(nsIPrintSettings* aPS)
 {
+  NS_ENSURE_ARG_POINTER(aPS);
   mPrintSettings = aPS;
 
   // Load the about:blank on the tail end...
@@ -556,7 +552,7 @@ nsMsgPrintEngine::FireThatLoadOperation(nsString *uri)
     if (webNav)
       rv = webNav->LoadURI(uri->get(),                        // URI string
                            nsIWebNavigation::LOAD_FLAGS_NONE, // Load flags
-                           nsnull,                            // Refering URI
+                           nsnull,                            // Referring URI
                            nsnull,                            // Post data
                            nsnull);                           // Extra headers
   }
@@ -763,7 +759,13 @@ FireEvent(nsMsgPrintEngine* aMPE, PLHandleEventProc handler, PLDestroyEventProc 
   // The event owns the msgPrintEngine pointer now.
   NS_ADDREF(aMPE);
 
-  event_queue->PostEvent(event);
+  if (NS_FAILED(event_queue->PostEvent(event)))
+  {
+    NS_WARNING("Failed to post event");
+    PL_DestroyEvent(event);
+    return PR_FALSE;
+  }
+
   return PR_TRUE;
 }
 

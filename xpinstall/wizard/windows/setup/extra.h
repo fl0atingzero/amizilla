@@ -199,8 +199,10 @@ int               CRCCheckArchivesStartup(char *szCorruptedArchiveList,
 BOOL              ResolveForceUpgrade(siC *siCObject);
 void              RestoreInvisibleFlag(siC *siCNode);
 void              RestoreAdditionalFlag(siC *siCNode);
+void              RestoreEnabledFlag(siC *siCNode);
 void              SwapFTPAndHTTP(char *szInUrl, DWORD dwInUrlSize);
 void              ClearWinRegUninstallFileDeletion(void);
+void              RemoveDelayedDeleteFileEntries(const char *aPathToMatch);
 int               AppendToGlobalMessageStream(char *szInfo);
 char              *GetOSTypeString(char *szOSType, DWORD dwOSTypeBufSize);
 int               UpdateIdiFile(char  *szPartialUrl,
@@ -226,6 +228,10 @@ void              GetXpinstallPath(char *aPath, int aPathBufSize);
 BOOL              GreInstallerNeedsReboot(void);
 void              ReplacePrivateProfileStrCR(LPSTR aInputOutputStr);
 void              UpdateGREAppInstallerProgress(int percent);
+BOOL              IsPathWithinWindir();
+void              CleanupOnUpgrade();
+BOOL              IsInstallerProductGRE(void);
+HRESULT           CleanupOrphanedGREs(void);
 
 #endif /* _EXTRA_H_ */
 

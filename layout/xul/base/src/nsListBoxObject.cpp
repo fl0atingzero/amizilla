@@ -179,19 +179,13 @@ nsListBoxObject::GetIndexOfItem(nsIDOMElement* aElement, PRInt32 *aResult)
 static void
 FindBodyContent(nsIContent* aParent, nsIContent** aResult)
 {
-  nsCOMPtr<nsIAtom> tag;
-  aParent->GetTag(getter_AddRefs(tag));
-  if (tag.get() == nsXULAtoms::listboxbody) {
+  if (aParent->Tag() == nsXULAtoms::listboxbody) {
     *aResult = aParent;
     NS_IF_ADDREF(*aResult);
   }
   else {
-    nsCOMPtr<nsIDocument> doc;
-    aParent->GetDocument(getter_AddRefs(doc));
-    nsCOMPtr<nsIBindingManager> bindingManager;
-    doc->GetBindingManager(getter_AddRefs(bindingManager));
     nsCOMPtr<nsIDOMNodeList> kids;
-    bindingManager->GetXBLChildNodesFor(aParent, getter_AddRefs(kids));
+    aParent->GetDocument()->GetBindingManager()->GetXBLChildNodesFor(aParent, getter_AddRefs(kids));
     if (!kids) return;
 
     PRUint32 i;
@@ -226,11 +220,8 @@ nsListBoxObject::GetListBoxBody()
     return nsnull;
 
   // Iterate over our content model children looking for the body.
-  nsCOMPtr<nsIContent> startContent;
-  frame->GetContent(getter_AddRefs(startContent));
-
   nsCOMPtr<nsIContent> content;
-  FindBodyContent(startContent, getter_AddRefs(content));
+  FindBodyContent(frame->GetContent(), getter_AddRefs(content));
 
   // this frame will be a nsGFXScrollFrame
   mPresShell->GetPrimaryFrameFor(content, &frame);
@@ -238,14 +229,12 @@ nsListBoxObject::GetListBoxBody()
      return nsnull;
 
   // this frame will be a nsListBoxScrollPortFrame
-  nsIFrame* scrollPort = nsnull;
-  frame->FirstChild(nsnull, nsnull, &scrollPort);
+  nsIFrame* scrollPort = frame->GetFirstChild(nsnull);
   if (!scrollPort)
      return nsnull;
 
   // this frame will be the one we want
-  nsIFrame* yeahBaby = nsnull;
-  scrollPort->FirstChild(nsnull, nsnull, &yeahBaby);
+  nsIFrame* yeahBaby = scrollPort->GetFirstChild(nsnull);
   if (!yeahBaby)
      return nsnull;
 

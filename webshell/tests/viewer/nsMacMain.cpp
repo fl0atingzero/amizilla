@@ -85,11 +85,6 @@ const MessageT  cmd_Preferences     = 27;   // nil
 
 enum
 {
-};
-
-
-enum
-{
     menu_First = 128,
     menu_Apple = menu_First,
     menu_File,
@@ -123,7 +118,6 @@ enum
     cmd_DebugOutputHTML,    
     cmd_DebugToggleSelection,
     cmd_DebugRobot,
-    cmd_ShowContentQuality,
     cmd_GFXWidgetMode,
     cmd_NativeWidgetMode,
     cmd_GFXScrollBars,
@@ -364,7 +358,6 @@ nsNativeBrowserWindow::DispatchMenuItem(PRInt32 aID)
                 case cmd_DebugOutputHTML:               xpID = VIEWER_DISPLAYHTML;              break;
                 case cmd_DebugToggleSelection:  xpID = VIEWER_TOGGLE_SELECTION;         break;
                 case cmd_DebugRobot:                        xpID = VIEWER_DEBUGROBOT;                       break;
-                case cmd_ShowContentQuality:        xpID =VIEWER_SHOW_CONTENT_QUALITY;  break;
 #ifdef GC_LEAK_DETECTOR
                 case cmd_DumpLeaks:
                     {
@@ -448,10 +441,13 @@ int main(int argc, char **argv)
     InitializeMacToolbox();
 #endif
 
-    // Install an a Quit AppleEvent handler.
-    OSErr err = AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
-                                      NewAEEventHandlerUPP(handleQuitApplication),
-                                      0, false);
+    // Install a Quit AppleEvent handler.
+#ifdef DEBUG
+  OSErr err =
+#endif
+    AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
+                          NewAEEventHandlerUPP(handleQuitApplication), 0,
+                          false);
     NS_ASSERTION((err==noErr), "AEInstallEventHandler failed");
 
 #ifdef XP_MACOSX

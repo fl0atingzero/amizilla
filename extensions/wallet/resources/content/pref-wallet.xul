@@ -21,7 +21,7 @@
   -->
 <?xml-stylesheet href="chrome://communicator/skin/" type="text/css"?>
 
-<!DOCTYPE window [
+<!DOCTYPE page [
 <!ENTITY % brandDTD SYSTEM "chrome://global/locale/brand.dtd" >
 %brandDTD;
 <!ENTITY % prefWalletDTD SYSTEM "chrome://wallet/locale/pref-wallet.dtd" >
@@ -45,7 +45,7 @@
     function viewWalletSites()
     {
       window.openDialog("chrome://communicator/content/wallet/SignonViewer.xul",
-                        "_blank","chrome,resizable=no", "W");
+                        "_blank","chrome,resizable", "W");
     }
 
   ]]>

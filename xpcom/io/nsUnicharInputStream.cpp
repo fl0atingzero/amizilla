@@ -44,7 +44,7 @@
 #include "nsCRT.h"
 #include "nsUTF8Utils.h"
 #include <fcntl.h>
-#if defined(NS_WIN32) || defined(XP_OS2_VACPP)
+#if defined(NS_WIN32)
 #include <io.h>
 #else
 #include <unistd.h>
@@ -53,7 +53,6 @@
 class StringUnicharInputStream : public nsIUnicharInputStream {
 public:
   StringUnicharInputStream(nsString* aString);
-  virtual ~StringUnicharInputStream();
 
   NS_DECL_ISUPPORTS
 
@@ -68,6 +67,9 @@ public:
   nsString* mString;
   PRUint32 mPos;
   PRUint32 mLen;
+
+private:
+  ~StringUnicharInputStream();
 };
 
 StringUnicharInputStream::StringUnicharInputStream(nsString* aString)
@@ -91,7 +93,7 @@ StringUnicharInputStream::Read(PRUnichar* aBuf,
 {
   if (mPos >= mLen) {
     *aReadCount = 0;
-    return (nsresult)-1;
+    return NS_OK;
   }
   const PRUnichar* us = mString->get();
   NS_ASSERTION(mLen >= mPos, "unsigned madness");
@@ -171,7 +173,6 @@ NS_NewStringUnicharInputStream(nsIUnicharInputStream** aInstancePtrResult,
 class UTF8InputStream : public nsIUnicharInputStream {
 public:
   UTF8InputStream();
-  virtual ~UTF8InputStream();
   nsresult Init(nsIInputStream* aStream, PRUint32 aBufSize);
 
   NS_DECL_ISUPPORTS
@@ -183,6 +184,9 @@ public:
                           PRUint32 aCount,
                           PRUint32 *aReadCount);
   NS_IMETHOD Close();
+
+private:
+  ~UTF8InputStream();
 
 protected:
   PRInt32 Fill(nsresult * aErrorCode);
@@ -339,7 +343,7 @@ PRInt32 UTF8InputStream::Fill(nsresult * aErrorCode)
                "Ouch. I would overflow my buffer if I wasn't so careful.");
   if (PRInt32(dstLen) > mUnicharData->GetBufferSize()) return 0;
   
-  ConvertUTF8toUCS2 converter(mUnicharData->GetBuffer());
+  ConvertUTF8toUTF16 converter(mUnicharData->GetBuffer());
   
   nsASingleFragmentCString::const_char_iterator start = mByteData->GetBuffer();
   nsASingleFragmentCString::const_char_iterator end = mByteData->GetBuffer() + srcLen;

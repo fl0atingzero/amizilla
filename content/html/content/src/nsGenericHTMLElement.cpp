@@ -58,7 +58,7 @@
 #include "nsIDOMElementCSSInlineStyle.h"
 #include "nsIEventListenerManager.h"
 #include "nsIFocusController.h"
-#include "nsHTMLAttributes.h"
+#include "nsMappedAttributes.h"
 #include "nsIHTMLStyleSheet.h"
 #include "nsIHTMLDocument.h"
 #include "nsIHTMLContent.h"
@@ -88,9 +88,7 @@
 
 #include "nsIPresState.h"
 #include "nsILayoutHistoryState.h"
-#include "nsIFrameManager.h"
 
-#include "nsIHTMLContentContainer.h"
 #include "nsHTMLParts.h"
 #include "nsContentUtils.h"
 #include "nsString.h"
@@ -133,10 +131,10 @@
 #include "nsLayoutCID.h"
 #include "nsContentCID.h"
 
-#include "nsHTMLUtils.h"
-
 #include "nsIDOMText.h"
 #include "nsITextContent.h"
+#include "nsAutoPtr.h"
+#include "nsCOMArray.h"
 
 static NS_DEFINE_CID(kPresStateCID,  NS_PRESSTATE_CID);
 // XXX todo: add in missing out-of-memory checks
@@ -221,61 +219,19 @@ private:
 NS_IMPL_ADDREF(nsGenericHTMLElementTearoff)
 NS_IMPL_RELEASE(nsGenericHTMLElementTearoff)
 
-NS_IMETHODIMP
-nsGenericHTMLElementTearoff::QueryInterface(REFNSIID aIID, void** aInstancePtr)
-{
-  NS_ENSURE_ARG_POINTER(aInstancePtr);
+NS_INTERFACE_MAP_BEGIN(nsGenericHTMLElementTearoff)
+  NS_INTERFACE_MAP_ENTRY(nsIDOMNSHTMLElement)
+  NS_INTERFACE_MAP_ENTRY(nsIDOMElementCSSInlineStyle)
+NS_INTERFACE_MAP_END_AGGREGATED(mElement)
 
-  nsISupports *inst = nsnull;
-
-  if (aIID.Equals(NS_GET_IID(nsIDOMNSHTMLElement))) {
-    inst = NS_STATIC_CAST(nsIDOMNSHTMLElement *, this);
-  } else if (aIID.Equals(NS_GET_IID(nsIDOMElementCSSInlineStyle))) {
-    inst = NS_STATIC_CAST(nsIDOMElementCSSInlineStyle *, this);
-  } else {
-    return mElement->QueryInterface(aIID, aInstancePtr);
-  }
-
-  NS_ADDREF(inst);
-
-  *aInstancePtr = inst;
-
-  return NS_OK;
-}
 
 static nsICSSOMFactory* gCSSOMFactory = nsnull;
 static NS_DEFINE_CID(kCSSOMFactoryCID, NS_CSSOMFACTORY_CID);
 
-nsGenericHTMLElement::nsGenericHTMLElement()
-{
-  mAttributes = nsnull;
-}
-
-nsGenericHTMLElement::~nsGenericHTMLElement()
-{
-  delete mAttributes;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLElement::QueryInterface(REFNSIID aIID, void** aInstancePtr)
-{
-  if (NS_SUCCEEDED(nsGenericElement::QueryInterface(aIID, aInstancePtr)))
-    return NS_OK;
-
-  nsISupports *inst = nsnull;
-
-  if (aIID.Equals(NS_GET_IID(nsIHTMLContent))) {
-    inst = NS_STATIC_CAST(nsIHTMLContent *, this);
-  } else {
-    return NS_NOINTERFACE;
-  }
-
-  NS_ADDREF(inst);
-
-  *aInstancePtr = inst;
-
-  return NS_OK;
-}
+NS_INTERFACE_MAP_BEGIN(nsGenericHTMLElement)
+  NS_INTERFACE_MAP_ENTRY(nsIHTMLContent)
+NS_INTERFACE_MAP_END_INHERITING(nsGenericElement)
+ 
 
 nsresult
 nsGenericHTMLElement::DOMQueryInterface(nsIDOMHTMLElement *aElement,
@@ -315,60 +271,79 @@ nsGenericHTMLElement::Shutdown()
 }
 
 nsresult
-nsGenericHTMLElement::CopyInnerTo(nsIContent* aSrcContent,
-                                  nsGenericHTMLElement* aDst,
-                                  PRBool aDeep)
+nsGenericHTMLElement::CopyInnerTo(nsGenericElement* aDst, PRBool aDeep)
 {
   nsresult rv = NS_OK;
+  PRInt32 i, count = GetAttrCount();
+  nsCOMPtr<nsIAtom> name, prefix;
+  PRInt32 namespace_id;
+  nsAutoString value;
 
-  if (mAttributes) {
-    PRInt32 index, count;
-    GetAttrCount(count);
-    nsCOMPtr<nsIAtom> name, prefix;
-    PRInt32 namespace_id;
-    nsAutoString value;
+  for (i = 0; i < count; ++i) {
+    rv = GetAttrNameAt(i, &namespace_id, getter_AddRefs(name),
+                       getter_AddRefs(prefix));
+    NS_ENSURE_SUCCESS(rv, rv);
 
-    for (index = 0; index < count; index++) {
-      rv = GetAttrNameAt(index, &namespace_id, getter_AddRefs(name),
-                         getter_AddRefs(prefix));
-      NS_ENSURE_SUCCESS(rv, rv);
-      rv = GetAttr(namespace_id, name, value);
-      NS_ENSURE_SUCCESS(rv, rv);
-      if (name == nsHTMLAtoms::style && namespace_id == kNameSpaceID_None) {
-        // We can't just set this as a string, because that will fail
-        // to reparse the string into style data until the node is
-        // inserted into the document.  Clone the HTMLValue instead.
-        nsHTMLValue val;
-        rv = GetHTMLAttribute(nsHTMLAtoms::style, val);
-        if (rv == NS_CONTENT_ATTR_HAS_VALUE &&
-            val.GetUnit() == eHTMLUnit_ISupports) {
-          nsCOMPtr<nsISupports> supports(dont_AddRef(val.GetISupportsValue()));
-          nsCOMPtr<nsICSSStyleRule> rule(do_QueryInterface(supports));
-
-          if (rule) {
-            nsCOMPtr<nsICSSRule> ruleClone;
-
-            rv = rule->Clone(*getter_AddRefs(ruleClone));
-
-            val.SetISupportsValue(ruleClone);
-            aDst->SetHTMLAttribute(nsHTMLAtoms::style, val, PR_FALSE);
-          }
-        }
-      } else {
-        rv = aDst->SetAttr(namespace_id, name, value, PR_FALSE);
+    if (name == nsHTMLAtoms::style && namespace_id == kNameSpaceID_None) {
+      // We can't just set this as a string, because that will fail
+      // to reparse the string into style data until the node is
+      // inserted into the document.  Clone the HTMLValue instead.
+      const nsAttrValue* styleVal =
+        mAttrsAndChildren.GetAttr(nsHTMLAtoms::style);
+      if (styleVal && styleVal->Type() == nsAttrValue::eCSSStyleRule) {
+        nsCOMPtr<nsICSSRule> ruleClone;
+        rv = styleVal->GetCSSStyleRuleValue()->
+          Clone(*getter_AddRefs(ruleClone));
         NS_ENSURE_SUCCESS(rv, rv);
+
+        nsCOMPtr<nsICSSStyleRule> styleRule = do_QueryInterface(ruleClone);
+        NS_ENSURE_TRUE(styleRule, NS_ERROR_UNEXPECTED);
+
+        rv = aDst->SetInlineStyleRule(styleRule, PR_FALSE);
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        continue;
       }
     }
+
+    rv = GetAttr(namespace_id, name, value);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = aDst->SetAttr(namespace_id, name, prefix, value, PR_FALSE);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
+  nsIDocument *doc = mNodeInfo->GetDocument();
+
   PRInt32 id;
-  if (mDocument) {
-    mDocument->GetAndIncrementContentID(&id);
+  if (doc) {
+    id = doc->GetAndIncrementContentID();
+  } else {
+    id = PR_INT32_MAX;
   }
 
   aDst->SetContentID(id);
 
-  return rv;
+  if (aDeep) {
+    PRInt32 i;
+    PRInt32 count = mAttrsAndChildren.ChildCount();
+    for (i = 0; i < count; ++i) {
+      nsCOMPtr<nsIDOMNode> node = 
+          do_QueryInterface(mAttrsAndChildren.ChildAt(i));
+      NS_ASSERTION(node, "child doesn't implement nsIDOMNode");
+
+      nsCOMPtr<nsIDOMNode> newNode;
+      rv = node->CloneNode(aDeep, getter_AddRefs(newNode));
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsCOMPtr<nsIContent> newContent(do_QueryInterface(newNode));
+      NS_ASSERTION(newContent, "clone doesn't implement nsIContent");
+      rv = aDst->AppendChildTo(newContent, PR_FALSE, PR_FALSE);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+  }
+
+  return NS_OK;
 }
 
 nsresult
@@ -377,15 +352,43 @@ nsGenericHTMLElement::GetTagName(nsAString& aTagName)
   return GetNodeName(aTagName);
 }
 
+NS_IMETHODIMP
+nsGenericHTMLElement::SetAttribute(const nsAString& aName,
+                                   const nsAString& aValue)
+{
+  const nsAttrName* name = InternalGetExistingAttrNameFromQName(aName);
+
+  if (!name) {
+    nsresult rv = nsContentUtils::CheckQName(aName, PR_FALSE);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIAtom> nameAtom;
+    if (mNodeInfo->NamespaceEquals(kNameSpaceID_None)) {
+      nsAutoString lower;
+      ToLowerCase(aName, lower);
+      nameAtom = do_GetAtom(lower);
+    }
+    else {
+      nameAtom = do_GetAtom(aName);
+    }
+    NS_ENSURE_TRUE(nameAtom, NS_ERROR_OUT_OF_MEMORY);
+
+    return SetAttr(kNameSpaceID_None, nameAtom, aValue, PR_TRUE);
+  }
+
+  return SetAttr(name->NamespaceID(), name->LocalName(), name->GetPrefix(),
+                 aValue, PR_TRUE);
+}
+
 nsresult
 nsGenericHTMLElement::GetNodeName(nsAString& aNodeName)
 {
-  nsresult rv = mNodeInfo->GetQualifiedName(aNodeName);
+  mNodeInfo->GetQualifiedName(aNodeName);
 
   if (mNodeInfo->NamespaceEquals(kNameSpaceID_None))
     ToUpperCase(aNodeName);
 
-  return rv;
+  return NS_OK;
 }
 
 nsresult
@@ -503,20 +506,25 @@ nsGenericHTMLElement::SetClassName(const nsAString& aClassName)
 nsresult
 nsGenericHTMLElement::GetStyle(nsIDOMCSSStyleDeclaration** aStyle)
 {
-  nsresult res = NS_OK;
   nsDOMSlots *slots = GetDOMSlots();
 
-  if (nsnull == slots->mStyle) {
+  if (!slots->mStyle) {
+    // Just in case...
+    ReparseStyleAttribute();
+
+    nsresult rv;
     if (!gCSSOMFactory) {
-      res = CallGetService(kCSSOMFactoryCID, &gCSSOMFactory);
-      if (NS_FAILED(res))
-        return res;
+      rv = CallGetService(kCSSOMFactoryCID, &gCSSOMFactory);
+      if (NS_FAILED(rv)) {
+        return rv;
+      }
     }
 
-    res = gCSSOMFactory->CreateDOMCSSAttributeDeclaration(this,
-                                                          &slots->mStyle);
-    if (NS_FAILED(res))
-      return res;
+    rv = gCSSOMFactory->CreateDOMCSSAttributeDeclaration(this,
+                                                         getter_AddRefs(slots->mStyle));
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
   }
 
   // Why bother with QI?
@@ -524,24 +532,48 @@ nsGenericHTMLElement::GetStyle(nsIDOMCSSStyleDeclaration** aStyle)
   return NS_OK;
 }
 
-
-static inline PRBool
-IsBodyTag(nsIAtom *aAtom)
+void
+nsGenericHTMLElement::RecreateFrames()
 {
-  return aAtom == nsHTMLAtoms::body;
+  if (!mDocument) {
+    return;
+  }
+
+  PRInt32 numShells = mDocument->GetNumberOfShells();
+  for (PRInt32 i = 0; i < numShells; ++i) {
+    nsIPresShell *shell = mDocument->GetShellAt(i);
+    if (shell) {
+      nsIFrame* frame = nsnull;
+      shell->GetPrimaryFrameFor(this, &frame);
+      if (frame) {
+        shell->RecreateFramesFor(this);
+      }
+    }
+  }
 }
 
-static inline PRBool
-IsOffsetParentTag(nsIAtom *aAtom)
+static PRBool
+IsBody(nsIContent *aContent)
 {
-  return (aAtom == nsHTMLAtoms::td ||
-          aAtom == nsHTMLAtoms::table ||
-          aAtom == nsHTMLAtoms::th);
+  nsINodeInfo *ni = aContent->GetNodeInfo();
+
+  return (ni && ni->Equals(nsHTMLAtoms::body) &&
+          aContent->IsContentOfType(nsIContent::eHTML));
 }
 
-nsresult
-nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
-                                    nsIContent** aOffsetParent)
+static PRBool
+IsOffsetParent(nsIContent *aContent)
+{
+  nsINodeInfo *ni = aContent->GetNodeInfo();
+
+  return (ni && (ni->Equals(nsHTMLAtoms::td) ||
+                 ni->Equals(nsHTMLAtoms::table) ||
+                 ni->Equals(nsHTMLAtoms::th)) &&
+          aContent->IsContentOfType(nsIContent::eHTML));
+}
+
+void
+nsGenericHTMLElement::GetOffsetRect(nsRect& aRect, nsIContent** aOffsetParent)
 {
   *aOffsetParent = nsnull;
 
@@ -549,15 +581,14 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
   aRect.Empty();
 
   if (!mDocument) {
-    return NS_OK;
+    return;
   }
 
   // Get Presentation shell 0
-  nsCOMPtr<nsIPresShell> presShell;
-  mDocument->GetShellAt(0, getter_AddRefs(presShell));
+  nsIPresShell *presShell = mDocument->GetShellAt(0);
 
   if (!presShell) {
-    return NS_OK;
+    return;
   }
 
   // Get the Presentation Context from the Shell
@@ -565,7 +596,7 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
   presShell->GetPresContext(getter_AddRefs(context));
 
   if (!context) {
-    return NS_OK;
+    return;
   }
 
   // Flush all pending notifications so that our frames are uptodate
@@ -576,7 +607,7 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
   presShell->GetPrimaryFrameFor(this, &frame);
 
   if (!frame) {
-    return NS_OK;
+    return;
   }
 
   // Get the union of all rectangles in this and continuation frames
@@ -584,31 +615,22 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
   nsIFrame* next = frame;
 
   do {
-    nsRect rect;
-    next->GetRect(rect);
-
-    rcFrame.UnionRect(rcFrame, rect);
-
+    rcFrame.UnionRect(rcFrame, next->GetRect());
     next->GetNextInFlow(&next);
   } while (next);
 
 
-  nsCOMPtr<nsIContent> docElement;
-  mDocument->GetRootContent(getter_AddRefs(docElement));
+  nsIContent *docElement = mDocument->GetRootContent();
 
   // Find the frame parent whose content's tagName either matches
   // the tagName passed in or is the document element.
-  nsCOMPtr<nsIContent> content;
   nsIFrame* parent = nsnull;
   PRBool done = PR_FALSE;
-  nsCOMPtr<nsIAtom> tag;
 
-  frame->GetContent(getter_AddRefs(content));
+  nsIContent* content = frame->GetContent();
 
   if (content) {
-    content->GetTag(getter_AddRefs(tag));
-
-    if (IsBodyTag(tag) || content == docElement) {
+    if (IsBody(content) || content == docElement) {
       done = PR_TRUE;
 
       parent = frame;
@@ -621,7 +643,7 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
     PRBool is_absolutely_positioned = PR_FALSE;
     PRBool is_positioned = PR_FALSE;
 
-    frame->GetOrigin(origin);
+    origin = frame->GetPosition();
 
     const nsStyleDisplay* display = frame->GetStyleDisplay();
 
@@ -638,7 +660,7 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
       is_positioned = PR_TRUE;
     }
 
-    frame->GetParent(&parent);
+    parent = frame->GetParent();
 
     while (parent) {
       display = parent->GetStyleDisplay();
@@ -647,7 +669,8 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
         // Stop at the first *parent* that is positioned (fixed,
         // absolute, or relatiive)
 
-        parent->GetContent(aOffsetParent);
+        *aOffsetParent = parent->GetContent();
+        NS_IF_ADDREF(*aOffsetParent);
 
         break;
       }
@@ -656,12 +679,10 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
       // right coordinate system
 
       if (!is_absolutely_positioned) {
-        nsPoint parentOrigin;
-        parent->GetOrigin(parentOrigin);
-        origin += parentOrigin;
+        origin += parent->GetPosition();
       }
 
-      parent->GetContent(getter_AddRefs(content));
+      content = parent->GetContent();
 
       if (content) {
         // If we've hit the document element, break here
@@ -669,12 +690,10 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
           break;
         }
 
-        content->GetTag(getter_AddRefs(tag));
-
         // If the tag of this frame is a offset parent tag and this
         // element is *not* positioned, break here. Also break if we
         // hit the body element.
-        if ((!is_positioned && IsOffsetParentTag(tag)) || IsBodyTag(tag)) {
+        if ((!is_positioned && IsOffsetParent(content)) || IsBody(content)) {
           *aOffsetParent = content;
           NS_ADDREF(*aOffsetParent);
 
@@ -682,7 +701,7 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
         }
       }
 
-      parent->GetParent(&parent);
+      parent = parent->GetParent();
     }
 
     if (is_absolutely_positioned && !*aOffsetParent) {
@@ -750,15 +769,13 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect,
   
   // Get the scale from that Presentation Context
   float scale;
-  context->GetTwipsToPixels(&scale);
+  scale = context->TwipsToPixels();
 
   // Convert to pixels using that scale
   aRect.x = NSTwipsToIntPixels(origin.x, scale);
   aRect.y = NSTwipsToIntPixels(origin.y, scale);
   aRect.width = NSTwipsToIntPixels(rcFrame.width, scale);
   aRect.height = NSTwipsToIntPixels(rcFrame.height, scale);
-
-  return NS_OK;
 }
 
 nsresult
@@ -766,16 +783,11 @@ nsGenericHTMLElement::GetOffsetTop(PRInt32* aOffsetTop)
 {
   nsRect rcFrame;
   nsCOMPtr<nsIContent> parent;
-  nsresult res = GetOffsetRect(rcFrame, getter_AddRefs(parent));
+  GetOffsetRect(rcFrame, getter_AddRefs(parent));
 
-  if(NS_SUCCEEDED(res)) {
-    *aOffsetTop = rcFrame.y;
-  }
-  else {
-    *aOffsetTop = 0;
-  }
+  *aOffsetTop = rcFrame.y;
 
-  return res;
+  return NS_OK;
 }
 
 nsresult
@@ -783,16 +795,11 @@ nsGenericHTMLElement::GetOffsetLeft(PRInt32* aOffsetLeft)
 {
   nsRect rcFrame;
   nsCOMPtr<nsIContent> parent;
-  nsresult res = GetOffsetRect(rcFrame, getter_AddRefs(parent));
+  GetOffsetRect(rcFrame, getter_AddRefs(parent));
 
-  if(NS_SUCCEEDED(res)) {
-    *aOffsetLeft = rcFrame.x;
-  }
-  else {
-    *aOffsetLeft = 0;
-  }
+  *aOffsetLeft = rcFrame.x;
 
-  return res;
+  return NS_OK;
 }
 
 nsresult
@@ -800,16 +807,11 @@ nsGenericHTMLElement::GetOffsetWidth(PRInt32* aOffsetWidth)
 {
   nsRect rcFrame;
   nsCOMPtr<nsIContent> parent;
-  nsresult res = GetOffsetRect(rcFrame, getter_AddRefs(parent));
+  GetOffsetRect(rcFrame, getter_AddRefs(parent));
 
-  if(NS_SUCCEEDED(res)) {
-    *aOffsetWidth = rcFrame.width;
-  }
-  else {
-    *aOffsetWidth = 0;
-  }
+  *aOffsetWidth = rcFrame.width;
 
-  return res;
+  return NS_OK;
 }
 
 nsresult
@@ -817,34 +819,27 @@ nsGenericHTMLElement::GetOffsetHeight(PRInt32* aOffsetHeight)
 {
   nsRect rcFrame;
   nsCOMPtr<nsIContent> parent;
-  nsresult res = GetOffsetRect(rcFrame, getter_AddRefs(parent));
+  GetOffsetRect(rcFrame, getter_AddRefs(parent));
 
-  if(NS_SUCCEEDED(res)) {
-    *aOffsetHeight = rcFrame.height;
-  }
-  else {
-    *aOffsetHeight = 0;
-  }
+  *aOffsetHeight = rcFrame.height;
 
-  return res;
+  return NS_OK;
 }
 
 nsresult
 nsGenericHTMLElement::GetOffsetParent(nsIDOMElement** aOffsetParent)
 {
-  NS_ENSURE_ARG_POINTER(aOffsetParent);
-
   nsRect rcFrame;
   nsCOMPtr<nsIContent> parent;
-  nsresult res = GetOffsetRect(rcFrame, getter_AddRefs(parent));
-  if (NS_SUCCEEDED(res)) {
-    if (parent) {
-      res = CallQueryInterface(parent, aOffsetParent);
-    } else {
-      *aOffsetParent = nsnull;
-    }
+  GetOffsetRect(rcFrame, getter_AddRefs(parent));
+
+  if (parent) {
+    CallQueryInterface(parent, aOffsetParent);
+  } else {
+    *aOffsetParent = nsnull;
   }
-  return res;
+
+  return NS_OK;
 }
 
 nsresult
@@ -852,8 +847,7 @@ nsGenericHTMLElement::GetInnerHTML(nsAString& aInnerHTML)
 {
   aInnerHTML.Truncate();
 
-  nsCOMPtr<nsIDocument> doc;
-  mNodeInfo->GetDocument(getter_AddRefs(doc));
+  nsCOMPtr<nsIDocument> doc = GetOwnerDocument();
   if (!doc) {
     return NS_OK; // We rely on the document for doing HTML conversion
   }
@@ -904,22 +898,19 @@ nsGenericHTMLElement::SetInnerHTML(const nsAString& aInnerHTML)
 
   nsCOMPtr<nsIDOMDocumentFragment> df;
 
-  nsCOMPtr<nsIDocument> doc;
-  mNodeInfo->GetDocument(getter_AddRefs(doc));
+  nsCOMPtr<nsIDocument> doc = GetOwnerDocument();
 
-  nsCOMPtr<nsIScriptContext> scx;
+  nsIScriptContext *scx = nsnull;
   PRBool scripts_enabled = PR_FALSE;
 
   if (doc) {
-    nsCOMPtr<nsIScriptGlobalObject> sgo;
-
-    doc->GetScriptGlobalObject(getter_AddRefs(sgo));
+    nsIScriptGlobalObject *sgo = doc->GetScriptGlobalObject();
 
     if (sgo) {
-      sgo->GetContext(getter_AddRefs(scx));
+      scx = sgo->GetContext();
 
       if (scx) {
-        scx->GetScriptsEnabled(&scripts_enabled);
+        scripts_enabled = scx->GetScriptsEnabled();
       }
     }
   }
@@ -947,7 +938,7 @@ nsGenericHTMLElement::SetInnerHTML(const nsAString& aInnerHTML)
   return rv;
 }
 
-nsresult
+void
 nsGenericHTMLElement::GetScrollInfo(nsIScrollableView **aScrollableView,
                                     float *aP2T, float *aT2P,
                                     nsIFrame **aFrame)
@@ -956,42 +947,38 @@ nsGenericHTMLElement::GetScrollInfo(nsIScrollableView **aScrollableView,
   *aP2T = 0.0f;
   *aT2P = 0.0f;
 
-  // Get the the document
-  nsCOMPtr<nsIDocument> doc;
-  GetDocument(getter_AddRefs(doc));
-  if (!doc) {
-    return NS_OK;
+  if (!mDocument) {
+    return;
   }
 
-  doc->FlushPendingNotifications(PR_TRUE, PR_FALSE);
+  mDocument->FlushPendingNotifications(PR_TRUE, PR_FALSE);
 
   // Get the presentation shell
-  nsCOMPtr<nsIPresShell> presShell;
-  doc->GetShellAt(0, getter_AddRefs(presShell));
+  nsIPresShell *presShell = mDocument->GetShellAt(0);
   if (!presShell) {
-    return NS_OK;
+    return;
   }
 
   // Get the presentation context
   nsCOMPtr<nsIPresContext> presContext;
   presShell->GetPresContext(getter_AddRefs(presContext));
   if (!presContext) {
-    return NS_OK;
+    return;
   }
 
   // Get the primary frame for this element
   nsIFrame *frame = nsnull;
   presShell->GetPrimaryFrameFor(this, &frame);
   if (!frame) {
-    return NS_OK;
+    return;
   }
 
   if (aFrame) {
     *aFrame = frame;
   }
 
-  presContext->GetPixelsToTwips(aP2T);
-  presContext->GetTwipsToPixels(aT2P);
+  *aP2T = presContext->PixelsToTwips();
+  *aT2P = presContext->TwipsToPixels();
 
   // Get the scrollable frame
   nsIScrollableFrame *scrollFrame = nsnull;
@@ -1003,17 +990,22 @@ nsGenericHTMLElement::GetScrollInfo(nsIScrollableView **aScrollableView,
     if (scrollProvider) {
       scrollProvider->GetScrollableView(presContext, aScrollableView);
       if (*aScrollableView) {
-        return NS_OK;
+        return;
       }
     }
 
-    if (mNodeInfo->Equals(nsHTMLAtoms::body)) {
-      // The scroll info for the body element should map to the scroll
-      // info for the nearest scrollable frame above the body element
-      // (i.e. the root scrollable frame).
+    PRBool quirksMode = InNavQuirksMode(mDocument);
+    if ((quirksMode && mNodeInfo->Equals(nsHTMLAtoms::body)) ||
+        (!quirksMode && mNodeInfo->Equals(nsHTMLAtoms::html))) {
+      // In quirks mode, the scroll info for the body element should map to the
+      // scroll info for the nearest scrollable frame above the body element
+      // (i.e. the root scrollable frame).  This is what IE6 does in quirks
+      // mode.  In strict mode the root scrollable frame corresponds to the
+      // html element in IE6, so we map the scroll info for the html element to
+      // the root scrollable frame.
 
       do {
-        frame->GetParent(&frame);
+        frame = frame->GetParent();
 
         if (!frame) {
           break;
@@ -1024,14 +1016,14 @@ nsGenericHTMLElement::GetScrollInfo(nsIScrollableView **aScrollableView,
     }
 
     if (!scrollFrame) {
-      return NS_OK;
+      return;
     }
   }
 
   // Get the scrollable view
   scrollFrame->GetScrollableView(presContext, aScrollableView);
 
-  return NS_OK;
+  return;
 }
 
 
@@ -1177,8 +1169,7 @@ nsGenericHTMLElement::GetScrollWidth(PRInt32* aScrollWidth)
 const nsSize
 nsGenericHTMLElement::GetClientAreaSize(nsIFrame *aFrame)
 {
-  nsRect rect;
-  aFrame->GetRect(rect);
+  nsRect rect = aFrame->GetRect();
 
   const nsStyleBorder* border = aFrame->GetStyleBorder();
 
@@ -1204,17 +1195,16 @@ nsGenericHTMLElement::GetClientHeight(PRInt32* aClientHeight)
 
   if (scrollView) {
     const nsIView *view = nsnull;
-    nsRect r;
 
     scrollView->GetClipView(&view);
-    view->GetBounds(r);
+    nsRect r = view->GetBounds();
 
     *aClientHeight = NSTwipsToIntPixels(r.height, t2p);
-  } else if (mNodeInfo->Equals(nsHTMLAtoms::body) && frame) {
-    // Special case code to make document.body.clientHeight work even
-    // if the body element's overflow is hidden.
-    //
-    // http://bugzilla.mozilla.org/show_bug.cgi?id=180552
+  } else if (frame &&
+             (frame->GetStyleDisplay()->mDisplay != NS_STYLE_DISPLAY_INLINE ||
+              (frame->GetStateBits() & NS_FRAME_REPLACED_ELEMENT))) {
+    // Special case code to make clientHeight work even when there isn't
+    // a scroll view, see bug 180552 and bug 227567.
 
     *aClientHeight = NSTwipsToIntPixels(GetClientAreaSize(frame).height, t2p);
   }
@@ -1236,17 +1226,16 @@ nsGenericHTMLElement::GetClientWidth(PRInt32* aClientWidth)
 
   if (scrollView) {
     const nsIView *view = nsnull;
-    nsRect r;
 
     scrollView->GetClipView(&view);
-    view->GetBounds(r);
+    nsRect r = view->GetBounds();
 
     *aClientWidth = NSTwipsToIntPixels(r.width, t2p);
-  } else if (mNodeInfo->Equals(nsHTMLAtoms::body) && frame) {
-    // Special case code to make document.body.clientWidth work even
-    // if the body element's overflow is hidden.
-    //
-    // http://bugzilla.mozilla.org/show_bug.cgi?id=180552
+  } else if (frame &&
+             (frame->GetStyleDisplay()->mDisplay != NS_STYLE_DISPLAY_INLINE ||
+              (frame->GetStateBits() & NS_FRAME_REPLACED_ELEMENT))) {
+    // Special case code to make clientWidth work even when there isn't
+    // a scroll view, see bug 180552 and bug 227567.
 
     *aClientWidth = NSTwipsToIntPixels(GetClientAreaSize(frame).width, t2p);
   }
@@ -1257,16 +1246,12 @@ nsGenericHTMLElement::GetClientWidth(PRInt32* aClientWidth)
 nsresult
 nsGenericHTMLElement::ScrollIntoView(PRBool aTop)
 {
-  // Get the the document
-  nsCOMPtr<nsIDocument> doc;
-  GetDocument(getter_AddRefs(doc));
-  if (!doc) {
+  if (!mDocument) {
     return NS_OK;
   }
 
   // Get the presentation shell
-  nsCOMPtr<nsIPresShell> presShell;
-  doc->GetShellAt(0, getter_AddRefs(presShell));
+  nsIPresShell *presShell = mDocument->GetShellAt(0);
   if (!presShell) {
     return NS_OK;
   }
@@ -1291,19 +1276,6 @@ nsGenericHTMLElement::ScrollIntoView(PRBool aTop)
 }
 
 
-static nsIHTMLStyleSheet* GetAttrStyleSheet(nsIDocument* aDocument)
-{
-  nsIHTMLStyleSheet* sheet = nsnull;
-
-  if (aDocument) {
-    nsCOMPtr<nsIHTMLContentContainer> container(do_QueryInterface(aDocument));
-
-    container->GetAttributeStyleSheet(&sheet);
-  }
-
-  return sheet;
-}
-
 PRBool
 nsGenericHTMLElement::InNavQuirksMode(nsIDocument* aDoc)
 {
@@ -1312,68 +1284,45 @@ nsGenericHTMLElement::InNavQuirksMode(nsIDocument* aDoc)
     return PR_FALSE;
   }
 
-  nsCompatibility mode;
-  doc->GetCompatibilityMode(mode);
-  return mode == eCompatibility_NavQuirks;
+  return doc->GetCompatibilityMode() == eCompatibility_NavQuirks;
 }
 
-nsresult
+void
 nsGenericHTMLElement::SetDocument(nsIDocument* aDocument, PRBool aDeep,
                                   PRBool aCompileEventHandlers)
 {
-  PRBool doNothing = PR_FALSE;
-  if (aDocument == mDocument) {
-    doNothing = PR_TRUE; // short circuit useless work
-  }
+  PRBool doNothing = aDocument == mDocument; // short circuit useless work
 
-  nsresult result = nsGenericElement::SetDocument(aDocument, aDeep,
-                                                  aCompileEventHandlers);
-  if (NS_FAILED(result)) {
-    return result;
-  }
+  nsGenericElement::SetDocument(aDocument, aDeep, aCompileEventHandlers);
 
-  if (!doNothing) {
-    if (mDocument && mAttributes) {
-      ReparseStyleAttribute();
-      nsIHTMLStyleSheet*  sheet = GetAttrStyleSheet(mDocument);
-      if (sheet) {
-        mAttributes->SetStyleSheet(sheet);
-        //      sheet->SetAttributesFor(htmlContent, mAttributes); // sync attributes with sheet
-        NS_RELEASE(sheet);
-      }
+  ReparseStyleAttribute();
+  if (!doNothing && mDocument) {
+    nsIHTMLStyleSheet* sheet = mDocument->GetAttributeStyleSheet();
+    if (sheet) {
+      mAttrsAndChildren.SetMappedAttrStyleSheet(sheet);
     }
   }
-
-  return result;
 }
 
-nsresult
-nsGenericHTMLElement::FindForm(nsIDOMHTMLFormElement **aForm)
+already_AddRefed<nsIDOMHTMLFormElement>
+nsGenericHTMLElement::FindForm()
 {
-  // XXX: Namespaces!!!
-
-  nsCOMPtr<nsIContent> content(this);
-  nsCOMPtr<nsIAtom> tag;
-
-  *aForm = nsnull;
-
+  nsIContent* content = this;
   while (content) {
-    if (content->IsContentOfType(nsIContent::eHTML)) {
-      content->GetTag(getter_AddRefs(tag));
+    // If the current ancestor is a form, return it as our form
+    if (content->IsContentOfType(nsIContent::eHTML) &&
+        content->GetNodeInfo()->Equals(nsHTMLAtoms::form)) {
+      nsIDOMHTMLFormElement* form;
+      CallQueryInterface(content, &form);
 
-      // If the current ancestor is a form, return it as our form
-      if (tag == nsHTMLAtoms::form) {
-        return CallQueryInterface(content, aForm);
-      }
+      return form;
     }
 
     nsIContent *tmp = content;
-    tmp->GetParent(getter_AddRefs(content));
+    content = tmp->GetParent();
 
     if (content) {
-      PRInt32 i;
-
-      content->IndexOf(tmp, i);
+      PRInt32 i = content->IndexOf(tmp);
 
       if (i < 0) {
         // This means 'tmp' is anonymous content, form controls in
@@ -1388,18 +1337,13 @@ nsGenericHTMLElement::FindForm(nsIDOMHTMLFormElement **aForm)
   return NS_OK;
 }
 
-nsresult
-nsGenericHTMLElement::FindAndSetForm(nsIFormControl *aFormControl)
+static PRBool
+IsArea(nsIContent *aContent)
 {
-  nsCOMPtr<nsIDOMHTMLFormElement> form;
+  nsINodeInfo *ni = aContent->GetNodeInfo();
 
-  FindForm(getter_AddRefs(form));
-
-  if (form) {
-    return aFormControl->SetForm(form);
-  }
-
-  return NS_OK;
+  return (ni && ni->Equals(nsHTMLAtoms::area) &&
+          aContent->IsContentOfType(nsIContent::eHTML));
 }
 
 nsresult
@@ -1428,29 +1372,15 @@ nsGenericHTMLElement::HandleDOMEventForAnchors(nsIPresContext* aPresContext,
   //the event on that map or on a link farther up the tree.  If we're on a
   //link farther up, do nothing.
   if (NS_SUCCEEDED(ret)) {
-    PRBool targetIsArea = PR_FALSE;
+    nsCOMPtr<nsIContent> target;
 
-    nsCOMPtr<nsIEventStateManager> esm;
-    if (NS_SUCCEEDED(aPresContext->GetEventStateManager(getter_AddRefs(esm))) && esm) {
-      nsCOMPtr<nsIContent> target;
-      esm->GetEventTargetContent(aEvent, getter_AddRefs(target));
-      if (target) {
-        nsCOMPtr<nsIAtom> tag;
-        target->GetTag(getter_AddRefs(tag));
-        if (tag && tag.get() == nsHTMLAtoms::area) {
-          targetIsArea = PR_TRUE;
-        }
-      }
-    }
+    aPresContext->EventStateManager()->
+      GetEventTargetContent(aEvent, getter_AddRefs(target));
 
-    if (targetIsArea) {
-      //We are over an area.  If our element is not one, then return without
-      //running anchor code.
-      nsCOMPtr<nsIAtom> tag;
-      GetTag(getter_AddRefs(tag));
-      if (tag && tag.get() != nsHTMLAtoms::area) {
-        return ret;
-      }
+    if (target && IsArea(target) && !IsArea(this)) {
+      // We are over an area and our element is not one.  Return without
+      // running anchor code.
+      return ret;
     }
   }
 
@@ -1467,31 +1397,23 @@ nsGenericHTMLElement::HandleDOMEventForAnchors(nsIPresContext* aPresContext,
     // nsILink interface to get a canonified URL that has been
     // correctly escaped and URL-encoded for the document's charset.
 
-    nsXPIDLCString hrefCStr;
-    GetHrefUTF8ForAnchors(getter_Copies(hrefCStr));
+    nsCOMPtr<nsIURI> hrefURI;
+    GetHrefURIForAnchors(getter_AddRefs(hrefURI));
 
     // Only bother to handle the mouse event if there was an href
     // specified.
-    if (hrefCStr) {
-      NS_ConvertUTF8toUCS2 href(hrefCStr);
-      // Strip off any unneeded CF/LF (for Bug 52119)
-      // It can't be done in the parser because of Bug 15204
-      href.StripChars("\r\n");
-
+    if (hrefURI) {
       switch (aEvent->message) {
       case NS_MOUSE_LEFT_BUTTON_DOWN:
         {
           // don't make the link grab the focus if there is no link handler
-          nsCOMPtr<nsILinkHandler> handler;
-          nsresult rv = aPresContext->GetLinkHandler(getter_AddRefs(handler));
-          if (NS_SUCCEEDED(rv) && handler && mDocument) {
+          nsILinkHandler *handler = aPresContext->GetLinkHandler();
+          if (handler && mDocument) {
             // If the window is not active, do not allow the focus to bring the
             // window to the front.  We update the focus controller, but do
             // nothing else.
             nsCOMPtr<nsIFocusController> focusController;
-            nsCOMPtr<nsIScriptGlobalObject> globalObj;
-            mDocument->GetScriptGlobalObject(getter_AddRefs(globalObj));
-            nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(globalObj));
+            nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(mDocument->GetScriptGlobalObject()));
             win->GetRootFocusController(getter_AddRefs(focusController));
             PRBool isActive = PR_FALSE;
             focusController->GetActive(&isActive);
@@ -1502,11 +1424,10 @@ nsGenericHTMLElement::HandleDOMEventForAnchors(nsIPresContext* aPresContext,
               break;
             }
   
-            nsCOMPtr<nsIEventStateManager> stateManager;
-            if (NS_OK == aPresContext->GetEventStateManager(getter_AddRefs(stateManager))) {
-              stateManager->SetContentState(this, NS_EVENT_STATE_ACTIVE |
-                                                  NS_EVENT_STATE_FOCUS);
-            }
+            aPresContext->EventStateManager()->
+              SetContentState(this,
+                              NS_EVENT_STATE_ACTIVE | NS_EVENT_STATE_FOCUS);
+
           }
         }
         break;
@@ -1516,8 +1437,7 @@ nsGenericHTMLElement::HandleDOMEventForAnchors(nsIPresContext* aPresContext,
         if (nsEventStatus_eConsumeNoDefault != *aEventStatus) {
           nsInputEvent* inputEvent = NS_STATIC_CAST(nsInputEvent*, aEvent);
           nsAutoString target;
-          nsCOMPtr<nsIURI> baseURL;
-          GetBaseURL(getter_AddRefs(baseURL));
+          nsCOMPtr<nsIURI> baseURI = GetBaseURI();
           GetAttr(kNameSpaceID_None, nsHTMLAtoms::target, target);
           if (target.IsEmpty()) {
             GetBaseTarget(target);
@@ -1527,8 +1447,8 @@ nsGenericHTMLElement::HandleDOMEventForAnchors(nsIPresContext* aPresContext,
             break;  // let the click go through so we can handle it in JS/XUL
           }
 
-          ret = TriggerLink(aPresContext, eLinkVerb_Replace, baseURL, href,
-                            target, PR_TRUE);
+          ret = TriggerLink(aPresContext, eLinkVerb_Replace, baseURI, hrefURI,
+                            target, PR_TRUE, PR_TRUE);
 
           *aEventStatus = nsEventStatus_eConsumeDoDefault;
         }
@@ -1539,15 +1459,12 @@ nsGenericHTMLElement::HandleDOMEventForAnchors(nsIPresContext* aPresContext,
         if (aEvent->eventStructType == NS_KEY_EVENT) {
           nsKeyEvent* keyEvent = NS_STATIC_CAST(nsKeyEvent*, aEvent);
           if (keyEvent->keyCode == NS_VK_RETURN) {
-            nsMouseEvent event;
             nsEventStatus status = nsEventStatus_eIgnore;
             nsCOMPtr<nsIContent> mouseContent;
 
             //fire click
-            event.message = NS_MOUSE_LEFT_CLICK;
-            event.eventStructType = NS_MOUSE_EVENT;
             nsGUIEvent* guiEvent = NS_STATIC_CAST(nsGUIEvent*, aEvent);
-            event.widget = guiEvent->widget;
+            nsMouseEvent event(NS_MOUSE_LEFT_CLICK, guiEvent->widget);
             event.point = aEvent->point;
             event.refPoint = aEvent->refPoint;
             event.clickCount = 1;
@@ -1556,10 +1473,11 @@ nsGenericHTMLElement::HandleDOMEventForAnchors(nsIPresContext* aPresContext,
             event.isAlt = keyEvent->isAlt;
             event.isMeta = keyEvent->isMeta;
 
-            nsCOMPtr<nsIPresShell> presShell;
-            aPresContext->GetShell(getter_AddRefs(presShell));
+            nsIPresShell *presShell = aPresContext->GetPresShell();
             if (presShell) {
               ret = presShell->HandleDOMEventWithTarget(this, &event, &status);
+              // presShell may no longer be alive, don't use it here
+              // unless you keep a reference.
             }
           }
         }
@@ -1571,14 +1489,13 @@ nsGenericHTMLElement::HandleDOMEventForAnchors(nsIPresContext* aPresContext,
       case NS_FOCUS_CONTENT:
       {
         nsAutoString target;
-        nsCOMPtr<nsIURI> baseURL;
-        GetBaseURL(getter_AddRefs(baseURL));
+        nsCOMPtr<nsIURI> baseURI = GetBaseURI();
         GetAttr(kNameSpaceID_None, nsHTMLAtoms::target, target);
         if (target.IsEmpty()) {
           GetBaseTarget(target);
         }
-        ret = TriggerLink(aPresContext, eLinkVerb_Replace,
-                          baseURL, href, target, PR_FALSE);
+        ret = TriggerLink(aPresContext, eLinkVerb_Replace, baseURI,
+                          hrefURI, target, PR_FALSE, PR_TRUE);
       }
       break;
 
@@ -1598,176 +1515,156 @@ nsGenericHTMLElement::HandleDOMEventForAnchors(nsIPresContext* aPresContext,
 }
 
 nsresult
-nsGenericHTMLElement::GetHrefUTF8ForAnchors(char** aHref)
+nsGenericHTMLElement::GetHrefURIForAnchors(nsIURI** aURI)
 {
   // This is used by the three nsILink implementations and
   // nsHTMLStyleElement.
 
-  // Get href= attribute (relative URL).
-  nsAutoString relURLSpec;
+  // Get href= attribute (relative URI).
+  nsAutoString relURISpec;
 
   if (NS_CONTENT_ATTR_HAS_VALUE ==
-      GetAttr(kNameSpaceID_None, nsHTMLAtoms::href, relURLSpec)) {
-    // Clean up any leading or trailing whitespace
-    relURLSpec.Trim(" \t\n\r");
+      GetAttr(kNameSpaceID_None, nsHTMLAtoms::href, relURISpec)) {
+    // Get base URI.
+    nsCOMPtr<nsIURI> baseURI = GetBaseURI();
 
-    // Get base URL.
-    nsCOMPtr<nsIURI> baseURL;
-    GetBaseURL(getter_AddRefs(baseURL));
-
-    if (baseURL) {
-      // Get absolute URL.
-      nsCAutoString buf;
-      NS_MakeAbsoluteURIWithCharset(buf, relURLSpec, mDocument, baseURL,
-                                    nsHTMLUtils::IOService,
-                                    nsHTMLUtils::CharsetMgr);
-      *aHref = ToNewCString(buf);
-    }
-    else {
-      // Absolute URL is same as relative URL.
-      *aHref = ToNewUTF8String(relURLSpec);
+    // Get absolute URI.
+    nsresult rv = nsContentUtils::NewURIWithDocumentCharset(aURI,
+                                                            relURISpec,
+                                                            mDocument,
+                                                            baseURI);
+    if (NS_FAILED(rv)) {
+      *aURI = nsnull;
     }
   }
   else {
-    // Absolute URL is null to say we have no HREF.
-    *aHref = nsnull;
+    // Absolute URI is null to say we have no HREF.
+    *aURI = nsnull;
   }
 
   return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsGenericHTMLElement::GetNameSpaceID(PRInt32* aID) const
 {
   // XXX
   // XXX This is incorrect!!!!!!!!!!!!!!!!
   // XXX
   *aID = kNameSpaceID_XHTML;
-  return NS_OK;
 }
 
 nsresult
-nsGenericHTMLElement::NormalizeAttrString(const nsAString& aStr,
-                                          nsINodeInfo** aNodeInfo)
-{
-  // XXX need to validate/strip namespace prefix
-  nsAutoString lower(aStr);
-  ToLowerCase(lower);
-
-  nsCOMPtr<nsINodeInfoManager> nimgr;
-  mNodeInfo->GetNodeInfoManager(getter_AddRefs(nimgr));
-  NS_ENSURE_TRUE(nimgr, NS_ERROR_FAILURE);
-
-  return nimgr->GetNodeInfo(lower, nsnull, kNameSpaceID_None, aNodeInfo);
-}
-
-nsresult
-nsGenericHTMLElement::SetAttr(PRInt32 aNameSpaceID,
-                              nsIAtom* aAttribute,
-                              const nsAString& aValue,
+nsGenericHTMLElement::SetAttr(PRInt32 aNamespaceID, nsIAtom* aAttribute,
+                              nsIAtom* aPrefix, const nsAString& aValue,
                               PRBool aNotify)
 {
-  NS_ASSERTION(aNameSpaceID != kNameSpaceID_XHTML,
+  NS_ASSERTION(aNamespaceID != kNameSpaceID_XHTML,
                "Error, attribute on [X]HTML element set with XHTML namespace, "
                "this is wrong, trust me! Lose the prefix on the attribute!");
 
-  nsresult  result = NS_OK;
+  nsresult rv;
+  nsAutoString oldValue;
+  PRBool hasListeners = PR_FALSE;
+  PRBool modification = PR_FALSE;
 
-  if (aNameSpaceID != kNameSpaceID_None) {
-    nsCOMPtr<nsINodeInfoManager> nimgr;
-    result = mNodeInfo->GetNodeInfoManager(getter_AddRefs(nimgr));
-    NS_ENSURE_SUCCESS(result, result);
+  if (mDocument) {
+    hasListeners = nsGenericElement::HasMutationListeners(this,
+      NS_EVENT_BITS_MUTATION_ATTRMODIFIED);
 
-    nsCOMPtr<nsINodeInfo> ni;
-    result = nimgr->GetNodeInfo(aAttribute, nsnull, kNameSpaceID_None,
-                                getter_AddRefs(ni));
-    NS_ENSURE_SUCCESS(result, result);
-
-    return SetAttr(ni, aValue, aNotify);
+    // If we have no listeners and aNotify is false, we are almost certainly
+    // coming from the content sink and will almost certainly have no previous
+    // value.  Even if we do, setting the value is cheap when we have no
+    // listeners and don't plan to notify.  The check for aNotify here is an
+    // optimization, the check for haveListeners is a correctness issue.
+    if (hasListeners || aNotify) {
+      // don't do any update if old == new.
+      // It would be nice to not have to call GetAttr here but to rather just
+      // grab the nsAttrValue from mAttrsAndChildren and compare that to
+      // aValue. However not all nsAttrValues can currently be converted to
+      // strings (specifically enums and nsISupports can't) so we have to take
+      // the detour through GetAttr for now.
+      rv = GetAttr(aNamespaceID, aAttribute, oldValue);
+      modification = rv != NS_CONTENT_ATTR_NOT_THERE;
+      if (modification && aValue.Equals(oldValue)) {
+        return NS_OK;
+      }
+    }
   }
 
-  if (aAttribute == nsHTMLAtoms::style) {
-    nsHTMLValue parsedValue;
-    ParseStyleAttribute(aValue, parsedValue);
-    result = SetHTMLAttribute(aAttribute, parsedValue, aNotify);
-    return result;
-  }
-  else {
-    // Check for event handlers
+  // Parse into a nsAttrValue
+  nsAttrValue attrValue;
+  if (aNamespaceID == kNameSpaceID_None) {
+    if (!ParseAttribute(aAttribute, aValue, attrValue)) {
+      attrValue.SetTo(aValue);
+    }
+
     if (IsEventName(aAttribute)) {
       AddScriptEventListener(aAttribute, aValue);
     }
   }
+  else {
+    attrValue.SetTo(aValue);
+  }
 
-  nsHTMLValue val;
+  return SetAttrAndNotify(aNamespaceID, aAttribute, aPrefix, oldValue,
+                          attrValue, modification, hasListeners, aNotify);
+}
 
-  nsAutoString strValue;
-  PRBool modification = PR_TRUE;
+nsresult
+nsGenericHTMLElement::SetAttrAndNotify(PRInt32 aNamespaceID,
+                                       nsIAtom* aAttribute,
+                                       nsIAtom* aPrefix,
+                                       const nsAString& aOldValue,
+                                       nsAttrValue& aParsedValue,
+                                       PRBool aModification,
+                                       PRBool aFireMutation,
+                                       PRBool aNotify)
+{
+  nsresult rv;
+  PRUint8 modType = aModification ?
+    NS_STATIC_CAST(PRUint8, nsIDOMMutationEvent::MODIFICATION) :
+    NS_STATIC_CAST(PRUint8, nsIDOMMutationEvent::ADDITION);
 
-  if (StringToAttribute(aAttribute, aValue,
-                        val) != NS_CONTENT_ATTR_NOT_THERE) {
-    // string value was mapped to nsHTMLValue, set it that way
-    return SetHTMLAttribute(aAttribute, val, aNotify);
+  mozAutoDocUpdate updateBatch(mDocument, UPDATE_CONTENT_MODEL, aNotify);
+  if (aNotify && mDocument) {
+    mDocument->AttributeWillChange(this, aNamespaceID, aAttribute);
+  }
+
+  if (aNamespaceID == kNameSpaceID_None) {
+    if (IsAttributeMapped(aAttribute)) {
+      nsIHTMLStyleSheet* sheet = mDocument ?
+        mDocument->GetAttributeStyleSheet() : nsnull;
+      rv = mAttrsAndChildren.SetAndTakeMappedAttr(aAttribute, aParsedValue,
+                                                  this, sheet);
+    }
+    else {
+      rv = mAttrsAndChildren.SetAndTakeAttr(aAttribute, aParsedValue);
+    }
+    NS_ENSURE_SUCCESS(rv, rv);
   }
   else {
-    if (ParseCommonAttribute(aAttribute, aValue, val)) {
-      // string value was mapped to nsHTMLValue, set it that way
-      return SetHTMLAttribute(aAttribute, val, aNotify);
-    }
+    nsCOMPtr<nsINodeInfo> ni;
+    rv = mNodeInfo->NodeInfoManager()->GetNodeInfo(aAttribute, nsnull,
+                                                   aNamespaceID,
+                                                   getter_AddRefs(ni));
+    NS_ENSURE_SUCCESS(rv, rv);
 
-    if (aValue.IsEmpty()) { // if empty string
-      val.SetEmptyValue();
-      return SetHTMLAttribute(aAttribute, val, aNotify);
-    }
-
-    // don't do any update if old == new
-    result = GetAttr(aNameSpaceID, aAttribute, strValue);
-    if ((NS_CONTENT_ATTR_NOT_THERE != result) && aValue.Equals(strValue)) {
-      return NS_OK;
-    }
-
-    modification = (result != NS_CONTENT_ATTR_NOT_THERE);
-
-    if (aNotify && (nsnull != mDocument)) {
-      mDocument->BeginUpdate();
-
-      mDocument->AttributeWillChange(this, aNameSpaceID, aAttribute);
-    }
-
-    // set as string value to avoid another string copy
-    nsChangeHint impact = NS_STYLE_HINT_NONE;
-    PRInt32 modHint = modification ? PRInt32(nsIDOMMutationEvent::MODIFICATION)
-                                   : PRInt32(nsIDOMMutationEvent::ADDITION);
-    GetMappedAttributeImpact(aAttribute, modHint, impact);
-
-    nsCOMPtr<nsIHTMLStyleSheet> sheet =
-      dont_AddRef(GetAttrStyleSheet(mDocument));
-
-    if (!mAttributes) {
-      result = NS_NewHTMLAttributes(&mAttributes);
-      NS_ENSURE_SUCCESS(result, result);
-    }
-    result = mAttributes->SetAttributeFor(aAttribute, aValue,
-                                          (impact & ~(nsChangeHint_AttrChange | nsChangeHint_Aural
-                                                      | nsChangeHint_Content)) != 0,
-                                          this, sheet);
+    rv = mAttrsAndChildren.SetAndTakeAttr(ni, aParsedValue);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   if (mDocument) {
-    nsCOMPtr<nsIBindingManager> bindingManager;
-    mDocument->GetBindingManager(getter_AddRefs(bindingManager));
     nsCOMPtr<nsIXBLBinding> binding;
-    bindingManager->GetBinding(this, getter_AddRefs(binding));
-    if (binding)
-      binding->AttributeChanged(aAttribute, aNameSpaceID, PR_FALSE, aNotify);
+    mDocument->GetBindingManager()->GetBinding(this, getter_AddRefs(binding));
+    if (binding) {
+      binding->AttributeChanged(aAttribute, aNamespaceID, PR_FALSE, aNotify);
+    }
 
-    if (nsGenericElement::HasMutationListeners(this, NS_EVENT_BITS_MUTATION_ATTRMODIFIED)) {
+    if (aFireMutation) {
       nsCOMPtr<nsIDOMEventTarget> node =
         do_QueryInterface(NS_STATIC_CAST(nsIContent *, this));
-      nsMutationEvent mutation;
-      mutation.eventStructType = NS_MUTATION_EVENT;
-      mutation.message = NS_MUTATION_ATTRMODIFIED;
-      mutation.mTarget = node;
+      nsMutationEvent mutation(NS_MUTATION_ATTRMODIFIED, node);
 
       nsAutoString attrName;
       aAttribute->ToString(attrName);
@@ -1776,125 +1673,30 @@ nsGenericHTMLElement::SetAttr(PRInt32 aNameSpaceID,
       mutation.mRelatedNode = attrNode;
 
       mutation.mAttrName = aAttribute;
-      if (!strValue.IsEmpty())
-        mutation.mPrevAttrValue = do_GetAtom(strValue);
-      if (!aValue.IsEmpty())
-        mutation.mNewAttrValue = do_GetAtom(aValue);
-      if (modification)
-        mutation.mAttrChange = nsIDOMMutationEvent::MODIFICATION;
-      else
-        mutation.mAttrChange = nsIDOMMutationEvent::ADDITION;
+      nsAutoString newValue;
+      // It sucks that we have to call GetAttr just to get the stringvalue
+      // here, but in SetInlineStyleRule we don't have the stringvalue
+      // directly and it would be a waste of time to get it since in the
+      // common case it's not needed. If we make nsHTMLValue->string
+      // conversion possible we wouldn't have to do this.
+      GetAttr(aNamespaceID, aAttribute, newValue);
+      if (!newValue.IsEmpty()) {
+        mutation.mNewAttrValue = do_GetAtom(newValue);
+      }
+      if (!aOldValue.IsEmpty()) {
+        mutation.mPrevAttrValue = do_GetAtom(aOldValue);
+      }
+      mutation.mAttrChange = modType;
       nsEventStatus status = nsEventStatus_eIgnore;
       HandleDOMEvent(nsnull, &mutation, nsnull,
                      NS_EVENT_FLAG_INIT, &status);
     }
 
     if (aNotify) {
-      PRInt32 modHint =
-        modification ? PRInt32(nsIDOMMutationEvent::MODIFICATION) :
-                       PRInt32(nsIDOMMutationEvent::ADDITION);
-
-      mDocument->AttributeChanged(this, aNameSpaceID, aAttribute, modHint, 
-                                  NS_STYLE_HINT_UNKNOWN);
-      mDocument->EndUpdate();
+      mDocument->AttributeChanged(this, aNamespaceID, aAttribute, modType);
     }
   }
-
-  return result;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLElement::SetAttr(nsINodeInfo* aNodeInfo,
-                              const nsAString& aValue,
-                              PRBool aNotify)
-{
-  NS_ENSURE_ARG_POINTER(aNodeInfo);
-
-  nsCOMPtr<nsIAtom> localName = aNodeInfo->GetNameAtom();
-  PRInt32 namespaceID = aNodeInfo->GetNamespaceID();
-
-  NS_ASSERTION(namespaceID != kNameSpaceID_XHTML,
-               "Error, attribute on [X]HTML element set with XHTML namespace, "
-               "this is wrong, trust me! Lose the prefix on the attribute!");
-
-  if (namespaceID == kNameSpaceID_None) {
-    return SetAttr(namespaceID, localName, aValue, aNotify);
-  }
-
-  // This code is copied from SetAttr(PRInt32, nsIAtom* ,...
-  // It sux that we have it duplicated, but we'll have to live with it
-  // until we have better SetAttr signatures in nsIContent
-
-  nsAutoString strValue;
-
-  // don't do any update if old == new
-  nsresult rv = GetAttr(namespaceID, localName, strValue);
-  if (rv != NS_CONTENT_ATTR_NOT_THERE && aValue.Equals(strValue))
-    return NS_OK;
-
-  PRBool modification = (rv != NS_CONTENT_ATTR_NOT_THERE);
-
-  if (aNotify && mDocument) {
-    mDocument->BeginUpdate();
-    mDocument->AttributeWillChange(this, namespaceID, localName);
-  }
-
-  if (!mAttributes) {
-    rv = NS_NewHTMLAttributes(&mAttributes);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-  rv = mAttributes->SetAttributeFor(aNodeInfo, aValue);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (mDocument) {
-    nsCOMPtr<nsIBindingManager> bindingManager;
-    mDocument->GetBindingManager(getter_AddRefs(bindingManager));
-    nsCOMPtr<nsIXBLBinding> binding;
-    bindingManager->GetBinding(this, getter_AddRefs(binding));
-    if (binding)
-      binding->AttributeChanged(localName, namespaceID, PR_FALSE, aNotify);
-
-    if (nsGenericElement::HasMutationListeners(this, NS_EVENT_BITS_MUTATION_ATTRMODIFIED)) {
-      nsCOMPtr<nsIDOMEventTarget> node =
-        do_QueryInterface(NS_STATIC_CAST(nsIContent *, this));
-
-      nsMutationEvent mutation;
-      mutation.eventStructType = NS_MUTATION_EVENT;
-      mutation.message = NS_MUTATION_ATTRMODIFIED;
-      mutation.mTarget = node;
-
-      nsAutoString attrLocalName, attrNamespace;
-      localName->ToString(attrLocalName);
-      aNodeInfo->GetNamespaceURI(attrNamespace);
-      nsCOMPtr<nsIDOMAttr> attrNode;
-      GetAttributeNodeNS(attrNamespace, attrLocalName,
-                         getter_AddRefs(attrNode));
-      mutation.mRelatedNode = attrNode;
-
-      mutation.mAttrName = localName;
-      if (!strValue.IsEmpty())
-        mutation.mPrevAttrValue = do_GetAtom(strValue);
-      if (!aValue.IsEmpty())
-        mutation.mNewAttrValue = do_GetAtom(aValue);
-      if (modification)
-        mutation.mAttrChange = nsIDOMMutationEvent::MODIFICATION;
-      else
-        mutation.mAttrChange = nsIDOMMutationEvent::ADDITION;
-      nsEventStatus status = nsEventStatus_eIgnore;
-      HandleDOMEvent(nsnull, &mutation, nsnull,
-                     NS_EVENT_FLAG_INIT, &status);
-    }
-
-    if (aNotify) {
-      PRInt32 modHint =
-        modification ? PRInt32(nsIDOMMutationEvent::MODIFICATION)
-                     : PRInt32(nsIDOMMutationEvent::ADDITION);
-      mDocument->AttributeChanged(this, namespaceID, localName, modHint, 
-                                  NS_STYLE_HINT_UNKNOWN);
-      mDocument->EndUpdate();
-    }
-  }
-
+  
   return NS_OK;
 }
 
@@ -1919,6 +1721,7 @@ PRBool nsGenericHTMLElement::IsEventName(nsIAtom* aName)
           aName == nsLayoutAtoms::onmousemove                   ||
           aName == nsLayoutAtoms::onload                        ||
           aName == nsLayoutAtoms::onunload                      ||
+          aName == nsLayoutAtoms::onbeforeunload                ||
           aName == nsLayoutAtoms::onabort                       ||
           aName == nsLayoutAtoms::onerror                       ||
           aName == nsLayoutAtoms::onfocus                       ||
@@ -1941,161 +1744,10 @@ PRBool nsGenericHTMLElement::IsEventName(nsIAtom* aName)
           aName == nsLayoutAtoms::onDOMNodeRemoved);
 }
 
-static nsChangeHint GetStyleImpactFrom(const nsHTMLValue& aValue)
-{
-  nsChangeHint hint = NS_STYLE_HINT_NONE;
-
-  if (eHTMLUnit_ISupports == aValue.GetUnit()) {
-    nsCOMPtr<nsISupports> supports(dont_AddRef(aValue.GetISupportsValue()));
-    nsCOMPtr<nsICSSStyleRule> cssRule(do_QueryInterface(supports));
-
-    if (cssRule) {
-      nsCSSDeclaration* declaration = cssRule->GetDeclaration();
-
-      if (declaration) {
-        hint = declaration->GetStyleImpact();
-      }
-    }
-  }
-
-  return hint;
-}
-
-nsresult
-nsGenericHTMLElement::SetHTMLAttribute(nsIAtom* aAttribute,
-                                       const nsHTMLValue& aValue,
-                                       PRBool aNotify)
-{
-  nsresult  result = NS_OK;
-
-  PRBool haveListeners =
-    mDocument &&
-    nsGenericElement::HasMutationListeners(this,
-                                           NS_EVENT_BITS_MUTATION_ATTRMODIFIED);
-  
-  // If we have no listeners and aNotify is false, we are almost certainly
-  // coming from the content sink and will almost certainly have no previous
-  // value.  Even if we do, setting the value is cheap when we have no
-  // listeners and don't plan to notify.  The check for aNotify here is an
-  // optimization; the check for haveListeners is a correctness issue.
-  if (haveListeners || aNotify) {
-    // Do nothing if there is no change.  Note that operator== on nsHTMLValue
-    // assumes that two nsHTMLValues are the same if they have the same unit
-    // and value.  For nsHTMLValues whose value is an nsISupports, this means
-    // that a new nsISupports pointer _must_ be created in order for attribute
-    // changes to take proper effect. Currently, this only applies to inline
-    // style, which satisfies this constraint because style rules are
-    // immutable.
-    nsHTMLValue oldValue;
-    result = GetHTMLAttribute(aAttribute, oldValue);
-    if (result != NS_CONTENT_ATTR_NOT_THERE && oldValue == aValue) {
-      return NS_OK;
-    }
-  }
-  
-  nsChangeHint impact = NS_STYLE_HINT_NONE;
-  GetMappedAttributeImpact(aAttribute, nsIDOMMutationEvent::MODIFICATION,
-                           impact);
-  nsCOMPtr<nsIHTMLStyleSheet> sheet;
-  if (mDocument) {
-    PRBool modification = PR_TRUE;
-    nsAutoString oldValueStr;
-    if (haveListeners) {
-      // save the old attribute so we can set up the mutation event
-      // properly
-      modification =
-        (NS_CONTENT_ATTR_NOT_THERE !=
-         GetAttr(kNameSpaceID_None, aAttribute, oldValueStr));
-    }
-    if (aNotify) {
-      mDocument->BeginUpdate();
-
-      mDocument->AttributeWillChange(this, kNameSpaceID_None, aAttribute);
-    }
-    sheet = dont_AddRef(GetAttrStyleSheet(mDocument));
-    if (sheet) {
-      if (!mAttributes) {
-        nsresult rv = NS_NewHTMLAttributes(&mAttributes);
-        NS_ENSURE_SUCCESS(rv, rv);
-      }
-      PRInt32 count;
-      result = mAttributes->SetAttributeFor(aAttribute, aValue,
-                                            (impact & ~(nsChangeHint_AttrChange | nsChangeHint_Aural
-                                                        | nsChangeHint_Content)) != 0,
-                                            this, sheet, count);
-      if (0 == count) {
-        delete mAttributes;
-        mAttributes = nsnull;
-      }
-    }
-
-    nsCOMPtr<nsIBindingManager> bindingManager;
-    mDocument->GetBindingManager(getter_AddRefs(bindingManager));
-    nsCOMPtr<nsIXBLBinding> binding;
-    bindingManager->GetBinding(this, getter_AddRefs(binding));
-    if (binding)
-      binding->AttributeChanged(aAttribute, kNameSpaceID_None, PR_TRUE,
-                                aNotify);
-
-    if (haveListeners) {
-      nsCOMPtr<nsIDOMEventTarget> node(do_QueryInterface(NS_STATIC_CAST(nsIContent *, this)));
-      nsMutationEvent mutation;
-      mutation.eventStructType = NS_MUTATION_EVENT;
-      mutation.message = NS_MUTATION_ATTRMODIFIED;
-      mutation.mTarget = node;
-
-      nsAutoString attrName;
-      aAttribute->ToString(attrName);
-      nsCOMPtr<nsIDOMAttr> attrNode;
-      GetAttributeNode(attrName, getter_AddRefs(attrNode));
-      mutation.mRelatedNode = attrNode;
-
-      mutation.mAttrName = aAttribute;
-      nsAutoString newValueStr;
-      GetAttr(kNameSpaceID_None, aAttribute, newValueStr);
-      if (!newValueStr.IsEmpty())
-        mutation.mNewAttrValue = do_GetAtom(newValueStr);
-      if (!oldValueStr.IsEmpty())
-        mutation.mPrevAttrValue = do_GetAtom(oldValueStr);
-      if (modification)
-        mutation.mAttrChange = nsIDOMMutationEvent::MODIFICATION;
-      else
-        mutation.mAttrChange = nsIDOMMutationEvent::ADDITION;
-      nsEventStatus status = nsEventStatus_eIgnore;
-      HandleDOMEvent(nsnull, &mutation, nsnull,
-                     NS_EVENT_FLAG_INIT, &status);
-    }
-
-    if (aNotify) {
-      mDocument->AttributeChanged(this, kNameSpaceID_None, aAttribute, nsIDOMMutationEvent::MODIFICATION, impact);
-      mDocument->EndUpdate();
-    }
-  }
-  if (!sheet) {  // manage this ourselves and re-sync when we connect to doc
-    if (!mAttributes) {
-      nsresult rv = NS_NewHTMLAttributes(&mAttributes);
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
-    PRInt32 count;
-    result = mAttributes->SetAttributeFor(aAttribute, aValue,
-                                          (impact & ~(nsChangeHint_AttrChange | nsChangeHint_Aural
-                                                      | nsChangeHint_Content)) != 0,
-                                          this, sheet, count);
-    if (0 == count) {
-      delete mAttributes;
-      mAttributes = nsnull;
-    }
-  }
-
-  return result;
-}
-
 nsresult
 nsGenericHTMLElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
                                 PRBool aNotify)
 {
-  nsresult result = NS_OK;
-
   // Check for event handlers
   if (aNameSpaceID == kNameSpaceID_None &&
       IsEventName(aAttribute)) {
@@ -2103,285 +1755,159 @@ nsGenericHTMLElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
     GetListenerManager(getter_AddRefs(manager));
 
     if (manager) {
-      result = manager->RemoveScriptEventListener(aAttribute);
+      manager->RemoveScriptEventListener(aAttribute);
     }
   }
 
-  nsChangeHint impact = NS_STYLE_HINT_UNKNOWN;
-  if (mDocument) {
-    if (aNotify) {
-      mDocument->BeginUpdate();
-
-      mDocument->AttributeWillChange(this, aNameSpaceID, aAttribute);
-
-      if (aNameSpaceID == kNameSpaceID_None &&
-          aAttribute == nsHTMLAtoms::style) {
-        nsHTMLValue oldValue;
-        if (NS_CONTENT_ATTR_NOT_THERE != GetHTMLAttribute(aAttribute,
-                                                          oldValue)) {
-          impact = GetStyleImpactFrom(oldValue);
-        }
-        else {
-          impact = NS_STYLE_HINT_NONE;
-        }
-      }
-    }
-
-    if (nsGenericElement::HasMutationListeners(this, NS_EVENT_BITS_MUTATION_ATTRMODIFIED)) {
-      nsCOMPtr<nsIDOMEventTarget> node(do_QueryInterface(NS_STATIC_CAST(nsIContent *, this)));
-      nsMutationEvent mutation;
-      mutation.eventStructType = NS_MUTATION_EVENT;
-      mutation.message = NS_MUTATION_ATTRMODIFIED;
-      mutation.mTarget = node;
-
-      nsAutoString attrName;
-      aAttribute->ToString(attrName);
-      nsCOMPtr<nsIDOMAttr> attrNode;
-      GetAttributeNode(attrName, getter_AddRefs(attrNode));
-      mutation.mRelatedNode = attrNode;
-
-      mutation.mAttrName = aAttribute;
-
-      nsAutoString attr;
-      GetAttr(aNameSpaceID, aAttribute, attr);
-      if (!attr.IsEmpty())
-        mutation.mPrevAttrValue = do_GetAtom(attr);
-      mutation.mAttrChange = nsIDOMMutationEvent::REMOVAL;
-
-      nsEventStatus status = nsEventStatus_eIgnore;
-      HandleDOMEvent(nsnull, &mutation, nsnull,
-                     NS_EVENT_FLAG_INIT, &status);
-    }
-  }
-
-  if (mAttributes) {
-    nsCOMPtr<nsIHTMLStyleSheet> sheet
-         = dont_AddRef(GetAttrStyleSheet(mDocument));
-    PRInt32 count;
-    result = mAttributes->UnsetAttributeFor(aAttribute, aNameSpaceID, this,
-                                            sheet, count);
-    if (0 == count) {
-      delete mAttributes;
-      mAttributes = nsnull;
-    }
-  }
-
-  if (mDocument) {
-    nsCOMPtr<nsIBindingManager> bindingManager;
-    mDocument->GetBindingManager(getter_AddRefs(bindingManager));
-    nsCOMPtr<nsIXBLBinding> binding;
-    bindingManager->GetBinding(this, getter_AddRefs(binding));
-    if (binding)
-      binding->AttributeChanged(aAttribute, aNameSpaceID, PR_TRUE, aNotify);
-
-    if (aNotify) {
-      mDocument->AttributeChanged(this, aNameSpaceID, aAttribute, nsIDOMMutationEvent::REMOVAL, impact);
-      mDocument->EndUpdate();
-    }
-  }
-
-  return result;
+  return nsGenericElement::UnsetAttr(aNameSpaceID, aAttribute, aNotify);
 }
 
 nsresult
 nsGenericHTMLElement::GetAttr(PRInt32 aNameSpaceID, nsIAtom *aAttribute,
                               nsAString& aResult) const
 {
-  nsCOMPtr<nsIAtom> prefix;
-  return GetAttr(aNameSpaceID, aAttribute, getter_AddRefs(prefix), aResult);
-}
+  NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown,
+               "must have a real namespace ID!");
 
-nsresult
-nsGenericHTMLElement::GetAttr(PRInt32 aNameSpaceID, nsIAtom *aAttribute,
-                              nsIAtom** aPrefix, nsAString& aResult) const
-{
-  nsresult rv;
   aResult.Truncate();
 
-  *aPrefix = nsnull;
-  const nsHTMLValue* value;
-  if (aNameSpaceID != kNameSpaceID_None) {
-    rv = mAttributes ? mAttributes->GetAttribute(aAttribute, aNameSpaceID,
-                                                 aPrefix, &value) :
-                       NS_CONTENT_ATTR_NOT_THERE;
-  } else {
-    aNameSpaceID = kNameSpaceID_None;
-    rv = mAttributes ? mAttributes->GetAttribute(aAttribute, &value) :
-                       NS_CONTENT_ATTR_NOT_THERE;
+  const nsAttrValue* attrValue =
+    mAttrsAndChildren.GetAttr(aAttribute, aNameSpaceID);
+  if (!attrValue) {
+    return NS_CONTENT_ATTR_NOT_THERE;
   }
 
-  if (rv == NS_CONTENT_ATTR_HAS_VALUE) {
-    // Try subclass conversion routine first
-    if (aNameSpaceID == kNameSpaceID_None && 
-        AttributeToString(aAttribute, *value, aResult) ==
+  // Use subclass to convert enums to string.
+  if (attrValue->Type() == nsAttrValue::eEnum) {
+    nsHTMLValue htmlVal(attrValue->GetEnumValue(), eHTMLUnit_Enumerated);
+    if (aNameSpaceID != kNameSpaceID_None ||
+        AttributeToString(aAttribute, htmlVal, aResult) !=
         NS_CONTENT_ATTR_HAS_VALUE) {
-      return rv;
+      NS_NOTREACHED("no enum to string conversion found");
+
+      return NS_CONTENT_ATTR_NOT_THERE;
     }
-
-    nscolor color;
-    // Provide default conversions for most everything
-    switch (value->GetUnit()) {
-    case eHTMLUnit_Null:
-    case eHTMLUnit_Empty:
-      break;
-
-    case eHTMLUnit_String:
-    case eHTMLUnit_ColorName:
-      value->GetStringValue(aResult);
-      break;
-
-    case eHTMLUnit_Integer:
-      {
-        nsAutoString intStr;
-        intStr.AppendInt(value->GetIntValue());
-
-        aResult.Assign(intStr);
-        break;
-      }
-
-    case eHTMLUnit_Pixel:
-      {
-        nsAutoString intStr;
-        intStr.AppendInt(value->GetPixelValue());
-
-        aResult.Assign(intStr);
-        break;
-      }
-
-    case eHTMLUnit_Percent:
-      {
-        nsAutoString intStr;
-        float percentVal = value->GetPercentValue() * 100.0f;
-        intStr.AppendInt(NSToCoordRoundExclusive(percentVal));
-
-        aResult.Assign(intStr);
-        aResult.Append(PRUnichar('%'));
-        break;
-      }
-
-    case eHTMLUnit_Color:
-      char cbuf[20];
-      color = nscolor(value->GetColorValue());
-      PR_snprintf(cbuf, sizeof(cbuf), "#%02x%02x%02x",
-                  NS_GET_R(color), NS_GET_G(color), NS_GET_B(color));
-      aResult.Assign(NS_ConvertASCIItoUCS2(cbuf));
-      break;
-
-    default:
-    case eHTMLUnit_Enumerated:
-      NS_NOTREACHED("no default enumerated value to string conversion");
-      rv = NS_CONTENT_ATTR_NOT_THERE;
-      break;
-    }
+    return NS_CONTENT_ATTR_HAS_VALUE;
   }
 
-  return rv;
-}
+  attrValue->ToString(aResult);
 
-NS_IMETHODIMP_(PRBool)
-nsGenericHTMLElement::HasAttr(PRInt32 aNameSpaceID, nsIAtom* aName) const
-{
-  return mAttributes && mAttributes->HasAttribute(aName, aNameSpaceID);
+  return NS_CONTENT_ATTR_HAS_VALUE;
 }
 
 nsresult
 nsGenericHTMLElement::GetHTMLAttribute(nsIAtom* aAttribute,
                                        nsHTMLValue& aValue) const
 {
-  if (nsnull != mAttributes) {
-    return mAttributes->GetAttribute(aAttribute, aValue);
-  }
-  aValue.Reset();
-  return NS_CONTENT_ATTR_NOT_THERE;
-}
+  const nsAttrValue* val = mAttrsAndChildren.GetAttr(aAttribute);
 
-nsresult
-nsGenericHTMLElement::GetAttrNameAt(PRInt32 aIndex,
-                                    PRInt32* aNameSpaceID,
-                                    nsIAtom** aName,
-                                    nsIAtom** aPrefix) const
-{
-  if (mAttributes) {
-    return mAttributes->GetAttributeNameAt(aIndex, aNameSpaceID, aName,
-                                           aPrefix);
+  if (!val) {
+    aValue.Reset();
+    return NS_CONTENT_ATTR_NOT_THERE;
   }
 
-  *aNameSpaceID = kNameSpaceID_None;
-  *aName = nsnull;
-  *aPrefix = nsnull;
+  val->ToHTMLValue(aValue);
 
-  return NS_ERROR_ILLEGAL_VALUE;
-}
-
-nsresult
-nsGenericHTMLElement::GetAttrCount(PRInt32& aCount) const
-{
-  if (nsnull != mAttributes) {
-    return mAttributes->GetAttributeCount(aCount);
-  }
-  aCount = 0;
-  return NS_OK;
+  return NS_CONTENT_ATTR_HAS_VALUE;
 }
 
 nsresult
 nsGenericHTMLElement::GetID(nsIAtom** aResult) const
 {
-  if (mAttributes) {
-    return mAttributes->GetID(aResult);
-  }
-
   *aResult = nsnull;
+
+  const nsAttrValue* attrVal = mAttrsAndChildren.GetAttr(nsHTMLAtoms::id);
+  NS_ASSERTION(!attrVal ||
+               attrVal->Type() == nsAttrValue::eAtom ||
+               (attrVal->Type() == nsAttrValue::eString &&
+                attrVal->GetStringValue().IsEmpty()),
+               "unexpected attribute type");
+  if (attrVal && attrVal->Type() == nsAttrValue::eAtom) {
+    NS_ADDREF(*aResult = attrVal->GetAtomValue());
+  }
 
   return NS_OK;
 }
 
-nsresult
-nsGenericHTMLElement::GetClasses(nsVoidArray& aArray) const
+const nsAttrValue*
+nsGenericHTMLElement::GetClasses() const
 {
-  if (nsnull != mAttributes) {
-    return mAttributes->GetClasses(aArray);
-  }
-  return NS_OK;
+  return mAttrsAndChildren.GetAttr(nsHTMLAtoms::kClass);
+}
+
+nsIAtom *
+nsGenericHTMLElement::GetIDAttributeName() const
+{
+  return nsHTMLAtoms::id;
+}
+
+nsIAtom *
+nsGenericHTMLElement::GetClassAttributeName() const
+{
+  return nsHTMLAtoms::kClass;
 }
 
 NS_IMETHODIMP_(PRBool)
 nsGenericHTMLElement::HasClass(nsIAtom* aClass, PRBool aCaseSensitive) const
 {
-  if (mAttributes) {
-    return mAttributes->HasClass(aClass, aCaseSensitive);
+  const nsAttrValue* val = mAttrsAndChildren.GetAttr(nsHTMLAtoms::kClass);
+  if (val) {
+    if (val->Type() == nsAttrValue::eAtom) {
+      if (aCaseSensitive) {
+        return aClass == val->GetAtomValue();
+      }
+
+      const char *class1, *class2;
+      aClass->GetUTF8String(&class1);
+      val->GetAtomValue()->GetUTF8String(&class2);
+
+      return nsCRT::strcasecmp(class1, class2) == 0;
+    }
+    if (val->Type() == nsAttrValue::eAtomArray) {
+      nsCOMArray<nsIAtom>* array = val->GetAtomArrayValue();
+      if (aCaseSensitive) {
+        return array->IndexOf(aClass) >= 0;
+      }
+
+      const char *class1, *class2;
+      aClass->GetUTF8String(&class1);
+
+      PRInt32 i, count = array->Count();
+      for (i = 0; i < count; ++i) {
+        array->ObjectAt(i)->GetUTF8String(&class2);
+        if (nsCRT::strcasecmp(class1, class2) == 0) {
+          return PR_TRUE;
+        }
+      }
+    }
   }
+
   return PR_FALSE;
 }
 
 nsresult
 nsGenericHTMLElement::WalkContentStyleRules(nsRuleWalker* aRuleWalker)
 {
-  nsresult result = NS_OK;
-
-  if (aRuleWalker) {
-    if (mAttributes) {
-      result = mAttributes->WalkMappedAttributeStyleRules(aRuleWalker);
-    }
-  }
-  else {
-    result = NS_ERROR_NULL_POINTER;
-  }
-  return result;
+  mAttrsAndChildren.WalkMappedAttributeStyleRules(aRuleWalker);
+  return NS_OK;
 }
 
 nsresult
-nsGenericHTMLElement::GetInlineStyleRule(nsIStyleRule** aStyleRule)
+nsGenericHTMLElement::GetInlineStyleRule(nsICSSStyleRule** aStyleRule)
 {
   *aStyleRule = nsnull;
   
-  if (mAttributes) {
-    nsHTMLValue value;
-    if (NS_CONTENT_ATTR_HAS_VALUE == mAttributes->GetAttribute(nsHTMLAtoms::style, value)) {
-      if (eHTMLUnit_ISupports == value.GetUnit()) {
-        nsCOMPtr<nsISupports> supports = getter_AddRefs(value.GetISupportsValue());
-        if (supports)
-          CallQueryInterface(supports, aStyleRule);
-      }
+  const nsAttrValue* attrVal = mAttrsAndChildren.GetAttr(nsHTMLAtoms::style);
+  
+  if (attrVal) {
+    if (attrVal->Type() != nsAttrValue::eCSSStyleRule) {
+      ReparseStyleAttribute();
+      attrVal = mAttrsAndChildren.GetAttr(nsHTMLAtoms::style);
+      // hopefully value.GetUnit() is now eHTMLUnit_CSSStyleRule
+    }
+
+    if (attrVal->Type() == nsAttrValue::eCSSStyleRule) {
+      NS_ADDREF(*aStyleRule = attrVal->GetCSSStyleRuleValue());
     }
   }
 
@@ -2389,79 +1915,98 @@ nsGenericHTMLElement::GetInlineStyleRule(nsIStyleRule** aStyleRule)
 }
 
 nsresult
-nsGenericHTMLElement::GetBaseURL(nsIURI** aBaseURL) const
+nsGenericHTMLElement::SetInlineStyleRule(nsICSSStyleRule* aStyleRule,
+                                         PRBool aNotify)
 {
-  nsHTMLValue baseHref;
-  if (mAttributes) {
-    mAttributes->GetAttribute(nsHTMLAtoms::_baseHref, baseHref);
-  }
+  PRBool hasListeners = PR_FALSE;
+  PRBool modification = PR_FALSE;
+  nsAutoString oldValueStr;
 
-  nsCOMPtr<nsIDocument> doc(mDocument);
+  if (mDocument) {
+    hasListeners = nsGenericElement::HasMutationListeners(this,
+      NS_EVENT_BITS_MUTATION_ATTRMODIFIED);
 
-  if (!doc) {
-    mNodeInfo->GetDocument(getter_AddRefs(doc));
-  }
-
-  return GetBaseURL(baseHref, doc, aBaseURL);
-}
-
-nsresult
-nsGenericHTMLElement::GetBaseURL(const nsHTMLValue& aBaseHref,
-                                 nsIDocument* aDocument,
-                                 nsIURI** aBaseURL)
-{
-  nsresult result = NS_OK;
-
-  nsCOMPtr<nsIURI> docBaseURL;
-
-  if (aDocument) {
-    result = aDocument->GetBaseURL(getter_AddRefs(docBaseURL));
-  }
-
-  if (eHTMLUnit_String == aBaseHref.GetUnit()) {
-    nsAutoString baseHref;
-    aBaseHref.GetStringValue(baseHref);
-    baseHref.Trim(" \t\n\r");
-
-    *aBaseURL = nsnull;
-    return NS_NewURI(aBaseURL, baseHref, nsnull, docBaseURL);
-  }
-
-  *aBaseURL = docBaseURL;
-  NS_IF_ADDREF(*aBaseURL);
-  return result;
-}
-
-nsresult
-nsGenericHTMLElement::GetBaseTarget(nsAString& aBaseTarget) const
-{
-  nsresult  result = NS_OK;
-
-  if (nsnull != mAttributes) {
-    nsHTMLValue value;
-    if (NS_CONTENT_ATTR_HAS_VALUE == mAttributes->GetAttribute(nsHTMLAtoms::_baseTarget, value)) {
-      if (eHTMLUnit_String == value.GetUnit()) {
-        value.GetStringValue(aBaseTarget);
-        return NS_OK;
-      }
+    // There's no point in comparing the stylerule pointers since we're always
+    // getting a new stylerule here. And we can't compare the stringvalues of
+    // the old and the new rules since both will point to the same declaration
+    // and thus will be the same.
+    if (hasListeners) {
+      // save the old attribute so we can set up the mutation event properly
+      modification = GetAttr(kNameSpaceID_None, nsHTMLAtoms::style,
+                             oldValueStr) != NS_CONTENT_ATTR_NOT_THERE;
+    }
+    else if (aNotify) {
+      modification = !!mAttrsAndChildren.GetAttr(nsHTMLAtoms::style);
     }
   }
-  if (nsnull != mDocument) {
-    result = mDocument->GetBaseTarget(aBaseTarget);
+
+  nsAttrValue attrValue(aStyleRule);
+
+  return SetAttrAndNotify(kNameSpaceID_None, nsHTMLAtoms::style, nsnull, oldValueStr,
+                          attrValue, modification, hasListeners, aNotify);
+}
+
+already_AddRefed<nsIURI>
+nsGenericHTMLElement::GetBaseURI() const
+{
+  nsIDocument* doc = GetOwnerDocument();
+
+  const nsAttrValue* val = mAttrsAndChildren.GetAttr(nsHTMLAtoms::_baseHref);
+  if (val) {
+    // We have a _baseHref attribute; that will determine our base URI
+    nsAutoString str;
+    val->ToString(str);
+
+    nsIURI* docBaseURL = nsnull;
+    if (doc) {
+      docBaseURL = doc->GetBaseURI();
+    }
+
+    nsIURI* uri = nsnull;
+    NS_NewURI(&uri, str, nsnull, docBaseURL);
+
+    return uri;
+  }
+
+  // If we are a plain old HTML element (not XHTML), don't bother asking the
+  // base class -- our base URI is determined solely by the document base.
+  if (mNodeInfo->NamespaceEquals(kNameSpaceID_None)) {
+    if (doc) {
+      nsIURI *uri = doc->GetBaseURI();
+      NS_IF_ADDREF(uri);
+
+      return uri;
+    }
+
+    return nsnull;
+  }
+
+  return nsGenericElement::GetBaseURI();
+}
+
+void
+nsGenericHTMLElement::GetBaseTarget(nsAString& aBaseTarget) const
+{
+  const nsAttrValue* val = mAttrsAndChildren.GetAttr(nsHTMLAtoms::_baseTarget);
+  if (val) {
+    val->ToString(aBaseTarget);
+    return;
+  }
+
+  if (mDocument) {
+    mDocument->GetBaseTarget(aBaseTarget);
   }
   else {
     aBaseTarget.Truncate();
   }
-
-  return result;
 }
 
 #ifdef DEBUG
 void
 nsGenericHTMLElement::ListAttributes(FILE* out) const
 {
-  PRInt32 index, count;
-  GetAttrCount(count);
+  PRUint32 index, count = GetAttrCount();
+
   for (index = 0; index < count; index++) {
     // name
     nsCOMPtr<nsIAtom> attr;
@@ -2489,7 +2034,7 @@ nsGenericHTMLElement::ListAttributes(FILE* out) const
   }
 }
 
-nsresult
+void
 nsGenericHTMLElement::List(FILE* out, PRInt32 aIndent) const
 {
   NS_PRECONDITION(nsnull != mDocument, "bad content");
@@ -2497,84 +2042,64 @@ nsGenericHTMLElement::List(FILE* out, PRInt32 aIndent) const
   PRInt32 index;
   for (index = aIndent; --index >= 0; ) fputs("  ", out);
 
-  nsCOMPtr<nsIAtom> tag;
-  GetTag(getter_AddRefs(tag));
-  if (tag) {
-    nsAutoString buf;
-    tag->ToString(buf);
-    fputs(NS_LossyConvertUCS2toASCII(buf).get(), out);
-  }
+  nsAutoString buf;
+  mNodeInfo->GetQualifiedName(buf);
+  fputs(NS_LossyConvertUCS2toASCII(buf).get(), out);
+
   fprintf(out, "@%p", (void*)this);
 
   ListAttributes(out);
 
   fprintf(out, " refcount=%d<", mRefCnt.get());
 
-  PRBool canHaveKids;
-  CanContainChildren(canHaveKids);
-  if (canHaveKids) {
-    fputs("\n", out);
-    PRInt32 kids;
-    ChildCount(kids);
-    nsCOMPtr<nsIContent> kid;
-    for (index = 0; index < kids; index++) {
-      ChildAt(index, getter_AddRefs(kid));
-      kid->List(out, aIndent + 1);
-    }
-    for (index = aIndent; --index >= 0; ) fputs("  ", out);
+  fputs("\n", out);
+  PRInt32 kids = GetChildCount();
+  for (index = 0; index < kids; index++) {
+    nsIContent *kid = GetChildAt(index);
+    kid->List(out, aIndent + 1);
   }
-  fputs(">\n", out);
+  for (index = aIndent; --index >= 0; ) fputs("  ", out);
 
-  return NS_OK;
+  fputs(">\n", out);
 }
 
-nsresult
-nsGenericHTMLElement::DumpContent(FILE* out, PRInt32 aIndent,PRBool aDumpAll) const {
+void
+nsGenericHTMLElement::DumpContent(FILE* out, PRInt32 aIndent,
+                                  PRBool aDumpAll) const
+{
    NS_PRECONDITION(nsnull != mDocument, "bad content");
 
   PRInt32 index;
   for (index = aIndent; --index >= 0; ) fputs("  ", out);
 
   nsAutoString buf;
-  nsCOMPtr<nsIAtom> tag;
-  GetTag(getter_AddRefs(tag));
-  if (tag) {
-    tag->ToString(buf);
-    fputs("<",out);
-    fputs(NS_LossyConvertUCS2toASCII(buf).get(), out);
+  mNodeInfo->GetQualifiedName(buf);
+  fputs("<",out);
+  fputs(NS_LossyConvertUCS2toASCII(buf).get(), out);
 
-    if(aDumpAll) ListAttributes(out);
+  if(aDumpAll) ListAttributes(out);
 
-    fputs(">",out);
+  fputs(">",out);
+
+  if(aIndent) fputs("\n", out);
+  PRInt32 kids = GetChildCount();
+  for (index = 0; index < kids; index++) {
+    nsIContent *kid = GetChildAt(index);
+    PRInt32 indent = aIndent ? aIndent + 1 : 0;
+    kid->DumpContent(out, indent, aDumpAll);
   }
+  for (index = aIndent; --index >= 0; ) fputs("  ", out);
+  fputs("</",out);
+  fputs(NS_LossyConvertUCS2toASCII(buf).get(), out);
+  fputs(">",out);
 
-  PRBool canHaveKids;
-  CanContainChildren(canHaveKids);
-  if (canHaveKids) {
-    if(aIndent) fputs("\n", out);
-    PRInt32 kids;
-    ChildCount(kids);
-    nsCOMPtr<nsIContent> kid;
-    for (index = 0; index < kids; index++) {
-      ChildAt(index, getter_AddRefs(kid));
-      PRInt32 indent = aIndent ? aIndent + 1 : 0;
-      kid->DumpContent(out, indent, aDumpAll);
-    }
-    for (index = aIndent; --index >= 0; ) fputs("  ", out);
-    fputs("</",out);
-    fputs(NS_LossyConvertUCS2toASCII(buf).get(), out);
-    fputs(">",out);
-
-    if(aIndent) fputs("\n", out);
-  }
-
-  return NS_OK;
+  if(aIndent) fputs("\n", out);
 }
 #endif
 
 
-NS_IMETHODIMP_(PRBool)
-nsGenericHTMLElement::IsContentOfType(PRUint32 aFlags)
+PRBool
+nsGenericHTMLElement::IsContentOfType(PRUint32 aFlags) const
 {
   return !(aFlags & ~(eELEMENT | eHTML));
 }
@@ -2587,29 +2112,9 @@ nsGenericHTMLElement::AttributeToString(nsIAtom* aAttribute,
                                         const nsHTMLValue& aValue,
                                         nsAString& aResult) const
 {
-  if (nsHTMLAtoms::style == aAttribute) {
-    if (eHTMLUnit_ISupports == aValue.GetUnit()) {
-      nsCOMPtr<nsISupports> rule = aValue.GetISupportsValue();
-      nsCOMPtr<nsICSSStyleRule> cssRule = do_QueryInterface(rule);
-      if (cssRule) {
-        nsCSSDeclaration* decl = cssRule->GetDeclaration();
-        if (decl) {
-          decl->ToString(aResult);
-        } else {
-          aResult.Truncate();
-        }
-      }
-      else {
-        aResult.Assign(NS_LITERAL_STRING("Unknown rule type"));
-      }
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
-  } else if (nsHTMLAtoms::dir == aAttribute) {
-    nsHTMLValue value;
-    nsresult result = GetHTMLAttribute(nsHTMLAtoms::dir, value);
-
-    if (NS_CONTENT_ATTR_HAS_VALUE == result) {
-      value.EnumValueToString(kDirTable, aResult);
+  if (nsHTMLAtoms::dir == aAttribute) {
+    if (aValue.GetUnit() == eHTMLUnit_Enumerated) {
+      aValue.EnumValueToString(kDirTable, aResult);
 
       return NS_OK;
     }
@@ -2618,29 +2123,52 @@ nsGenericHTMLElement::AttributeToString(nsIAtom* aAttribute,
   return NS_CONTENT_ATTR_NOT_THERE;
 }
 
-NS_IMETHODIMP
-nsGenericHTMLElement::GetMappedAttributeImpact(const nsIAtom* aAttribute,
-                                               PRInt32 aModType,
-                                               nsChangeHint& aHint) const
+PRBool
+nsGenericHTMLElement::ParseAttribute(nsIAtom* aAttribute,
+                                     const nsAString& aValue,
+                                     nsAttrValue& aResult)
 {
-  static const AttributeImpactEntry* const map[] = {
+  if (aAttribute == nsHTMLAtoms::dir) {
+    return aResult.ParseEnumValue(aValue, kDirTable);
+  }
+  if (aAttribute == nsHTMLAtoms::style) {
+    ParseStyleAttribute(this, mNodeInfo->NamespaceEquals(kNameSpaceID_XHTML),
+                        aValue, aResult);
+    return PR_TRUE;
+  }
+  if (aAttribute == nsHTMLAtoms::id && !aValue.IsEmpty()) {
+    aResult.ParseAtom(aValue);
+
+    return PR_TRUE;
+  }
+  if (aAttribute == nsHTMLAtoms::kClass) {
+    aResult.ParseAtomArray(aValue);
+
+    return PR_TRUE;
+  }
+
+  return PR_FALSE;
+}
+
+PRBool
+nsGenericHTMLElement::IsAttributeMapped(const nsIAtom* aAttribute) const
+{
+  static const MappedAttributeEntry* const map[] = {
     sCommonAttributeMap
   };
   
-  FindAttributeImpact(aAttribute, aHint,
-                map, NS_ARRAY_LENGTH(map));
-  return NS_OK;
+  return FindAttributeDependence(aAttribute, map, NS_ARRAY_LENGTH(map));
 }
 
 /**
  * Handle attributes on the BDO element
  */
 static void
-MapBdoAttributesInto(const nsIHTMLMappedAttributes* aAttributes,
+MapBdoAttributesInto(const nsMappedAttributes* aAttributes,
                      nsRuleData* aData)
 {
   if (aData->mSID == eStyleStruct_TextReset &&
-    aData->mTextData->mUnicodeBidi.GetUnit() == eCSSUnit_Null) {
+      aData->mTextData->mUnicodeBidi.GetUnit() == eCSSUnit_Null) {
     aData->mTextData->mUnicodeBidi.SetIntValue(NS_STYLE_UNICODE_BIDI_OVERRIDE, eCSSUnit_Enumerated);
   }
   nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aData);
@@ -2669,16 +2197,15 @@ nsGenericHTMLElement::GetPrimaryFrameFor(nsIContent* aContent,
   }
 
   // Get presentation shell 0
-  nsCOMPtr<nsIPresShell> presShell;
-  aDocument->GetShellAt(0, getter_AddRefs(presShell));
+  nsIPresShell *presShell = aDocument->GetShellAt(0);
+
+  nsIFrame *frame = nsnull;
 
   if (presShell) {
-    nsIFrame *frame = nsnull;
     presShell->GetPrimaryFrameFor(aContent, &frame);
-    return frame;
   }
 
-  return nsnull;
+  return frame;
 }
 
 // static
@@ -2691,7 +2218,22 @@ nsGenericHTMLElement::GetFormControlFrameFor(nsIContent* aContent,
   if (frame) {
     nsIFormControlFrame* form_frame = nsnull;
     CallQueryInterface(frame, &form_frame);
-    return form_frame;
+    if (form_frame) {
+      return form_frame;
+    }
+
+    // If we have generated content, the primary frame will be a
+    // wrapper frame..  out real frame will be in its child list.
+    for (frame = frame->GetFirstChild(nsnull);
+         frame;
+         frame = frame->GetNextSibling()) {
+      CallQueryInterface(frame, &form_frame);
+      if (form_frame) {
+        return form_frame;
+      }
+    }
+        
+    NS_ERROR("Form control has a frame, but it's not a form frame");
   }
 
   return nsnull;
@@ -2733,24 +2275,23 @@ nsGenericHTMLElement::GetLayoutHistoryAndKey(nsIHTMLContent* aContent,
   //
   // Get the pres shell
   //
-  nsCOMPtr<nsIDocument> doc;
-  nsresult rv = aContent->GetDocument(getter_AddRefs(doc));
+  nsCOMPtr<nsIDocument> doc = aContent->GetDocument();
   if (!doc) {
-    return rv;
+    return NS_OK;
   }
 
   //
   // Get the history (don't bother with the key if the history is not there)
   //
-  nsCOMPtr<nsISupports> container;
-  doc->GetContainer(getter_AddRefs(container));
+  nsresult rv;
+  nsCOMPtr<nsISupports> container = doc->GetContainer();
   nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
   if (docShell) {
     rv = docShell->GetLayoutHistoryState(aHistory);
     NS_ENSURE_SUCCESS(rv, rv);
-    if (!*aHistory) {
-      return NS_OK;
-    }
+  }
+  if (!*aHistory) {
+    return NS_OK;
   }
 
   //
@@ -2800,14 +2341,11 @@ nsresult
 nsGenericHTMLElement::GetPresContext(nsIHTMLContent* aContent,
                                      nsIPresContext** aPresContext)
 {
-  nsCOMPtr<nsIDocument> doc;
-
   // Get the document
-  aContent->GetDocument(getter_AddRefs(doc));
+  nsIDocument* doc = aContent->GetDocument();
   if (doc) {
     // Get presentation shell 0
-    nsCOMPtr<nsIPresShell> presShell;
-    doc->GetShellAt(0, getter_AddRefs(presShell));
+    nsIPresShell *presShell = doc->GetShellAt(0);
     if (presShell) {
       return presShell->GetPresContext(aPresContext);
     }
@@ -2887,23 +2425,8 @@ static const nsHTMLValue::EnumTable kTableVAlignTable[] = {
 };
 
 PRBool
-nsGenericHTMLElement::ParseCommonAttribute(nsIAtom* aAttribute,
-                                           const nsAString& aValue,
-                                           nsHTMLValue& aResult)
-{
-  if (nsHTMLAtoms::dir == aAttribute) {
-    return aResult.ParseEnumValue(aValue, kDirTable);
-  }
-  else if (nsHTMLAtoms::lang == aAttribute) {
-    aResult.SetStringValue(aValue);
-    return PR_TRUE;
-  }
-  return PR_FALSE;
-}
-
-PRBool
 nsGenericHTMLElement::ParseAlignValue(const nsAString& aString,
-                                      nsHTMLValue& aResult)
+                                      nsAttrValue& aResult)
 {
   return aResult.ParseEnumValue(aString, kAlignTable);
 }
@@ -2935,7 +2458,7 @@ static const nsHTMLValue::EnumTable kCompatTableHAlignTable[] = {
 
 PRBool
 nsGenericHTMLElement::ParseTableHAlignValue(const nsAString& aString,
-                                            nsHTMLValue& aResult) const
+                                            nsAttrValue& aResult) const
 {
   if (InNavQuirksMode(mDocument)) {
     return aResult.ParseEnumValue(aString, kCompatTableHAlignTable);
@@ -2984,7 +2507,7 @@ static const nsHTMLValue::EnumTable kCompatTableCellHAlignTable[] = {
 
 PRBool
 nsGenericHTMLElement::ParseTableCellHAlignValue(const nsAString& aString,
-                                                nsHTMLValue& aResult) const
+                                                nsAttrValue& aResult) const
 {
   if (InNavQuirksMode(mDocument)) {
     return aResult.ParseEnumValue(aString, kCompatTableCellHAlignTable);
@@ -3006,7 +2529,7 @@ nsGenericHTMLElement::TableCellHAlignValueToString(const nsHTMLValue& aValue,
 
 PRBool
 nsGenericHTMLElement::ParseTableVAlignValue(const nsAString& aString,
-                                            nsHTMLValue& aResult)
+                                            nsAttrValue& aResult)
 {
   return aResult.ParseEnumValue(aString, kTableVAlignTable);
 }
@@ -3034,7 +2557,7 @@ nsGenericHTMLElement::TableVAlignValueToString(const nsHTMLValue& aValue,
 
 PRBool
 nsGenericHTMLElement::ParseDivAlignValue(const nsAString& aString,
-                                         nsHTMLValue& aResult) const
+                                         nsAttrValue& aResult) const
 {
   return aResult.ParseEnumValue(aString, kDivAlignTable);
 }
@@ -3049,38 +2572,23 @@ nsGenericHTMLElement::DivAlignValueToString(const nsHTMLValue& aValue,
 PRBool
 nsGenericHTMLElement::ParseImageAttribute(nsIAtom* aAttribute,
                                           const nsAString& aString,
-                                          nsHTMLValue& aResult)
+                                          nsAttrValue& aResult)
 {
   if ((aAttribute == nsHTMLAtoms::width) ||
       (aAttribute == nsHTMLAtoms::height)) {
-    return aResult.ParseSpecialIntValue(aString, eHTMLUnit_Pixel, PR_TRUE, PR_FALSE);
+    return aResult.ParseSpecialIntValue(aString, PR_TRUE, PR_FALSE);
   }
   else if ((aAttribute == nsHTMLAtoms::hspace) ||
            (aAttribute == nsHTMLAtoms::vspace) ||
            (aAttribute == nsHTMLAtoms::border)) {
-    return aResult.ParseIntWithBounds(aString, eHTMLUnit_Pixel, 0);
-  }
-  return PR_FALSE;
-}
-
-PRBool
-nsGenericHTMLElement::ImageAttributeToString(nsIAtom* aAttribute,
-                                             const nsHTMLValue& aValue,
-                                             nsAString& aResult)
-{
-  if ((aAttribute == nsHTMLAtoms::width) ||
-      (aAttribute == nsHTMLAtoms::height) ||
-      (aAttribute == nsHTMLAtoms::border) ||
-      (aAttribute == nsHTMLAtoms::hspace) ||
-      (aAttribute == nsHTMLAtoms::vspace)) {
-    return aValue.ToString(aResult);
+    return aResult.ParseIntWithBounds(aString, 0);
   }
   return PR_FALSE;
 }
 
 PRBool
 nsGenericHTMLElement::ParseFrameborderValue(const nsAString& aString,
-                                            nsHTMLValue& aResult)
+                                            nsAttrValue& aResult)
 {
   return aResult.ParseEnumValue(aString, kFrameborderTable);
 }
@@ -3094,7 +2602,7 @@ nsGenericHTMLElement::FrameborderValueToString(const nsHTMLValue& aValue,
 
 PRBool
 nsGenericHTMLElement::ParseScrollingValue(const nsAString& aString,
-                                          nsHTMLValue& aResult)
+                                          nsAttrValue& aResult)
 {
   return aResult.ParseEnumValue(aString, kScrollingTable);
 }
@@ -3107,53 +2615,55 @@ nsGenericHTMLElement::ScrollingValueToString(const nsHTMLValue& aValue,
 }
 
 nsresult
-nsGenericHTMLElement::ReparseStyleAttribute(void)
+nsGenericHTMLElement::ReparseStyleAttribute()
 {
-  nsresult result = NS_OK;
-  nsHTMLValue oldValue;
-  if (NS_CONTENT_ATTR_HAS_VALUE == GetHTMLAttribute(nsHTMLAtoms::style, oldValue)) {
-    if (eHTMLUnit_String == oldValue.GetUnit()) {
-      nsHTMLValue parsedValue;
-      nsAutoString  stringValue;
-      result = ParseStyleAttribute(oldValue.GetStringValue(stringValue), parsedValue);
-      if (NS_SUCCEEDED(result) && (eHTMLUnit_String != parsedValue.GetUnit())) {
-        result = SetHTMLAttribute(nsHTMLAtoms::style, parsedValue, PR_FALSE);
-      }
-    }
+  const nsAttrValue* oldVal = mAttrsAndChildren.GetAttr(nsHTMLAtoms::style);
+  
+  if (oldVal && oldVal->Type() != nsAttrValue::eCSSStyleRule) {
+    nsAttrValue attrValue;
+    nsAutoString stringValue;
+    oldVal->ToString(stringValue);
+    ParseStyleAttribute(this, mNodeInfo->NamespaceEquals(kNameSpaceID_XHTML),
+                        stringValue, attrValue);
+    // Don't bother going through SetInlineStyleRule, we don't want to fire off
+    // mutation events or document notifications anyway
+    nsresult rv = mAttrsAndChildren.SetAndTakeAttr(nsHTMLAtoms::style, attrValue);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
-  return result;
+  
+  return NS_OK;
 }
 
-nsresult
-nsGenericHTMLElement::ParseStyleAttribute(const nsAString& aValue, nsHTMLValue& aResult)
+void
+nsGenericHTMLElement::ParseStyleAttribute(nsIContent* aContent,
+                                          PRBool aCaseSensitive,
+                                          const nsAString& aValue,
+                                          nsAttrValue& aResult)
 {
   nsresult result = NS_OK;
-  NS_ASSERTION(mNodeInfo, "If we don't have a nodeinfo, we are very screwed");
+  NS_ASSERTION(aContent->GetNodeInfo(), "If we don't have a nodeinfo, we are very screwed");
 
-  nsCOMPtr<nsIDocument> doc = mDocument;
-
+  nsIDocument* doc = aContent->GetDocument();
   if (!doc) {
-    mNodeInfo->GetDocument(getter_AddRefs(doc));
+    doc = aContent->GetNodeInfo()->GetDocument();
   }
 
   if (doc) {
-    PRBool isCSS = PR_TRUE; // asume CSS until proven otherwise
+    PRBool isCSS = PR_TRUE; // assume CSS until proven otherwise
 
-    nsAutoString styleType;
-    doc->GetHeaderData(nsHTMLAtoms::headerContentStyleType, styleType);
-    if (!styleType.IsEmpty()) {
-      static const char textCssStr[] = "text/css";
-      isCSS = (styleType.EqualsIgnoreCase(textCssStr, sizeof(textCssStr) - 1));
+    if (!aContent->IsNativeAnonymous()) {  // native anonymous content
+                                           // always assumes CSS
+      nsAutoString styleType;
+      doc->GetHeaderData(nsHTMLAtoms::headerContentStyleType, styleType);
+      if (!styleType.IsEmpty()) {
+        static const char textCssStr[] = "text/css";
+        isCSS = (styleType.EqualsIgnoreCase(textCssStr, sizeof(textCssStr) - 1));
+      }
     }
 
     if (isCSS) {
-      nsCOMPtr<nsICSSLoader> cssLoader;
+      nsICSSLoader* cssLoader = doc->GetCSSLoader();
       nsCOMPtr<nsICSSParser> cssParser;
-      nsCOMPtr<nsIHTMLContentContainer> htmlContainer(do_QueryInterface(doc));
-
-      if (htmlContainer) {
-        htmlContainer->GetCSSLoader(*getter_AddRefs(cssLoader));
-      }
       if (cssLoader) {
         result = cssLoader->GetParserFor(nsnull, getter_AddRefs(cssParser));
       }
@@ -3162,35 +2672,36 @@ nsGenericHTMLElement::ParseStyleAttribute(const nsAString& aValue, nsHTMLValue& 
         if (cssParser) {
           // look up our namespace.  If we're XHTML, we need to be case-sensitive
           // Otherwise, we should not be.
-          cssParser->SetCaseSensitive(mNodeInfo->NamespaceEquals(kNameSpaceID_XHTML));
+          cssParser->SetCaseSensitive(aCaseSensitive);
         }
       }
       if (cssParser) {
-        nsCOMPtr<nsIURI> docURL;
-        doc->GetBaseURL(getter_AddRefs(docURL));
+        nsCOMPtr<nsIURI> baseURI = aContent->GetBaseURI();
 
-        nsCOMPtr<nsIStyleRule> rule;
-        result = cssParser->ParseStyleAttribute(aValue, docURL, getter_AddRefs(rule));
+        nsCOMPtr<nsICSSStyleRule> rule;
+        result = cssParser->ParseStyleAttribute(aValue, baseURI,
+                                                getter_AddRefs(rule));
         if (cssLoader) {
           cssLoader->RecycleParser(cssParser);
         }
 
         if (rule) {
-          aResult.SetISupportsValue(rule);
-          return NS_OK;
+          aResult.SetTo(rule);
+
+          return;
         }
       }
     }
   }
-  aResult.SetStringValue(aValue);
-  return result;
+
+  aResult.SetTo(aValue);
 }
 
 /**
  * Handle attributes common to all html elements
  */
 void
-nsGenericHTMLElement::MapCommonAttributesInto(const nsIHTMLMappedAttributes* aAttributes,
+nsGenericHTMLElement::MapCommonAttributesInto(const nsMappedAttributes* aAttributes,
                                               nsRuleData* aData)
 {
   if (aData->mSID == eStyleStruct_TextReset) {
@@ -3210,8 +2721,9 @@ nsGenericHTMLElement::MapCommonAttributesInto(const nsIHTMLMappedAttributes* aAt
                                                     eCSSUnit_Enumerated);
     }
     nsHTMLValue value;
-    aAttributes->GetAttribute(nsHTMLAtoms::lang, value);
-    if (value.GetUnit() == eHTMLUnit_String) {
+    if (aAttributes->GetAttribute(nsHTMLAtoms::lang, value) !=
+        NS_CONTENT_ATTR_NOT_THERE &&
+        value.GetUnit() == eHTMLUnit_String) {
       nsAutoString lang;
       value.GetStringValue(lang);
       aData->mDisplayData->mLang.SetStringValue(lang,
@@ -3222,82 +2734,69 @@ nsGenericHTMLElement::MapCommonAttributesInto(const nsIHTMLMappedAttributes* aAt
 
 
 
-const nsGenericHTMLElement::AttributeImpactEntry
+/* static */ const nsGenericHTMLElement::MappedAttributeEntry
 nsGenericHTMLElement::sCommonAttributeMap[] = {
-  { &nsHTMLAtoms::dir, NS_STYLE_HINT_REFLOW },
-  { &nsHTMLAtoms::lang, NS_STYLE_HINT_REFLOW },
-  { &nsHTMLAtoms::_baseHref, NS_STYLE_HINT_VISUAL },
-  { nsnull, NS_STYLE_HINT_NONE }
+  { &nsHTMLAtoms::dir },
+  { &nsHTMLAtoms::lang },
+  { nsnull }
 };
 
-const
-nsGenericHTMLElement::AttributeImpactEntry
-nsGenericHTMLElement::sImageAttributeMap[] = {
-  { &nsHTMLAtoms::width, NS_STYLE_HINT_REFLOW },
-  { &nsHTMLAtoms::height, NS_STYLE_HINT_REFLOW },
-  { &nsHTMLAtoms::hspace, NS_STYLE_HINT_REFLOW },
-  { &nsHTMLAtoms::vspace, NS_STYLE_HINT_REFLOW },
-  { nsnull, NS_STYLE_HINT_NONE }
+/* static */ const nsGenericElement::MappedAttributeEntry
+nsGenericHTMLElement::sImageMarginSizeAttributeMap[] = {
+  { &nsHTMLAtoms::width },
+  { &nsHTMLAtoms::height },
+  { &nsHTMLAtoms::hspace },
+  { &nsHTMLAtoms::vspace },
+  { nsnull }
 };
 
-const nsGenericHTMLElement::AttributeImpactEntry
+/* static */ const nsGenericElement::MappedAttributeEntry
 nsGenericHTMLElement::sImageAlignAttributeMap[] = {
-  { &nsHTMLAtoms::align, NS_STYLE_HINT_FRAMECHANGE },
-  { nsnull, NS_STYLE_HINT_NONE }
+  { &nsHTMLAtoms::align },
+  { nsnull }
 };
 
-const nsGenericHTMLElement::AttributeImpactEntry
+/* static */ const nsGenericElement::MappedAttributeEntry
+nsGenericHTMLElement::sDivAlignAttributeMap[] = {
+  { &nsHTMLAtoms::align },
+  { nsnull }
+};
+
+/* static */ const nsGenericElement::MappedAttributeEntry
 nsGenericHTMLElement::sImageBorderAttributeMap[] = {
-  { &nsHTMLAtoms::border, NS_STYLE_HINT_REFLOW },
-  { nsnull, NS_STYLE_HINT_NONE }
+  { &nsHTMLAtoms::border },
+  { nsnull }
 };
 
-
-const nsGenericHTMLElement::AttributeImpactEntry
+/* static */ const nsGenericElement::MappedAttributeEntry
 nsGenericHTMLElement::sBackgroundAttributeMap[] = {
-  { &nsHTMLAtoms::background, NS_STYLE_HINT_VISUAL },
-  { &nsHTMLAtoms::bgcolor, NS_STYLE_HINT_VISUAL },
-  { nsnull, NS_STYLE_HINT_NONE }
+  { &nsHTMLAtoms::background },
+  { &nsHTMLAtoms::bgcolor },
+  { nsnull }
+};
+
+/* static */ const nsGenericElement::MappedAttributeEntry
+nsGenericHTMLElement::sScrollingAttributeMap[] = {
+  { &nsHTMLAtoms::scrolling },
+  { nsnull }
 };
 
 void
-nsGenericHTMLElement::FindAttributeImpact(const nsIAtom* aAttribute,
-                                          nsChangeHint& aHint,
-                                          const AttributeImpactEntry* const aMaps[],
-                                          PRUint32 aMapCount)
-{
-  for (PRUint32 mapindex = 0; mapindex < aMapCount; ++mapindex) {
-    const AttributeImpactEntry* map = aMaps[mapindex];
-    while (map->attribute) {
-      if (aAttribute == *map->attribute) {
-        aHint = map->hint;
-        return;
-      }
-      map++;
-    }
-  }
-
-  // fall-through
-  aHint = NS_STYLE_HINT_CONTENT;
-}
-
-
-void
-nsGenericHTMLElement::MapAlignAttributeInto(const nsIHTMLMappedAttributes* aAttributes,
-                                            nsRuleData* aRuleData)
+nsGenericHTMLElement::MapImageAlignAttributeInto(const nsMappedAttributes* aAttributes,
+                                                 nsRuleData* aRuleData)
 {
   if (aRuleData->mSID == eStyleStruct_Display || aRuleData->mSID == eStyleStruct_TextReset) {
     nsHTMLValue value;
     aAttributes->GetAttribute(nsHTMLAtoms::align, value);
     if (value.GetUnit() == eHTMLUnit_Enumerated) {
       PRUint8 align = (PRUint8)(value.GetIntValue());
-      if (aRuleData->mDisplayData && aRuleData->mDisplayData->mFloat.GetUnit() == eCSSUnit_Null) {
+      if (aRuleData->mSID == eStyleStruct_Display && aRuleData->mDisplayData->mFloat.GetUnit() == eCSSUnit_Null) {
         if (align == NS_STYLE_TEXT_ALIGN_LEFT)
           aRuleData->mDisplayData->mFloat.SetIntValue(NS_STYLE_FLOAT_LEFT, eCSSUnit_Enumerated);
         else if (align == NS_STYLE_TEXT_ALIGN_RIGHT)
           aRuleData->mDisplayData->mFloat.SetIntValue(NS_STYLE_FLOAT_RIGHT, eCSSUnit_Enumerated);
       }
-      else if (aRuleData->mTextData && aRuleData->mTextData->mVerticalAlign.GetUnit() == eCSSUnit_Null) {
+      else if (aRuleData->mSID == eStyleStruct_TextReset && aRuleData->mTextData->mVerticalAlign.GetUnit() == eCSSUnit_Null) {
         switch (align) {
         case NS_STYLE_TEXT_ALIGN_LEFT:
         case NS_STYLE_TEXT_ALIGN_RIGHT:
@@ -3312,10 +2811,10 @@ nsGenericHTMLElement::MapAlignAttributeInto(const nsIHTMLMappedAttributes* aAttr
 }
 
 void
-nsGenericHTMLElement::MapDivAlignAttributeInto(const nsIHTMLMappedAttributes* aAttributes,
+nsGenericHTMLElement::MapDivAlignAttributeInto(const nsMappedAttributes* aAttributes,
                                                nsRuleData* aRuleData)
 {
-  if (aRuleData->mSID == eStyleStruct_Text && aRuleData->mTextData) {
+  if (aRuleData->mSID == eStyleStruct_Text) {
     if (aRuleData->mTextData->mTextAlign.GetUnit() == eCSSUnit_Null) {
       // align: enum
       nsHTMLValue value;
@@ -3328,10 +2827,10 @@ nsGenericHTMLElement::MapDivAlignAttributeInto(const nsIHTMLMappedAttributes* aA
 
 
 void
-nsGenericHTMLElement::MapImageMarginAttributeInto(const nsIHTMLMappedAttributes* aAttributes,
+nsGenericHTMLElement::MapImageMarginAttributeInto(const nsMappedAttributes* aAttributes,
                                                   nsRuleData* aData)
 {
-  if (aData->mSID != eStyleStruct_Margin || !aData->mMarginData)
+  if (aData->mSID != eStyleStruct_Margin)
     return;
 
   nsHTMLValue value;
@@ -3339,8 +2838,8 @@ nsGenericHTMLElement::MapImageMarginAttributeInto(const nsIHTMLMappedAttributes*
   // hspace: value
   aAttributes->GetAttribute(nsHTMLAtoms::hspace, value);
   nsCSSValue hval;
-  if (value.GetUnit() == eHTMLUnit_Pixel)
-    hval.SetFloatValue((float)value.GetPixelValue(), eCSSUnit_Pixel);
+  if (value.GetUnit() == eHTMLUnit_Integer)
+    hval.SetFloatValue((float)value.GetIntValue(), eCSSUnit_Pixel);
   else if (value.GetUnit() == eHTMLUnit_Percent)
     hval.SetPercentValue(value.GetPercentValue());
 
@@ -3355,8 +2854,8 @@ nsGenericHTMLElement::MapImageMarginAttributeInto(const nsIHTMLMappedAttributes*
   // vspace: value
   aAttributes->GetAttribute(nsHTMLAtoms::vspace, value);
   nsCSSValue vval;
-  if (value.GetUnit() == eHTMLUnit_Pixel)
-    vval.SetFloatValue((float)value.GetPixelValue(), eCSSUnit_Pixel);
+  if (value.GetUnit() == eHTMLUnit_Integer)
+    vval.SetFloatValue((float)value.GetIntValue(), eCSSUnit_Pixel);
   else if (value.GetUnit() == eHTMLUnit_Percent)
     vval.SetPercentValue(value.GetPercentValue());
 
@@ -3370,10 +2869,10 @@ nsGenericHTMLElement::MapImageMarginAttributeInto(const nsIHTMLMappedAttributes*
 }
 
 void
-nsGenericHTMLElement::MapImagePositionAttributeInto(const nsIHTMLMappedAttributes* aAttributes,
-                                                    nsRuleData* aData)
+nsGenericHTMLElement::MapImageSizeAttributesInto(const nsMappedAttributes* aAttributes,
+                                                 nsRuleData* aData)
 {
-  if (!aAttributes || aData->mSID != eStyleStruct_Position || !aData->mPositionData)
+  if (aData->mSID != eStyleStruct_Position)
     return;
 
   nsHTMLValue value;
@@ -3381,8 +2880,8 @@ nsGenericHTMLElement::MapImagePositionAttributeInto(const nsIHTMLMappedAttribute
   // width: value
   if (aData->mPositionData->mWidth.GetUnit() == eCSSUnit_Null) {
     aAttributes->GetAttribute(nsHTMLAtoms::width, value);
-    if (value.GetUnit() == eHTMLUnit_Pixel)
-      aData->mPositionData->mWidth.SetFloatValue((float)value.GetPixelValue(), eCSSUnit_Pixel);
+    if (value.GetUnit() == eHTMLUnit_Integer)
+      aData->mPositionData->mWidth.SetFloatValue((float)value.GetIntValue(), eCSSUnit_Pixel);
     else if (value.GetUnit() == eHTMLUnit_Percent)
       aData->mPositionData->mWidth.SetPercentValue(value.GetPercentValue());
   }
@@ -3390,31 +2889,32 @@ nsGenericHTMLElement::MapImagePositionAttributeInto(const nsIHTMLMappedAttribute
   // height: value
   if (aData->mPositionData->mHeight.GetUnit() == eCSSUnit_Null) {
     aAttributes->GetAttribute(nsHTMLAtoms::height, value);
-    if (value.GetUnit() == eHTMLUnit_Pixel)
-      aData->mPositionData->mHeight.SetFloatValue((float)value.GetPixelValue(), eCSSUnit_Pixel); 
+    if (value.GetUnit() == eHTMLUnit_Integer)
+      aData->mPositionData->mHeight.SetFloatValue((float)value.GetIntValue(), eCSSUnit_Pixel); 
     else if (value.GetUnit() == eHTMLUnit_Percent)
       aData->mPositionData->mHeight.SetPercentValue(value.GetPercentValue());    
   }
 }
 
 void
-nsGenericHTMLElement::MapImageBorderAttributeInto(const nsIHTMLMappedAttributes* aAttributes,
+nsGenericHTMLElement::MapImageBorderAttributeInto(const nsMappedAttributes* aAttributes,
                                                   nsRuleData* aData)
 {
-  if (aData->mSID != eStyleStruct_Border || !aData->mMarginData)
+  if (aData->mSID != eStyleStruct_Border)
     return;
 
   nsHTMLValue value;
 
   // border: pixels
-  aAttributes->GetAttribute(nsHTMLAtoms::border, value);
-  if (value.GetUnit() == eHTMLUnit_Null)
+  if (aAttributes->GetAttribute(nsHTMLAtoms::border, value) ==
+      NS_CONTENT_ATTR_NOT_THERE) {
     return;
+  }
   
-  if (value.GetUnit() != eHTMLUnit_Pixel)  // something other than pixels
-    value.SetPixelValue(0);
+  if (value.GetUnit() != eHTMLUnit_Integer)  // something other than Integer
+    value.SetIntValue(0, eHTMLUnit_Integer);
 
-  nscoord val = value.GetPixelValue();
+  nscoord val = value.GetIntValue();
 
   nsCSSRect& borderWidth = aData->mMarginData->mBorderWidth;
   if (borderWidth.mLeft.GetUnit() == eCSSUnit_Null)
@@ -3448,50 +2948,47 @@ nsGenericHTMLElement::MapImageBorderAttributeInto(const nsIHTMLMappedAttributes*
 }
 
 void
-nsGenericHTMLElement::MapBackgroundAttributesInto(const nsIHTMLMappedAttributes* aAttributes,
+nsGenericHTMLElement::MapBackgroundAttributesInto(const nsMappedAttributes* aAttributes,
                                                   nsRuleData* aData)
 {
-  if (!aData || !aData->mColorData || aData->mSID != eStyleStruct_Background)
+  if (aData->mSID != eStyleStruct_Background)
     return;
 
   if (aData->mColorData->mBackImage.GetUnit() == eCSSUnit_Null) {
     // background
     nsHTMLValue value;
     if (NS_CONTENT_ATTR_HAS_VALUE ==
-        aAttributes->GetAttribute(nsHTMLAtoms::background, value)) {
-      if (eHTMLUnit_String == value.GetUnit()) {
-        nsAutoString absURLSpec;
-        nsAutoString spec;
-        value.GetStringValue(spec);
-        if (!spec.IsEmpty()) {
-          // Resolve url to an absolute url
-          nsCOMPtr<nsIPresShell> shell;
-          nsresult rv = aData->mPresContext->GetShell(getter_AddRefs(shell));
-          if (NS_SUCCEEDED(rv) && shell) {
-            nsCOMPtr<nsIDocument> doc;
-            rv = shell->GetDocument(getter_AddRefs(doc));
-            if (NS_SUCCEEDED(rv) && doc) {
-              nsCOMPtr<nsIURI> docURL;
-              nsHTMLValue baseHref;
-              aAttributes->GetAttribute(nsHTMLAtoms::_baseHref, baseHref);
-              nsGenericHTMLElement::GetBaseURL(baseHref, doc,
-                                               getter_AddRefs(docURL));
-              rv = NS_MakeAbsoluteURI(absURLSpec, spec, docURL);
-              if (NS_SUCCEEDED(rv))
-                aData->mColorData->mBackImage.SetStringValue(absURLSpec,
-                                                             eCSSUnit_URL);
+        aAttributes->GetAttribute(nsHTMLAtoms::background, value) &&
+        value.GetUnit() == eHTMLUnit_String) {
+      nsAutoString spec;
+      value.GetStringValue(spec);
+      if (!spec.IsEmpty()) {
+        // Resolve url to an absolute url
+        // XXX this breaks if the HTML element has an xml:base
+        // attribute (the xml:base will not be taken into account)
+        // as well as elements with _baseHref set. We need to be able
+        // to get to the element somehow, or store the base URI in the
+        // attributes.
+        nsIDocument* doc = aData->mPresContext->GetDocument();
+        nsCOMPtr<nsIURI> uri;
+        nsresult rv = nsContentUtils::NewURIWithDocumentCharset(
+            getter_AddRefs(uri), spec, doc, doc->GetBaseURI());
+        if (NS_SUCCEEDED(rv)) {
+          nsCSSValue::Image *img = new nsCSSValue::Image(uri, spec.get(), doc);
+          if (img) {
+            if (img->mString) {
+              aData->mColorData->mBackImage.SetImageValue(img);
             }
+            else
+              delete img;
           }
         }
-      } else if (aData->mPresContext) {
+      }
+      else if (aData->mPresContext->CompatibilityMode() ==
+               eCompatibility_NavQuirks) {
         // in NavQuirks mode, allow the empty string to set the
         // background to empty
-        nsCompatibility mode;
-        aData->mPresContext->GetCompatibilityMode(&mode);
-        if (eCompatibility_NavQuirks == mode &&
-            eHTMLUnit_Empty == value.GetUnit())
-          aData->mColorData->mBackImage.SetStringValue(NS_LITERAL_STRING(""),
-                                                       eCSSUnit_URL);
+        aData->mColorData->mBackImage.SetNoneValue();
       }
     }
   }
@@ -3499,406 +2996,81 @@ nsGenericHTMLElement::MapBackgroundAttributesInto(const nsIHTMLMappedAttributes*
   // bgcolor
   if (aData->mColorData->mBackColor.GetUnit() == eCSSUnit_Null) {
     nsHTMLValue value;
-    aAttributes->GetAttribute(nsHTMLAtoms::bgcolor, value);
-    if ((eHTMLUnit_Color == value.GetUnit()) ||
-        (eHTMLUnit_ColorName == value.GetUnit()))
-      aData->mColorData->mBackColor.SetColorValue(value.GetColorValue());
+    nscolor color;
+    if (aAttributes->GetAttribute(nsHTMLAtoms::bgcolor, value) !=
+        NS_CONTENT_ATTR_NOT_THERE &&
+        value.GetColorValue(color)) {
+      aData->mColorData->mBackColor.SetColorValue(color);
+    }
+  }
+}
+
+void
+nsGenericHTMLElement::MapScrollingAttributeInto(const nsMappedAttributes* aAttributes,
+                                                nsRuleData* aData)
+{
+  if (aData->mSID != eStyleStruct_Display)
+    return;
+
+  // scrolling
+  if (aData->mDisplayData->mOverflow.GetUnit() == eCSSUnit_Null) {
+    nsHTMLValue value;
+    aAttributes->GetAttribute(nsHTMLAtoms::scrolling, value);
+    if (eHTMLUnit_Enumerated == value.GetUnit()) {
+      PRInt32 mappedValue;
+      switch (value.GetIntValue()) {
+        case NS_STYLE_FRAME_ON:
+        case NS_STYLE_FRAME_SCROLL:
+        case NS_STYLE_FRAME_YES:
+          mappedValue = NS_STYLE_OVERFLOW_SCROLL;
+          break;
+
+        case NS_STYLE_FRAME_OFF:
+        case NS_STYLE_FRAME_NOSCROLL:
+        case NS_STYLE_FRAME_NO:
+          mappedValue = NS_STYLE_OVERFLOW_SCROLLBARS_NONE;
+          break;
+      
+        case NS_STYLE_FRAME_AUTO:
+          mappedValue = NS_STYLE_OVERFLOW_AUTO;
+          break;
+
+        default:
+          NS_NOTREACHED("unexpected value");
+          mappedValue = NS_STYLE_OVERFLOW_AUTO;
+          break;
+      }
+      aData->mDisplayData->mOverflow.SetIntValue(mappedValue,
+                                                 eCSSUnit_Enumerated);
+    }
   }
 }
 
 //----------------------------------------------------------------------
 
-nsGenericHTMLLeafElement::nsGenericHTMLLeafElement()
-{
-}
-
-nsGenericHTMLLeafElement::~nsGenericHTMLLeafElement()
-{
-}
-
 nsresult
-nsGenericHTMLLeafElement::CopyInnerTo(nsIContent* aSrcContent,
-                                      nsGenericHTMLLeafElement* aDst,
-                                      PRBool aDeep)
+nsGenericHTMLElement::ReplaceContentsWithText(const nsAString& aText,
+                                              PRBool aNotify)
 {
-  nsresult result = nsGenericHTMLElement::CopyInnerTo(aSrcContent,
-                                                      aDst,
-                                                      aDeep);
-  return result;
-}
+  PRUint32 count = GetChildCount();
+  nsresult rv = NS_OK;
 
-NS_IMETHODIMP
-nsGenericHTMLLeafElement::GetChildNodes(nsIDOMNodeList** aChildNodes)
-{
-  nsDOMSlots* slots = GetDOMSlots();
-
-  if (!slots->mChildNodes) {
-    slots->mChildNodes = new nsChildContentList(nsnull);
-    if (!slots->mChildNodes) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-    NS_ADDREF(slots->mChildNodes);
-  }
-
-  return CallQueryInterface(slots->mChildNodes, aChildNodes);
-}
-
-//----------------------------------------------------------------------
-
-nsGenericHTMLContainerElement::nsGenericHTMLContainerElement()
-{
-}
-
-nsGenericHTMLContainerElement::~nsGenericHTMLContainerElement()
-{
-  PRInt32 n = mChildren.Count();
-  for (PRInt32 i = 0; i < n; i++) {
-    nsIContent* kid = (nsIContent *)mChildren.ElementAt(i);
-    kid->SetParent(nsnull);
-    NS_RELEASE(kid);
-  }
-}
-
-nsresult
-nsGenericHTMLContainerElement::CopyInnerTo(nsIContent* aSrcContent,
-                                           nsGenericHTMLContainerElement* aDst,
-                                           PRBool aDeep)
-{
-  nsresult rv = nsGenericHTMLElement::CopyInnerTo(aSrcContent, aDst, aDeep);
-
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  if (aDeep) {
-    PRInt32 indx;
-    PRInt32 count = mChildren.Count();
-    for (indx = 0; indx < count; indx++) {
-      nsIContent* child = (nsIContent*)mChildren.ElementAt(indx);
-
-      nsCOMPtr<nsIDOMNode> node(do_QueryInterface(child));
-
-      if (node) {
-        nsCOMPtr<nsIDOMNode> newNode;
-
-        rv = node->CloneNode(aDeep, getter_AddRefs(newNode));
-        if (node) {
-          nsCOMPtr<nsIContent> newContent(do_QueryInterface(newNode));
-
-          if (newContent) {
-            rv = aDst->AppendChildTo(newContent, PR_FALSE, PR_FALSE);
-            }
-          }
-        }
-
-      if (NS_FAILED(rv)) {
-        return rv;
-      }
-    }
-  }
-
-  return NS_OK;
-}
-
-nsresult
-nsGenericHTMLContainerElement::GetChildNodes(nsIDOMNodeList** aChildNodes)
-{
-  nsDOMSlots *slots = GetDOMSlots();
-
-  if (!slots->mChildNodes) {
-    slots->mChildNodes = new nsChildContentList(this);
-    // XXX Need to check for out-of-memory
-    NS_ADDREF(slots->mChildNodes);
-  }
-
-  return CallQueryInterface(slots->mChildNodes, aChildNodes);
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::HasChildNodes(PRBool* aReturn)
-{
-  if (0 != mChildren.Count()) {
-    *aReturn = PR_TRUE;
-  }
-  else {
-    *aReturn = PR_FALSE;
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::GetFirstChild(nsIDOMNode** aNode)
-{
-  nsIContent *child = (nsIContent *)mChildren.SafeElementAt(0);
-  if (child) {
-    nsresult res = CallQueryInterface(child, aNode);
-    NS_ASSERTION(NS_SUCCEEDED(res), "Must be a DOM Node"); // must be a DOM Node
-
-    return res;
-  }
-  *aNode = nsnull;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::GetLastChild(nsIDOMNode** aNode)
-{
-  if (0 != mChildren.Count()) {
-    nsIContent *child = (nsIContent *)mChildren.ElementAt(mChildren.Count()-1);
-    if (child) {
-      nsresult res = CallQueryInterface(child, aNode);
-      NS_ASSERTION(NS_SUCCEEDED(res), "Must be a DOM Node"); // must be a DOM Node
-
-      return res;
-    }
-  }
-  *aNode = nsnull;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::Compact()
-{
-  mChildren.Compact();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::CanContainChildren(PRBool& aResult) const
-{
-  aResult = PR_TRUE;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::ChildCount(PRInt32& aCount) const
-{
-  aCount = mChildren.Count();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::ChildAt(PRInt32 aIndex,
-                                       nsIContent** aResult) const
-{
-  // I really prefer NOT to do this test on all ChildAt calls - perhaps we
-  // should add FastChildAt().
-  nsIContent *child = (nsIContent *)mChildren.SafeElementAt(aIndex);
-  NS_IF_ADDREF(child);
-  *aResult = child;
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::IndexOf(nsIContent* aPossibleChild,
-                                       PRInt32& aIndex) const
-{
-  NS_PRECONDITION(nsnull != aPossibleChild, "null ptr");
-  aIndex = mChildren.IndexOf(aPossibleChild);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::InsertChildAt(nsIContent* aKid,
-                                             PRInt32 aIndex,
-                                             PRBool aNotify,
-                                             PRBool aDeepSetDocument)
-{
-  NS_PRECONDITION(nsnull != aKid, "null ptr");
-  nsIDocument* doc = mDocument;
-  if (aNotify && (nsnull != doc)) {
-    doc->BeginUpdate();
-  }
-  PRBool rv = mChildren.InsertElementAt(aKid, aIndex);/* XXX fix up void array api to use nsresult's*/
-  if (rv) {
-    NS_ADDREF(aKid);
-    aKid->SetParent(this);
-    nsRange::OwnerChildInserted(this, aIndex);
-    if (nsnull != doc) {
-      aKid->SetDocument(doc, aDeepSetDocument, PR_TRUE);
-      if (aNotify) {
-        doc->ContentInserted(this, aKid, aIndex);
-      }
-
-      if (nsGenericElement::HasMutationListeners(this, NS_EVENT_BITS_MUTATION_NODEINSERTED)) {
-        nsCOMPtr<nsIDOMEventTarget> node(do_QueryInterface(aKid));
-        nsMutationEvent mutation;
-        mutation.eventStructType = NS_MUTATION_EVENT;
-        mutation.message = NS_MUTATION_NODEINSERTED;
-        mutation.mTarget = node;
-
-        nsCOMPtr<nsIDOMNode> relNode(do_QueryInterface(NS_STATIC_CAST(nsIContent *, this)));
-        mutation.mRelatedNode = relNode;
-
-        nsEventStatus status = nsEventStatus_eIgnore;
-        aKid->HandleDOMEvent(nsnull, &mutation, nsnull, NS_EVENT_FLAG_INIT, &status);
-      }
-    }
-  }
-  if (aNotify && (nsnull != doc)) {
-    doc->EndUpdate();
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::ReplaceChildAt(nsIContent* aKid,
-                                              PRInt32 aIndex,
-                                              PRBool aNotify,
-                                              PRBool aDeepSetDocument)
-{
-  NS_PRECONDITION(nsnull != aKid, "null ptr");
-  nsIContent* oldKid = NS_STATIC_CAST(nsIContent *,
-                                      mChildren.SafeElementAt(aIndex));
-  nsIDocument* doc = mDocument;
-  if (aNotify && (nsnull != doc)) {
-    doc->BeginUpdate();
-  }
-  nsRange::OwnerChildReplaced(this, aIndex, oldKid);
-  PRBool rv = mChildren.ReplaceElementAt(aKid, aIndex);
-  if (rv) {
-    NS_ADDREF(aKid);
-    aKid->SetParent(this);
-    if (nsnull != doc) {
-      aKid->SetDocument(doc, aDeepSetDocument, PR_TRUE);
-      if (aNotify) {
-        doc->ContentReplaced(this, oldKid, aKid, aIndex);
-      }
-    }
-    if (nsGenericElement::HasMutationListeners(this, NS_EVENT_BITS_MUTATION_SUBTREEMODIFIED)) {
-      nsMutationEvent mutation;
-      mutation.eventStructType = NS_MUTATION_EVENT;
-      mutation.message = NS_MUTATION_SUBTREEMODIFIED;
-      mutation.mTarget = do_QueryInterface(this);
-      mutation.mRelatedNode = do_QueryInterface(oldKid);
-    
-      nsEventStatus status = nsEventStatus_eIgnore;
-      HandleDOMEvent(nsnull, &mutation, nsnull,
-                     NS_EVENT_FLAG_INIT, &status);
-    }
-
-    if (oldKid) {
-      oldKid->SetDocument(nsnull, PR_TRUE, PR_TRUE);
-      oldKid->SetParent(nsnull);
-      NS_RELEASE(oldKid);
-    }
-  }
-  if (aNotify && (nsnull != doc)) {
-    doc->EndUpdate();
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::AppendChildTo(nsIContent* aKid, PRBool aNotify,
-                                             PRBool aDeepSetDocument)
-{
-  NS_PRECONDITION(nsnull != aKid && this != aKid, "null ptr");
-  nsIDocument* doc = mDocument;
-  if (aNotify && (nsnull != doc)) {
-    doc->BeginUpdate();
-  }
-  PRBool rv = mChildren.AppendElement(aKid);
-  if (rv) {
-    NS_ADDREF(aKid);
-    aKid->SetParent(this);
-    // ranges don't need adjustment since new child is at end of list
-    if (nsnull != doc) {
-      aKid->SetDocument(doc, aDeepSetDocument, PR_TRUE);
-      if (aNotify) {
-        doc->ContentAppended(this, mChildren.Count() - 1);
-      }
-
-      if (nsGenericElement::HasMutationListeners(this, NS_EVENT_BITS_MUTATION_NODEINSERTED)) {
-        nsCOMPtr<nsIDOMEventTarget> node(do_QueryInterface(aKid));
-        nsMutationEvent mutation;
-        mutation.eventStructType = NS_MUTATION_EVENT;
-        mutation.message = NS_MUTATION_NODEINSERTED;
-        mutation.mTarget = node;
-
-        nsCOMPtr<nsIDOMNode> relNode(do_QueryInterface(NS_STATIC_CAST(nsIContent *, this)));
-        mutation.mRelatedNode = relNode;
-
-        nsEventStatus status = nsEventStatus_eIgnore;
-        aKid->HandleDOMEvent(nsnull, &mutation, nsnull, NS_EVENT_FLAG_INIT, &status);
-      }
-    }
-  }
-  if (aNotify && (nsnull != doc)) {
-    doc->EndUpdate();
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerElement::RemoveChildAt(PRInt32 aIndex, PRBool aNotify)
-{
-  nsIDocument* doc = mDocument;
-  if (aNotify && (nsnull != doc)) {
-    doc->BeginUpdate();
-  }
-  nsIContent* oldKid = NS_STATIC_CAST(nsIContent *,
-                                      mChildren.SafeElementAt(aIndex));
-  if (nsnull != oldKid ) {
-
-    if (nsGenericElement::HasMutationListeners(this, NS_EVENT_BITS_MUTATION_NODEREMOVED)) {
-      nsCOMPtr<nsIDOMEventTarget> node(do_QueryInterface(oldKid));
-      nsMutationEvent mutation;
-      mutation.eventStructType = NS_MUTATION_EVENT;
-      mutation.message = NS_MUTATION_NODEREMOVED;
-      mutation.mTarget = node;
-
-      nsCOMPtr<nsIDOMNode> relNode(do_QueryInterface(NS_STATIC_CAST(nsIContent *, this)));
-      mutation.mRelatedNode = relNode;
-
-      nsEventStatus status = nsEventStatus_eIgnore;
-      oldKid->HandleDOMEvent(nsnull, &mutation, nsnull,
-                             NS_EVENT_FLAG_INIT, &status);
-    }
-
-    nsRange::OwnerChildRemoved(this, aIndex, oldKid);
-
-    mChildren.RemoveElementAt(aIndex);
-    if (aNotify) {
-      if (nsnull != doc) {
-        doc->ContentRemoved(this, oldKid, aIndex);
-      }
-    }
-    oldKid->SetDocument(nsnull, PR_TRUE, PR_TRUE);
-    oldKid->SetParent(nsnull);
-    NS_RELEASE(oldKid);
-  }
-  if (aNotify && (nsnull != doc)) {
-    doc->EndUpdate();
-  }
-
-  return NS_OK;
-}
-
-nsresult
-nsGenericHTMLContainerElement::ReplaceContentsWithText(const nsAString& aText,
-                                                       PRBool aNotify) {
-  PRInt32 children;
-  nsresult rv = ChildCount(children);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIContent> firstChild;
   nsCOMPtr<nsIDOMText> textChild;
-  // if we already have a DOMText child, reuse it.
-  if (children > 0) {
-    rv = ChildAt(0, getter_AddRefs(firstChild));
-    NS_ENSURE_SUCCESS(rv, rv);
-    textChild = do_QueryInterface(firstChild);
-  }
-  
-  PRInt32 i;
-  PRInt32 lastChild = textChild ? 1 : 0;
-  for (i = children - 1; i >= lastChild; --i) {
-    RemoveChildAt(i, aNotify);
+
+  if (count > 0) {
+    // if we already have a DOMText child, reuse it.
+    textChild = do_QueryInterface(GetChildAt(0));
+
+    PRUint32 lastChild = textChild ? 1 : 0;
+    PRUint32 i = count - 1;
+    while (i-- > lastChild) {
+      RemoveChildAt(i, aNotify);
+    }
   }
 
-  if (!textChild) {
+  if (textChild) {
+    rv = textChild->SetData(aText);
+  } else {
     nsCOMPtr<nsITextContent> text;
     rv = NS_NewTextNode(getter_AddRefs(text));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -3906,29 +3078,23 @@ nsGenericHTMLContainerElement::ReplaceContentsWithText(const nsAString& aText,
     rv = text->SetText(aText, PR_TRUE);
     NS_ENSURE_SUCCESS(rv, rv);
     rv = InsertChildAt(text, 0, aNotify, PR_FALSE);
-  } else {
-    rv = textChild->SetData(aText);
   }    
       
   return rv;
 }
 
 nsresult
-nsGenericHTMLContainerElement::GetContentsAsText(nsAString& aText)
+nsGenericHTMLElement::GetContentsAsText(nsAString& aText)
 {
   aText.Truncate();
-  PRInt32 children;
-  nsresult rv = ChildCount(children);
-  NS_ENSURE_SUCCESS(rv, rv);
+  PRInt32 children = GetChildCount();
   
   nsCOMPtr<nsIDOMText> tc;
-  nsCOMPtr<nsIContent> child;
   nsAutoString textData;
 
   PRInt32 i;
   for (i = 0; i < children; ++i) {
-    ChildAt(i, getter_AddRefs(child));
-    tc = do_QueryInterface(child);
+    tc = do_QueryInterface(GetChildAt(i));
     if (tc) {
       if (aText.IsEmpty()) {
         tc->GetData(aText);
@@ -3942,50 +3108,106 @@ nsGenericHTMLContainerElement::GetContentsAsText(nsAString& aText)
   return NS_OK;
 }
 
+void
+nsGenericHTMLElement::GetStringAttrWithDefault(nsIAtom* aAttr,
+                                               const nsAString& aDefault,
+                                               nsAString& aResult)
+{
+  nsresult rv = GetAttr(kNameSpaceID_None, aAttr, aResult);
+  if (rv == NS_CONTENT_ATTR_NOT_THERE) {
+    aResult = aDefault;
+  }
+}
+
+nsresult
+nsGenericHTMLElement::SetBoolAttr(nsIAtom* aAttr, PRBool aValue)
+{
+  if (aValue) {
+    return SetAttr(kNameSpaceID_None, aAttr, EmptyString(), PR_TRUE);
+  }
+
+  return UnsetAttr(kNameSpaceID_None, aAttr, PR_TRUE);
+}
+
+void
+nsGenericHTMLElement::GetIntAttr(nsIAtom* aAttr, PRInt32 aDefault, PRInt32* aResult)
+{
+  const nsAttrValue* attrVal = mAttrsAndChildren.GetAttr(aAttr);
+  if (attrVal && attrVal->Type() == nsAttrValue::eInteger) {
+    *aResult = attrVal->GetIntegerValue();
+  }
+  else {
+    *aResult = aDefault;
+  }
+}
+
+nsresult
+nsGenericHTMLElement::SetIntAttr(nsIAtom* aAttr, PRInt32 aValue)
+{
+  nsAutoString value;
+  value.AppendInt(aValue);
+
+  return SetAttr(kNameSpaceID_None, aAttr, value, PR_TRUE);
+}
+
+void
+nsGenericHTMLElement::GetURIAttr(nsIAtom* aAttr, nsAString& aResult)
+{
+  nsAutoString attrValue;
+  nsresult rv = GetAttr(kNameSpaceID_None, aAttr, attrValue);
+  if (rv != NS_CONTENT_ATTR_HAS_VALUE) {
+    aResult.Truncate();
+
+    return;
+  }
+
+  nsCOMPtr<nsIURI> baseURI = GetBaseURI();
+  nsCOMPtr<nsIURI> attrURI;
+  rv = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(attrURI),
+                                                 attrValue, GetOwnerDocument(),
+                                                 baseURI);
+  if (NS_FAILED(rv)) {
+    // Just use the attr value as the result...
+    aResult = attrValue;
+
+    return;
+  }
+
+  NS_ASSERTION(attrURI,
+               "nsContentUtils::NewURIWithDocumentCharset return value lied");
+
+  nsCAutoString spec;
+  attrURI->GetSpec(spec);
+  CopyUTF8toUTF16(spec, aResult);
+}
+
 //----------------------------------------------------------------------
 
-nsGenericHTMLContainerFormElement::nsGenericHTMLContainerFormElement()
+nsGenericHTMLFormElement::nsGenericHTMLFormElement()
 {
   mForm = nsnull;
 }
 
-nsGenericHTMLContainerFormElement::~nsGenericHTMLContainerFormElement()
+nsGenericHTMLFormElement::~nsGenericHTMLFormElement()
 {
   // Clean up.  Set the form to nsnull so it knows we went away.
   SetForm(nsnull);
 }
 
-NS_IMETHODIMP
-nsGenericHTMLContainerFormElement::QueryInterface(REFNSIID aIID,
-                                                  void** aInstancePtr)
-{
-  if (NS_SUCCEEDED(nsGenericHTMLElement::QueryInterface(aIID, aInstancePtr)))
-    return NS_OK;
+NS_INTERFACE_MAP_BEGIN(nsGenericHTMLFormElement)
+  NS_INTERFACE_MAP_ENTRY(nsIFormControl)
+NS_INTERFACE_MAP_END_INHERITING(nsGenericHTMLElement)
 
-  nsISupports *inst = nsnull;
 
-  if (aIID.Equals(NS_GET_IID(nsIFormControl))) {
-    inst = NS_STATIC_CAST(nsIFormControl *, this);
-  } else {
-    return NS_NOINTERFACE;
-  }
-
-  NS_ADDREF(inst);
-
-  *aInstancePtr = inst;
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP_(PRBool)
-nsGenericHTMLContainerFormElement::IsContentOfType(PRUint32 aFlags)
+PRBool
+nsGenericHTMLFormElement::IsContentOfType(PRUint32 aFlags) const
 {
   return !(aFlags & ~(eELEMENT | eHTML | eHTML_FORM_CONTROL));
 }
 
 NS_IMETHODIMP
-nsGenericHTMLContainerFormElement::SetForm(nsIDOMHTMLFormElement* aForm,
-                                           PRBool aRemoveFromForm)
+nsGenericHTMLFormElement::SetForm(nsIDOMHTMLFormElement* aForm,
+                                  PRBool aRemoveFromForm)
 {
   nsAutoString nameVal, idVal;
 
@@ -4030,7 +3252,7 @@ nsGenericHTMLContainerFormElement::SetForm(nsIDOMHTMLFormElement* aForm,
 }
 
 NS_IMETHODIMP
-nsGenericHTMLContainerFormElement::GetForm(nsIDOMHTMLFormElement** aForm)
+nsGenericHTMLFormElement::GetForm(nsIDOMHTMLFormElement** aForm)
 {
   NS_ENSURE_ARG_POINTER(aForm);
   *aForm = nsnull;
@@ -4042,76 +3264,60 @@ nsGenericHTMLContainerFormElement::GetForm(nsIDOMHTMLFormElement** aForm)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsGenericHTMLContainerFormElement::SetParent(nsIContent* aParent)
+void
+nsGenericHTMLFormElement::SetParent(nsIContent* aParent)
 {
-  nsresult rv = NS_OK;
-
   if (!aParent && mForm) {
     SetForm(nsnull);
-  } else if (mDocument && aParent && (mParent || !mForm)) {
+  } else if (mDocument && aParent && (GetParent() || !mForm)) {
     // If we have a new parent and either we had an old parent or we
     // don't have a form, search for a containing form.  If we didn't
     // have an old parent, but we do have a form, we shouldn't do the
     // search. In this case, someone (possibly the content sink) has
     // already set the form for us.
 
-    rv = FindAndSetForm(this);
+    FindAndSetForm();
   }
 
-  if (NS_SUCCEEDED(rv)) {
-    rv = nsGenericElement::SetParent(aParent);
-  }
-
-  return rv;
+  nsGenericHTMLElement::SetParent(aParent);
 }
 
-NS_IMETHODIMP
-nsGenericHTMLContainerFormElement::SetDocument(nsIDocument* aDocument,
-                                               PRBool aDeep,
-                                               PRBool aCompileEventHandlers)
+void
+nsGenericHTMLFormElement::SetDocument(nsIDocument* aDocument, PRBool aDeep,
+                                      PRBool aCompileEventHandlers)
 {
-  nsresult rv = NS_OK;
-
   // Save state before doing anything if the document is being removed
   if (!aDocument) {
     SaveState();
   }
 
-  if (aDocument && mParent && !mForm) {
-    rv = FindAndSetForm(this);
+  if (aDocument && GetParent() && !mForm) {
+    FindAndSetForm();
   } else if (!aDocument && mForm) {
     // We got removed from document.  We have a parent form.  Check
     // that the form is still in the document, and if so remove
     // ourselves from the form.  This keeps ghosts from appearing in
     // the form's |elements| array
-    nsCOMPtr<nsIContent> formContent(do_QueryInterface(mForm, &rv));
-    if (formContent) {
-      nsCOMPtr<nsIDocument> doc;
-      rv = formContent->GetDocument(getter_AddRefs(doc));
-      NS_ENSURE_SUCCESS(rv, rv);
-      if (doc) {
-        SetForm(nsnull);
-      }
+    nsCOMPtr<nsIContent> formContent(do_QueryInterface(mForm));
+    if (formContent && formContent->GetDocument()) {
+      SetForm(nsnull);
     }
   }
 
-  if (NS_SUCCEEDED(rv)) {
-    rv = nsGenericHTMLElement::SetDocument(aDocument, aDeep,
-                                           aCompileEventHandlers);
-  }
-
-  return rv;
+  nsGenericHTMLElement::SetDocument(aDocument, aDeep, aCompileEventHandlers);
 }
 
 
 nsresult
-nsGenericHTMLElement::SetFormControlAttribute(nsIForm* aForm,
-                                              PRInt32 aNameSpaceID,
-                                              nsIAtom* aName,
-                                              const nsAString& aValue,
-                                              PRBool aNotify)
+nsGenericHTMLFormElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                                  nsIAtom* aPrefix, const nsAString& aValue,
+                                  PRBool aNotify)
 {
+  if (aNameSpaceID != kNameSpaceID_None) {
+    return nsGenericHTMLElement::SetAttr(aNameSpaceID, aName, aPrefix, aValue,
+                                         aNotify);
+  }
+
   nsCOMPtr<nsIFormControl> thisControl;
   nsAutoString tmp;
   nsresult rv = NS_OK;
@@ -4119,286 +3325,84 @@ nsGenericHTMLElement::SetFormControlAttribute(nsIForm* aForm,
   QueryInterface(NS_GET_IID(nsIFormControl), getter_AddRefs(thisControl));
 
   // Add & remove the control to and/or from the hash table
-  if (aForm && (aName == nsHTMLAtoms::name || aName == nsHTMLAtoms::id)) {
+  if (mForm && (aName == nsHTMLAtoms::name || aName == nsHTMLAtoms::id)) {
     GetAttr(kNameSpaceID_None, aName, tmp);
 
     if (!tmp.IsEmpty()) {
-      aForm->RemoveElementFromTable(thisControl, tmp);
+      mForm->RemoveElementFromTable(thisControl, tmp);
     }
   }
 
-  if (aForm && aName == nsHTMLAtoms::type) {
+  if (mForm && aName == nsHTMLAtoms::type) {
     GetAttr(kNameSpaceID_None, nsHTMLAtoms::name, tmp);
 
     if (!tmp.IsEmpty()) {
-      aForm->RemoveElementFromTable(thisControl, tmp);
+      mForm->RemoveElementFromTable(thisControl, tmp);
     }
 
     GetAttr(kNameSpaceID_None, nsHTMLAtoms::id, tmp);
 
     if (!tmp.IsEmpty()) {
-      aForm->RemoveElementFromTable(thisControl, tmp);
+      mForm->RemoveElementFromTable(thisControl, tmp);
     }
 
-    aForm->RemoveElement(thisControl);
+    mForm->RemoveElement(thisControl);
   }
 
-  rv = nsGenericHTMLElement::SetAttr(aNameSpaceID, aName, aValue, aNotify);
+  rv = nsGenericHTMLElement::SetAttr(aNameSpaceID, aName, aPrefix, aValue, aNotify);
 
-  if (aForm && (aName == nsHTMLAtoms::name || aName == nsHTMLAtoms::id)) {
+  if (mForm && (aName == nsHTMLAtoms::name || aName == nsHTMLAtoms::id)) {
     GetAttr(kNameSpaceID_None, aName, tmp);
 
     if (!tmp.IsEmpty()) {
-      aForm->AddElementToTable(thisControl, tmp);
+      mForm->AddElementToTable(thisControl, tmp);
     }
   }
 
-  if (aForm && aName == nsHTMLAtoms::type) {
+  if (mForm && aName == nsHTMLAtoms::type) {
     GetAttr(kNameSpaceID_None, nsHTMLAtoms::name, tmp);
 
     if (!tmp.IsEmpty()) {
-      aForm->AddElementToTable(thisControl, tmp);
+      mForm->AddElementToTable(thisControl, tmp);
     }
 
     GetAttr(kNameSpaceID_None, nsHTMLAtoms::id, tmp);
 
     if (!tmp.IsEmpty()) {
-      aForm->AddElementToTable(thisControl, tmp);
+      mForm->AddElementToTable(thisControl, tmp);
     }
 
-    aForm->AddElement(thisControl);
+    mForm->AddElement(thisControl);
   }
 
   return rv;
 }
 
-NS_IMETHODIMP
-nsGenericHTMLContainerFormElement::SetAttr(PRInt32 aNameSpaceID,
-                                           nsIAtom* aName,
-                                           const nsAString& aVal,
-                                           PRBool aNotify)
+void
+nsGenericHTMLFormElement::FindAndSetForm()
 {
-  return SetFormControlAttribute(mForm, aNameSpaceID, aName, aVal, aNotify);
-}
-
-NS_IMETHODIMP
-nsGenericHTMLContainerFormElement::SetAttr(nsINodeInfo* aNodeInfo,
-                                           const nsAString& aValue,
-                                           PRBool aNotify)
-{
-  return nsGenericHTMLElement::SetAttr(aNodeInfo, aValue, aNotify);
-}
-
-//----------------------------------------------------------------------
-
-nsGenericHTMLLeafFormElement::nsGenericHTMLLeafFormElement()
-{
-  mForm = nsnull;
-}
-
-nsGenericHTMLLeafFormElement::~nsGenericHTMLLeafFormElement()
-{
-  // Clean up.  Set the form to nsnull so it knows we went away.
-  SetForm(nsnull);
-}
-
-
-NS_IMETHODIMP
-nsGenericHTMLLeafFormElement::QueryInterface(REFNSIID aIID,
-                                             void** aInstancePtr)
-{
-  if (NS_SUCCEEDED(nsGenericHTMLElement::QueryInterface(aIID, aInstancePtr)))
-    return NS_OK;
-
-  nsISupports *inst = nsnull;
-
-  if (aIID.Equals(NS_GET_IID(nsIFormControl))) {
-    inst = NS_STATIC_CAST(nsIFormControl *, this);
-  } else {
-    return NS_NOINTERFACE;
+  nsCOMPtr<nsIDOMHTMLFormElement> form = FindForm();
+  if (form) {
+    SetForm(form);  // always succeeds
   }
-
-  NS_ADDREF(inst);
-
-  *aInstancePtr = inst;
-
-  return NS_OK;
 }
 
-NS_IMETHODIMP_(PRBool)
-nsGenericHTMLLeafFormElement::IsContentOfType(PRUint32 aFlags)
-{
-  return !(aFlags & ~(eELEMENT | eHTML | eHTML_FORM_CONTROL));
-}
-
-NS_IMETHODIMP
-nsGenericHTMLLeafFormElement::SetForm(nsIDOMHTMLFormElement* aForm,
-                                      PRBool aRemoveFromForm)
-{
-  nsAutoString nameVal, idVal;
-
-  if (aForm || (mForm && aRemoveFromForm)) {
-    GetAttr(kNameSpaceID_None, nsHTMLAtoms::name, nameVal);
-    GetAttr(kNameSpaceID_None, nsHTMLAtoms::id, idVal);
-  }
-
-  if (mForm && aRemoveFromForm) {
-    mForm->RemoveElement(this);
-
-    if (!nameVal.IsEmpty()) {
-      mForm->RemoveElementFromTable(this, nameVal);
-    }
-
-    if (!idVal.IsEmpty()) {
-      mForm->RemoveElementFromTable(this, idVal);
-    }
-  }
-
-  if (aForm) {
-    // keep a *weak* ref to the form here
-    CallQueryInterface(aForm, &mForm);
-    mForm->Release();
-  } else {
-    mForm = nsnull;
-  }
-
-  if (mForm) {
-    mForm->AddElement(this);
-
-    if (!nameVal.IsEmpty()) {
-      mForm->AddElementToTable(this, nameVal);
-    }
-
-    if (!idVal.IsEmpty()) {
-      mForm->AddElementToTable(this, idVal);
-    }
-  }
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLLeafFormElement::GetForm(nsIDOMHTMLFormElement** aForm)
-{
-  NS_ENSURE_ARG_POINTER(aForm);
-  *aForm = nsnull;
-
-  if (mForm) {
-    CallQueryInterface(mForm, aForm);
-  }
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLLeafFormElement::SetParent(nsIContent* aParent)
-{
-  nsresult rv = NS_OK;
-
-  PRBool old_parent = NS_PTR_TO_INT32(mParent);
-
-  if (NS_SUCCEEDED(rv)) {
-    rv = nsGenericElement::SetParent(aParent);
-  }
-
-  if (!aParent && mForm) {
-    SetForm(nsnull);
-  }
-  // If we have a new parent and either we had an old parent or we
-  // don't have a form, search for a containing form.  If we didn't
-  // have an old parent, but we do have a form, we shouldn't do the
-  // search. In this case, someone (possibly the content sink) has
-  // already set the form for us.
-  else if (mDocument && aParent && (old_parent || !mForm)) {
-    rv = FindAndSetForm(this);
-  }
-
-  return rv;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLLeafFormElement::SetDocument(nsIDocument* aDocument,
-                                          PRBool aDeep,
-                                          PRBool aCompileEventHandlers)
-{
-  nsresult rv = NS_OK;
-
-  // Save state before doing anything if the document is being removed
-  if (!aDocument) {
-    SaveState();
-  }
-
-  if (aDocument && mParent && !mForm) {
-    rv = FindAndSetForm(this);
-  } else if (!aDocument && mForm) {
-    // We got removed from document.  We have a parent form.  Check
-    // that the form is still in the document, and if so remove
-    // ourselves from the form.  This keeps ghosts from appearing in
-    // the form's |elements| array
-    nsCOMPtr<nsIContent> formContent(do_QueryInterface(mForm, &rv));
-    if (formContent) {
-      nsCOMPtr<nsIDocument> doc;
-      rv = formContent->GetDocument(getter_AddRefs(doc));
-      NS_ENSURE_SUCCESS(rv, rv);
-      if (doc) {
-        SetForm(nsnull);
-      }
-    }
-  }
-
-  if (NS_SUCCEEDED(rv)) {
-    rv = nsGenericHTMLElement::SetDocument(aDocument, aDeep,
-                                           aCompileEventHandlers);
-  }
-
-  return rv;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLLeafFormElement::DoneCreatingElement()
-{
-  RestoreFormControlState(this, this);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLLeafFormElement::SetAttr(PRInt32 aNameSpaceID,
-                                      nsIAtom* aName,
-                                      const nsAString& aValue,
-                                      PRBool aNotify)
-{
-  return SetFormControlAttribute(mForm, aNameSpaceID, aName, aValue, aNotify);
-}
-
-NS_IMETHODIMP
-nsGenericHTMLLeafFormElement::SetAttr(nsINodeInfo* aNodeInfo,
-                                      const nsAString& aValue,
-                                      PRBool aNotify)
-{
-  return nsGenericHTMLLeafElement::SetAttr(aNodeInfo, aValue, aNotify);
-}
-
-nsresult
+void
 nsGenericHTMLElement::SetElementFocus(PRBool aDoFocus)
 {
   nsCOMPtr<nsIPresContext> presContext;
   GetPresContext(this, getter_AddRefs(presContext));
-  if (!presContext) {
-    return NS_OK;
-  }
+  if (!presContext)
+    return;
 
   if (aDoFocus) {
-    nsresult rv = SetFocus(presContext);
-    NS_ENSURE_SUCCESS(rv,rv);
-    nsCOMPtr<nsIEventStateManager> esm;
-    rv = presContext->GetEventStateManager(getter_AddRefs(esm));
-    if (esm) {
-      rv = esm->MoveCaretToFocus();
-    }
-    return rv;
+    SetFocus(presContext);
+
+    presContext->EventStateManager()->MoveCaretToFocus();
+    return;
   }
 
-  return RemoveFocus(presContext);
+  RemoveFocus(presContext);
 }
 
 nsresult nsGenericHTMLElement::RegUnRegAccessKey(PRBool aDoReg)
@@ -4416,9 +3420,7 @@ nsresult nsGenericHTMLElement::RegUnRegAccessKey(PRBool aDoReg)
   GetPresContext(this, getter_AddRefs(presContext));
   NS_ENSURE_TRUE(presContext, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIEventStateManager> esm;
-  presContext->GetEventStateManager(getter_AddRefs(esm));
-  NS_ENSURE_TRUE(esm, NS_ERROR_FAILURE);
+  nsIEventStateManager *esm = presContext->EventStateManager();
 
   // Register or unregister as appropriate.
   if (aDoReg) {
@@ -4524,12 +3526,14 @@ nsGenericHTMLElement::SetHostInHrefString(const nsAString &aHref,
   uri->GetUserPass(userpass);
   uri->GetPath(path);
 
-  if (!userpass.IsEmpty())
-    userpass.Append('@');
-
-  aResult.Assign(NS_ConvertUTF8toUCS2(scheme) + NS_LITERAL_STRING("://") +
-                 NS_ConvertUTF8toUCS2(userpass) + aHost +
-                 NS_ConvertUTF8toUCS2(path));
+  CopyASCIItoUTF16(scheme, aResult);
+  aResult.Append(NS_LITERAL_STRING("://"));
+  if (!userpass.IsEmpty()) {
+    AppendUTF8toUTF16(userpass, aResult);
+    aResult.Append(PRUnichar('@'));
+  }
+  aResult.Append(aHost);
+  AppendUTF8toUTF16(path, aResult);
 
   return NS_OK;
 }
@@ -4624,41 +3628,35 @@ nsGenericHTMLElement::GetProtocolFromHrefString(const nsAString& aHref,
 {
   aProtocol.Truncate();
 
-  NS_ENSURE_TRUE(nsHTMLUtils::IOService, NS_ERROR_FAILURE);
+  nsIIOService* ioService = nsContentUtils::GetIOServiceWeakRef();
+  NS_ENSURE_TRUE(ioService, NS_ERROR_FAILURE);
 
   nsCAutoString protocol;
 
   nsresult rv =
-    nsHTMLUtils::IOService->ExtractScheme(NS_ConvertUCS2toUTF8(aHref), protocol);
+    ioService->ExtractScheme(NS_ConvertUCS2toUTF8(aHref), protocol);
 
   if (NS_SUCCEEDED(rv)) {
-    aProtocol.Assign(NS_ConvertASCIItoUCS2(protocol) + NS_LITERAL_STRING(":"));
+    CopyASCIItoUTF16(protocol, aProtocol);
   } else {
     // set the protocol to the protocol of the base URI.
 
-    nsCOMPtr<nsIURI> uri;
-
     if (aDocument) {
-      aDocument->GetBaseURL(getter_AddRefs(uri));
-
-      if (!uri) {
-        aDocument->GetDocumentURL(getter_AddRefs(uri));
+      nsIURI *uri = aDocument->GetBaseURI();
+      if (uri) {
+        uri->GetScheme(protocol);
       }
     }
 
-    if (uri) {
-      uri->GetScheme(protocol);
-    }
-
     if (protocol.IsEmpty()) {
-      // set the protocol to http since it is the mostlikely protocol
+      // set the protocol to http since it is the most likely protocol
       // to be used.
-
-      CopyASCIItoUCS2(nsDependentCString("http:"), aProtocol);
+      aProtocol.Assign(NS_LITERAL_STRING("http"));
     } else {
-      CopyASCIItoUCS2(protocol + NS_LITERAL_CSTRING(":"), aProtocol);
+      CopyASCIItoUTF16(protocol, aProtocol);
     }
   }
+  aProtocol.Append(PRUnichar(':'));
 
   return NS_OK;
 }
@@ -4829,7 +3827,23 @@ nsGenericHTMLElement::GetHashFromHrefString(const nsAString& aHref,
     return rv;
   NS_UnescapeURL(ref); // XXX may result in random non-ASCII bytes!
 
-  if (!ref.IsEmpty())
-    aHash.Assign(NS_LITERAL_STRING("#") + NS_ConvertASCIItoUCS2(ref));
+  if (!ref.IsEmpty()) {
+    aHash.Assign(PRUnichar('#'));
+    AppendASCIItoUTF16(ref, aHash);
+  }
   return NS_OK;
+}
+
+const nsAttrName*
+nsGenericHTMLElement::InternalGetExistingAttrNameFromQName(const nsAString& aStr) const
+{
+  if (mNodeInfo->NamespaceEquals(kNameSpaceID_None)) {
+    nsAutoString lower;
+    ToLowerCase(aStr, lower);
+    return mAttrsAndChildren.GetExistingAttrNameFromQName(
+      NS_ConvertUTF16toUTF8(lower));
+  }
+
+  return mAttrsAndChildren.GetExistingAttrNameFromQName(
+    NS_ConvertUTF16toUTF8(aStr));
 }

@@ -46,14 +46,23 @@
 #include "nsICSSParser.h"
 #include "nsLayoutCID.h"
 
+/*
+ * Enum that describes the primary state of the parsing process
+ */
 typedef enum {
-  eXBL_InDocument,
-  eXBL_InBinding,
-  eXBL_InResources,
-  eXBL_InImplementation,
-  eXBL_InHandlers
+  eXBL_InDocument,       /* outside any bindings */
+  eXBL_InBindings,       /* Inside a <bindings> element */
+  eXBL_InBinding,        /* Inside a <binding> */
+  eXBL_InResources,      /* Inside a <resources> */
+  eXBL_InImplementation, /* Inside a <implementation> */
+  eXBL_InHandlers,       /* Inside a <handlers> */
+  eXBL_Error             /* An error has occured.  Suspend binding construction */
 } XBLPrimaryState;
 
+/*
+ * Enum that describes our substate (typically when parsing something
+ * like <handlers> or <implementation>).
+ */
 typedef enum {
   eXBL_None,
   eXBL_InHandler,
@@ -91,7 +100,7 @@ public:
   NS_IMETHOD HandleStartElement(const PRUnichar *aName, 
                                 const PRUnichar **aAtts, 
                                 PRUint32 aAttsCount, 
-                                PRUint32 aIndex, 
+                                PRInt32 aIndex, 
                                 PRUint32 aLineNumber);
 
   NS_IMETHOD HandleEndElement(const PRUnichar *aName);
@@ -104,7 +113,8 @@ protected:
     PRBool OnOpenContainer(const PRUnichar **aAtts, 
                            PRUint32 aAttsCount, 
                            PRInt32 aNameSpaceID, 
-                           nsIAtom* aTagName);
+                           nsIAtom* aTagName,
+                           PRUint32 aLineNumber);
     
     nsresult CreateElement(const PRUnichar** aAtts, PRUint32 aAttsCount,
                            nsINodeInfo* aNodeInfo, PRUint32 aLineNumber,
@@ -121,13 +131,13 @@ protected:
 
     // Our own helpers for constructing XBL prototype objects.
     void ConstructBinding();
-    void ConstructHandler(const PRUnichar **aAtts);
+    void ConstructHandler(const PRUnichar **aAtts, PRUint32 aLineNumber);
     void ConstructResource(const PRUnichar **aAtts, nsIAtom* aResourceType);
     void ConstructImplementation(const PRUnichar **aAtts);
     void ConstructProperty(const PRUnichar **aAtts);
     void ConstructMethod(const PRUnichar **aAtts);
     void ConstructParameter(const PRUnichar **aAtts);
-    void ConstructField(const PRUnichar **aAtts);
+    void ConstructField(const PRUnichar **aAtts, PRUint32 aLineNumber);
   
 
   // nsXMLContentSink overrides
@@ -139,12 +149,12 @@ protected:
                          const PRUnichar* aSourceText);
 
 protected:
+  nsresult ReportUnexpectedElement(nsIAtom* aElementName, PRUint32 aLineNumber);
+  
   XBLPrimaryState mState;
   XBLSecondaryState mSecondaryState;
   nsIXBLDocumentInfo* mDocInfo;
   PRBool mIsChromeOrResource; // For bug #45989
-
-  nsCOMPtr<nsICSSParser> mCSSParser;            // [OWNER]
 
   nsXBLPrototypeBinding* mBinding;
   nsXBLPrototypeHandler* mHandler; // current handler, owned by its PrototypeBinding

@@ -142,8 +142,7 @@ nsStreamListenerEvent::Fire(nsIEventQueue* aEventQueue)
                  (PLHandleEventProc)  nsStreamListenerEvent::HandlePLEvent,
                  (PLDestroyEventProc) nsStreamListenerEvent::DestroyPLEvent);
 
-    PRStatus status = aEventQueue->PostEvent(&mEvent);
-    return status == PR_SUCCESS ? NS_OK : NS_ERROR_FAILURE;
+    return aEventQueue->PostEvent(&mEvent);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -151,8 +150,8 @@ nsStreamListenerEvent::Fire(nsIEventQueue* aEventQueue)
 NS_IMPL_THREADSAFE_ISUPPORTS1(nsAsyncStreamObserver,
                               nsIRequestObserver)
 
-NS_IMPL_ADDREF_INHERITED(nsAsyncStreamListener, nsAsyncStreamObserver);
-NS_IMPL_RELEASE_INHERITED(nsAsyncStreamListener, nsAsyncStreamObserver);
+NS_IMPL_ADDREF_INHERITED(nsAsyncStreamListener, nsAsyncStreamObserver)
+NS_IMPL_RELEASE_INHERITED(nsAsyncStreamListener, nsAsyncStreamObserver)
 
 NS_IMETHODIMP 
 nsAsyncStreamListener::QueryInterface(REFNSIID aIID, void** aInstancePtr)
@@ -426,7 +425,7 @@ nsOnDataAvailableEvent::HandleEvent()
                                    mIStream, mSourceOffset, mLength);
   }
   else {
-	  NS_WARNING("not calling OnDataAvailable");
+    NS_WARNING("not calling OnDataAvailable");
   }
   return rv;
 }

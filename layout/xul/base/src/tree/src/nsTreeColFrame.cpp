@@ -132,20 +132,16 @@ nsTreeColFrame::GetFrameForPoint(nsIPresContext* aPresContext,
 
   if (left || right) {
     // We are a header. Look for the correct splitter.
-    nsIFrame* firstChild;
-    mParent->FirstChild(aPresContext, nsnull, &firstChild);
-    nsFrameList frames(firstChild);
+    nsFrameList frames(mParent->GetFirstChild(nsnull));
     nsIFrame* child;
     if (left)
       child = frames.GetPrevSiblingFor(this);
-    else GetNextSibling(&child);
+    else
+      child = GetNextSibling();
 
-    nsCOMPtr<nsIAtom> tag;
-    nsCOMPtr<nsIContent> content;
     if (child) {
-      child->GetContent(getter_AddRefs(content));
-      content->GetTag(getter_AddRefs(tag));
-      if (tag.get() == nsXULAtoms::splitter) {
+      nsINodeInfo *ni = child->GetContent()->GetNodeInfo();
+      if (ni && ni->Equals(nsXULAtoms::splitter, kNameSpaceID_XUL)) {
         *aFrame = child;
         return NS_OK;
       }
@@ -153,9 +149,8 @@ nsTreeColFrame::GetFrameForPoint(nsIPresContext* aPresContext,
   }
 
   nsresult result = nsBoxFrame::GetFrameForPoint(aPresContext, aPoint, aWhichLayer, aFrame);
-  nsCOMPtr<nsIContent> content;
   if (result == NS_OK) {
-    (*aFrame)->GetContent(getter_AddRefs(content));
+    nsIContent* content = (*aFrame)->GetContent();
     if (content) {
       // This allows selective overriding for subcontent.
       nsAutoString value;
@@ -175,14 +170,14 @@ nsTreeColFrame::GetFrameForPoint(nsIPresContext* aPresContext,
 
 NS_IMETHODIMP
 nsTreeColFrame::AttributeChanged(nsIPresContext* aPresContext,
-                                     nsIContent* aChild,
-                                     PRInt32 aNameSpaceID,
-                                     nsIAtom* aAttribute,
-                                     PRInt32 aModType, 
-                                     PRInt32 aHint)
+                                 nsIContent* aChild,
+                                 PRInt32 aNameSpaceID,
+                                 nsIAtom* aAttribute,
+                                 PRInt32 aModType)
 {
   nsresult rv = nsBoxFrame::AttributeChanged(aPresContext, aChild,
-                                               aNameSpaceID, aAttribute, aModType, aHint);
+                                             aNameSpaceID, aAttribute,
+                                             aModType);
 
   if (aAttribute == nsHTMLAtoms::width || aAttribute == nsHTMLAtoms::hidden) {
     // Invalidate the tree.
@@ -201,14 +196,10 @@ nsTreeColFrame::EnsureTree()
 {
   if (!mTree && mContent) {
     // Get our parent node.
-    nsCOMPtr<nsIContent> parent;
-    mContent->GetParent(getter_AddRefs(parent));
+    nsIContent* parent = mContent->GetParent();
     if (parent) {
-      nsCOMPtr<nsIContent> grandParent;
-      parent->GetParent(getter_AddRefs(grandParent));
-      nsCOMPtr<nsIDocument> doc;
-      mContent->GetDocument(getter_AddRefs(doc));
-      nsCOMPtr<nsIDOMNSDocument> nsDoc(do_QueryInterface(doc));
+      nsIContent* grandParent = parent->GetParent();
+      nsCOMPtr<nsIDOMNSDocument> nsDoc(do_QueryInterface(mContent->GetDocument()));
       nsCOMPtr<nsIDOMElement> elt(do_QueryInterface(grandParent));
 
       nsCOMPtr<nsIBoxObject> boxObject;
@@ -228,10 +219,8 @@ nsTreeColFrame::InvalidateColumnCache(nsIPresContext* aPresContext)
     mTree->GetTreeBody(getter_AddRefs(bodyEl));
     nsCOMPtr<nsIContent> bodyContent = do_QueryInterface(bodyEl);
     if (bodyContent) {
-      nsCOMPtr<nsIPresShell> shell;
-      aPresContext->GetShell(getter_AddRefs(shell));
       nsIFrame* frame;
-      shell->GetPrimaryFrameFor(bodyContent, &frame);
+      aPresContext->PresShell()->GetPrimaryFrameFor(bodyContent, &frame);
       if (frame) {
         nsTreeBodyFrame* oframe = NS_STATIC_CAST(nsTreeBodyFrame*, frame);
         oframe->InvalidateColumnCache();

@@ -160,10 +160,8 @@ nsPopupSetFrame::Init(nsIPresContext*  aPresContext,
   mPresContext = aPresContext; // Don't addref it.  Our lifetime is shorter.
   nsresult  rv = nsBoxFrame::Init(aPresContext, aContent, aParent, aContext, aPrevInFlow);
 
-  nsIFrame *grandParent;
-  aParent->GetParent(&grandParent);
   nsIRootBox *rootBox;
-  nsresult res = CallQueryInterface(grandParent, &rootBox);
+  nsresult res = CallQueryInterface(aParent->GetParent(), &rootBox);
   NS_ASSERTION(NS_SUCCEEDED(res), "grandparent should be root box");
   if (NS_SUCCEEDED(res)) {
     rootBox->SetPopupSetFrame(this);
@@ -188,10 +186,8 @@ nsPopupSetFrame::Destroy(nsIPresContext* aPresContext)
     }
   }
 
-  nsIFrame *grandParent;
-  mParent->GetParent(&grandParent);
   nsIRootBox *rootBox;
-  nsresult res = CallQueryInterface(grandParent, &rootBox);
+  nsresult res = CallQueryInterface(mParent->GetParent(), &rootBox);
   NS_ASSERTION(NS_SUCCEEDED(res), "grandparent should be root box");
   if (NS_SUCCEEDED(res)) {
     rootBox->SetPopupSetFrame(nsnull);
@@ -253,12 +249,10 @@ nsPopupSetFrame::DoLayout(nsBoxLayoutState& aState)
              // layout the child
              ibox->Layout(aState);
 
-             nscoord width;
-             nscoord height;
-             scrollframe->GetScrollbarSizes(aState.GetPresContext(), &width, &height);
-             if (bounds.width < prefSize.width + width)
+             nsMargin scrollbars = scrollframe->GetActualScrollbarSizes();
+             if (bounds.width < prefSize.width + scrollbars.left + scrollbars.right)
              {
-               bounds.width += width;
+               bounds.width += scrollbars.left + scrollbars.right;
                //printf("Width=%d\n",width);
                ibox->SetBounds(aState, bounds);
              }
@@ -271,9 +265,8 @@ nsPopupSetFrame::DoLayout(nsBoxLayoutState& aState)
 
       // only size popup if open
       if (currEntry->mCreateHandlerSucceeded) {
-        nsIView* view = popupChild->GetView(aState.GetPresContext());
-        nsCOMPtr<nsIViewManager> viewManager;
-        view->GetViewManager(*getter_AddRefs(viewManager));
+        nsIView* view = popupChild->GetView();
+        nsIViewManager* viewManager = view->GetViewManager();
         nsRect r(0, 0, bounds.width, bounds.height);
         viewManager->ResizeView(view, r);
         viewManager->SetViewVisibility(view, nsViewVisibility_kShow);
@@ -317,7 +310,7 @@ nsPopupSetFrame::SetDebug(nsBoxLayoutState& aState, nsIFrame* aList, PRBool aDeb
               ibox->SetDebug(aState, aDebug);
           }
 
-          aList->GetNextSibling(&aList);
+          aList = aList->GetNextSibling();
       }
 
       return NS_OK;
@@ -331,10 +324,9 @@ nsPopupSetFrame::RepositionPopup(nsPopupFrameList* aEntry, nsBoxLayoutState& aSt
   // Sync up the view.
   if (aEntry && aEntry->mElementContent) {
     nsIFrame* frameToSyncTo = nsnull;
-    nsCOMPtr<nsIPresShell> presShell;
     nsIPresContext* presContext = aState.GetPresContext();
-    presContext->GetShell(getter_AddRefs(presShell));
-    presShell->GetPrimaryFrameFor(aEntry->mElementContent, &frameToSyncTo );
+    presContext->PresShell()->GetPrimaryFrameFor(aEntry->mElementContent,
+                                                 &frameToSyncTo );
     ((nsMenuPopupFrame*)(aEntry->mPopupFrame))->SyncViewWithFrame(presContext, 
           aEntry->mPopupAnchor, aEntry->mPopupAlign, frameToSyncTo, aEntry->mXPos, aEntry->mYPos);
   }
@@ -356,6 +348,8 @@ nsPopupSetFrame::ShowPopup(nsIContent* aElementContent, nsIContent* aPopupConten
     entry = mPopupList->GetEntry(aPopupContent);
   if (!entry) {
     entry = new nsPopupFrameList(aPopupContent, mPopupList);
+    if (!entry)
+      return NS_ERROR_OUT_OF_MEMORY;
     mPopupList = entry;
   }
 
@@ -368,9 +362,8 @@ nsPopupSetFrame::ShowPopup(nsIContent* aElementContent, nsIContent* aPopupConten
   entry->mYPos = aYPos;
 
   // If a frame exists already, go ahead and use it.
-  nsCOMPtr<nsIPresShell> shell;
-  mPresContext->GetShell(getter_AddRefs(shell));
-  shell->GetPrimaryFrameFor(aPopupContent, &entry->mPopupFrame);
+  mPresContext->PresShell()->GetPrimaryFrameFor(aPopupContent,
+                                                &entry->mPopupFrame);
 
 #ifdef DEBUG_PINK
   printf("X Pos: %d\n", mXPos);
@@ -412,15 +405,13 @@ nsPopupSetFrame::HidePopup(nsIFrame* aPopup)
     ActivatePopup(entry, PR_FALSE);
 
   if (entry->mElementContent && entry->mPopupType == NS_LITERAL_STRING("context")) {
-    // If we are a context menu, and if we are attached to a menupopup, then hiding us
-    // should also hide the parent menu popup.
-    nsCOMPtr<nsIAtom> tag;
-    entry->mElementContent->GetTag(getter_AddRefs(tag));
-    if (tag && tag.get() == nsXULAtoms::menupopup) {
+    // If we are a context menu, and if we are attached to a
+    // menupopup, then hiding us should also hide the parent menu
+    // popup.
+    if (entry->mElementContent->Tag() == nsXULAtoms::menupopup) {
       nsIFrame* popupFrame = nsnull;
-      nsCOMPtr<nsIPresShell> presShell;
-      mPresContext->GetShell(getter_AddRefs(presShell));
-      presShell->GetPrimaryFrameFor(entry->mElementContent, &popupFrame);
+      mPresContext->PresShell()->GetPrimaryFrameFor(entry->mElementContent,
+                                                    &popupFrame);
       if (popupFrame) {
         nsCOMPtr<nsIMenuParent> menuParent(do_QueryInterface(popupFrame));
         if (menuParent)
@@ -445,15 +436,13 @@ nsPopupSetFrame::DestroyPopup(nsIFrame* aPopup, PRBool aDestroyEntireChain)
     entry->mPopupType.SetLength(0);
   
     if (aDestroyEntireChain && entry->mElementContent && entry->mPopupType == NS_LITERAL_STRING("context")) {
-      // If we are a context menu, and if we are attached to a menupopup, then destroying us
-      // should also dismiss the parent menu popup.
-      nsCOMPtr<nsIAtom> tag;
-      entry->mElementContent->GetTag(getter_AddRefs(tag));
-      if (tag && tag.get() == nsXULAtoms::menupopup) {
+      // If we are a context menu, and if we are attached to a
+      // menupopup, then destroying us should also dismiss the parent
+      // menu popup.
+      if (entry->mElementContent->Tag() == nsXULAtoms::menupopup) {
         nsIFrame* popupFrame = nsnull;
-        nsCOMPtr<nsIPresShell> presShell;
-        mPresContext->GetShell(getter_AddRefs(presShell));
-        presShell->GetPrimaryFrameFor(entry->mElementContent, &popupFrame);
+        mPresContext->PresShell()->GetPrimaryFrameFor(entry->mElementContent,
+                                                      &popupFrame);
         if (popupFrame) {
           nsCOMPtr<nsIMenuParent> menuParent(do_QueryInterface(popupFrame));
           if (menuParent)
@@ -558,8 +547,7 @@ nsPopupSetFrame::ActivatePopup(nsPopupFrameList* aEntry, PRBool aActivateFlag)
       // can get into trouble if a dialog with a modal event loop comes along and
       // processes the reflows before we get to call DestroyChain(). Processing the
       // reflow will cause the popup to show itself again. (bug 71219)
-      nsCOMPtr<nsIDocument> doc;
-      aEntry->mPopupContent->GetDocument(getter_AddRefs(doc));
+      nsIDocument* doc = aEntry->mPopupContent->GetDocument();
       if (doc)
         doc->FlushPendingNotifications();
          
@@ -568,11 +556,10 @@ nsPopupSetFrame::ActivatePopup(nsPopupFrameList* aEntry, PRBool aActivateFlag)
       // destroy the popup.
       nsIFrame* activeChild = aEntry->mPopupFrame;
       if (activeChild) {
-        nsIView* view = activeChild->GetView(mPresContext);
+        nsIView* view = activeChild->GetView();
         NS_ASSERTION(view, "View is gone, looks like someone forgot to roll up the popup!");
         if (view) {
-          nsCOMPtr<nsIViewManager> viewManager;
-          view->GetViewManager(*getter_AddRefs(viewManager));
+          nsIViewManager* viewManager = view->GetViewManager();
           viewManager->SetViewVisibility(view, nsViewVisibility_kHide);
           nsRect r(0, 0, 0, 0);
           viewManager->ResizeView(view, r);
@@ -586,45 +573,32 @@ PRBool
 nsPopupSetFrame::OnCreate(PRInt32 aX, PRInt32 aY, nsIContent* aPopupContent)
 {
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event;
-  event.eventStructType = NS_POPUP_EVENT;
-  event.message = NS_XUL_POPUP_SHOWING;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_POPUP_SHOWING);
   event.point.x = aX;
   event.point.y = aY;
 
   if (aPopupContent) {
-    nsCOMPtr<nsIPresShell> shell;
-    nsresult rv = mPresContext->GetShell(getter_AddRefs(shell));
-    if (NS_SUCCEEDED(rv) && shell) {
-      rv = shell->HandleDOMEventWithTarget(aPopupContent, &event, &status);
+    nsIPresShell *shell = mPresContext->GetPresShell();
+    if (shell) {
+      nsresult rv = shell->HandleDOMEventWithTarget(aPopupContent, &event,
+                                                    &status);
+      // shell may no longer be alive, don't use it here unless you keep a ref
+      if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
+        return PR_FALSE;
     }
-
-    if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
-      return PR_FALSE;
 
     // The menu is going to show, and the create handler has executed.
     // We should now walk all of our menu item children, checking to see if any
     // of them has a command attribute.  If so, then several attributes must
     // potentially be updated.
  
-    nsCOMPtr<nsIDocument> doc;
-    aPopupContent->GetDocument(getter_AddRefs(doc));
-    nsCOMPtr<nsIDOMDocument> domDoc(do_QueryInterface(doc));
+    nsCOMPtr<nsIDOMDocument> domDoc(do_QueryInterface(aPopupContent->GetDocument()));
 
-    PRInt32 count;
-    aPopupContent->ChildCount(count);
-    for (PRInt32 i = 0; i < count; i++) {
-      nsCOMPtr<nsIContent> grandChild;
-      aPopupContent->ChildAt(i, getter_AddRefs(grandChild));
-      nsCOMPtr<nsIAtom> tag;
-      grandChild->GetTag(getter_AddRefs(tag));
-      if (tag.get() == nsXULAtoms::menuitem) {
+    PRUint32 count = aPopupContent->GetChildCount();
+    for (PRUint32 i = 0; i < count; i++) {
+      nsIContent *grandChild = aPopupContent->GetChildAt(i);
+
+      if (grandChild->Tag() == nsXULAtoms::menuitem) {
         // See if we have a command attribute.
         nsAutoString command;
         grandChild->GetAttr(kNameSpaceID_None, nsXULAtoms::command, command);
@@ -676,27 +650,19 @@ PRBool
 nsPopupSetFrame::OnCreated(PRInt32 aX, PRInt32 aY, nsIContent* aPopupContent)
 {
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event;
-  event.eventStructType = NS_POPUP_EVENT;
-  event.message = NS_XUL_POPUP_SHOWN;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_POPUP_SHOWN);
   event.point.x = aX;
   event.point.y = aY;
 
   if (aPopupContent) {
-    nsCOMPtr<nsIPresShell> shell;
-    nsresult rv = mPresContext->GetShell(getter_AddRefs(shell));
-    if (NS_SUCCEEDED(rv) && shell) {
-      rv = shell->HandleDOMEventWithTarget(aPopupContent, &event, &status);
+    nsIPresShell *shell = mPresContext->GetPresShell();
+    if (shell) {
+      nsresult rv = shell->HandleDOMEventWithTarget(aPopupContent, &event,
+                                                    &status);
+      // shell may no longer be alive, don't use it here unless you keep a ref
+      if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
+        return PR_FALSE;
     }
-
-    if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
-      return PR_FALSE;
   }
 
   return PR_TRUE;
@@ -706,24 +672,17 @@ PRBool
 nsPopupSetFrame::OnDestroy(nsIContent* aPopupContent)
 {
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event;
-  event.eventStructType = NS_POPUP_EVENT;
-  event.message = NS_XUL_POPUP_HIDING;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_POPUP_HIDING);
  
   if (aPopupContent) {
-    nsCOMPtr<nsIPresShell> shell;
-    nsresult rv = mPresContext->GetShell(getter_AddRefs(shell));
-    if (NS_SUCCEEDED(rv) && shell) {
-      rv = shell->HandleDOMEventWithTarget(aPopupContent, &event, &status);
+    nsIPresShell *shell = mPresContext->GetPresShell();
+    if (shell) {
+      nsresult rv = shell->HandleDOMEventWithTarget(aPopupContent, &event,
+                                                    &status);
+      // shell may no longer be alive, don't use it here unless you keep a ref
+      if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
+        return PR_FALSE;
     }
-    if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
-      return PR_FALSE;
   }
   return PR_TRUE;
 }
@@ -732,24 +691,17 @@ PRBool
 nsPopupSetFrame::OnDestroyed(nsIContent* aPopupContent)
 {
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event;
-  event.eventStructType = NS_POPUP_EVENT;
-  event.message = NS_XUL_POPUP_HIDDEN;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_POPUP_HIDDEN);
 
   if (aPopupContent) {
-    nsCOMPtr<nsIPresShell> shell;
-    nsresult rv = mPresContext->GetShell(getter_AddRefs(shell));
-    if (NS_SUCCEEDED(rv) && shell) {
-      rv = shell->HandleDOMEventWithTarget(aPopupContent, &event, &status);
+    nsIPresShell *shell = mPresContext->GetPresShell();
+    if (shell) {
+      nsresult rv = shell->HandleDOMEventWithTarget(aPopupContent, &event,
+                                                    &status);
+      // shell may no longer be alive, don't use it here unless you keep a ref
+      if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
+        return PR_FALSE;
     }
-    if ( NS_FAILED(rv) || status == nsEventStatus_eConsumeNoDefault )
-      return PR_FALSE;
   }
   return PR_TRUE;
 }
@@ -809,13 +761,14 @@ nsPopupSetFrame::AddPopupFrame(nsIFrame* aPopup)
   // popup visible straightaway, e.g., the autocomplete widget).
 
   // First look for an entry by content.
-  nsCOMPtr<nsIContent> content;
-  aPopup->GetContent(getter_AddRefs(content));
+  nsIContent* content = aPopup->GetContent();
   nsPopupFrameList* entry = nsnull;
   if (mPopupList)
     entry = mPopupList->GetEntry(content);
   if (!entry) {
     entry = new nsPopupFrameList(content, mPopupList);
+    if (!entry)
+      return NS_ERROR_OUT_OF_MEMORY;
     mPopupList = entry;
   }
   

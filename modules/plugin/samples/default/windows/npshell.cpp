@@ -40,7 +40,7 @@
 
 #include "resource.h"
 
-#include "Plugin.h" // this includes npapi.h
+#include "plugin.h" // this includes npapi.h
 #include "utils.h"
 #include "dbg.h"
 
@@ -252,6 +252,9 @@ NPP_WriteReady(NPP pInstance, NPStream *stream)
   CPlugin * pPlugin = (CPlugin *)pInstance->pdata;
   assert(pPlugin != NULL);
 
+  // We don't want any data, kill the stream
+  NPN_DestroyStream(pInstance, stream, NPRES_DONE);
+
   return -1L;   // dont accept any bytes in NPP_Write()
 }
 
@@ -267,6 +270,9 @@ NPP_Write(NPP pInstance, NPStream *stream, int32 offset, int32 len, void *buffer
 
   CPlugin * pPlugin = (CPlugin *)pInstance->pdata;
   assert(pPlugin != NULL);
+
+  // We don't want any data, kill the stream
+  NPN_DestroyStream(pInstance, stream, NPRES_DONE);
 
   return -1;   // tell the browser to abort the stream, don't need it
 }

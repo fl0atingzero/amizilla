@@ -19,6 +19,9 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s): Mike Potter <mikep@oeone.com>
+ *                 Eric Belhaire <belhaire@ief.u-psud.fr>
+ *                 Matthew Buckett <buckett@bumph.org>
+ *                 Mike Loll <michaelloll@hotmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -36,6 +39,7 @@
 include('chrome://calendar/content/jslib/io/io.js');
 include('chrome://calendar/content/jslib/rdf/rdf.js');
 include('chrome://calendar/content/jslib/rdf/rdfFile.js');
+var gNextSubNodeToRefresh=0;
 
 function CalendarObject()
 {
@@ -64,7 +68,7 @@ function calendarManager( CalendarWindow )
    if( !CalendarDirectory.exists() )
    {
       var thisDir = new Dir( CalendarDirectory.path );
-      thisDir.create( 0755 );
+      thisDir.create();
    }
 
    var profileFile = this.getProfileDirectory();
@@ -86,7 +90,7 @@ function calendarManager( CalendarWindow )
                          
       var node = this.rootContainer.addNode( "calendar0" );
    
-      node.setAttribute( "http://home.netscape.com/NC-rdf#name", "My Calendar" );
+      node.setAttribute( "http://home.netscape.com/NC-rdf#name", defaultCalendarFileName );
       node.setAttribute( "http://home.netscape.com/NC-rdf#path", profileFile.path );
       node.setAttribute( "http://home.netscape.com/NC-rdf#active", "true" );
       node.setAttribute( "http://home.netscape.com/NC-rdf#remote", "false" );
@@ -117,9 +121,7 @@ function calendarManager( CalendarWindow )
    
    /* Refresh remote calendars */
 
-   var categoriesStringBundle = srGetStrBundle("chrome://calendar/locale/calendar.properties");
-   
-   var RefreshServers = getBoolPref(this.CalendarWindow.calendarPreferences.calendarPref, "servers.reloadonlaunch", categoriesStringBundle.GetStringFromName("reloadServersOnLaunch" ) );
+   var RefreshServers = getBoolPref(this.CalendarWindow.calendarPreferences.calendarPref, "servers.reloadonlaunch", gCalendarBundle.getString("reloadServersOnLaunch" ) );
    
    if( RefreshServers == true )
       this.refreshAllRemoteCalendars( );
@@ -148,10 +150,6 @@ calendarManager.prototype.launchAddCalendarDialog = function calMan_launchAddCal
 
    // open the dialog modally
    openDialog("chrome://calendar/content/localCalDialog.xul", "caAddServer", "chrome,modal", args );
-   
-   // CofC
-   // call the calendar color update function with the calendar object
-   calendarColorStyleRuleUpdate( ThisCalendarObject );
 }
 
 /*
@@ -191,10 +189,6 @@ calendarManager.prototype.launchEditCalendarDialog = function calMan_launchEditC
 
    // open the dialog modally
    openDialog("chrome://calendar/content/localCalDialog.xul", "caEditServer", "chrome,modal", args );
-
-   // CofC
-   // call the calendar color update function with the calendar object
-   calendarColorStyleRuleUpdate( ThisCalendarObject );
 }
 
 
@@ -228,9 +222,6 @@ calendarManager.prototype.launchAddRemoteCalendarDialog = function calMan_launch
    // open the dialog modally
    openDialog("chrome://calendar/content/serverDialog.xul", "caAddServer", "chrome,modal", args );
 
-   // CofC
-   // call the calendar color update function with the calendar object
-   calendarColorStyleRuleUpdate( ThisCalendarObject );
 }
 
 /*
@@ -267,10 +258,6 @@ calendarManager.prototype.launchEditRemoteCalendarDialog = function calMan_launc
 
    // open the dialog modally
    openDialog("chrome://calendar/content/serverDialog.xul", "caEditServer", "chrome,modal", args );
-   
-   // CofC
-   // call the calendar color update function with the calendar object
-   calendarColorStyleRuleUpdate( ThisCalendarObject );
 }
 
 
@@ -279,15 +266,15 @@ calendarManager.prototype.launchEditRemoteCalendarDialog = function calMan_launc
 */
 calendarManager.prototype.addServerDialogResponse = function calMan_addServerDialogResponse( CalendarObject )
 {
-   var now = new Date();
-   var name = "calendar"+now.getTime();
+   var next = this.nextCalendar();
+   var name = "calendar"+next;
 
    CalendarObject.active = true;
    CalendarObject.remotePath = CalendarObject.remotePath.replace( "webcal:", "http:" );
 
    var node = this.rootContainer.addNode(name);
    node.setAttribute("http://home.netscape.com/NC-rdf#active", "true");
-   node.setAttribute("http://home.netscape.com/NC-rdf#serverNumber", this.rootContainer.getSubNodes().length);
+   node.setAttribute("http://home.netscape.com/NC-rdf#serverNumber", next);
    node.setAttribute("http://home.netscape.com/NC-rdf#name", CalendarObject.name);
    
    var profileFile;
@@ -297,14 +284,22 @@ calendarManager.prototype.addServerDialogResponse = function calMan_addServerDia
       //they didn't set a path in the box, that's OK, its not required.
       profileFile = this.getProfileDirectory();
       profileFile.append("Calendar");
-      profileFile.append("CalendarDataFile"+this.rootContainer.getSubNodes().length+".ics");
+      profileFile.append("CalendarDataFile"+ next+ ".ics");
       CalendarObject.path = profileFile.path;
    }
    
    node.setAttribute("http://home.netscape.com/NC-rdf#path", CalendarObject.path);
 
    // CofC save off the color of the new calendar
-   node.setAttribute("http://home.netscape.com/NC-rdf#color", CalendarObject.color);
+    // Add the default color for when a user does not select a calendar color.
+    if( CalendarObject.color == '' )
+    {
+        node.setAttribute("http://home.netscape.com/NC-rdf#color", "#F9F4FF");
+    }
+    else
+    {
+        node.setAttribute("http://home.netscape.com/NC-rdf#color", CalendarObject.color);
+    }
    
    if( CalendarObject.remotePath.indexOf( "http://" ) != -1 ||
        CalendarObject.remotePath.indexOf( "https://" ) != -1 ||
@@ -312,7 +307,7 @@ calendarManager.prototype.addServerDialogResponse = function calMan_addServerDia
    {
       profileFile = this.getProfileDirectory();
       profileFile.append( "Calendar" );
-      profileFile.append("RemoteCalendar"+this.rootContainer.getSubNodes().length+".ics");
+      profileFile.append("RemoteCalendar"+ next+ ".ics");
 
       node.setAttribute("http://home.netscape.com/NC-rdf#remote", "true");
       
@@ -322,16 +317,44 @@ calendarManager.prototype.addServerDialogResponse = function calMan_addServerDia
       node.setAttribute("http://home.netscape.com/NC-rdf#password", CalendarObject.password);
       this.retrieveAndSaveRemoteCalendar( node );
       
-      dump( "Remote Calendar Number "+this.rootContainer.getSubNodes().length+" Added" );
+      dump( "Remote Calendar Number "+ next+ " Added\n" );
    }
    else
    {
       node.setAttribute("http://home.netscape.com/NC-rdf#remote", "false");
       
-      dump( "Calendar Number "+CalendarObject.serverNumber+" Added" );
+      dump( "Calendar Number "+CalendarObject.serverNumber+" Added\n" );
    }
    
    this.rdf.flush();
+
+   // change made by PAB... new calendars don't have their Id field set because
+   // it does not exist until after the node is created. This causes trouble downstream
+   // because the calendar coloring code forms the name of the color style from the Id.
+   // So... set the CalendarObjects Id here
+   CalendarObject.Id = node.resource.Value;
+   
+   // call the calendar color update function with the calendar object
+   // NOTE: this call was moved
+   calendarColorStyleRuleUpdate( CalendarObject );
+}
+
+/**
+ * Finds the maximum calendar id used in the RDF datasource.
+ */
+calendarManager.prototype.nextCalendar = function calMan_getNextCalendar()
+{
+    var seq = this.rootContainer.getSubNodes();
+    var max = -1;
+    var subject;
+
+    for (var count = 0; count < seq.length; count++ ) {
+        subject = seq[count].getSubject();
+        subject = subject.replace(/^.*calendar(\d+)$/, "$1");
+        if (Number(subject) > max) max = Number(subject);
+    }
+
+    return ++max;
 }
 
 
@@ -352,7 +375,12 @@ calendarManager.prototype.editLocalCalendarDialogResponse = function calMan_edit
    node.setAttribute("http://home.netscape.com/NC-rdf#publishAutomatically", CalendarObject.publishAutomatically);
    node.setAttribute("http://home.netscape.com/NC-rdf#color", CalendarObject.color);
    this.rdf.flush();
+   
+   // CofC
+   // call the calendar color update function with the calendar object
+   calendarColorStyleRuleUpdate( CalendarObject );
 }
+
 /*
 ** Called when OK is clicked in the new server dialog.
 */
@@ -369,6 +397,10 @@ calendarManager.prototype.editServerDialogResponse = function calMan_editServerD
    node.setAttribute("http://home.netscape.com/NC-rdf#publishAutomatically", CalendarObject.publishAutomatically);
    node.setAttribute("http://home.netscape.com/NC-rdf#color", CalendarObject.color);
    this.rdf.flush();
+   
+   // CofC
+   // call the calendar color update function with the calendar object
+   calendarColorStyleRuleUpdate( CalendarObject );
 }
 
 
@@ -428,7 +460,7 @@ calendarManager.prototype.publishCalendar = function calMan_publishCalendar( Sel
    if( !SelectedCalendar )
    {
       var SelectedCalendarId = this.getSelectedCalendarId();
-      var SelectedCalendar = this.rdf.getNode( SelectedCalendarId );
+      SelectedCalendar = this.rdf.getNode( SelectedCalendarId );
    }
    
    calendarUploadFile(SelectedCalendar.getAttribute( "http://home.netscape.com/NC-rdf#path" ), 
@@ -494,13 +526,15 @@ calendarManager.prototype.retrieveAndSaveRemoteCalendar = function calMan_retrie
       Path = ThisCalendarObject.getAttribute( "http://home.netscape.com/NC-rdf#remotePath" );
 
    var Channel = ioService.newChannel( Path, null, null );
+   Channel.loadFlags |= Components.interfaces.nsIRequest.LOAD_BYPASS_CACHE;
 
    var CalendarManager = this;
    
    var onResponse = function( CalendarData )
    {
       //save the stream to a file.
-      saveDataToFile( ThisCalendarObject.getAttribute( "http://home.netscape.com/NC-rdf#path" ), CalendarData, "UTF-8" );
+      //saveDataToFile( ThisCalendarObject.getAttribute( "http://home.netscape.com/NC-rdf#path" ), CalendarData, "UTF-8" );
+       saveDataToFile( ThisCalendarObject.getAttribute( "http://home.netscape.com/NC-rdf#path" ), CalendarData, null );
       
       if( onResponseExtra )
          onResponseExtra();
@@ -524,21 +558,26 @@ calendarManager.prototype.retrieveAndSaveRemoteCalendar = function calMan_retrie
    var CalendarData = this.getRemoteCalendarText( Channel, onResponse, null );
 }
 
-
+//this function will do the refreshing in turn for all calendars
+//so once refreshing one is finished refreshing the other will be
+//invoked.
 calendarManager.prototype.refreshAllRemoteCalendars = function calMan_refreshAllRemoteCalendars()
 {
    //get all the calendars.
    //get all the other calendars
    var SubNodes = this.rootContainer.getSubNodes();
 
-   for( var i = 0; i < SubNodes.length; i++ )
+   for( var i = gNextSubNodeToRefresh; i < SubNodes.length; i++ )
    {
       //check their remote attribute, if its true, call retrieveAndSaveRemoteCalendar()
       if( SubNodes[i].getAttribute( "http://home.netscape.com/NC-rdf#remote" ) == "true" )
       {
          this.retrieveAndSaveRemoteCalendar( SubNodes[i] );
+         gNextSubNodeToRefresh = i+1;
+         return;
       }
    }
+   gNextSubNodeToRefresh = 0;
 }
 
 /*
@@ -624,7 +663,7 @@ calendarManager.prototype.checkCalendarURL = function calMan_checkCalendarURL( C
                var profileFile = CalendarManager.getProfileDirectory();
       
                profileFile.append("Calendar");
-               profileFile.append("Email"+CalendarManager.rootContainer.getSubNodes().length+".ics");
+               profileFile.append("Email"+ this.nextCalendar()+ ".ics");
                 
                FilePath = profileFile.path;
                saveDataToFile(FilePath, CalendarData, null);
@@ -663,27 +702,28 @@ calendarManager.prototype.getRemoteCalendarText = function calMan_getRemoteCalen
       onStreamComplete: function(loader, ctxt, status, resultLength, result)
       {
          window.setCursor( "default" );
-         
+         var retval = false;
+
          //check to make sure its actually a calendar file, if not return.
          if( result.indexOf( "BEGIN:VCALENDAR" ) == -1 )
          {
             alert( "This doesn't appear to be a valid file. Here's what I got back from\n"+Channel.URI.spec+":\nResult:"+result );
-            return false;
+         } else {
+             //if we have only one event, open the event dialog.
+             var firstMatchLocation = result.indexOf( "BEGIN:VEVENT" );
+             if( firstMatchLocation == -1 )
+             {
+                alert( "There are no events in this file. Here's what I got from\n"+Channel.URI.spec+"\nResult: "+result );
+             }
+             else
+             {
+                onResponse( result );
+                retval = true;
+             }
          }
-
-         //if we have only one event, open the event dialog.
-         var BeginEventText = "BEGIN:VEVENT";
-         var firstMatchLocation = result.indexOf( BeginEventText );
-         if( firstMatchLocation == -1 )
-         {
-            alert( "There are no events in this file. Here's what I got from\n"+Channel.URI.spec+"\nResult: "+result );
-            return false;
-         }
-         else
-         {
-            onResponse( result );
-         }
-         return true;
+         if( gNextSubNodeToRefresh )
+            gCalendarWindow.calendarManager.refreshAllRemoteCalendars();
+         return retval;
       }
    }
    
@@ -758,19 +798,20 @@ calendarManager.prototype.getAndConvertAllOldCalendars = function calMan_getAllC
          dump( "error: could not get calendar information from preferences\n"+e );
       }
 
-      var name = "calendar"+this.rootContainer.getSubNodes().length;
+      var nameId = this.nextCalendar();
+      var name = "calendar"+ nameId;
         
       //now convert it, and put it in the RDF file.
       var node = this.rootContainer.addNode(name);
       node.setAttribute("http://home.netscape.com/NC-rdf#active", thisCalendar.name);
-      node.setAttribute("http://home.netscape.com/NC-rdf#serverNumber", this.rootContainer.getSubNodes().length);
+      node.setAttribute("http://home.netscape.com/NC-rdf#serverNumber", nameId);
       node.setAttribute("http://home.netscape.com/NC-rdf#name", thisCalendar.name);
       
       if( thisCalendar.remote == true )
       {
          var profileFile = this.getProfileDirectory();
          profileFile.append( "Calendar" );
-         profileFile.append("RemoteCalendar"+this.rootContainer.getSubNodes().length+".ics");
+         profileFile.append("RemoteCalendar"+ nameId);
          var CalendarPath  = profileFile.path;
       }
       else
@@ -786,7 +827,7 @@ calendarManager.prototype.getAndConvertAllOldCalendars = function calMan_getAllC
       //if the file CalendarDataFile.ics exists in the users profile directory, move it to Calendar/CalendarDataFile.ics
       newCalendarFile = this.getProfileDirectory();
       newCalendarFile.append( "Calendar" );
-      newCalendarFile.append( "RemoteCalendar"+this.rootContainer.getSubNodes().length+".ics" );
+      newCalendarFile.append( "RemoteCalendar"+this.nextCalendar()+".ics" );
    
       oldCalendarDataFile = new File( thisCalendar.path );
       newCalendarDataFile = new File( newCalendarFile.path );
@@ -885,15 +926,13 @@ function deleteCalendar( )
    promptService = promptService.QueryInterface(Components.interfaces.nsIPromptService); 
    var result = {value:0}; 
 
-   var calendarStringBundle = srGetStrBundle("chrome://calendar/locale/calendar.properties");
-   
    var buttonPressed =      
       promptService.confirmEx(window, 
-                            calendarStringBundle.GetStringFromName( "deleteCalendarTitle" ), calendarStringBundle.GetStringFromName( "deleteCalendarMessage" ), 
+                            gCalendarBundle.getString( "deleteCalendarTitle" ), gCalendarBundle.getString( "deleteCalendarMessage" ), 
                             (promptService.BUTTON_TITLE_IS_STRING * promptService.BUTTON_POS_0) + 
                             (promptService.BUTTON_TITLE_CANCEL * promptService.BUTTON_POS_1) + 
                             (promptService.BUTTON_TITLE_IS_STRING * promptService.BUTTON_POS_2), 
-                            calendarStringBundle.GetStringFromName( "deleteCalendarOnly" ),null,calendarStringBundle.GetStringFromName( "deleteCalendarAndFile" ),null, result); 
+                            gCalendarBundle.getString( "deleteCalendarOnly" ),null,gCalendarBundle.getString( "deleteCalendarAndFile" ),null, result); 
    
    var IdToDelete = gCalendarWindow.calendarManager.getSelectedCalendarId()
    
@@ -917,6 +956,8 @@ function deleteCalendar( )
    refreshToDoTree( false );
 
    gCalendarWindow.currentView.refreshEvents();
+
+   return true;
 }
 
 // CofC
@@ -926,14 +967,15 @@ function deleteCalendar( )
 function calendarColorStyleRuleUpdate( ThisCalendarObject )
 {
    var j = -1;
+   var i;
    
    // obtain calendar name from the Id
    containerName = ThisCalendarObject.Id.split(':')[2];
 
    var tempStyleSheets = document.styleSheets;
-   for (var i=0; i<tempStyleSheets.length; i++)
+   for (i=0; i<tempStyleSheets.length; i++)
    {
-      if (tempStyleSheets[i].href == "chrome://calendar/skin/calendar.css")
+      if (tempStyleSheets[i].href.match(/chrome.*\/skin.*\/calendar.css$/))
 	  {
           j = i;
           break;
@@ -946,7 +988,7 @@ function calendarColorStyleRuleUpdate( ThisCalendarObject )
 	   var ruleList = tempStyleSheets[j].cssRules;
 	   var ruleName;
 
-	   for (var i=0; i < ruleList.length; i++)
+	   for (i=0; i < ruleList.length; i++)
 	   {
 		  ruleName = ruleList[i].cssText.split(' ');
 

@@ -49,9 +49,10 @@ class nsHTMLBlockAccessible : public nsBlockAccessible,
 
 public:
   nsHTMLBlockAccessible(nsIDOMNode* aDomNode, nsIWeakReference* aShell);
-  NS_IMETHOD GetAccName(nsAString& aName);
-  NS_IMETHOD GetAccRole(PRUint32 *aRole); 
-  NS_IMETHOD GetAccState(PRUint32 *aState); 
+  NS_IMETHOD GetName(nsAString& aName);
+  NS_IMETHOD GetRole(PRUint32 *aRole); 
+  NS_IMETHOD GetState(PRUint32 *aState); 
+  NS_IMETHOD GetBounds(PRInt32 *x, PRInt32 *y, PRInt32 *width, PRInt32 *height);
 
   NS_IMETHOD Shutdown();
 };

@@ -41,9 +41,11 @@
 #include "nsIDOMScreen.h"
 #include "nsISupports.h"
 #include "nsIScriptContext.h"
+#include "nsCOMPtr.h"
 
 class nsIDocShell;
 class nsIDeviceContext;
+struct nsRect;
 
 // Script "screen" object
 class ScreenImpl : public nsIDOMScreen
@@ -69,8 +71,10 @@ public:
 
 
 protected:
-	nsIDeviceContext* GetDeviceContext();
-	
+  nsIDeviceContext* GetDeviceContext();
+  nsresult GetRect(nsRect& aRect);
+  nsresult GetAvailRect(nsRect& aRect);
+
   nsIDocShell* mDocShell; // Weak Reference
 };
 

@@ -42,8 +42,6 @@
 #include "nsIDOMRange.h"
 #include "nsIContent.h"
 #include "nsLayoutCID.h"
-#include "nsIEnumerator.h"
-#include "nsISupportsArray.h"
 
 // hooks
 #include "nsIClipboardDragDropHooks.h"
@@ -91,9 +89,6 @@ nsAutoSelectionReset::Abort()
  * some helper classes for iterating the dom tree
  *****************************************************************************/
 
-static NS_DEFINE_IID(kSubtreeIteratorCID, NS_SUBTREEITERATOR_CID);
-static NS_DEFINE_IID(kContentIteratorCID, NS_CONTENTITERATOR_CID);
-
 nsDOMIterator::nsDOMIterator() :
 mIter(nsnull)
 {
@@ -106,22 +101,20 @@ nsDOMIterator::~nsDOMIterator()
 nsresult
 nsDOMIterator::Init(nsIDOMRange* aRange)
 {
-  nsresult res = nsComponentManager::CreateInstance(kContentIteratorCID,
-                                        nsnull,
-                                        NS_GET_IID(nsIContentIterator), 
-                                        getter_AddRefs(mIter));
+  nsresult res;
+  mIter = do_CreateInstance("@mozilla.org/content/post-content-iterator;1", &res);
   if (NS_FAILED(res)) return res;
+  if (!mIter) return NS_ERROR_FAILURE;
   return mIter->Init(aRange);
 }
 
 nsresult
 nsDOMIterator::Init(nsIDOMNode* aNode)
 {
-  nsresult res = nsComponentManager::CreateInstance(kContentIteratorCID,
-                                        nsnull,
-                                        NS_GET_IID(nsIContentIterator), 
-                                        getter_AddRefs(mIter));
+  nsresult res;
+  mIter = do_CreateInstance("@mozilla.org/content/post-content-iterator;1", &res);
   if (NS_FAILED(res)) return res;
+  if (!mIter) return NS_ERROR_FAILURE;
   nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
   return mIter->Init(content);
 }
@@ -129,20 +122,17 @@ nsDOMIterator::Init(nsIDOMNode* aNode)
 void
 nsDOMIterator::ForEach(nsDomIterFunctor& functor) const
 {
-  nsCOMPtr<nsIContent> content;
   nsCOMPtr<nsIDOMNode> node;
-  nsresult res;
   
   // iterate through dom
-  while (NS_ENUMERATOR_FALSE == mIter->IsDone())
+  while (!mIter->IsDone())
   {
-    res = mIter->CurrentNode(getter_AddRefs(content));
-    if (NS_FAILED(res)) return;
-    node = do_QueryInterface(content);
-    if (!node) return;
+    node = do_QueryInterface(mIter->GetCurrentNode());
+    if (!node)
+      return;
+
     functor(node);
-    res = mIter->Next();
-    if (NS_FAILED(res)) return;
+    mIter->Next();
   }
 }
 
@@ -150,23 +140,20 @@ nsresult
 nsDOMIterator::AppendList(nsBoolDomIterFunctor& functor,
                           nsCOMArray<nsIDOMNode>& arrayOfNodes) const
 {
-  nsCOMPtr<nsIContent> content;
   nsCOMPtr<nsIDOMNode> node;
-  nsresult res;
   
   // iterate through dom and build list
-  while (NS_ENUMERATOR_FALSE == mIter->IsDone())
+  while (!mIter->IsDone())
   {
-    res = mIter->CurrentNode(getter_AddRefs(content));
-    if (NS_FAILED(res)) return res;
-    node = do_QueryInterface(content);
-    if (!node) return NS_ERROR_NULL_POINTER;
+    node = do_QueryInterface(mIter->GetCurrentNode());
+    if (!node)
+      return NS_ERROR_NULL_POINTER;
+
     if (functor(node))
     {
       arrayOfNodes.AppendObject(node);
     }
-    res = mIter->Next();
-    if (NS_FAILED(res)) return res;
+    mIter->Next();
   }
   return NS_OK;
 }
@@ -182,22 +169,20 @@ nsDOMSubtreeIterator::~nsDOMSubtreeIterator()
 nsresult
 nsDOMSubtreeIterator::Init(nsIDOMRange* aRange)
 {
-  nsresult res = nsComponentManager::CreateInstance(kSubtreeIteratorCID,
-                                        nsnull,
-                                        NS_GET_IID(nsIContentIterator), 
-                                        getter_AddRefs(mIter));
+  nsresult res;
+  mIter = do_CreateInstance("@mozilla.org/content/subtree-content-iterator;1", &res);
   if (NS_FAILED(res)) return res;
+  if (!mIter) return NS_ERROR_FAILURE;
   return mIter->Init(aRange);
 }
 
 nsresult
 nsDOMSubtreeIterator::Init(nsIDOMNode* aNode)
 {
-  nsresult res = nsComponentManager::CreateInstance(kSubtreeIteratorCID,
-                                        nsnull,
-                                        NS_GET_IID(nsIContentIterator), 
-                                        getter_AddRefs(mIter));
+  nsresult res;
+  mIter = do_CreateInstance("@mozilla.org/content/subtree-content-iterator;1", &res);
   if (NS_FAILED(res)) return res;
+  if (!mIter) return NS_ERROR_FAILURE;
   nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
   return mIter->Init(content);
 }
@@ -219,15 +204,15 @@ nsEditorUtils::IsDescendantOf(nsIDOMNode *aNode, nsIDOMNode *aParent, PRInt32 *a
   {
     res = node->GetParentNode(getter_AddRefs(parent));
     if (NS_FAILED(res)) return PR_FALSE;
-    if (parent.get() == aParent) 
+    if (parent == aParent) 
     {
       if (aOffset)
       {
         nsCOMPtr<nsIContent> pCon(do_QueryInterface(parent));
         nsCOMPtr<nsIContent> cCon(do_QueryInterface(node));
-        if (pCon && cCon)
+        if (pCon)
         {
-          pCon->IndexOf(cCon, *aOffset);
+          *aOffset = pCon->IndexOf(cCon);
         }
       }
       return PR_TRUE;
@@ -241,9 +226,9 @@ nsEditorUtils::IsDescendantOf(nsIDOMNode *aNode, nsIDOMNode *aParent, PRInt32 *a
 PRBool
 nsEditorUtils::IsLeafNode(nsIDOMNode *aNode)
 {
-  if (!aNode) return PR_FALSE;
   PRBool hasChildren = PR_FALSE;
-  aNode->HasChildNodes(&hasChildren);
+  if (aNode)
+    aNode->HasChildNodes(&hasChildren);
   return !hasChildren;
 }
 
@@ -258,9 +243,8 @@ nsEditorHookUtils::GetHookEnumeratorFromDocument(nsIDOMDocument *aDoc,
   nsCOMPtr<nsIDocument> doc = do_QueryInterface(aDoc);
   if (!doc) return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsISupports> isupp;
-  doc->GetContainer(getter_AddRefs(isupp));
-  nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(isupp);
+  nsCOMPtr<nsISupports> container = doc->GetContainer();
+  nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(container);
   nsCOMPtr<nsIClipboardDragDropHookList> hookObj = do_GetInterface(docShell);
   if (!hookObj) return NS_ERROR_FAILURE;
 

@@ -11,8 +11,8 @@
                    chrome:displayName="Win-specific dl mgr files"
                    chrome:author="mozilla.org"
                    chrome:name="dlmgr"
-                   chrome:localeVersion="1.5a"
-                   chrome:skinVersion="1.2">
+#expand                    chrome:localeVersion="__MOZILLA_LOCALE_VERSION__"
+#expand                    chrome:skinVersion="__MOZILLA_SKIN_VERSION__">
   </RDF:Description>
  
   <!-- overlay information -->

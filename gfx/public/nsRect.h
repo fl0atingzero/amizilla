@@ -97,6 +97,7 @@ struct NS_GFX nsRect {
   void MoveTo(nscoord aX, nscoord aY) {x = aX; y = aY;}
   void MoveTo(const nsPoint& aPoint) {x = aPoint.x; y = aPoint.y;}
   void MoveBy(nscoord aDx, nscoord aDy) {x += aDx; y += aDy;}
+  void MoveBy(const nsPoint& aPoint) {x += aPoint.x; y += aPoint.y;}
   void SizeTo(nscoord aWidth, nscoord aHeight) {width = aWidth; height = aHeight;}
   void SizeTo(const nsSize& aSize) {SizeTo(aSize.width, aSize.height);}
   void SizeBy(nscoord aDeltaWidth, nscoord aDeltaHeight) {width += aDeltaWidth;
@@ -122,13 +123,12 @@ struct NS_GFX nsRect {
   PRBool  operator!=(const nsRect& aRect) const {
     return (PRBool) !operator==(aRect);
   }
-  nsRect  operator+(const nsRect& aRect) const {
-    return nsRect(x + aRect.x, y + aRect.y,
-                  width + aRect.width, height + aRect.height);
+
+  nsRect  operator+(const nsPoint& aPoint) const {
+    return nsRect(x + aPoint.x, y + aPoint.y, width, height);
   }
-  nsRect  operator-(const nsRect& aRect) const {
-    return nsRect(x - aRect.x, y - aRect.y,
-                  width - aRect.width, height - aRect.height);
+  nsRect  operator-(const nsPoint& aPoint) const {
+    return nsRect(x - aPoint.x, y - aPoint.y, width, height);
   }
   nsRect& operator+=(const nsPoint& aPoint) {x += aPoint.x; y += aPoint.y; return *this;}
   nsRect& operator-=(const nsPoint& aPoint) {x -= aPoint.x; y -= aPoint.y; return *this;}
@@ -141,6 +141,12 @@ struct NS_GFX nsRect {
 
   nsRect& ScaleRoundOut(const float aScale);
   nsRect& ScaleRoundIn(const float aScale);
+
+  // Helpers for accessing the vertices
+  nsPoint TopLeft() const { return nsPoint(x, y); }
+  nsPoint TopRight() const { return nsPoint(XMost(), y); }
+  nsPoint BottomLeft() const { return nsPoint(x, YMost()); }
+  nsPoint BottomRight() const { return nsPoint(XMost(), YMost()); }
 
   // Helper methods for computing the extents
   nscoord XMost() const {return x + width;}

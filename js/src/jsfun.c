@@ -1,36 +1,41 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * JS function support.
@@ -45,6 +50,7 @@
 #include "jsatom.h"
 #include "jscntxt.h"
 #include "jsconfig.h"
+#include "jsdbgapi.h"
 #include "jsfun.h"
 #include "jsgc.h"
 #include "jsinterp.h"
@@ -100,6 +106,9 @@ js_GetArgsValue(JSContext *cx, JSStackFrame *fp, jsval *vp)
     return JS_TRUE;
 }
 
+#define MAXARGS(fp)     ((fp)->fun ? JS_MAX((fp)->argc, (fp)->fun->nargs)     \
+                                   : (fp)->argc)
+
 static JSBool
 MarkArgDeleted(JSContext *cx, JSStackFrame *fp, uintN slot)
 {
@@ -110,7 +119,7 @@ MarkArgDeleted(JSContext *cx, JSStackFrame *fp, uintN slot)
 
     argsobj = fp->argsobj;
     (void) JS_GetReservedSlot(cx, argsobj, 0, &bmapval);
-    nbits = JS_MAX(fp->argc, fp->fun->nargs);
+    nbits = MAXARGS(fp);
     JS_ASSERT(slot < nbits);
     if (JSVAL_IS_VOID(bmapval)) {
         if (nbits <= JSVAL_INT_BITS) {
@@ -153,7 +162,7 @@ ArgWasDeleted(JSContext *cx, JSStackFrame *fp, uintN slot)
     (void) JS_GetReservedSlot(cx, argsobj, 0, &bmapval);
     if (JSVAL_IS_VOID(bmapval))
         return JS_FALSE;
-    if (JS_MAX(fp->argc, fp->fun->nargs) <= JSVAL_INT_BITS) {
+    if (MAXARGS(fp) <= JSVAL_INT_BITS) {
         bmapint = JSVAL_TO_INT(bmapval);
         bitmap = (jsbitmap *) &bmapint;
     } else {
@@ -192,7 +201,7 @@ js_GetArgsProperty(JSContext *cx, JSStackFrame *fp, jsid id,
     *vp = JSVAL_VOID;
     if (JSVAL_IS_INT(id)) {
         slot = (uintN) JSVAL_TO_INT(id);
-        if (slot < JS_MAX(fp->argc, fp->fun->nargs)) {
+        if (slot < MAXARGS(fp)) {
             if (fp->argsobj && ArgWasDeleted(cx, fp, slot))
                 return OBJ_GET_PROPERTY(cx, fp->argsobj, id, vp);
             *vp = fp->argv[slot];
@@ -213,7 +222,6 @@ js_GetArgsObject(JSContext *cx, JSStackFrame *fp)
     JSObject *argsobj;
 
     /* Create an arguments object for fp only if it lacks one. */
-    JS_ASSERT(fp->fun);
     argsobj = fp->argsobj;
     if (argsobj)
         return argsobj;
@@ -254,7 +262,7 @@ js_PutArgsObject(JSContext *cx, JSStackFrame *fp)
     (void) JS_GetReservedSlot(cx, argsobj, 0, &bmapval);
     if (!JSVAL_IS_VOID(bmapval)) {
         JS_SetReservedSlot(cx, argsobj, 0, JSVAL_VOID);
-        if (JS_MAX(fp->argc, fp->fun->nargs) > JSVAL_INT_BITS)
+        if (MAXARGS(fp) > JSVAL_INT_BITS)
             JS_free(cx, JSVAL_TO_PRIVATE(bmapval));
     }
 
@@ -291,7 +299,6 @@ args_delProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
     if (!fp)
         return JS_TRUE;
     JS_ASSERT(fp->argsobj);
-    JS_ASSERT(fp->fun);
 
     slot = JSVAL_TO_INT(id);
     switch (slot) {
@@ -301,10 +308,8 @@ args_delProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
         break;
 
       default:
-        if ((uintN)slot < JS_MAX(fp->argc, fp->fun->nargs) &&
-            !MarkArgDeleted(cx, fp, slot)) {
+        if ((uintN)slot < MAXARGS(fp) && !MarkArgDeleted(cx, fp, slot))
             return JS_FALSE;
-        }
         break;
     }
     return JS_TRUE;
@@ -323,7 +328,6 @@ args_getProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
     if (!fp)
         return JS_TRUE;
     JS_ASSERT(fp->argsobj);
-    JS_ASSERT(fp->fun);
 
     slot = JSVAL_TO_INT(id);
     switch (slot) {
@@ -338,10 +342,8 @@ args_getProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
         break;
 
       default:
-        if ((uintN)slot < JS_MAX(fp->argc, fp->fun->nargs) &&
-            !ArgWasDeleted(cx, fp, slot)) {
+        if ((uintN)slot < MAXARGS(fp) && !ArgWasDeleted(cx, fp, slot))
             *vp = fp->argv[slot];
-        }
         break;
     }
     return JS_TRUE;
@@ -360,7 +362,6 @@ args_setProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
     if (!fp)
         return JS_TRUE;
     JS_ASSERT(fp->argsobj);
-    JS_ASSERT(fp->fun);
 
     slot = JSVAL_TO_INT(id);
     switch (slot) {
@@ -370,10 +371,8 @@ args_setProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
         break;
 
       default:
-        if ((uintN)slot < JS_MAX(fp->argc, fp->fun->nargs) &&
-            !ArgWasDeleted(cx, fp, slot)) {
+        if ((uintN)slot < MAXARGS(fp) && !ArgWasDeleted(cx, fp, slot))
             fp->argv[slot] = *vp;
-        }
         break;
     }
     return JS_TRUE;
@@ -396,12 +395,10 @@ args_resolve(JSContext *cx, JSObject *obj, jsval id, uintN flags,
     if (!fp)
         return JS_TRUE;
     JS_ASSERT(fp->argsobj);
-    JS_ASSERT(fp->fun);
 
     if (JSVAL_IS_INT(id)) {
         slot = JSVAL_TO_INT(id);
-        if (slot < JS_MAX(fp->argc, fp->fun->nargs) &&
-            !ArgWasDeleted(cx, fp, slot)) {
+        if (slot < MAXARGS(fp) && !ArgWasDeleted(cx, fp, slot)) {
             /* XXX ECMA specs DontEnum, contrary to other array-like objects */
             if (!js_DefineProperty(cx, obj, (jsid) id, fp->argv[slot],
                                    args_getProperty, args_setProperty,
@@ -460,7 +457,6 @@ args_enumerate(JSContext *cx, JSObject *obj)
     if (!fp)
         return JS_TRUE;
     JS_ASSERT(fp->argsobj);
-    JS_ASSERT(fp->fun);
 
     /*
      * Trigger reflection with value snapshot in args_resolve using a series
@@ -483,7 +479,7 @@ args_enumerate(JSContext *cx, JSObject *obj)
     if (prop)
         OBJ_DROP_PROPERTY(cx, pobj, prop);
 
-    nargs = JS_MAX(fp->argc, fp->fun->nargs);
+    nargs = MAXARGS(fp);
     for (slot = 0; slot < nargs; slot++) {
         if (!js_LookupProperty(cx, obj, (jsid) INT_TO_JSVAL((jsint)slot),
                                &pobj, &prop)) {
@@ -930,6 +926,8 @@ fun_getProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
         break;
 
       case FUN_CALLER:
+        while (fp && (fp->flags & JSFRAME_SKIP_CALLER) && fp->down)
+            fp = fp->down;
         if (fp && fp->down && fp->down->fun && fp->down->argv)
             *vp = fp->down->argv[-2];
         else
@@ -1015,13 +1013,14 @@ fun_resolve(JSContext *cx, JSObject *obj, jsval id, uintN flags,
             return JS_FALSE;
 
         /*
-         * ECMA says that constructor.prototype is DontEnum | DontDelete for
+         * ECMA (15.3.5.2) says that constructor.prototype is DontDelete for
          * user-defined functions, but DontEnum | ReadOnly | DontDelete for
          * native "system" constructors such as Object or Function.  So lazily
          * set the former here in fun_resolve, but eagerly define the latter
          * in JS_InitClass, with the right attributes.
          */
-        if (!js_SetClassPrototype(cx, obj, proto, JSPROP_PERMANENT)) {
+        if (!js_SetClassPrototype(cx, obj, proto,
+                                  JSPROP_ENUMERATE | JSPROP_PERMANENT)) {
             cx->newborn[GCX_OBJECT] = NULL;
             return JS_FALSE;
         }
@@ -1155,8 +1154,10 @@ fun_xdrObject(JSXDRState *xdr, JSObject **objp)
                        ? JSXDR_FUNCONST
                        : JSXDR_FUNVAR;
                 userid = INT_TO_JSVAL(sprop->shortid);
-                propname = ATOM_BYTES((JSAtom *)sprop->id);
-                if (!JS_XDRUint32(xdr, &type) ||
+                /* XXX lossy conversion, need new XDR version for ECMAv3 */
+                propname = JS_GetStringBytes(ATOM_TO_STRING((JSAtom *)sprop->id));
+                if (!propname ||
+                    !JS_XDRUint32(xdr, &type) ||
                     !JS_XDRUint32(xdr, &userid) ||
                     !JS_XDRCString(xdr, &propname)) {
                     if (mark)
@@ -1282,7 +1283,7 @@ fun_hasInstance(JSContext *cx, JSObject *obj, jsval v, JSBool *bp)
     if (!js_IsDelegate(cx, proto, v, bp))
         return JS_FALSE;
 
-    if (!*bp && !JSVAL_IS_PRIMITIVE(v)) {
+    if (!*bp && !JSVAL_IS_PRIMITIVE(v) && v != pval) {
         /*
          * Extension for "brutal sharing" of standard class constructors: if
          * a script is compiled using a single, shared set of constructors, in
@@ -1475,7 +1476,7 @@ fun_call(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
     fp = cx->fp;
     oldsp = fp->sp;
     fp->sp = sp;
-    ok = js_Invoke(cx, argc, JSINVOKE_INTERNAL);
+    ok = js_Invoke(cx, argc, JSINVOKE_INTERNAL | JSINVOKE_SKIP_CALLER);
 
     /* Store rval and pop stack back to our frame's sp. */
     *rval = fp->sp[-1];
@@ -1498,7 +1499,7 @@ fun_apply(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
     JSStackFrame *fp;
 
     if (argc == 0) {
-        /* Will get globalObject as 'this' and no other agurments. */
+        /* Will get globalObject as 'this' and no other arguments. */
         return fun_call(cx, obj, argc, argv, rval);
     }
 
@@ -1543,7 +1544,7 @@ fun_apply(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
         return JS_FALSE;
 
     /* Allocate stack space for fval, obj, and the args. */
-    argc = (uintN)length;
+    argc = (uintN)JS_MIN(length, ARGC_LIMIT - 1);
     sp = js_AllocStack(cx, 2 + argc, &mark);
     if (!sp)
         return JS_FALSE;
@@ -1562,7 +1563,7 @@ fun_apply(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
     fp = cx->fp;
     oldsp = fp->sp;
     fp->sp = sp;
-    ok = js_Invoke(cx, argc, JSINVOKE_INTERNAL);
+    ok = js_Invoke(cx, argc, JSINVOKE_INTERNAL | JSINVOKE_SKIP_CALLER);
 
     /* Store rval and pop stack back to our frame's sp. */
     *rval = fp->sp[-1];
@@ -1594,14 +1595,11 @@ js_IsIdentifier(JSString *str)
     jschar *s, c;
 
     n = JSSTRING_LENGTH(str);
+    if (n == 0)
+        return JS_FALSE;
     s = JSSTRING_CHARS(str);
     c = *s;
-    /*
-     * We don't handle unicode escape sequences here
-     * because they won't be in the input string.
-     * (Right?)
-     */
-    if (n == 0 || !JS_ISIDENT_START(c))
+    if (!JS_ISIDENT_START(c))
         return JS_FALSE;
     for (n--; n != 0; n--) {
         c = *++s;
@@ -1614,6 +1612,7 @@ js_IsIdentifier(JSString *str)
 static JSBool
 Function(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
 {
+    JSStackFrame *fp, *caller;
     JSFunction *fun;
     JSObject *parent;
     uintN i, n, lineno, dupflag;
@@ -1622,7 +1621,6 @@ Function(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
     JSObject *obj2;
     JSScopeProperty *sprop;
     JSString *str, *arg;
-    JSStackFrame *fp;
     void *mark;
     JSTokenStream *ts;
     JSPrincipals *principals;
@@ -1631,7 +1629,8 @@ Function(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
     JSTokenType tt;
     JSBool ok;
 
-    if (cx->fp && !(cx->fp->flags & JSFRAME_CONSTRUCTING)) {
+    fp = cx->fp;
+    if (fp && !(fp->flags & JSFRAME_CONSTRUCTING)) {
         obj = js_NewObject(cx, &js_FunctionClass, NULL, NULL);
         if (!obj)
             return JS_FALSE;
@@ -1659,7 +1658,7 @@ Function(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
 #endif
 
     fun = js_NewFunction(cx, obj, NULL, 0, JSFUN_LAMBDA, parent,
-                         (JSVERSION_IS_ECMA(cx->version))
+                         JSVERSION_IS_ECMA(cx->version)
                          ? cx->runtime->atomState.anonymousAtom
                          : NULL);
 
@@ -1673,26 +1672,16 @@ Function(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
      * are built for Function.prototype.call or .apply activations that invoke
      * Function indirectly from a script.
      */
-    fp = cx->fp;
     JS_ASSERT(!fp->script && fp->fun && fp->fun->native == Function);
-    for (;;) {
-        fp = fp->down;
-        if (!fp) {
-            filename = NULL;
-            lineno = 0;
-            principals = NULL;
-            break;
-        }
-        if (fp->script) {
-            /*
-             * Load fp->script->* before calling js_PCToLineNumber, to avoid
-             * a pessimal reload of fp->script.
-             */
-            principals = fp->script->principals;
-            filename = fp->script->filename;
-            lineno = js_PCToLineNumber(fp->script, fp->pc);
-            break;
-        }
+    caller = JS_GetScriptedCaller(cx, fp);
+    if (caller) {
+        filename = caller->script->filename;
+        lineno = js_PCToLineNumber(cx, caller->script, caller->pc);
+        principals = JS_EvalFramePrincipals(cx, fp, caller);
+    } else {
+        filename = NULL;
+        lineno = 0;
+        principals = NULL;
     }
 
     n = argc ? argc - 1 : 0;
@@ -1779,6 +1768,8 @@ Function(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
                 if (sprop) {
                     ok = JS_TRUE;
                     if (obj2 == obj) {
+                        const char *name = js_AtomToPrintableString(cx, atom);
+
                         /*
                          * A duplicate parameter name. We force a duplicate
                          * node on the SCOPE_LAST_PROP(scope) list with the
@@ -1786,11 +1777,12 @@ Function(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
                          * flag, and not mapped by an entry in scope.
                          */
                         JS_ASSERT(sprop->getter == js_GetArgument);
-                        ok = js_ReportCompileErrorNumber(cx, ts, NULL,
+                        ok = name &&
+                             js_ReportCompileErrorNumber(cx, ts, NULL,
                                                          JSREPORT_WARNING |
                                                          JSREPORT_STRICT,
                                                          JSMSG_DUPLICATE_FORMAL,
-                                                         ATOM_BYTES(atom));
+                                                         name);
 
                         dupflag = SPROP_IS_DUPLICATE;
                     }
@@ -1890,7 +1882,7 @@ js_InitFunctionClass(JSContext *cx, JSObject *obj)
     fun = js_NewFunction(cx, proto, NULL, 0, 0, obj, NULL);
     if (!fun)
         goto bad;
-    fun->script = js_NewScript(cx, 0);
+    fun->script = js_NewScript(cx, 0, 0, 0);
     if (!fun->script)
         goto bad;
     return proto;
@@ -1998,8 +1990,12 @@ js_DefineFunction(JSContext *cx, JSObject *obj, JSAtom *atom, JSNative native,
     return fun;
 }
 
+#if (JSV2F_CONSTRUCT & JSV2F_SEARCH_STACK)
+# error "JSINVOKE_CONSTRUCT and JSV2F_SEARCH_STACK are not disjoint!"
+#endif
+
 JSFunction *
-js_ValueToFunction(JSContext *cx, jsval *vp, JSBool constructing)
+js_ValueToFunction(JSContext *cx, jsval *vp, uintN flags)
 {
     jsval v;
     JSObject *obj;
@@ -2015,18 +2011,17 @@ js_ValueToFunction(JSContext *cx, jsval *vp, JSBool constructing)
         }
     }
     if (!obj) {
-        js_ReportIsNotFunction(cx, vp, constructing);
+        js_ReportIsNotFunction(cx, vp, flags);
         return NULL;
     }
     return (JSFunction *) JS_GetPrivate(cx, obj);
 }
 
 void
-js_ReportIsNotFunction(JSContext *cx, jsval *vp, JSBool constructing)
+js_ReportIsNotFunction(JSContext *cx, jsval *vp, uintN flags)
 {
     JSType type;
     JSString *fallback;
-    JSStackFrame *fp;
     JSString *str;
 
     /*
@@ -2037,13 +2032,19 @@ js_ReportIsNotFunction(JSContext *cx, jsval *vp, JSBool constructing)
      */
     type = JS_TypeOfValue(cx, *vp);
     fallback = ATOM_TO_STRING(cx->runtime->atomState.typeAtoms[type]);
-    fp = cx->fp;
-    str = js_DecompileValueGenerator(cx, fp ? vp - fp->sp : JSDVG_IGNORE_STACK,
-                                     *vp, fallback);
+    str = js_DecompileValueGenerator(cx,
+                                     (flags & JSV2F_SEARCH_STACK)
+                                     ? JSDVG_SEARCH_STACK
+                                     : cx->fp
+                                     ? vp - cx->fp->sp
+                                     : JSDVG_IGNORE_STACK,
+                                     *vp,
+                                     fallback);
     if (str) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
-                             (uintN)(constructing ? JSMSG_NOT_CONSTRUCTOR
-                                                  : JSMSG_NOT_FUNCTION),
+                             (uintN)((flags & JSV2F_CONSTRUCT)
+                                     ? JSMSG_NOT_CONSTRUCTOR
+                                     : JSMSG_NOT_FUNCTION),
                              JS_GetStringBytes(str));
     }
 }

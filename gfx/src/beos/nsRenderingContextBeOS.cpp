@@ -47,9 +47,8 @@
 #include <Polygon.h>
 #include <math.h>
 
-static NS_DEFINE_IID(kRenderingContextIID, NS_IRENDERING_CONTEXT_IID);
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsRenderingContextBeOS, nsIRenderingContext)
+NS_IMPL_ISUPPORTS1(nsRenderingContextBeOS, nsIRenderingContext)
 
 static NS_DEFINE_CID(kRegionCID, NS_REGION_CID);
 
@@ -82,7 +81,7 @@ nsRenderingContextBeOS::~nsRenderingContextBeOS() {
 		mStateCache = nsnull;
 	}
 	
-	if (mTranMatrix) delete mTranMatrix;
+	delete mTranMatrix;
 	NS_IF_RELEASE(mOffscreenSurface);
 	NS_IF_RELEASE(mFontMetrics);
 	NS_IF_RELEASE(mContext);
@@ -114,11 +113,14 @@ NS_IMETHODIMP nsRenderingContextBeOS::Init(nsIDeviceContext *aContext, nsDrawing
 }
 
 NS_IMETHODIMP nsRenderingContextBeOS::CommonInit() {
-	mContext->GetDevUnitsToAppUnits(mP2T);
-	float app2dev;
-	mContext->GetAppUnitsToDevUnits(app2dev);
-	mTranMatrix->AddScale(app2dev, app2dev);
-	return NS_OK;
+  if (!mTranMatrix)
+    return NS_ERROR_OUT_OF_MEMORY;
+
+  mP2T = mContext->DevUnitsToAppUnits();
+  float app2dev;
+  app2dev = mContext->AppUnitsToDevUnits();
+  mTranMatrix->AddScale(app2dev, app2dev);
+  return NS_OK;
 }
 
 // We like PRUnichar rendering, hopefully it's not slowing us too much
@@ -168,28 +170,40 @@ NS_IMETHODIMP nsRenderingContextBeOS::GetDeviceContext(nsIDeviceContext *&aConte
 // Get a new GS
 NS_IMETHODIMP nsRenderingContextBeOS::PushState() {
 #ifdef USE_GS_POOL
-	nsGraphicsState *state = nsGraphicsStatePool::GetNewGS();
+  nsGraphicsState *state = nsGraphicsStatePool::GetNewGS();
 #else
-	nsGraphicsState *state = new nsGraphicsState;
+  nsGraphicsState *state = new nsGraphicsState;
 #endif
+  // Push into this state object, add to vector
+  if (!state) return NS_ERROR_OUT_OF_MEMORY;
 
-	// Push into this state object, add to vector
-	if (!state) return NS_ERROR_FAILURE;
-	
-	state->mMatrix = mTranMatrix;
-	if (nsnull == mTranMatrix) mTranMatrix = new nsTransform2D();
-	else mTranMatrix = new nsTransform2D(mTranMatrix);
-	
-	// Set state to mClipRegion. SetClip{Rect,Region}() will do copy-on-write stuff
-	state->mClipRegion = mClipRegion;
-	
-	NS_IF_ADDREF(mFontMetrics);
-	state->mFontMetrics = mFontMetrics;
-	state->mColor = mCurrentColor;
-	state->mLineStyle = mCurrentLineStyle;
-	
-	mStateCache->AppendElement(state);
-	return NS_OK;
+  nsTransform2D *tranMatrix;
+  if (nsnull == mTranMatrix)
+    tranMatrix = new nsTransform2D();
+  else
+    tranMatrix = new nsTransform2D(mTranMatrix);
+
+  if (!tranMatrix) {
+#ifdef USE_GS_POOL
+    nsGraphicsStatePool::ReleaseGS(state);
+#else
+    delete state;
+#endif
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  state->mMatrix = mTranMatrix;
+  mTranMatrix = tranMatrix;
+
+  // Set state to mClipRegion. SetClip{Rect,Region}() will do copy-on-write stuff
+  state->mClipRegion = mClipRegion;
+
+  NS_IF_ADDREF(mFontMetrics);
+  state->mFontMetrics = mFontMetrics;
+  state->mColor = mCurrentColor;
+  state->mLineStyle = mCurrentLineStyle;
+
+  mStateCache->AppendElement(state);
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsRenderingContextBeOS::PopState(PRBool &aClipEmpty) {
@@ -202,7 +216,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::PopState(PRBool &aClipEmpty) {
 		
 		// Assign all local attributes from the state object just popped
 		if (state->mMatrix) {
-			if (mTranMatrix) delete mTranMatrix;
+			delete mTranMatrix;
 			mTranMatrix = state->mMatrix;
 		}
 		
@@ -292,10 +306,11 @@ NS_IMETHODIMP nsRenderingContextBeOS::SetClipRect(const nsRect& aRect, nsClipCom
 // and imposes serious overhead. The entire locking mechanism here needs to be
 // revisited, especially for offscreen surfaces whose thread is not locked
 // for other purposes, the way a BWindow does for message handling.
-void nsRenderingContextBeOS::UpdateView() {
+bool nsRenderingContextBeOS::LockAndUpdateView() {
+	bool rv = false;
 	if (mView) mView = nsnull;
 	mSurface->AcquireView(&mView);
-
+	
 	if (mView && mView->LockLooper()) {
 		if (mCurrentFont == nsnull) mCurrentFont = (BFont *)be_plain_font;
 		
@@ -310,7 +325,9 @@ void nsRenderingContextBeOS::UpdateView() {
 			mClipRegion->GetNativeRegion((void *&)region);
 			mView->ConstrainClippingRegion(region);
 		}
+		rv = true;
 	}
+	return rv;
 }
 
 NS_IMETHODIMP nsRenderingContextBeOS::SetClipRegion(const nsIRegion &aRegion,
@@ -464,8 +481,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::CreateDrawingSurface(const nsRect& aBounds
 		NS_ADDREF(surf);
 		if (!mView) 
 		{
-		    UpdateView(); 
-		    if (mView) 
+		    if(LockAndUpdateView())
 		        mView->UnlockLooper();
 		}
 		surf->Init(mView, aBounds.width, aBounds.height, aSurfFlags);
@@ -497,8 +513,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawLine(nscoord aX0, nscoord aY0, nscoord
 		diffY = (diffY > 0) ? 1 : -1;
 	}
 	
-	UpdateView();
-	if (mView) {
+	if (LockAndUpdateView()) {
 		mView->StrokeLine(BPoint(aX0, aY0), BPoint(aX1 - diffX, aY1 - diffY));
 		mView->UnlockLooper();
 	}
@@ -519,8 +534,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawStdLine(nscoord aX0, nscoord aY0, nsco
 		diffY = (diffY > 0) ? 1 : -1;
 	}
 	
-	UpdateView();
-	if (mView) {
+	if (LockAndUpdateView()) {
 		mView->StrokeLine(BPoint(aX0, aY0), BPoint(aX1 - diffX, aY1 - diffY));
 		mView->UnlockLooper();
 	}	
@@ -555,8 +569,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawPolyline(const nsPoint aPoints[], PRIn
 //	Don't draw empty polygon
 	if(w && h)
 	{
-		UpdateView();
-		if (mView) {
+		if (LockAndUpdateView()) {
 			if (1 == h) {
 				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left + w - 1, r.top));
 			} else if (1 == w) {
@@ -592,8 +605,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawRect(nscoord aX, nscoord aY, nscoord a
 	// Don't draw empty rectangles; also, w/h are adjusted down by one
 	// so that the right number of pixels are drawn.
 	if (w && h) {
-		UpdateView();
-		if (mView) {
+		if (LockAndUpdateView()) {
 			// FIXME: add line style
 			if (1 == h) {
 				mView->StrokeLine(BPoint(x, y), BPoint(x + w - 1, y));
@@ -623,8 +635,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::FillRect(nscoord aX, nscoord aY, nscoord a
 	ConditionRect(x, y, w, h);
 	
 	if (w && h) {
-		UpdateView();
-		if (mView) {
+		if (LockAndUpdateView()) {
 			// FIXME: add line style
 			if (1 == h) {
 				mView->StrokeLine(BPoint(x, y), BPoint(x + w - 1, y));
@@ -654,9 +665,12 @@ NS_IMETHODIMP nsRenderingContextBeOS::InvertRect(nscoord aX, nscoord aY, nscoord
 	ConditionRect(x, y, w, h);
 	
 	if (w && h) {
-		UpdateView();
-		if (mView) {
+		if (LockAndUpdateView()) {
+			//Mozilla doesn't seem to set clipping for InvertRect, so we do it here - bug 230267
+			BRegion tmpClip = BRegion(BRect(x, y, x + w - 1, y + h - 1));
+			mView->ConstrainClippingRegion(&tmpClip);
 			mView->InvertRect(BRect(x, y, x + w - 1, y + h - 1));
+			mView->Sync();
 			mView->UnlockLooper();
 		}
 	}
@@ -687,8 +701,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawPolygon(const nsPoint aPoints[], PRInt
 //	Don't draw empty polygon
 	if(w && h)
 	{
-		UpdateView();
-		if (mView) {
+		if (LockAndUpdateView()) {
 			if (1 == h) {
 				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left + w - 1, r.top));
 			} else if (1 == w) {
@@ -729,8 +742,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::FillPolygon(const nsPoint aPoints[], PRInt
 //	Don't draw empty polygon
 	if(w && h)
 	{
-		UpdateView();
-		if (mView) {
+		if (LockAndUpdateView()) {
 			if (1 == h) {
 				mView->StrokeLine(BPoint(r.left, r.top), BPoint(r.left + w - 1, r.top));
 			} else if (1 == w) {
@@ -759,8 +771,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawEllipse(nscoord aX, nscoord aY, nscoor
 	nscoord x = aX, y = aY, w = aWidth, h = aHeight;
 	mTranMatrix->TransformCoord(&x, &y, &w, &h);
 	
-	UpdateView();
-	if (mView) {
+	if (LockAndUpdateView()) {
 		mView->StrokeEllipse(BRect(x, y, x + w - 1, y + h - 1));
 		mView->UnlockLooper();
 	}
@@ -779,8 +790,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::FillEllipse(nscoord aX, nscoord aY, nscoor
 	nscoord x = aX, y = aY, w = aWidth, h = aHeight;
 	mTranMatrix->TransformCoord(&x, &y, &w, &h);
 	
-	UpdateView();
-	if (mView) {
+	if (LockAndUpdateView()) {
 		mView->FillEllipse(BRect(x, y, x + w - 1, y + h - 1));
 		mView->UnlockLooper();
 	}
@@ -801,8 +811,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawArc(nscoord aX, nscoord aY, nscoord aW
 	nscoord x = aX, y = aY, w = aWidth, h = aHeight;
 	mTranMatrix->TransformCoord(&x, &y, &w, &h);
 	
-	UpdateView();
-	if (mView) {
+	if (LockAndUpdateView()) {
 		// FIXME: add line style
 		mView->StrokeArc(BRect(x, y, x + w - 1, y + h - 1), aStartAngle, aEndAngle - aStartAngle);
 		mView->UnlockLooper();
@@ -824,8 +833,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::FillArc(nscoord aX, nscoord aY, nscoord aW
 	nscoord x = aX, y = aY, w = aWidth, h = aHeight;
 	mTranMatrix->TransformCoord(&x, &y, &w, &h);
 	
-	UpdateView();
-	if (mView) {
+	if (LockAndUpdateView()) {
 		mView->FillArc(BRect(x, y, x + w - 1, y + h - 1), aStartAngle, aEndAngle - aStartAngle);
 		mView->UnlockLooper();
 	}
@@ -1213,8 +1221,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::DrawString(const char *aString, PRUint32 a
 			doEmulateBold = metrics->GetEmulateBold();
 		}
 		
-		UpdateView();
-		if (mView)  
+		if (LockAndUpdateView())  
 		{
 			// XXX: the following maybe isn't  most efficient for text rendering,
 			// but it's the easy way to render antialiased text correctly
@@ -1279,7 +1286,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::CopyOffScreenBits(nsDrawingSurface aSrcSur
 	if (mTranMatrix == nsnull) return NS_ERROR_FAILURE;
 	if (mSurface == nsnull) return NS_ERROR_FAILURE;
 	
-	UpdateView();	
+	bool mustunlock = LockAndUpdateView();	
 	BBitmap *srcbitmap;
 	((nsDrawingSurfaceBeOS *)aSrcSurf)->AcquireBitmap(&srcbitmap);
 	BView *srcview;
@@ -1320,7 +1327,7 @@ NS_IMETHODIMP nsRenderingContextBeOS::CopyOffScreenBits(nsDrawingSurface aSrcSur
 				destview->DrawBitmap(srcbitmap, BRect(srcX, srcY, srcX + drect.width - 1, srcY + drect.height - 1),
 					BRect(drect.x, drect.y, drect.x + drect.width - 1, drect.y + drect.height - 1));
 				destview->UnlockLooper();
-				if (destview != mView) mView->UnlockLooper();
+				if (destview != mView && mustunlock) mView->UnlockLooper();
 				destsurf->ReleaseView();
 			}
 			srcview->UnlockLooper();

@@ -23,8 +23,8 @@
  *                 Karl Guertin <grayrest@grayrest.com> 
  *                 Colin Phillips <colinp@oeone.com> 
  *                 ArentJan Banck <ajbanck@planet.nl>
- *			 			 Eric Belhaire <belhaire@ief.u-psud.fr>
- *						 Mark Swaffer <swaff@fudo.org>
+ *                 Eric Belhaire <belhaire@ief.u-psud.fr>
+ *                 Mark Swaffer <swaff@fudo.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -63,7 +63,7 @@
  *-------------------------------------------------------------------*/
 
 .toolbarbutton-1 {
-  list-style-image: url("chrome://calendar/skin/btn1.gif");
+  list-style-image: url("chrome://calendar/skin/btn1.png");
 }
 
 
@@ -73,21 +73,21 @@
 
 #calendar-new-event-button 
   {
-    -moz-image-region: rect(105px 32px 126px 0px);
+    -moz-image-region: rect(126px 32px 147px 0px);
   }
 #calendar-new-event-button[disabled="true"],
 #calendar-new-event-button[disabled="true"]:hover,
 #calendar-new-event-button[disabled="true"]:hover:active
   {
-    -moz-image-region: rect(105px 128px 126px 96px);
+    -moz-image-region: rect(126px 128px 147px 96px);
   }
 #calendar-new-event-button:hover
   {
-    -moz-image-region: rect(105px 64px 126px 32px);
+    -moz-image-region: rect(126px 64px 147px 32px);
   }
 #calendar-new-event-button:hover:active
   {
-    -moz-image-region: rect(105px 96px 126px 64px);
+    -moz-image-region: rect(126px 96px 147px 64px);
   }
 
 /*--------------------------------------------------------------------
@@ -96,24 +96,24 @@
 
 #calendar-edit-event-button 
 {
-    -moz-image-region: rect(126px 32px 147px 0px);
+    -moz-image-region: rect(147px 32px 168px 0px);
 }
 
 #calendar-edit-event-button[disabled="true"],
 #calendar-edit-event-button[disabled="true"]:hover,
 #calendar-edit-event-button[disabled="true"]:hover:active
 {
-    -moz-image-region: rect(126px 128px 147px 96px);
+    -moz-image-region: rect(147px 128px 168px 96px);
 }
 
 #calendar-edit-event-button:hover
 {
-    -moz-image-region: rect(126px 64px 147px 32px);
+    -moz-image-region: rect(147px 64px 168px 32px);
 }
 
 #calendar-edit-event-button:hover:active
 {
-    -moz-image-region: rect(126px 96px 147px 64px);
+    -moz-image-region: rect(147px 96px 168px 64px);
 }
 
 /*--------------------------------------------------------------------
@@ -122,24 +122,24 @@
 
 #calendar-delete-event-button
 {
-    -moz-image-region: rect(147px 32px 168px 0px);
+    -moz-image-region: rect(168px 32px 189px 0px);
 }
   
 #calendar-delete-event-button[disabled="true"],
 #calendar-delete-event-button[disabled="true"]:hover,
 #calendar-delete-event-button[disabled="true"]:hover:active
 {
-    -moz-image-region: rect(147px 128px 168px 96px);
+    -moz-image-region: rect(168px 128px 189px 96px);
 }
 
 #calendar-delete-event-button:hover
 {
-    -moz-image-region: rect(147px 64px 168px 32px);
+    -moz-image-region: rect(168px 64px 189px 32px);
 }
 
 #calendar-delete-event-button:hover:active
 {
-    -moz-image-region: rect(147px 96px 168px 64px);
+    -moz-image-region: rect(168px 96px 189px 64px);
 }
 
 /*--------------------------------------------------------------------
@@ -148,21 +148,21 @@
 
 #calendar-go-to-today-button 
   {
-    -moz-image-region: rect(84px 32px 105px 0px);
+    -moz-image-region: rect(105px 32px 126px 0px);
   }
 #calendar-go-to-today-button[disabled="true"],
 #calendar-go-to-today-button[disabled="true"]:hover,
 #calendar-go-to-today-button[disabled="true"]:hover:active
   {
-    -moz-image-region: rect(84px 128px 105px 96px);
+    -moz-image-region: rect(105px 128px 126px 96px);
   }
 #calendar-go-to-today-button:hover
   {
-    -moz-image-region: rect(84px 64px 105px 32px);
+    -moz-image-region: rect(105px 64px 126px 32px);
   }
 #calendar-go-to-today-button:hover:active
   {
-    -moz-image-region: rect(84px 96px 105px 64px);
+    -moz-image-region: rect(105px 96px 126px 64px);
   }
 
 
@@ -172,45 +172,44 @@
 
 #calendar-choose-date-button 
   {
-    -moz-image-region: rect(63px 32px 84px 0px);
+    -moz-image-region: rect(84px 32px 105px 0px);
   }
 #calendar-choose-date-button[disabled="true"],
 #calendar-choose-date-button[disabled="true"]:hover,
 #calendar-choose-date-button[disabled="true"]:hover:active
   {
-    -moz-image-region: rect(63px 128px 84px 96px);
+    -moz-image-region: rect(84px 128px 105px 96px);
   }
 #calendar-choose-date-button:hover
   {
-    -moz-image-region: rect(63px 64px 84px 32px);
+    -moz-image-region: rect(84px 64px 105px 32px);
   }
 #calendar-choose-date-button:hover:active
   {
-    -moz-image-region: rect(63px 96px 84px 64px);
+    -moz-image-region: rect(84px 96px 105px 64px);
   }
 
 
 /*--------------------------------------------------------------------
  *   Change to multiweek view button
  *-------------------------------------------------------------------*/
-.toolbarbutton-1#calendar-multiweek-view-button {
-  list-style-image: url("chrome://calendar/skin/btnwm1.gif");
-}
-
 #calendar-multiweek-view-button 
   {
-    -moz-image-region: rect(1px 32px 21px 0px);
+    -moz-image-region: rect(42px 32px 63px 0px);
   }
 #calendar-multiweek-view-button[disabled="true"],
 #calendar-multiweek-view-button[disabled="true"]:hover,
-#calendar-multiweek-view-button[disabled="true"]:hover:active,
-#calendar-multiweek-view-button:hover:active
+#calendar-multiweek-view-button[disabled="true"]:hover:active
   {
-    -moz-image-region: rect(1px 128px 21px 96px);
+    -moz-image-region: rect(42px 128px 63px 96px);
   }
 #calendar-multiweek-view-button:hover
   {
-    -moz-image-region: rect(1px 64px 21px 32px);
+    -moz-image-region: rect(42px 64px 63px 32px);
+  }
+#calendar-multiweek-view-button:hover:active
+  {
+    -moz-image-region: rect(42px 96px 63px 64px);
   }
 
 /*--------------------------------------------------------------------
@@ -219,21 +218,21 @@
 
 #calendar-month-view-button 
   {
-    -moz-image-region: rect(42px 32px 63px 0px);
+    -moz-image-region: rect(63px 32px 84px 0px);
   }
 #calendar-month-view-button[disabled="true"],
 #calendar-month-view-button[disabled="true"]:hover,
 #calendar-month-view-button[disabled="true"]:hover:active
   {
-    -moz-image-region: rect(42px 128px 63px 96px);
+    -moz-image-region: rect(63px 128px 84px 96px);
   }
 #calendar-month-view-button:hover
   {
-    -moz-image-region: rect(42px 64px 63px 32px);
+    -moz-image-region: rect(63px 64px 84px 32px);
   }
 #calendar-month-view-button:hover:active
   {
-    -moz-image-region: rect(42px 96px 63px 64px);
+    -moz-image-region: rect(63px 96px 84px 64px);
   }
 
 /*--------------------------------------------------------------------
@@ -282,14 +281,45 @@
     -moz-image-region: rect(0px 96px 21px 64px);
   }
 
+/*--------------------------------------------------------------------
+ *   Throbber button
+ *-------------------------------------------------------------------*/
+
+#navigator-throbber2 {
+  -moz-appearance: none;
+  -moz-user-focus: ignore;
+  margin: 0 !important;
+  border: none !important;
+  padding: 0px !important;
+  min-width: 0;
+  background-color: transparent;
+  list-style-image: url('chrome://calendar/content/sunbird_small.png');
+}
+
 /*
 *****************************
  MultiWeek
 *****************************
 */
 #multiweek-grid{
-   border-right: 1px solid #3f7d91;
+   border: 1px solid #3f7d91;
 }
+
+#multiweek-grid-box{
+    border: 1px solid #3f7d91;
+    padding: 2px;
+    margin: 10px 2px 15px 10px;
+    background-color: #E7EEEC;
+    background-position: 50% 50%;
+    background-repeat: no-repeat;
+}
+
+
+/*Right column*/
+.multiweek-rightcol-class{ 
+    margin: 10px 2px 15px 2px;
+}
+
 
 #multiweek-view-box{
     -moz-box-align: center;
@@ -307,18 +337,31 @@
     padding:0px;
 }
 
+.multiweek-header-class{
+    border-left: 1px solid #3f7d91;
+    -moz-box-align: center;
+    font-size: 1.3em;
+    font-family: Arial, Helvetica;
+    color: #3f7d91;
+    background-color: #FFFFFF;
+    font-weight:bold;
+}
+.multiweek-header-left-class{
+     -moz-box-align: center;
+    font-size: 1.3em;
+    font-family: Arial, Helvetica;
+    color: #3f7d91;
+    font-weight:bold;
+}
+
 .multiweek-leftcol-box-class{ 
    display            : -moz-stack;
    background-color   : #E7EEEC;
 }
 
-/*Right column*/
-.multiweek-rightcol-class{ 
-   background-color   : #E7EEEC;
-}
 /*Previous/Next Buttons*/
 .updownbuttons{
-    list-style-image: url("chrome://calendar/skin/pageupdown.gif");
+    list-style-image: url("chrome://calendar/skin/pageupdown.png");
 }
 #multiweek-next-button{
     -moz-box-align:end;
@@ -381,7 +424,8 @@
 
 .multiweek-day-event-box-class
 {
-  border	       : 1px solid #F9F4FF;
+  border	       : 1px solid #1D7AB5;
+  margin               : 1px;
   background-color     : #F9F4FF;
   text-align           : left; 	
   font-size            : 0.9em;
@@ -391,14 +435,14 @@
 
 .multiweek-day-event-box-class:hover
 {
-  background-color      : #F9F4FF;
   border		: 1px solid #003366;
 }
 
 .multiweek-day-event-box-class[eventselected="true"]
 {
    background-color     :  #D5E3F2;  
-   border-color         :  #003366;
+   border	        : 2px solid #990000;
+   margin               : 0px;
 }
 
 .multiweek-view-event-dot-class
@@ -569,7 +613,7 @@
 
 /*user enableable background*/
 .month-day-box-class[background="true"]{
-    -moz-opacity: 90%;
+    -moz-opacity: 0.9;
     border-left: 1px solid #3f7d91;
     border-top: 1px solid #3f7d91;
 }
@@ -624,9 +668,7 @@
 .month-day-event-box-class
 {
    border               : 1px solid #1D7AB5;
-   margin-bottom        : 1px;
-   margin-left          : 2px;
-   margin-right         : 2px;
+   margin               : 1px;
    background-color     : #F9F4FF;
    text-align           : left; 	
    font-size            : 0.9em;
@@ -636,16 +678,15 @@
 
 .month-day-event-box-class:hover
 {
-   background-color  : #F9F4FF;
-	border				: 1px solid #003366;
+   border	        : 1px solid #003366;
 }
 
 .month-day-event-box-class[eventselected="true"]
 {
    background-color     :  #D5E3F2;  
-   border-color         :  #003366;
+   border	        : 2px solid #990000;
+   margin               : 0px;
 }
-
 
 .all-day-event-class,
 .month-allday-busy-ind-class[busy="true"]
@@ -758,7 +799,9 @@
     -moz-image-region: rect(0 60px 33px 40px);
 }
 
-/* Day title Stuff */
+/*--------------------------------------------------------------------
+ * Day title stuff
+ *-------------------------------------------------------------------*/
 #day-title-container
 {
     -moz-box-align: center;
@@ -808,46 +851,103 @@
  * Box around the all day content at the top
  *-------------------------------------------------------------------*/
 
+#all-day-collapsible-box
+{
+   border-top           : 1px solid #1D7AB5;
+   background-color     : #ffffff;
+   padding-top          : 1px;
+}
+
 #all-day-content-box
 {
-   min-height           : 25px;
-   max-height           : 25px;
-   overflow             : auto;
-   border-top           : 1px solid #1D7AB5;
-   border-left          : 1px solid #1D7AB5;
-   border-right         : 1px solid #1D7AB5;
-	background-color		: #ffffff;
+   padding-top          : 2px;
+   padding-bottom       : 2px;
+   padding-right        : 7px;
 }
 
 /*--------------------------------------------------------------------
  * Box around the tree content
  *-------------------------------------------------------------------*/
-
 #day-view-content-box
 {
    overflow             : auto;
    background-color     : white;
-   border             : 1px solid #2085c4;
+   border               : 1px solid #2085c4;
 }
 
 /*--------------------------------------------------------------------
- * Box around the tree content
+ * Box for all day events
+ *-------------------------------------------------------------------*/
+
+.day-view-all-day-event-class
+{
+  -moz-user-focus   : normal;
+  cursor            : pointer;
+  margin-bottom     : 1px;
+  margin-right      : 1px;
+  border            : 1px solid #1D7AB5;
+  /* calendar-specific color setting overrides this */
+  background-color  : #F9F4FF;
+}
+
+.day-view-all-day-event-class[continues-left="true"]
+{
+  border-left-color : white;
+}
+
+.day-view-all-day-event-class[continues-right="true"]
+{
+  border-right-color: white;
+}
+
+.day-view-all-day-event-class:hover
+{
+  border            : 1px solid #003366;
+}
+
+.day-view-all-day-event-class[eventselected="true"]
+{
+  border            : 2px solid #990000;
+  /* !important to prevent calendar-specific color setting from overriding this */
+  background-color  : #D5E3F2 !important;
+  /* set margins to prevent jittering when border width is changed */
+  margin-top        : -1px;
+  margin-left       : -1px;
+  margin-bottom     : 0px;
+  margin-right      : 0px;
+}
+
+/*--------------------------------------------------------------------
+ * Box for non- all day events
  *-------------------------------------------------------------------*/
 
 .day-view-event-class
 {
-   margin-bottom     : 1px;
-   margin-top        : 1px;
-   border            : 1px solid #1D7AB5;
-   background-color  : #F9F4FF;
-   -moz-user-focus   : normal;
-   cursor            : pointer;
+  -moz-user-focus   : normal;
+  cursor            : pointer;
+  padding-left      : 1px;
+  padding-right     : 1px;
+  padding-top       : 1px;
+  border            : 1px solid #1D7AB5;
+  overflow          : hidden;
+  /* calendar-specific color setting overrides this */
+  background-color  : #F9F4FF;
+}
+
+.day-view-event-class:hover
+{
+  border            : 1px solid #003366;
 }
 
 .day-view-event-class[eventselected="true"]
 {
-   background-color  : #d5e3f2;
-	border-color      : #003366
+  border            : 2px solid #990000;
+  /* set padding to prevent jittering when border width is changed */
+  padding-left      : 0px;
+  padding-right     : 0px;
+  padding-top       : 0px;
+  /* !important to prevent calendar-specific color setting from overriding this */
+  background-color  : #D5E3F2 !important;
 }
  
 /*--------------------------------------------------------------------
@@ -862,7 +962,7 @@
    -moz-box-align       : center;
    height               : 50px;
    padding-top          : 2px;
-   margin-right 	: 5px;
+   margin-right         : 5px;
    -moz-user-focus      : normal;
 }
 
@@ -870,12 +970,6 @@
 {
    background-color     : #2085c4;
 }
-
-#day-tree-item-0
-{
-   border-top           : none;
-}
-
 
 .day-view-hour-box-class[selected="true"]
 {
@@ -898,17 +992,42 @@
    -moz-box-align       : center;
 }
 
-/*--------------------------------------------------------------------
- * Class for text of events
- *-------------------------------------------------------------------*/
-
-.day-view-event-text-class
+#all-day-content-title
 {
-   font-size            : 10pt;
+   margin-right         : 6px;
+   margin-left          : 6px;
+   font-size            : 8pt;
    font-family          : Arial, Helvetica;
-   color                : #000000;
-   -moz-user-focus      : normal;
-   cursor               : pointer;
+   color                : #1d7ab5;
+   -moz-box-pack        : start;
+   -moz-box-align       : center;
+}
+
+/*--------------------------------------------------------------------
+ * Classes for text of events
+ *-------------------------------------------------------------------*/
+.day-view-allday-event-title-label-class
+{
+  cursor               : pointer;
+  font-size            : 8pt;
+  font-family          : Arial, Helvetica;
+  color                : #000000;
+}
+
+.day-view-event-title-label-class
+{
+  cursor               : pointer;
+  font-size            : 10pt;
+  font-family          : Arial, Helvetica;
+  color                : #000000;
+}
+
+.day-view-event-description-class
+{
+  cursor            : pointer;
+  font-size            : 8pt;
+  font-family          : Arial, Helvetica;
+  color                : grey;
 }
 
 /*--------------------------------------------------------------------
@@ -1081,10 +1200,15 @@ then observed (ERic 20/06/03)
    cursor            : pointer;
 }
 
+.week-view-event-class:hover
+{
+  border		: 1px solid #003366;
+}
+
 .week-view-event-class[eventselected="true"]
 {
-   background-color  : #D5E3F2;
-	border				: 1px solid #003366;
+   background-color     :  #D5E3F2;  
+   border	        : 2px solid #990000;
 }
 
 /*--------------------------------------------------------------------
@@ -1211,43 +1335,43 @@ then observed (ERic 20/06/03)
 
 /* TO DO ITEMS */
 
-treechildren:-moz-tree-cell-text(inprogress)
+treechildren::-moz-tree-cell-text(inprogress)
 {
    color                 : green;
 }
-treechildren:-moz-tree-row(inprogress,selected)
+treechildren::-moz-tree-row(inprogress,selected)
 {
    background-color                 : green;
 }
 
-treechildren:-moz-tree-cell-text(overdue)
+treechildren::-moz-tree-cell-text(overdue)
 {
    color                  : red;
 }
-treechildren:-moz-tree-row(overdue,selected)
+treechildren::-moz-tree-row(overdue,selected)
 {
    background-color                  : red;
 }
 
-treechildren:-moz-tree-cell-text(duetoday)
+treechildren::-moz-tree-cell-text(duetoday)
 {
    color                  : blue;
 }
-treechildren:-moz-tree-row(duetoday,selected)
+treechildren::-moz-tree-row(duetoday,selected)
 {
    background-color                  : blue;
 }
 
-treechildren:-moz-tree-cell-text(future)
+treechildren::-moz-tree-cell-text(future)
 {
    color                  : gray;
 }
-treechildren:-moz-tree-row(future,selected)
+treechildren::-moz-tree-row(future,selected)
 {
    background-color                  : gray;
 }
 
-treechildren:-moz-tree-cell-text(completed)
+treechildren::-moz-tree-cell-text(completed)
 {
    text-decoration        : line-through;
    color                  : black;
@@ -1256,15 +1380,15 @@ treechildren:-moz-tree-cell-text(completed)
 
 /* TO DO LIST IMAGES */
 
-treechildren:-moz-tree-image(unifinder-todo-tree-col-completed, completed),
+treechildren::-moz-tree-image(unifinder-todo-tree-col-completed, completed),
 #unifinder-todo-tree-col-completed {
    list-style-image      : url("chrome://calendar/skin/unifinder/checkbox_checked.png");
 }
 
-treechildren:-moz-tree-image(unifinder-todo-tree-col-completed, duetoday),
-treechildren:-moz-tree-image(unifinder-todo-tree-col-completed, overdue),
-treechildren:-moz-tree-image(unifinder-todo-tree-col-completed, future),
-treechildren:-moz-tree-image(unifinder-todo-tree-col-completed, inprogress) {
+treechildren::-moz-tree-image(unifinder-todo-tree-col-completed, duetoday),
+treechildren::-moz-tree-image(unifinder-todo-tree-col-completed, overdue),
+treechildren::-moz-tree-image(unifinder-todo-tree-col-completed, future),
+treechildren::-moz-tree-image(unifinder-todo-tree-col-completed, inprogress) {
    list-style-image      : url("chrome://calendar/skin/unifinder/checkbox_unchecked.png");
 }
 
@@ -1272,25 +1396,31 @@ treechildren:-moz-tree-image(unifinder-todo-tree-col-completed, inprogress) {
    list-style-image      : url( "chrome://calendar/skin/unifinder/priority_header.png" )
 }
 
-treechildren:-moz-tree-image(unifinder-todo-tree-col-priority, mediumpriority) {
+treechildren::-moz-tree-image(unifinder-todo-tree-col-priority, mediumpriority) {
    list-style-image      : url( "chrome://calendar/skin/unifinder/priority_header.png" )
 }
 
-treechildren:-moz-tree-image(unifinder-todo-tree-col-priority, highpriority) {
+treechildren::-moz-tree-image(unifinder-todo-tree-col-priority, highpriority) {
    list-style-image      : url( "chrome://calendar/skin/unifinder/priority_high.png" )
 }
 
-treechildren:-moz-tree-image(unifinder-todo-tree-col-priority, lowpriority) {
+treechildren::-moz-tree-image(unifinder-todo-tree-col-priority, lowpriority) {
    list-style-image      : url( "chrome://calendar/skin/unifinder/priority_low.png" )
 }
 
-treechildren:-moz-tree-cell-text(selected) {
+treechildren::-moz-tree-cell-text(selected) {
    color                  : HighlightText;
 }
 
 .calendar-list-item-class[synching="true"]
 {
    list-style-image     : url( "chrome://calendar/skin/synch_animated.gif" );
+}
+
+listitem[selected="true"] > .calendar-list-item-class
+{
+  background-color     : White;
+  color                : Black;
 }
 
 .todo-due-image-class
@@ -1307,3 +1437,11 @@ treechildren:-moz-tree-cell-text(selected) {
 {
    list-style-image      : url( "chrome://calendar/skin/unifinder/priority_low.png" )
 }  
+/*--------------------------------------------------------------------
+ * Unifinder 
+ *-------------------------------------------------------------------*/
+/* workaround to avoid Window Flick */
+#unifinder-search-results-listbox
+{
+   min-height : 40px ;
+}

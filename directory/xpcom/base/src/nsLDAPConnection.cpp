@@ -22,6 +22,7 @@
  *                 Kipp Hickman <kipp@netscape.com>
  *                 Warren Harris <warren@netscape.com>
  *                 Dan Matejka <danm@netscape.com>
+ *                 David Bienvenu <bienvenu@mozilla.org>
  *  
  * 
  * Alternatively, the contents of this file may be used under the
@@ -49,7 +50,9 @@
 #include "nsIDNSService.h"
 #include "nsIRequestObserver.h"
 #include "nsIProxyObjectManager.h"
-#include "netCore.h"
+#include "nsEventQueueUtils.h"
+#include "nsNetError.h"
+#include "nsLDAPOperation.h"
 
 const char kConsoleServiceContractId[] = "@mozilla.org/consoleservice;1";
 const char kDNSServiceContractId[] = "@mozilla.org/network/dns-service;1";
@@ -58,12 +61,11 @@ const char kDNSServiceContractId[] = "@mozilla.org/network/dns-service;1";
 //
 nsLDAPConnection::nsLDAPConnection()
     : mConnectionHandle(0),
-      mBindName(0),
       mPendingOperations(0),
       mRunnable(0),
       mSSL(PR_FALSE),
-      mDNSRequest(0),
-      mDNSFinished(PR_FALSE)
+      mVersion(nsILDAPConnection::VERSION3),
+      mDNSRequest(0)
 {
 }
 
@@ -71,40 +73,7 @@ nsLDAPConnection::nsLDAPConnection()
 //
 nsLDAPConnection::~nsLDAPConnection()
 {
-  int rc;
-
-  PR_LOG(gLDAPLogModule, PR_LOG_DEBUG, ("unbinding\n"));
-
-  if (mConnectionHandle) {
-      // note that the ldap_unbind() call in the 5.0 version of the LDAP C SDK
-      // appears to be exactly identical to ldap_unbind_s(), so it may in fact
-      // still be synchronous
-      //
-      rc = ldap_unbind(mConnectionHandle);
-#ifdef PR_LOGGING
-      if (rc != LDAP_SUCCESS) {
-          PR_LOG(gLDAPLogModule, PR_LOG_WARNING, 
-                 ("nsLDAPConnection::~nsLDAPConnection: %s\n", 
-                  ldap_err2string(rc)));
-      }
-#endif
-  }
-
-  PR_LOG(gLDAPLogModule, PR_LOG_DEBUG, ("unbound\n"));
-
-  if (mPendingOperations) {
-      delete mPendingOperations;
-  }
-
-  // Cancel the DNS lookup if needed, and also drop the reference to the
-  // Init listener (if still there).
-  //
-  if (mDNSRequest) {
-      mDNSRequest->Cancel(NS_BINDING_ABORTED);
-      mDNSRequest = 0;
-  }
-  mInitListener = 0;
-
+  Close();
   // Release the reference to the runnable object.
   //
   NS_IF_RELEASE(mRunnable);
@@ -116,11 +85,11 @@ nsLDAPConnection::~nsLDAPConnection()
 // nsLDAPConnection gets destroyed while do_QueryReferent() is called,
 // since converting to the strong reference isn't MT safe.
 //
-NS_IMPL_THREADSAFE_ADDREF(nsLDAPConnection);
+NS_IMPL_THREADSAFE_ADDREF(nsLDAPConnection)
 NS_IMPL_THREADSAFE_QUERY_INTERFACE3(nsLDAPConnection,
                                     nsILDAPConnection,
                                     nsISupportsWeakReference,
-                                    nsIDNSListener);
+                                    nsIDNSListener)
 
 nsrefcnt
 nsLDAPConnection::Release(void)
@@ -164,10 +133,10 @@ nsLDAPConnection::Release(void)
 
 
 NS_IMETHODIMP
-nsLDAPConnection::Init(const char *aHost, PRInt16 aPort, PRBool aSSL,
+nsLDAPConnection::Init(const char *aHost, PRInt32 aPort, PRBool aSSL,
                        const nsACString& aBindName, 
                        nsILDAPMessageListener *aMessageListener,
-                       nsISupports *aClosure)
+                       nsISupports *aClosure, PRUint32 aVersion)
 {
     nsCOMPtr<nsIDNSListener> selfProxy;
     nsresult rv;
@@ -186,13 +155,17 @@ nsLDAPConnection::Init(const char *aHost, PRInt16 aPort, PRBool aSSL,
 
     mClosure = aClosure;
 
-    // Save the port number for later use, once the DNS server(s) has
-    // resolved the host part.
+    // Save the port number, SSL flag, and protocol version for later
+    // use, once the DNS server(s) has resolved the host part.
     //
     mPort = aPort;
-
-    // Save the SSL flag for later use
     mSSL = aSSL;
+    if (aVersion != nsILDAPConnection::VERSION2 && 
+        aVersion != nsILDAPConnection::VERSION3) {
+        NS_ERROR("nsLDAPConnection::Init(): illegal version");
+        return NS_ERROR_ILLEGAL_VALUE;
+    }
+    mVersion = aVersion;
 
     // Save the Init listener reference, we need it when the async
     // DNS resolver has finished.
@@ -209,23 +182,13 @@ nsLDAPConnection::Init(const char *aHost, PRInt16 aPort, PRBool aSSL,
         return NS_ERROR_FAILURE;
     }
 
-    // Get a proxy object so the callback happens on the current thread.
-    // This is now a Synchronous proxy, due to the fact that the DNS
-    // service hands out data which it later deallocates, and the async
-    // proxy makes this unreliable. See bug 102227 for more details.
-    //
-    rv = NS_GetProxyForObject(NS_CURRENT_EVENTQ,
-                              NS_GET_IID(nsIDNSListener), 
-                              NS_STATIC_CAST(nsIDNSListener*, this), 
-                              PROXY_SYNC | PROXY_ALWAYS, 
-                              getter_AddRefs(selfProxy));
-
+    nsCOMPtr<nsIEventQueue> curEventQ;
+    rv = NS_GetCurrentEventQ(getter_AddRefs(curEventQ));
     if (NS_FAILED(rv)) {
         NS_ERROR("nsLDAPConnection::Init(): couldn't "
-                 "create proxy to this object for callback");
+                 "get current event queue");
         return NS_ERROR_FAILURE;
     }
-
     // Do the pre-resolve of the hostname, using the DNS service. This
     // will also initialize the LDAP connection properly, once we have
     // the IPs resolved for the hostname. This includes creating the
@@ -242,10 +205,22 @@ nsLDAPConnection::Init(const char *aHost, PRInt16 aPort, PRBool aSSL,
 
         return NS_ERROR_FAILURE;
     }
-    rv = pDNSService->Lookup(aHost, 
-                             selfProxy,
-                             nsnull, 
-                             getter_AddRefs(mDNSRequest));
+    mDNSHost = aHost;
+
+    // if the caller has passed in a space-delimited set of hosts, as the 
+    // ldap c-sdk allows, strip off the trailing hosts for now.
+    // Soon, we'd like to make multiple hosts work, but now make
+    // at least the first one work.
+    mDNSHost.CompressWhitespace(PR_TRUE, PR_TRUE);
+
+    PRInt32 spacePos = mDNSHost.FindChar(' ');
+    // trim off trailing host(s)
+    if (spacePos != kNotFound)
+      mDNSHost.Truncate(spacePos);
+
+    rv = pDNSService->AsyncResolve(mDNSHost,
+                                   PR_FALSE, this, curEventQ, 
+                                   getter_AddRefs(mDNSRequest));
 
     if (NS_FAILED(rv)) {
         switch (rv) {
@@ -253,24 +228,57 @@ nsLDAPConnection::Init(const char *aHost, PRInt16 aPort, PRBool aSSL,
         case NS_ERROR_UNKNOWN_HOST:
         case NS_ERROR_FAILURE:
         case NS_ERROR_OFFLINE:
-            return rv;
+            break;
 
         default:
-            return NS_ERROR_UNEXPECTED;
+            rv = NS_ERROR_UNEXPECTED;
         }
+        mDNSHost.Truncate();
     }
+    return rv;
+}
 
-    // The DNS service can actually call the listeners even before the
-    // Lookup() function has returned. If that happens, we can still hold
-    // a reference to the DNS request, even after the DNS lookup is done.
-    // If this happens, lets just get rid of the DNS request, since we won't
-    // need it any more.
-    //
-    if (mDNSFinished && mDNSRequest) {
-        mDNSRequest = 0;
-    }
+// this might get exposed to clients, so we've broken it
+// out of the destructor.
+void
+nsLDAPConnection::Close()
+{
+  int rc;
 
-    return NS_OK;
+  PR_LOG(gLDAPLogModule, PR_LOG_DEBUG, ("unbinding\n"));
+
+  if (mConnectionHandle) {
+      // note that the ldap_unbind() call in the 5.0 version of the LDAP C SDK
+      // appears to be exactly identical to ldap_unbind_s(), so it may in fact
+      // still be synchronous
+      //
+      rc = ldap_unbind(mConnectionHandle);
+#ifdef PR_LOGGING
+      if (rc != LDAP_SUCCESS) {
+          PR_LOG(gLDAPLogModule, PR_LOG_WARNING, 
+                 ("nsLDAPConnection::Close(): %s\n", 
+                  ldap_err2string(rc)));
+      }
+#endif
+      mConnectionHandle = nsnull;
+  }
+
+  PR_LOG(gLDAPLogModule, PR_LOG_DEBUG, ("unbound\n"));
+
+  if (mPendingOperations) {
+      delete mPendingOperations;
+      mPendingOperations = nsnull;
+  }
+
+  // Cancel the DNS lookup if needed, and also drop the reference to the
+  // Init listener (if still there).
+  //
+  if (mDNSRequest) {
+      mDNSRequest->Cancel();
+      mDNSRequest = 0;
+  }
+  mInitListener = 0;
+
 }
 
 NS_IMETHODIMP
@@ -337,7 +345,7 @@ nsLDAPConnection::GetErrorString(PRUnichar **_retval)
 
     // make a copy using the XPCOM shared allocator
     //
-    *_retval = ToNewUnicode(NS_ConvertUTF8toUCS2(rv));
+    *_retval = UTF8ToNewUnicode(nsDependentCString(rv));
     if (!*_retval) {
         return NS_ERROR_OUT_OF_MEMORY;
     }
@@ -408,6 +416,7 @@ nsLDAPConnection::RemovePendingOperation(nsILDAPOperation *aOperation)
     nsresult rv;
     PRInt32 msgID;
 
+    NS_ENSURE_TRUE(mPendingOperations, NS_OK);
     NS_ENSURE_ARG_POINTER(aOperation);
 
     // find the message id
@@ -473,9 +482,8 @@ nsLDAPConnection::InvokeMessageCallback(LDAPMessage *aMsgHandle,
         return NS_ERROR_OUT_OF_MEMORY;
 
     // find the operation in question
-    //
-    nsISupports *data = mPendingOperations->Get(key);
-    if (!data) {
+    operation = getter_AddRefs(NS_STATIC_CAST(nsILDAPOperation *, mPendingOperations->Get(key)));
+    if (!operation) {
 
         PR_LOG(gLDAPLogModule, PR_LOG_WARNING, 
                ("Warning: InvokeMessageCallback(): couldn't find "
@@ -488,7 +496,6 @@ nsLDAPConnection::InvokeMessageCallback(LDAPMessage *aMsgHandle,
         return NS_OK;
     }
 
-    operation = getter_AddRefs(NS_STATIC_CAST(nsILDAPOperation *, data));
 
     // Make sure the mOperation member is set to this operation before
     // we call the callback.
@@ -508,12 +515,19 @@ nsLDAPConnection::InvokeMessageCallback(LDAPMessage *aMsgHandle,
 
     // invoke the callback 
     //
-    listener->OnLDAPMessage(aMsg);
-
+    if (listener) {
+      listener->OnLDAPMessage(aMsg);
+    }
     // if requested (ie the operation is done), remove the operation
     // from the connection queue.
     //
     if (aRemoveOpFromConnQ) {
+        nsCOMPtr <nsLDAPOperation> operation = 
+          getter_AddRefs(NS_STATIC_CAST(nsLDAPOperation *,
+                                        mPendingOperations->Get(key)));
+        // try to break cycles
+        if (operation)
+          operation->Clear();
         rv = mPendingOperations->Remove(key);
         if (NS_FAILED(rv)) {
             NS_ERROR("nsLDAPConnection::InvokeMessageCallback: unable to "
@@ -548,7 +562,7 @@ nsLDAPConnectionLoop::~nsLDAPConnectionLoop()
         PR_DestroyLock(mLock);
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsLDAPConnectionLoop, nsIRunnable);
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsLDAPConnectionLoop, nsIRunnable)
 
 NS_IMETHODIMP
 nsLDAPConnectionLoop::Init()
@@ -702,6 +716,28 @@ CheckLDAPOperationResult(nsHashKey *aKey, void *aData, void* aClosure)
             switch (rv) {
 
             case NS_OK: 
+              {
+                PRInt32 errorCode;
+                rawMsg->GetErrorCode(&errorCode);
+                if (errorCode == LDAP_PROTOCOL_ERROR)
+                {
+                  // maybe a version error, e.g., using v3 on a v2 server.
+                  // if we're using v3, try v2.
+                  if (loop->mRawConn->mVersion == nsILDAPConnection::VERSION3)
+                  {
+                    nsCAutoString password;
+                    loop->mRawConn->mVersion = nsILDAPConnection::VERSION2;
+                    ldap_set_option(loop->mRawConn->mConnectionHandle, LDAP_OPT_PROTOCOL_VERSION, &loop->mRawConn->mVersion);
+                    nsCOMPtr <nsILDAPOperation> operation = NS_STATIC_CAST(nsILDAPOperation *, NS_STATIC_CAST(nsISupports *, aData));
+                    // we pass in an empty password to tell the operation that it
+                    // should use the cached password.
+                    operation->SimpleBind(password);
+                    operationFinished = PR_FALSE;
+                    // we don't want to notify callers that we're done...
+                    return PR_TRUE;
+                  }
+                }
+              }
                 break;
 
             case NS_ERROR_LDAP_DECODING_ERROR:
@@ -823,102 +859,50 @@ nsLDAPConnectionLoop::Run(void)
     return NS_OK;
 }
 
-//
-// nsIDNSListener implementation, for asynchronous DNS. Once the lookup
-// has finished, we will initialize the LDAP connection properly.
-//
 NS_IMETHODIMP
-nsLDAPConnection::OnStartLookup(nsISupports *aContext, const char *aHostName)
-{
-    // Initialize some members which will be used in the other callbacks.
-    //
-    mDNSStatus = NS_OK;
-    mResolvedIP = "";
-
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsLDAPConnection::OnFound(nsISupports *aContext, 
-                          const char* aHostName,
-                          nsHostEnt *aHostEnt) 
-{
-    PRUint32 index = 0;
-    PRNetAddr netAddress;
-    char addrbuf[64];
-
-    // Do we have a proper host entry? If not, set the internal DNS
-    // status to indicate that host lookup failed.
-    //
-    if (!aHostEnt->hostEnt.h_addr_list || !aHostEnt->hostEnt.h_addr_list[0]) {
-        mDNSStatus = NS_ERROR_UNKNOWN_HOST;
-
-        return NS_ERROR_UNKNOWN_HOST;
-    }
-    
-    // Make sure our address structure is initialized properly
-    //
-    memset(&netAddress, 0, sizeof(netAddress));
-    PR_SetNetAddr(PR_IpAddrAny, PR_AF_INET6, 0, &netAddress);
-
-    // Loop through the addresses, and add them to our IP string.
-    //
-    while (aHostEnt->hostEnt.h_addr_list[index]) {
-        if (aHostEnt->hostEnt.h_addrtype == PR_AF_INET6) {
-            memcpy(&netAddress.ipv6.ip, aHostEnt->hostEnt.h_addr_list[index],
-                   sizeof(netAddress.ipv6.ip));
-        } else {
-            // Can this ever happen? Not sure, cause everything seems to be
-            // IPv6 internally, even in the DNS service.
-            //
-            PR_ConvertIPv4AddrToIPv6(*(PRUint32*)aHostEnt->hostEnt.h_addr_list[0],
-                                     &netAddress.ipv6.ip);
-        }
-        if (PR_IsNetAddrType(&netAddress, PR_IpAddrV4Mapped)) {
-            // If there are more IPs in the list, we separate them with
-            // a space, as supported/used by the LDAP C-SDK.
-            //
-            if (index)
-                mResolvedIP.Append(' ');
-
-            // Convert the IPv4 address to a string, and append it to our
-            // list of IPs.
-            //
-            PR_NetAddrToString(&netAddress, addrbuf, sizeof(addrbuf));
-            if ((addrbuf[0] == ':') && (strlen(addrbuf) > 7))
-                mResolvedIP.Append(addrbuf+7);
-            else
-                mResolvedIP.Append(addrbuf);
-        }
-        index++;
-    }
-
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsLDAPConnection::OnStopLookup(nsISupports *aContext,
-                               const char *aHostName,
-                               nsresult aStatus)
-{
-    nsCOMPtr<nsILDAPMessageListener> selfProxy;
+nsLDAPConnection::OnLookupComplete(nsIDNSRequest *aRequest,
+                                   nsIDNSRecord  *aRecord,
+                                   nsresult       aStatus)
+{    
     nsresult rv = NS_OK;
 
-    if (NS_FAILED(mDNSStatus)) {
-        // We failed previously in the OnFound() callback
+    if (aRecord) {
+        // Build mResolvedIP list
         //
-        switch (mDNSStatus) {
-        case NS_ERROR_UNKNOWN_HOST:
-        case NS_ERROR_FAILURE:
-            rv = mDNSStatus;
-            break;
+        mResolvedIP.Truncate();
 
-        default:
-            rv = NS_ERROR_UNEXPECTED;
-            break;
+        PRInt32 index = 0;
+        char addrbuf[64];
+        PRNetAddr addr;
+
+        while (NS_SUCCEEDED(aRecord->GetNextAddr(0, &addr))) {
+            // We can only use v4 addresses
+            //
+            PRBool v4mapped = PR_FALSE;
+            if (addr.raw.family == PR_AF_INET6)
+                v4mapped = PR_IsNetAddrType(&addr, PR_IpAddrV4Mapped);
+            if (addr.raw.family == PR_AF_INET || v4mapped) {
+                // If there are more IPs in the list, we separate them with
+                // a space, as supported/used by the LDAP C-SDK.
+                //
+                if (index++)
+                    mResolvedIP.Append(' ');
+
+                // Convert the IPv4 address to a string, and append it to our
+                // list of IPs.  Strip leading '::FFFF:' (the IPv4-mapped-IPv6 
+                // indicator) if present.
+                //
+                PR_NetAddrToString(&addr, addrbuf, sizeof(addrbuf));
+                if ((addrbuf[0] == ':') && (strlen(addrbuf) > 7))
+                    mResolvedIP.Append(addrbuf+7);
+                else
+                    mResolvedIP.Append(addrbuf);
+            }
         }
-    } else if (NS_FAILED(aStatus)) {
-        // The DNS service failed , lets pass something reasonable
+    }
+
+    if (NS_FAILED(aStatus)) {
+        // The DNS service failed, lets pass something reasonable
         // back to the listener.
         //
         switch (aStatus) {
@@ -956,34 +940,53 @@ nsLDAPConnection::OnStopLookup(nsISupports *aContext,
         if ( !mConnectionHandle ) {
             rv = NS_ERROR_FAILURE;  // LDAP C SDK API gives no useful error
         } else {
-#ifdef DEBUG_dmose
+#if defined(DEBUG_dmose) || defined(DEBUG_bienvenu)
             const int lDebug = 0;
             ldap_set_option(mConnectionHandle, LDAP_OPT_DEBUG_LEVEL, &lDebug);
 #endif
-        }
+
+            // the C SDK currently defaults to v2.  if we're to use v3, 
+            // tell it so.
+            //
+            int version;
+            switch (mVersion) {
+            case 2:
+                break;
+            case 3:
+                version = LDAP_VERSION3;
+                ldap_set_option(mConnectionHandle, LDAP_OPT_PROTOCOL_VERSION, 
+                                &version);
+		break;
+            default:
+                NS_ERROR("nsLDAPConnection::OnLookupComplete(): mVersion"
+                         " invalid");
+            }
 
 #ifdef MOZ_PSM
-        // This code sets up the current connection to use PSM for SSL
-        // functionality.  Making this use libssldap instead for
-        // non-browser user shouldn't be hard.
+            // This code sets up the current connection to use PSM for SSL
+            // functionality.  Making this use libssldap instead for
+            // non-browser user shouldn't be hard.
 
-        extern nsresult nsLDAPInstallSSL(LDAP *ld, const char *aHostName);
+            extern nsresult nsLDAPInstallSSL(LDAP *ld, const char *aHostName);
 
-        if (mSSL) {
-            if (ldap_set_option(mConnectionHandle, LDAP_OPT_SSL, LDAP_OPT_ON)
-                != LDAP_SUCCESS ) {
-                NS_ERROR("nsLDAPConnection::OnStopLookup(): Error configuring"
-                         " connection to use SSL");
-                rv = NS_ERROR_UNEXPECTED;
+            if (mSSL) {
+                if (ldap_set_option(mConnectionHandle, LDAP_OPT_SSL,
+                                    LDAP_OPT_ON) != LDAP_SUCCESS ) {
+                    NS_ERROR("nsLDAPConnection::OnStopLookup(): Error"
+                             " configuring connection to use SSL");
+                    rv = NS_ERROR_UNEXPECTED;
+                }
+
+                rv = nsLDAPInstallSSL(mConnectionHandle, mDNSHost.get());
+                if (NS_FAILED(rv)) {
+                    NS_ERROR("nsLDAPConnection::OnStopLookup(): Error"
+                             " installing secure LDAP routines for"
+                             " connection");
+                }
             }
-
-            rv = nsLDAPInstallSSL(mConnectionHandle, aHostName);
-            if (NS_FAILED(rv)) {
-                NS_ERROR("nsLDAPConnection::OnStopLookup(): Error installing"
-                         " secure LDAP routines for connection");
-            }
-        }
 #endif
+        }
+
         // Create a new runnable object, and increment the refcnt. The
         // thread will also hold a strong ref to the runnable, but we need
         // to make sure it doesn't get destructed until we are done with
@@ -1023,7 +1026,7 @@ nsLDAPConnection::OnStopLookup(nsISupports *aContext,
     // indicating that DNS has finished.
     //
     mDNSRequest = 0;
-    mDNSFinished = PR_TRUE;
+    mDNSHost.Truncate();
 
     // Call the listener, and then we can release our reference to it.
     //

@@ -87,7 +87,7 @@ public:
         nsIURI* aURI,
         const PRUnichar* aTargetSpec);
     NS_IMETHOD OnLeaveLink();
-    NS_IMETHOD GetLinkState(const nsACString& aLinkURI, nsLinkState& aState);
+    NS_IMETHOD GetLinkState(nsIURI* aLinkURI, nsLinkState& aState);
 
     NS_IMETHOD Create();
     NS_IMETHOD Destroy();
@@ -98,6 +98,15 @@ public:
     static nsEventStatus PR_CALLBACK HandleEvent(nsGUIEvent *aEvent);
 
     // NS_IMETHOD SetURL(const PRUnichar* aURL);
+
+    nsresult OnLinkClickSyncInternal(nsIContent* aContent, nsLinkVerb aVerb,
+                                     nsIURI* aURI,
+                                     const PRUnichar* aTargetSpec,
+                                     nsIInputStream* aPostDataStream,
+                                     nsIInputStream* aHeadersDataStream,
+                                     nsIDocShell** aDocShell,
+                                     nsIRequest** aRequest,
+                                     nsISupports *aOwner);
 
 protected:
     // void GetRootWebShellEvenIfChrome(nsIWebShell** aResult);
@@ -117,8 +126,6 @@ protected:
         nsIChannel* channel,
         nsresult aStatus);
 
-    nsresult NormalizeURI(nsACString& aURLSpec);
-
     PRThread *mThread;
 
     nsIWebShellContainer* mContainer;
@@ -134,17 +141,6 @@ protected:
         nsIStreamListener** aResult);
 
     nsCOMPtr<nsICommandManager> mCommandManager;
-
-    // cached io service for NS_NewURI
-    nsCOMPtr<nsIIOService> mIOService;
-
-    // these are specifically cached for these
-    // protocols, because we're optimizing for link coloring -
-    // most links are http, https, or ftp
-    nsCOMPtr<nsIURI> mCachedHttpUrl;
-    nsCOMPtr<nsIURI> mCachedHttpsUrl;
-    nsCOMPtr<nsIURI> mCachedFtpUrl;
-    
     
 #ifdef DEBUG
 private:

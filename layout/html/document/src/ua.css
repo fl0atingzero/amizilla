@@ -34,9 +34,9 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-@import url(resource:/res/html.css);
+@import url(resource://gre/res/html.css);
 @import url(chrome://global/content/xul.css);
-@import url(resource:/res/quirk.css);
+@import url(resource://gre/res/quirk.css);
 
 @namespace parsererror url(http://www.mozilla.org/newlayout/xml/parsererror.xml);
 
@@ -46,17 +46,15 @@
 
 /* Tables */
 
-*|*:-moz-table {
+*|*::-moz-table {
   display: table !important;
   -moz-box-sizing: border-box; /* XXX do we really want this? */
 }
 
-*|*:-moz-table-outer {
+*|*::-moz-table-outer {
   display: table !important;
   margin: 0;
   padding: 0;
-  width: 0;
-  height: 0;
   float: inherit;
   clear: inherit;
   position: inherit;
@@ -78,32 +76,32 @@
   page-break-after: inherit;
 }
 
-*|*:-moz-table-row {
+*|*::-moz-table-row {
   display: table-row !important;
 }
 
-/* The :-moz-table-column pseudo-element is for extra columns at the end 
+/* The ::-moz-table-column pseudo-element is for extra columns at the end 
    of a table. */
-*|*:-moz-table-column {
+*|*::-moz-table-column {
   display: table-column !important;
 }
 
-*|*:-moz-table-column-group {
+*|*::-moz-table-column-group {
   display: table-column-group !important;
 }
  
-*|*:-moz-table-row-group {
+*|*::-moz-table-row-group {
   display: table-row-group !important;
 }
 
-*|*:-moz-table-cell {
+*|*::-moz-table-cell {
   display: table-cell !important;
   white-space: inherit;
 }
 
 /* Lists */
 
-*|*:-moz-list-bullet, *|*:-moz-list-number {
+*|*::-moz-list-bullet, *|*::-moz-list-number {
   display: inline;
   vertical-align: baseline;
   margin-right: 8px;
@@ -116,51 +114,47 @@
   -moz-user-focus: normal;
 }
 
-*|*:-moz-any-link:active {
-  color: red;
-}
-
 *|*:-moz-any-link:focus {
   -moz-outline: 1px dotted invert;
 }
 
 /* Miscellaneous */
 
-*|*:-moz-anonymous-block, *|*:-moz-cell-content {
+*|*::-moz-anonymous-block, *|*::-moz-cell-content {
   display: block !important;
 }
 
-*|*:-moz-viewport, *|*:-moz-viewport-scroll, *|*:-moz-canvas {
+*|*::-moz-viewport, *|*::-moz-viewport-scroll, *|*::-moz-canvas {
   display: block !important;
   background-color: inherit;
 }
 
-*|*:-moz-viewport-scroll {
+*|*::-moz-viewport-scroll {
   overflow: auto;
 }
 
-*|*:-moz-scrolled-content { 
+*|*::-moz-scrolled-content { 
   /* e.g., text inputs, select boxes */
-  background: inherit;
   padding: inherit;
   display: inherit;
   -moz-box-orient: inherit;
+  -moz-counter-reset: inherit;
 }
 
-*|*:-moz-page, *|*:-moz-page-sequence {
+*|*::-moz-page, *|*::-moz-page-sequence {
   display: block !important;
   background: transparent;
 }
 
-*|*:-moz-pagecontent {
+*|*::-moz-pagecontent {
   display: block !important;
 }
 
-*|*:-moz-pagebreak {
+*|*::-moz-pagebreak {
   display: -moz-page-break !important;
 }
 
-*|*:-moz-anonymous-positioned-block {
+*|*::-moz-anonymous-positioned-block {
   display: block !important;
   position: relative;
   top: inherit; 
@@ -172,10 +166,6 @@
   -moz-opacity: inherit;
 }
 
-*|*:-moz-gc-wrapper-block {
-  display: block !important;
-}
-
 /* Printing */
 
 @media print {
@@ -184,7 +174,7 @@
     cursor: default !important;
   }
 
-  *|*:-moz-viewport, *|*:-moz-viewport-scroll, *|*:-moz-canvas {
+  *|*::-moz-viewport, *|*::-moz-viewport-scroll, *|*::-moz-canvas {
     background-color: #737373 !important;
   }
 

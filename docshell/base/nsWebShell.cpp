@@ -37,13 +37,6 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifdef XP_OS2_VACPP
-// XXX every other file that pulls in _os2.h has no problem with HTMX there;
-// this one does; the problem may lie with the order of the headers below,
-// which is why this fix is here instead of in _os2.h
-typedef unsigned long HMTX;
-#endif
-
 #include "nsDocShell.h"
 #include "nsIWebShell.h"
 #include "nsWebShell.h"
@@ -65,6 +58,7 @@ typedef unsigned long HMTX;
 #include "nsIRefreshURI.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptGlobalObjectOwner.h"
+#include "nsIScriptSecurityManager.h"
 #include "nsIDOMEvent.h"
 #include "nsIPresContext.h"
 #include "nsIComponentManager.h"
@@ -73,8 +67,6 @@ typedef unsigned long HMTX;
 #include "nsVoidArray.h"
 #include "nsString.h"
 #include "nsReadableUtils.h"
-#include "nsWidgetsCID.h"
-#include "nsGfxCIID.h"
 #include "plevent.h"
 #include "prprf.h"
 #include "nsIPluginHost.h"
@@ -91,10 +83,10 @@ typedef unsigned long HMTX;
 #include "prthread.h"
 #include "nsXPIDLString.h"
 #include "nsDOMError.h"
-#include "nsLayoutCID.h"
 #include "nsIDOMRange.h"
 #include "nsIURIContentListener.h"
 #include "nsIDOMDocument.h"
+#include "nsIDOMHTMLAnchorElement.h"
 #include "nsIBaseWindow.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
@@ -127,10 +119,11 @@ typedef unsigned long HMTX;
 #include "nsIDocument.h"
 #include "nsITextToSubURI.h"
 
-#ifdef MOZ_THUNDERBIRD
 #include "nsIExternalProtocolService.h"
 #include "nsCExternalHandlerService.h"
-#endif
+
+// Used in the fixup code
+#include "prnetdb.h"
 
 #ifdef NS_DEBUG
 /**
@@ -158,14 +151,6 @@ static PRLogModuleInfo* gLogModule = PR_NewLogModule("webshell");
 
 //----------------------------------------------------------------------
 
-//----------------------------------------------------------------------
-
-// Class IID's
-static NS_DEFINE_IID(kEventQueueServiceCID,   NS_EVENTQUEUESERVICE_CID);
-static NS_DEFINE_CID(kCDOMRangeCID,           NS_RANGE_CID);
-
-//----------------------------------------------------------------------
-
 static PRBool
 IsOffline()
 {
@@ -186,7 +171,7 @@ nsWebShell::nsWebShell() : nsDocShell()
   ++gNumberOfWebShells;
 #endif
 #ifdef DEBUG
-    printf("WEBSHELL+ = %ld\n", gNumberOfWebShells);
+    printf("++WEBSHELL == %ld\n", gNumberOfWebShells);
 #endif
 
   mThread = nsnull;
@@ -232,7 +217,7 @@ nsWebShell::~nsWebShell()
   --gNumberOfWebShells;
 #endif
 #ifdef DEBUG
-  printf("WEBSHELL- = %ld\n", gNumberOfWebShells);
+  printf("--WEBSHELL == %ld\n", gNumberOfWebShells);
 #endif
 }
 
@@ -372,40 +357,6 @@ nsWebShell::GetDocumentLoader(nsIDocumentLoader*& aResult)
 //----------------------------------------------------------------------
 // Web Shell Services API
 
-NS_IMETHODIMP
-nsWebShell::LoadDocument(const char* aURL,
-                         const char* aCharset,
-                         PRInt32 aSource)
-{
-  // XXX hack. kee the aCharset and aSource wait to pick it up
-  nsCOMPtr<nsIContentViewer> cv;
-  NS_ENSURE_SUCCESS(GetContentViewer(getter_AddRefs(cv)), NS_ERROR_FAILURE);
-  if (cv)
-  {
-    nsCOMPtr<nsIMarkupDocumentViewer> muDV = do_QueryInterface(cv);  
-    if (muDV)
-    {
-      PRInt32 hint;
-      muDV->GetHintCharacterSetSource(&hint);
-      if( aSource > hint ) 
-      {
-        muDV->SetHintCharacterSet(nsDependentCString(aCharset));
-        muDV->SetHintCharacterSetSource(aSource);
-        if(eCharsetReloadRequested != mCharsetReloadState) 
-        {
-          mCharsetReloadState = eCharsetReloadRequested;
-          LoadURI(NS_ConvertASCIItoUCS2(aURL).get(),  // URI string
-                  LOAD_FLAGS_NONE,                    // Load flags
-                  nsnull,                             // Refering URI
-                  nsnull,                             // Post data stream
-                  nsnull);                            // Header stream
-        }
-      }
-    }
-  }
-  return NS_OK;
-}
-
 //This functions is only called when a new charset is detected in loading a document. 
 //Its name should be changed to "CharsetReloadDocument"
 NS_IMETHODIMP
@@ -473,15 +424,17 @@ nsWebShell::SetRendering(PRBool aRender)
 struct OnLinkClickEvent : public PLEvent {
   OnLinkClickEvent(nsWebShell* aHandler, nsIContent* aContent,
                    nsLinkVerb aVerb, nsIURI* aURI,
-                   const PRUnichar* aTargetSpec, nsIInputStream* aPostDataStream = 0, 
-                   nsIInputStream* aHeadersDataStream = 0);
+                   const PRUnichar* aTargetSpec,
+                   nsIInputStream* aPostDataStream, 
+                   nsIInputStream* aHeadersDataStream,
+                   nsISupports *aOwner);
   ~OnLinkClickEvent();
 
   void HandleEvent() {
-    mHandler->OnLinkClickSync(mContent, mVerb, mURI,
-                              mTargetSpec.get(), mPostDataStream,
-                              mHeadersDataStream,
-                              nsnull, nsnull);
+    mHandler->OnLinkClickSyncInternal(mContent, mVerb, mURI,
+                                      mTargetSpec.get(), mPostDataStream,
+                                      mHeadersDataStream,
+                                      nsnull, nsnull, mOwner);
   }
 
   nsWebShell*              mHandler;
@@ -491,6 +444,7 @@ struct OnLinkClickEvent : public PLEvent {
   nsCOMPtr<nsIInputStream> mHeadersDataStream;
   nsCOMPtr<nsIContent>     mContent;
   nsLinkVerb               mVerb;
+  nsCOMPtr<nsISupports>    mOwner;
 };
 
 static void PR_CALLBACK HandlePLEvent(OnLinkClickEvent* aEvent)
@@ -509,7 +463,8 @@ OnLinkClickEvent::OnLinkClickEvent(nsWebShell* aHandler,
                                    nsIURI* aURI,
                                    const PRUnichar* aTargetSpec,
                                    nsIInputStream* aPostDataStream,
-                                   nsIInputStream* aHeadersDataStream)
+                                   nsIInputStream* aHeadersDataStream,
+                                   nsISupports *aOwner)
 {
   mHandler = aHandler;
   NS_ADDREF(aHandler);
@@ -519,6 +474,7 @@ OnLinkClickEvent::OnLinkClickEvent(nsWebShell* aHandler,
   mHeadersDataStream = aHeadersDataStream;
   mContent = aContent;
   mVerb = aVerb;
+  mOwner = aOwner;
 
   PL_InitEvent(this, nsnull,
                (PLHandleEventProc) ::HandlePLEvent,
@@ -546,10 +502,20 @@ nsWebShell::OnLinkClick(nsIContent* aContent,
                         nsIInputStream* aPostDataStream,
                         nsIInputStream* aHeadersDataStream)
 {
-  OnLinkClickEvent* ev;
+  nsCOMPtr<nsIScriptSecurityManager> securityManager =
+    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
+  NS_ENSURE_TRUE(securityManager, NS_ERROR_UNEXPECTED);
 
-  ev = new OnLinkClickEvent(this, aContent, aVerb, aURI,
-                            aTargetSpec, aPostDataStream, aHeadersDataStream);
+  nsCOMPtr<nsIPrincipal> principal;
+  securityManager->GetSubjectPrincipal(getter_AddRefs(principal));
+
+  if (!principal && aContent && aContent->GetDocument()) {
+    principal = aContent->GetDocument()->GetPrincipal();
+  }
+
+  OnLinkClickEvent* ev =
+    new OnLinkClickEvent(this, aContent, aVerb, aURI, aTargetSpec,
+                         aPostDataStream, aHeadersDataStream, principal);
   if (!ev) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -562,13 +528,13 @@ nsWebShell::GetEventQueue(nsIEventQueue **aQueue)
   NS_ENSURE_ARG_POINTER(aQueue);
   *aQueue = 0;
 
-  nsCOMPtr<nsIEventQueueService> eventService(do_GetService(kEventQueueServiceCID));
+  nsCOMPtr<nsIEventQueueService> eventService(do_GetService(NS_EVENTQUEUESERVICE_CONTRACTID));
   if (eventService)
     eventService->GetThreadEventQueue(mThread, aQueue);
   return *aQueue ? NS_OK : NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP
+nsresult
 nsWebShell::OnLinkClickSync(nsIContent *aContent,
                             nsLinkVerb aVerb,
                             nsIURI* aURI,
@@ -578,47 +544,55 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
                             nsIDocShell** aDocShell,
                             nsIRequest** aRequest)
 {
-#ifdef MOZ_THUNDERBIRD
-  // XXX ugly thunderbird hack to force all url clicks to go to the system default app
-  // I promise this will be removed once we figure out a better way. 
-  nsCAutoString scheme;
-  aURI->GetScheme(scheme);
-                                          
-  static const char kMailToURI[] = "mailto";                                    
-  static const char kNewsURI[] = "news";                                        
-  static const char kSnewsURI[] = "snews";                                      
-  static const char kNntpURI[] = "nntp";                                        
-  static const char kImapURI[] = "imap"; 
-  if (scheme.EqualsIgnoreCase(kMailToURI)) 
-  {
-    // the scheme is mailto, we can handle it
-  } 
-  else if (scheme.EqualsIgnoreCase(kNewsURI)) 
-  {
-    // the scheme is news, we can handle it
-  } 
-  else if (scheme.EqualsIgnoreCase(kSnewsURI)) 
-  {
-     // the scheme is snews, we can handle it
-  } 
-  else if (scheme.EqualsIgnoreCase(kNntpURI)) 
-  {
-     // the scheme is nntp, we can handle it 
-  } else if (scheme.EqualsIgnoreCase(kImapURI)) 
-  {
-      // the scheme is imap, we can handle it
+  nsCOMPtr<nsIScriptSecurityManager> securityManager =
+    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
+  NS_ENSURE_TRUE(securityManager, NS_ERROR_UNEXPECTED);
+
+  nsCOMPtr<nsIPrincipal> principal;
+  securityManager->GetSubjectPrincipal(getter_AddRefs(principal));
+
+  if (!principal && aContent && aContent->GetDocument()) {
+    principal = aContent->GetDocument()->GetPrincipal();
   }
-  else 
+
+  return OnLinkClickSyncInternal(aContent, aVerb, aURI, aTargetSpec,
+                                 aPostDataStream, aHeadersDataStream,
+                                 aDocShell, aRequest, principal);
+}
+
+nsresult
+nsWebShell::OnLinkClickSyncInternal(nsIContent *aContent,
+                                    nsLinkVerb aVerb,
+                                    nsIURI* aURI,
+                                    const PRUnichar* aTargetSpec,
+                                    nsIInputStream* aPostDataStream,
+                                    nsIInputStream* aHeadersDataStream,
+                                    nsIDocShell** aDocShell,
+                                    nsIRequest** aRequest,
+                                    nsISupports *aOwner)
+{
   {
-      // we don't handle this type, the the registered handler take it 
-      nsresult rv = NS_OK;
-      nsCOMPtr<nsIExternalProtocolService> extProtService = do_GetService(NS_EXTERNALPROTOCOLSERVICE_CONTRACTID, &rv);
-      NS_ENSURE_SUCCESS(rv,rv);
-      rv = extProtService->LoadUrl(aURI);
-      NS_ENSURE_SUCCESS(rv,rv);
-      return rv;                                                                  
-  }                                                                               
-#endif
+    // defer to an external protocol handler if necessary...
+    nsCOMPtr<nsIExternalProtocolService> extProtService = do_GetService(NS_EXTERNALPROTOCOLSERVICE_CONTRACTID);
+    if (extProtService) {
+      nsCAutoString scheme;
+      aURI->GetScheme(scheme);
+      if (!scheme.IsEmpty()) {
+        // if the URL scheme does not correspond to an exposed protocol, then we
+        // need to hand this link click over to the external protocol handler.
+        PRBool isExposed;
+        nsresult rv = extProtService->IsExposedProtocol(scheme.get(), &isExposed);
+        if (NS_SUCCEEDED(rv) && !isExposed) {
+          rv = extProtService->LoadUrl(aURI);
+
+          if (NS_SUCCEEDED(rv))
+            return NS_OK;
+
+          NS_WARNING("failed to launch external protocol handler");
+        }
+      }
+    }
+  }
 
   nsCOMPtr<nsIDOMNode> node(do_QueryInterface(aContent));
   NS_ENSURE_TRUE(node, NS_ERROR_UNEXPECTED);
@@ -630,8 +604,7 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
   aURI->SchemeIs("data", &isData);
 
   if (isJS || isData) {
-    nsCOMPtr<nsIDocument> sourceDoc;
-    aContent->GetDocument(getter_AddRefs(sourceDoc));
+    nsIDocument *sourceDoc = aContent->GetDocument();
 
     if (!sourceDoc) {
       // The source is in a 'zombie' document, or not part of a
@@ -667,14 +640,20 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
   nsCOMPtr<nsIDocument> refererDoc(do_QueryInterface(refererOwnerDoc));
   NS_ENSURE_TRUE(refererDoc, NS_ERROR_UNEXPECTED);
 
-  nsCOMPtr<nsIURI> referer;
-  refererDoc->GetDocumentURL(getter_AddRefs(referer));
+  nsIURI *referer = refererDoc->GetDocumentURI();
 
   // referer could be null here in some odd cases, but that's ok,
   // we'll just load the link w/o sending a referer in those cases.
 
   nsAutoString target(aTargetSpec);
 
+  // If this is an anchor element, grab its type property to use as a hint
+  nsAutoString typeHint;
+  nsCOMPtr<nsIDOMHTMLAnchorElement> anchor(do_QueryInterface(aContent));
+  if (anchor) {
+    anchor->GetType(typeHint);
+  }
+  
   // Initialize the DocShell / Request
   if (aDocShell) {
     *aDocShell = nsnull;
@@ -693,9 +672,10 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
       {
         return InternalLoad(aURI,               // New URI
                             referer,            // Referer URI
-                            nsnull,             // No onwer
+                            aOwner,             // Owner (nsIPrincipal)
                             PR_TRUE,            // Inherit owner from document
                             target.get(),       // Window target
+                            NS_LossyConvertUCS2toASCII(typeHint).get(),
                             aPostDataStream,    // Post data stream
                             aHeadersDataStream, // Headers stream
                             LOAD_LINK,          // Load type
@@ -752,91 +732,28 @@ nsWebShell::OnLeaveLink()
 
   if (browserChrome)  {
       rv = browserChrome->SetStatus(nsIWebBrowserChrome::STATUS_LINK,
-                                    NS_LITERAL_STRING("").get());
+                                    EmptyString().get());
   }
-  return rv;
-}
-
-nsresult
-nsWebShell::NormalizeURI(nsACString& aURLSpec)
-{
-  nsIURI *uri = nsnull;
-  nsCAutoString scheme;
-  nsresult rv = mIOService->ExtractScheme(aURLSpec, scheme);
-  if (NS_FAILED(rv)) return rv;
-
-  // keep tempUri up here to keep it in scope
-  nsCOMPtr<nsIURI> tempUri;
-
-  // used to avoid extra work later
-  PRBool clearUri(PR_TRUE);
-  
-  if (scheme.Equals(NS_LITERAL_CSTRING("http"))) {
-    if (mCachedHttpUrl)
-      rv = mCachedHttpUrl->SetSpec(aURLSpec);
-    else
-      rv = NS_NewURI(getter_AddRefs(mCachedHttpUrl), aURLSpec);
-    
-    uri = mCachedHttpUrl;
-  }
-
-  else if (scheme.Equals(NS_LITERAL_CSTRING("https"))) {
-    if (mCachedHttpsUrl)
-      rv = mCachedHttpsUrl->SetSpec(aURLSpec);
-    else
-      rv = NS_NewURI(getter_AddRefs(mCachedHttpsUrl), aURLSpec);
-
-    uri = mCachedHttpsUrl;
-  }
-
-  else if (scheme.Equals(NS_LITERAL_CSTRING("ftp"))) {
-    if (mCachedFtpUrl)
-      rv = mCachedFtpUrl->SetSpec(aURLSpec);
-    else      
-      rv = NS_NewURI(getter_AddRefs(mCachedFtpUrl), aURLSpec);
-    
-    uri = mCachedFtpUrl;
-  } else {
-    rv = NS_NewURI(getter_AddRefs(tempUri), aURLSpec);
-    uri = tempUri;
-    clearUri = PR_FALSE;
-  }
-
-  // covers all above failures
-  if (NS_FAILED(rv)) return rv;
-  
-  rv = uri->GetSpec(aURLSpec);
-
-  // clear out the old spec, for security reasons - old data should
-  // not be floating around in cached URIs!
-  // (but avoid doing extra work if we're just destroying the uri)
-  if (clearUri)
-    uri->SetSpec(NS_LITERAL_CSTRING(""));
-
   return rv;
 }
 
 NS_IMETHODIMP
-nsWebShell::GetLinkState(const nsACString& aLinkURI, nsLinkState& aState)
+nsWebShell::GetLinkState(nsIURI* aLinkURI, nsLinkState& aState)
 {
+  if (!aLinkURI) {
+    // No uri means not a link
+    aState = eLinkState_NotLink;
+    return NS_OK;
+  }
+    
   aState = eLinkState_Unvisited;
 
   // no history, leave state unchanged
   if (!mGlobalHistory)
     return NS_OK;
-  
-  // default to the given URI
-  nsCAutoString resolvedPath(aLinkURI);
-  nsresult rv;
-
-  // get the cached IO service
-  if (!mIOService)
-    mIOService = do_GetService(NS_IOSERVICE_CONTRACTID, &rv);
-        
-  NormalizeURI(resolvedPath);
 
   PRBool isVisited;
-  NS_ENSURE_SUCCESS(mGlobalHistory->IsVisited(resolvedPath.get(), &isVisited),
+  NS_ENSURE_SUCCESS(mGlobalHistory->IsVisited(aLinkURI, &isVisited),
                     NS_ERROR_FAILURE);
   if (isVisited)
     aState = eLinkState_Visited;
@@ -916,17 +833,12 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
       //
       // First try keyword fixup
       //
-      if (aStatus == NS_ERROR_UNKNOWN_HOST ||
-          aStatus == NS_ERROR_CONNECTION_REFUSED ||
-          aStatus == NS_ERROR_NET_TIMEOUT ||
-          aStatus == NS_ERROR_NET_RESET)
+      if (aStatus == NS_ERROR_UNKNOWN_HOST)  
       {
         PRBool keywordsEnabled = PR_FALSE;
 
-        if(mPrefs) {
-          rv = mPrefs->GetBoolPref("keyword.enabled", &keywordsEnabled);
-          if (NS_FAILED(rv)) return rv;
-        }
+        if (mPrefs && NS_FAILED(mPrefs->GetBoolPref("keyword.enabled", &keywordsEnabled)))
+            keywordsEnabled = PR_FALSE;
 
         nsCAutoString host;
         url->GetHost(host);
@@ -950,12 +862,19 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
             keywordsEnabled = PR_FALSE;
         }
 
+        // Don't perform fixup on an IP address
+        PRNetAddr addr;
+        if(PR_StringToNetAddr(host.get(), &addr) == PR_SUCCESS) {
+            keywordsEnabled = PR_FALSE;
+        }
+
         if(keywordsEnabled && (-1 == dotLoc)) {
           // only send non-qualified hosts to the keyword server
-          nsAutoString keywordSpec; keywordSpec.AssignWithConversion("keyword:");
-          keywordSpec.Append(NS_ConvertUTF8toUCS2(host));
+          nsCAutoString keywordSpec("keyword:");
+          keywordSpec += host;
 
-          NS_NewURI(getter_AddRefs(newURI), keywordSpec, nsnull);
+          NS_NewURI(getter_AddRefs(newURI),
+                    keywordSpec, nsnull);
         } // end keywordsEnabled
       }
 
@@ -992,7 +911,7 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
         if (doCreateAlternate)
         {
           newURI = nsnull;
-          mURIFixup->CreateFixupURI(NS_ConvertUTF8toUCS2(oldSpec),
+          mURIFixup->CreateFixupURI(oldSpec,
               nsIURIFixup::FIXUP_FLAGS_MAKE_ALTERNATE_URI, getter_AddRefs(newURI));
         }
       }
@@ -1018,7 +937,7 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
 
           return LoadURI(newSpecW.get(),      // URI string
                          LOAD_FLAGS_NONE, // Load flags
-                         nsnull,          // Refering URI
+                         nsnull,          // Referring URI
                          nsnull,          // Post data stream
                          nsnull);         // Headers stream
         }
@@ -1127,10 +1046,11 @@ nsresult nsWebShell::EndPageLoad(nsIWebProgress *aProgress,
                postDataSeekable->Seek(nsISeekableStream::NS_SEEK_SET, 0);
             }
             InternalLoad(url,                               // URI
-                         referrer,                          // Refering URI
+                         referrer,                          // Referring URI
                          nsnull,                            // Owner
                          PR_TRUE,                           // Inherit owner
                          nsnull,                            // No window target
+                         nsnull,                            // No type hint
                          inputStream,                       // Post data stream
                          nsnull,                            // No headers stream
                          LOAD_RELOAD_BYPASS_PROXY_AND_CACHE,// Load type

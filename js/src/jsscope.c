@@ -1,36 +1,41 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * JS symbol tables.
@@ -59,7 +64,7 @@ js_GetMutableScope(JSContext *cx, JSObject *obj)
     JSScope *scope, *newscope;
 
     scope = OBJ_SCOPE(obj);
-    JS_ASSERT(JS_IS_SCOPE_LOCKED(scope));
+    JS_ASSERT(JS_IS_SCOPE_LOCKED(cx, scope));
     if (scope->object == obj)
         return scope;
     newscope = js_NewScope(cx, 0, scope->map.ops, LOCKED_OBJ_GET_CLASS(obj),
@@ -79,12 +84,9 @@ js_GetMutableScope(JSContext *cx, JSObject *obj)
  * entries, we use linear search and avoid allocating scope->table.
  */
 #define SCOPE_HASH_THRESHOLD    6
-
 #define MIN_SCOPE_SIZE_LOG2     4
 #define MIN_SCOPE_SIZE          JS_BIT(MIN_SCOPE_SIZE_LOG2)
-
-#define SCOPE_TABLE_SIZE(n)     ((n) * sizeof(JSScopeProperty **))
-#define MIN_SCOPE_TABLE_SIZE    SCOPE_TABLE_SIZE(MIN_SCOPE_SIZE)
+#define SCOPE_TABLE_NBYTES(n)   ((n) * sizeof(JSScopeProperty *))
 
 static void
 InitMinimalScope(JSScope *scope)
@@ -178,11 +180,7 @@ js_DestroyScope(JSContext *cx, JSScope *scope)
 #endif
 
 #ifdef JS_THREADSAFE
-    /*
-     * Scope must be single-threaded at this point, so set scope->ownercx.
-     * This also satisfies the JS_IS_SCOPE_LOCKED assertions in the _clear
-     * implementations.
-     */
+    /* Scope must be single-threaded at this point, so set scope->ownercx. */
     JS_ASSERT(scope->u.count == 0);
     scope->ownercx = cx;
     js_FinishLock(&scope->lock);
@@ -336,7 +334,7 @@ ChangeScope(JSContext *cx, JSScope *scope, int change)
     newlog2 = oldlog2 + change;
     oldsize = JS_BIT(oldlog2);
     newsize = JS_BIT(newlog2);
-    nbytes = newsize * sizeof(JSScopeProperty);
+    nbytes = SCOPE_TABLE_NBYTES(newsize);
     table = (JSScopeProperty **) calloc(nbytes, 1);
     if (!table) {
         JS_ReportOutOfMemory(cx);
@@ -861,6 +859,7 @@ js_AddScopeProperty(JSContext *cx, JSScope *scope, jsid id,
     uint32 size, splen, i;
     int change;
 
+    JS_ASSERT(JS_IS_SCOPE_LOCKED(cx, scope));
     CHECK_ANCESTOR_LINE(scope, JS_TRUE);
 
     /*
@@ -891,7 +890,6 @@ js_AddScopeProperty(JSContext *cx, JSScope *scope, jsid id,
     sprop = overwriting = SPROP_FETCH(spp);
     if (!sprop) {
         /* Check whether we need to grow, if the load factor is >= .75. */
-        JS_ASSERT(JS_IS_SCOPE_LOCKED(scope));
         size = SCOPE_CAPACITY(scope);
         if (scope->entryCount + scope->removedCount >= size - (size >> 2)) {
             if (scope->removedCount >= size >> 2) {
@@ -1017,7 +1015,7 @@ js_AddScopeProperty(JSContext *cx, JSScope *scope, jsid id,
                  * ancestor line from scope->lastProp.
                  */
                 spvec = (JSScopeProperty **)
-                    JS_malloc(cx, splen * sizeof(JSScopeProperty *));
+                        JS_malloc(cx, SCOPE_TABLE_NBYTES(splen));
                 if (!spvec)
                     goto fail_overwrite;
                 i = splen;
@@ -1049,16 +1047,14 @@ js_AddScopeProperty(JSContext *cx, JSScope *scope, jsid id,
                                 i++;
                         } while ((tmp = tmp->parent) != NULL);
                         spp2 = (JSScopeProperty **)
-                            JS_realloc(cx, spvec,
-                                       (splen + i) * sizeof(JSScopeProperty *));
+                             JS_realloc(cx, spvec, SCOPE_TABLE_NBYTES(splen+i));
                         if (!spp2) {
                             JS_free(cx, spvec);
                             goto fail_overwrite;
                         }
 
                         spvec = spp2;
-                        memmove(spvec + i, spvec,
-                                splen * sizeof(JSScopeProperty *));
+                        memmove(spvec + i, spvec, SCOPE_TABLE_NBYTES(splen));
                         splen += i;
                     }
 
@@ -1294,7 +1290,7 @@ js_RemoveScopeProperty(JSContext *cx, JSScope *scope, jsid id)
     JSScopeProperty **spp, *stored, *sprop;
     uint32 size;
 
-    JS_ASSERT(JS_IS_SCOPE_LOCKED(scope));
+    JS_ASSERT(JS_IS_SCOPE_LOCKED(cx, scope));
     CHECK_ANCESTOR_LINE(scope, JS_TRUE);
     if (SCOPE_IS_SEALED(scope)) {
         ReportReadOnlyScope(cx, scope);
@@ -1449,7 +1445,7 @@ js_SweepScopeProperties(JSRuntime *rt)
     uintN i;
 
 #ifdef DEBUG_brendan
-    uint32 livePropCapacity, totalLiveCount = 0;
+    uint32 livePropCapacity = 0, totalLiveCount = 0;
     static FILE *logfp;
     if (!logfp)
         logfp = fopen("/tmp/proptree.stats", "a");
@@ -1490,9 +1486,6 @@ js_SweepScopeProperties(JSRuntime *rt)
     js_nkids_sqsum = 0;
     memset(js_nkids_hist, 0, sizeof js_nkids_hist);
 #endif
-
-    /* Mark watched scope properties hidden in the runtime before we sweep. */
-    js_MarkWatchPoints(rt);
 
     ap = &rt->propertyArenaPool.first.next;
     while ((a = *ap) != NULL) {

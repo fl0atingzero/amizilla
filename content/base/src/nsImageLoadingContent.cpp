@@ -39,7 +39,6 @@
 #include "nsImageLoadingContent.h"
 #include "nsContentErrors.h"
 #include "nsIContent.h"
-#include "nsIHTMLContent.h"
 #include "nsIDocument.h"
 #include "nsINodeInfo.h"
 #include "nsIScriptGlobalObject.h"
@@ -67,6 +66,8 @@
 #include "nsLayoutAtoms.h"
 #include "nsIFrame.h"
 
+#include "nsContentUtils.h"
+
 // Statics
 imgILoader* nsImageLoadingContent::sImgLoader = nsnull;
 nsIIOService* nsImageLoadingContent::sIOService = nsnull;
@@ -74,7 +75,8 @@ nsIIOService* nsImageLoadingContent::sIOService = nsnull;
 nsImageLoadingContent::nsImageLoadingContent()
   : mObserverList(nsnull),
     mLoadingEnabled(PR_TRUE),
-    mImageIsBlocked(PR_FALSE)
+    mImageIsBlocked(PR_FALSE),
+    mHaveHadObserver(PR_FALSE)
 {
   if (!sImgLoader)
     mLoadingEnabled = PR_FALSE;
@@ -114,8 +116,9 @@ nsImageLoadingContent::Shutdown()
 // removing themselves.
 #define LOOP_OVER_OBSERVERS(func_)                                       \
   PR_BEGIN_MACRO                                                         \
-    for (ImageObserver* observer = &mObserverList; observer;             \
-         observer = observer->mNext) {                                   \
+    for (ImageObserver* observer = &mObserverList, *next; observer;      \
+         observer = next) {                                              \
+      next = observer->mNext;                                            \
       if (observer->mObserver) {                                         \
         observer->mObserver->func_;                                      \
       }                                                                  \
@@ -236,12 +239,14 @@ nsImageLoadingContent::GetImageBlocked(PRBool* aBlocked)
   *aBlocked = mImageIsBlocked;
   return NS_OK;
 }
-                                      
+
 NS_IMETHODIMP
 nsImageLoadingContent::AddObserver(imgIDecoderObserver* aObserver)
 {
   NS_ENSURE_ARG_POINTER(aObserver);
 
+  mHaveHadObserver = PR_TRUE;
+  
   if (!mObserverList.mObserver) {
     mObserverList.mObserver = aObserver;
     // Don't touch the linking of the list!
@@ -354,10 +359,12 @@ nsImageLoadingContent::LoadImageWithChannel(nsIChannel* aChannel,
   // XXX what should we do with content policies here, if anything?
   // Shouldn't that be done before the start of the load?
   
-  nsCOMPtr<nsIDocument> doc;
-  nsresult rv = GetOurDocument(getter_AddRefs(doc));
-  NS_ENSURE_TRUE(doc, rv);
-
+  nsCOMPtr<nsIDocument> doc = GetOurDocument();
+  if (!doc) {
+    // Don't bother
+    return NS_OK;
+  }
+  
   CancelImageRequests(NS_ERROR_IMAGE_SRC_CHANGED);
 
   nsCOMPtr<imgIRequest> & req = mCurrentRequest ? mPendingRequest : mCurrentRequest;
@@ -381,15 +388,14 @@ nsImageLoadingContent::ImageURIChanged(const nsACString& aNewURI)
     return NS_OK;
   }
 
-  nsresult rv;   // XXXbz Should failures in this method fire onerror?
-
-  // First, get a document (needed for security checks, base URI and the like)
-  nsCOMPtr<nsIDocument> doc;
-  rv = GetOurDocument(getter_AddRefs(doc));
+  // First, get a document (needed for security checks and the like)
+  nsCOMPtr<nsIDocument> doc = GetOurDocument();
   if (!doc) {
     // No reason to bother, I think...
-    return rv;
+    return NS_OK;
   }
+
+  nsresult rv;   // XXXbz Should failures in this method fire onerror?
 
   nsCOMPtr<nsIURI> imageURI;
   rv = StringToURI(aNewURI, doc, getter_AddRefs(imageURI));
@@ -403,7 +409,7 @@ nsImageLoadingContent::ImageURIChanged(const nsACString& aNewURI)
   // not to show the broken image icon.  If the load is blocked by the
   // content policy or security manager, we will want to cancel with
   // the error code from those.
-  nsresult cancelResult = CanLoadImage(imageURI, doc);
+  nsresult cancelResult = nsContentUtils::CanLoadImage(imageURI, this, doc);
   if (NS_SUCCEEDED(cancelResult)) {
     cancelResult = NS_ERROR_IMAGE_SRC_CHANGED;
   }
@@ -417,35 +423,18 @@ nsImageLoadingContent::ImageURIChanged(const nsACString& aNewURI)
     return NS_OK;
   }
 
-  nsCOMPtr<nsILoadGroup> loadGroup;
-  doc->GetDocumentLoadGroup(getter_AddRefs(loadGroup));
-  NS_WARN_IF_FALSE(loadGroup, "Could not get loadgroup; onload may fire too early");
-
-  nsCOMPtr<nsIURI> documentURI;
-  doc->GetDocumentURL(getter_AddRefs(documentURI));
-
   nsCOMPtr<imgIRequest> & req = mCurrentRequest ? mPendingRequest : mCurrentRequest;
 
   // It may be that one of our frames has replaced itself with alt text... This
   // would only have happened if our mCurrentRequest had issues, and we would
   // have set it to null by now in that case.  Have to save that information
-  // here, since LoadImage may clobber the value of mCurrentRequest.
-  PRBool mayNeedReframe = !mCurrentRequest;
+  // here, since LoadImage may clobber the value of mCurrentRequest.  On the
+  // other hand, if we've never had an observer, we know there aren't any frames
+  // that have changed to alt text on us yet.
+  PRBool mayNeedReframe = mHaveHadObserver && !mCurrentRequest;
   
-  // XXXbz using "documentURI" for the initialDocumentURI is not quite
-  // right, but the best we can do here...
-  rv = sImgLoader->LoadImage(imageURI,                /* uri to load */
-                             documentURI,             /* initialDocumentURI */
-                             documentURI,             /* referrer */
-                             loadGroup,               /* loadgroup */
-                             this,                    /* imgIDecoderObserver */
-                             doc,                     /* uniquification key */
-                             nsIRequest::LOAD_NORMAL, /* load flags */
-                             nsnull,                  /* cache key */
-                             nsnull,                  /* existing request*/
-                             getter_AddRefs(req));
-
-  NS_ENSURE_SUCCESS(rv, rv);
+  rv = nsContentUtils::LoadImage(imageURI, doc, this, nsIRequest::LOAD_NORMAL,
+                                 getter_AddRefs(req));
 
   if (!mayNeedReframe) {
     // We're all set
@@ -459,15 +448,7 @@ nsImageLoadingContent::ImageURIChanged(const nsACString& aNewURI)
   nsCOMPtr<nsIContent> thisContent = do_QueryInterface(this, &rv);
   NS_ENSURE_TRUE(thisContent, rv);
 
-  nsCOMPtr<nsIDocument> tempDoc;
-  thisContent->GetDocument(getter_AddRefs(tempDoc));
-  if (!doc) {
-    return NS_OK;
-  }
-
-  nsCOMPtr<nsIContent> parent;
-  thisContent->GetParent(getter_AddRefs(parent));
-  if (!parent) {
+  if (!thisContent->GetDocument() || !thisContent->GetParent()) {
     return NS_OK;
   }
 
@@ -476,8 +457,7 @@ nsImageLoadingContent::ImageURIChanged(const nsACString& aNewURI)
   // and it's not of the right type, reframe it.
   PRInt32 numShells = doc->GetNumberOfShells();
   for (PRInt32 i = 0; i < numShells; ++i) {
-    nsCOMPtr<nsIPresShell> shell;
-    doc->GetShellAt(i, getter_AddRefs(shell));
+    nsIPresShell *shell = doc->GetShellAt(i);
     if (shell) {
       nsIFrame* frame = nsnull;
       shell->GetPrimaryFrameFor(thisContent, &frame);
@@ -487,8 +467,7 @@ nsImageLoadingContent::ImageURIChanged(const nsACString& aNewURI)
         // to be easily detectable.  For example, I suspect that this code will
         // fail for <object> in the current CantRenderReplacedElement
         // implementation...
-        nsCOMPtr<nsIAtom> frameType;
-        frame->GetFrameType(getter_AddRefs(frameType));
+        nsIAtom* frameType = frame->GetType();
         if (frameType != nsLayoutAtoms::imageFrame &&
             frameType != nsLayoutAtoms::imageControlFrame &&
             frameType != nsLayoutAtoms::objectFrame) {
@@ -523,55 +502,23 @@ nsImageLoadingContent::CancelImageRequests(nsresult aReason)
   }
 }
 
-nsresult
-nsImageLoadingContent::CanLoadImage(nsIURI* aURI, nsIDocument* aDocument)
+nsIDocument*
+nsImageLoadingContent::GetOurDocument()
 {
-  NS_PRECONDITION(aURI, "Null URI");
-  NS_PRECONDITION(aDocument, "Null document!");
+  nsCOMPtr<nsIContent> thisContent = do_QueryInterface(this);
+  NS_ENSURE_TRUE(thisContent, nsnull);
+
+  nsIDocument* doc = thisContent->GetDocument();
   
-  // Check with the content-policy things to make sure this load is permitted.
-
-  nsCOMPtr<nsIScriptGlobalObject> globalScript;
-  nsresult rv = aDocument->GetScriptGlobalObject(getter_AddRefs(globalScript));
-  if (NS_FAILED(rv)) {
-    // just let it load.  Documents loaded as data should take care to
-    // prevent image loading themselves.
-    return NS_OK;
-  }
-
-  nsCOMPtr<nsIDOMWindow> domWin(do_QueryInterface(globalScript));
-
-  PRBool shouldLoad = PR_TRUE;
-  rv = NS_CheckContentLoadPolicy(nsIContentPolicy::IMAGE, aURI, this,
-                                 domWin, &shouldLoad);
-  if (NS_SUCCEEDED(rv) && !shouldLoad) {
-    return NS_ERROR_IMAGE_BLOCKED;
-  }
-
-  return NS_OK;
-}
-
-
-nsresult
-nsImageLoadingContent::GetOurDocument(nsIDocument** aDocument)
-{
-  NS_PRECONDITION(aDocument, "Null out param");
-
-  nsresult rv;
-
-  nsCOMPtr<nsIContent> thisContent = do_QueryInterface(this, &rv);
-  NS_ENSURE_TRUE(thisContent, rv);
-
-  rv = thisContent->GetDocument(aDocument);
-  if (!*aDocument) {  // nodeinfo time
-    nsCOMPtr<nsINodeInfo> nodeInfo;
-    rv = thisContent->GetNodeInfo(getter_AddRefs(nodeInfo));
+  if (!doc) {  // nodeinfo time
+    // XXXbz GetOwnerDocument
+    nsINodeInfo *nodeInfo = thisContent->GetNodeInfo();
     if (nodeInfo) {
-      rv = nodeInfo->GetDocument(aDocument);
+      doc = nodeInfo->GetDocument();
     }
   }
 
-  return rv;
+  return doc;
 }
 
 nsresult
@@ -582,29 +529,18 @@ nsImageLoadingContent::StringToURI(const nsACString& aSpec,
   NS_PRECONDITION(aDocument, "Must have a document");
   NS_PRECONDITION(aURI, "Null out param");
 
-  nsresult rv;
-  
   // (1) Get the base URI
-  nsCOMPtr<nsIURI> baseURL;
-  nsCOMPtr<nsIHTMLContent> thisContent = do_QueryInterface(this);
-  if (thisContent) {
-    rv = thisContent->GetBaseURL(getter_AddRefs(baseURL));
-  } else {
-    rv = aDocument->GetBaseURL(getter_AddRefs(baseURL));
-    if (!baseURL) {
-      rv = aDocument->GetDocumentURL(getter_AddRefs(baseURL));
-    }
-  }
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIContent> thisContent = do_QueryInterface(this);
+  NS_ASSERTION(thisContent, "An image loading content must be an nsIContent");
+  nsCOMPtr<nsIURI> baseURL = thisContent->GetBaseURI();
 
   // (2) Get the charset
-  nsCAutoString charset;
-  aDocument->GetDocumentCharacterSet(charset);
+  const nsACString &charset = aDocument->GetDocumentCharacterSet();
 
   // (3) Construct the silly thing
   return NS_NewURI(aURI,
                    aSpec,
-                   charset.IsEmpty() ? nsnull : charset.get(),
+                   charset.IsEmpty() ? nsnull : PromiseFlatCString(charset).get(),
                    baseURL,
                    sIOService);
 }
@@ -615,16 +551,17 @@ nsImageLoadingContent::StringToURI(const nsACString& aSpec,
  */
 MOZ_DECL_CTOR_COUNTER(ImageEvent)
 
-struct ImageEvent : PLEvent
+class ImageEvent : public PLEvent,
+                   public nsDummyLayoutRequest
 {
+public:
   ImageEvent(nsIPresContext* aPresContext, nsIContent* aContent,
-             const nsAString& aMessage, nsILoadGroup *aLoadGroup,
-             nsIRequest *aRequest)
-    : mPresContext(aPresContext),
+             const nsAString& aMessage, nsILoadGroup *aLoadGroup)
+    : nsDummyLayoutRequest(nsnull),
+      mPresContext(aPresContext),
       mContent(aContent),
       mMessage(aMessage),
-      mLoadGroup(aLoadGroup),
-      mDummyRequest(aRequest)
+      mLoadGroup(aLoadGroup)
   {
     MOZ_COUNT_CTOR(ImageEvent);
   }
@@ -637,7 +574,6 @@ struct ImageEvent : PLEvent
   nsCOMPtr<nsIContent> mContent;
   nsString mMessage;
   nsCOMPtr<nsILoadGroup> mLoadGroup;
-  nsCOMPtr<nsIRequest> mDummyRequest;
 };
 
 PR_STATIC_CALLBACK(void*)
@@ -645,20 +581,20 @@ HandleImagePLEvent(PLEvent* aEvent)
 {
   ImageEvent* evt = NS_STATIC_CAST(ImageEvent*, aEvent);
   nsEventStatus estatus = nsEventStatus_eIgnore;
-  nsEvent event;
-  event.eventStructType = NS_EVENT;
+  PRUint32 eventMsg;
 
   if (evt->mMessage == NS_LITERAL_STRING("load")) {
-    event.message = NS_IMAGE_LOAD;
+    eventMsg = NS_IMAGE_LOAD;
   } else {
-    event.message = NS_IMAGE_ERROR;
+    eventMsg = NS_IMAGE_ERROR;
   }
 
+  nsEvent event(eventMsg);
   evt->mContent->HandleDOMEvent(evt->mPresContext, &event, nsnull,
                                 NS_EVENT_FLAG_INIT, &estatus);
 
-  evt->mLoadGroup->RemoveRequest(evt->mDummyRequest, nsnull, NS_OK);
-  
+  evt->mLoadGroup->RemoveRequest(evt, nsnull, NS_OK);
+
   return nsnull;
 }
 
@@ -666,7 +602,12 @@ PR_STATIC_CALLBACK(void)
 DestroyImagePLEvent(PLEvent* aEvent)
 {
   ImageEvent* evt = NS_STATIC_CAST(ImageEvent*, aEvent);
-  delete evt;
+
+  // We're reference counted, and we hold a strong reference to
+  // ourselves while we're a 'live' PLEvent. Now that the PLEvent is
+  // destroyed, release ourselves.
+
+  NS_RELEASE(evt);
 }
 
 nsresult
@@ -676,12 +617,12 @@ nsImageLoadingContent::FireEvent(const nsAString& aEventType)
   // loops in cases when onLoad handlers reset the src and the new src is in
   // cache.
 
-  nsCOMPtr<nsIDocument> document;
-  nsresult rv = GetOurDocument(getter_AddRefs(document));
+  nsCOMPtr<nsIDocument> document = GetOurDocument();
   if (!document) {
     // no use to fire events if there is no document....
-    return rv;
+    return NS_OK;
   }                                                                             
+  nsresult rv;
   nsCOMPtr<nsIEventQueueService> eventQService =
     do_GetService("@mozilla.org/event-queue-service;1", &rv);
   NS_ENSURE_TRUE(eventQService, rv);
@@ -693,15 +634,9 @@ nsImageLoadingContent::FireEvent(const nsAString& aEventType)
                                            getter_AddRefs(eventQ));
   NS_ENSURE_TRUE(eventQ, rv);
 
-  nsCOMPtr<nsILoadGroup> loadGroup;
-  document->GetDocumentLoadGroup(getter_AddRefs(loadGroup));
+  nsCOMPtr<nsILoadGroup> loadGroup = document->GetDocumentLoadGroup();
 
-  nsCOMPtr<nsIRequest> dummyRequest;
-  rv = nsDummyLayoutRequest::Create(getter_AddRefs(dummyRequest), nsnull);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIPresShell> shell;
-  document->GetShellAt(0, getter_AddRefs(shell));
+  nsIPresShell *shell = document->GetShellAt(0);
   NS_ENSURE_TRUE(shell, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsIPresContext> presContext;
@@ -711,18 +646,23 @@ nsImageLoadingContent::FireEvent(const nsAString& aEventType)
   nsCOMPtr<nsIContent> ourContent = do_QueryInterface(this);
   
   ImageEvent* evt = new ImageEvent(presContext, ourContent, aEventType,
-                                   loadGroup, dummyRequest);
+                                   loadGroup);
 
   NS_ENSURE_TRUE(evt, NS_ERROR_OUT_OF_MEMORY);
 
   PL_InitEvent(evt, this, ::HandleImagePLEvent, ::DestroyImagePLEvent);
 
+  // The event will own itself while it's in the event queue, once
+  // removed, it will release itself, and if there are no other
+  // references, it will be deleted.
+  NS_ADDREF(evt);
+
   rv = eventQ->PostEvent(evt);
 
-  if (rv == PR_SUCCESS) {
-    // Add the dummy request to the load group only after all the early
-    // returns here!
-    loadGroup->AddRequest(dummyRequest, nsnull);
+  if (NS_SUCCEEDED(rv)) {
+    // Add the dummy request (the ImageEvent) to the load group only
+    // after all the early returns here!
+    loadGroup->AddRequest(evt, nsnull);
   } else {
     PL_DestroyEvent(evt);
   }

@@ -77,7 +77,7 @@ NSSCleanupAutoPtrClass(CERTCertList, CERT_DestroyCertList)
 static NS_DEFINE_CID(kNSSComponentCID, NS_NSSCOMPONENT_CID);
 
 
-NS_IMPL_ISUPPORTS1(nsNSSCertificateDB, nsIX509CertDB)
+NS_IMPL_ISUPPORTS2(nsNSSCertificateDB, nsIX509CertDB, nsIX509CertDB2)
 
 nsNSSCertificateDB::nsNSSCertificateDB()
 {
@@ -299,14 +299,14 @@ nsNSSCertificateDB::handleCACertDownload(nsIArray *x509Certs,
     cert1->GetIssuerName(cert1IssuerName);
     cert1->GetSubjectName(cert1SubjectName);
 
-    if (nsCRT::strcmp(cert1IssuerName.get(), cert0SubjectName.get()) == 0) {
+    if (cert1IssuerName.Equals(cert0SubjectName)) {
       // In this case, the first cert in the list signed the second,
       // so the first cert is the root.  Let's display the last cert 
       // in the list.
       selCertIndex = numCerts-1;
       certToShow = do_QueryElementAt(x509Certs, selCertIndex);
     } else 
-    if (nsCRT::strcmp(cert0IssuerName.get(), cert1SubjectName.get()) == 0) { 
+    if (cert0IssuerName.Equals(cert1SubjectName)) { 
       // In this case the second cert has signed the first cert.  The 
       // first cert is the leaf, so let's display it.
       selCertIndex = 0;
@@ -1279,14 +1279,10 @@ nsNSSCertificateDB::default_nickname(CERTCertificate *cert, nsIInterfaceRequesto
     goto loser;
   
   count = 1;
-  nssComponent->GetPIPNSSBundleString(
-                              NS_LITERAL_STRING("nick_template").get(),
-                              tmpNickFmt);
+  nssComponent->GetPIPNSSBundleString("nick_template", tmpNickFmt);
   nickFmt = ToNewUTF8String(tmpNickFmt);
 
-  nssComponent->GetPIPNSSBundleString(
-                              NS_LITERAL_STRING("nick_template_with_num").get(),
-                              tmpNickFmtWithNum);
+  nssComponent->GetPIPNSSBundleString("nick_template_with_num", tmpNickFmtWithNum);
   nickFmtWithNum = ToNewUTF8String(tmpNickFmtWithNum);
 
 
@@ -1380,4 +1376,60 @@ done:
     }
     PR_FREEIF(tmp);
     return(nickname);
+}
+
+NS_IMETHODIMP nsNSSCertificateDB::AddCertFromBase64(const char *aBase64, const char *aTrust, const char *aName)
+{
+  NS_ENSURE_ARG_POINTER(aBase64);
+  nsCOMPtr <nsIX509Cert> newCert;
+
+  nsNSSCertTrust trust;
+
+  // need to calculate the trust bits from the aTrust string.
+  nsresult rv = CERT_DecodeTrustString(trust.GetTrust(), /* this is const, but not declared that way */(char *) aTrust);
+  NS_ENSURE_SUCCESS(rv, rv); // if bad trust passed in, return error.
+  trust.SetValidCA();
+  trust.AddCATrust(trust.GetTrust()->sslFlags,
+                   trust.GetTrust()->emailFlags,
+                   trust.GetTrust()->objectSigningFlags);
+
+
+  rv = ConstructX509FromBase64(aBase64, getter_AddRefs(newCert));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  SECItem der;
+  rv = newCert->GetRawDER(&der.len, (PRUint8 **)&der.data);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("Creating temp cert\n"));
+  CERTCertificate *tmpCert;
+  CERTCertDBHandle *certdb = CERT_GetDefaultCertDB();
+  tmpCert = CERT_FindCertByDERCert(certdb, &der);
+  if (!tmpCert) 
+    tmpCert = CERT_NewTempCertificate(certdb, &der,
+                                      nsnull, PR_FALSE, PR_TRUE);
+
+  if (!tmpCert) {
+    NS_ASSERTION(0,"Couldn't create cert from DER blob\n");
+    return NS_ERROR_FAILURE;
+  }
+
+  if (tmpCert->isperm) {
+    CERT_DestroyCertificate(tmpCert);
+    return NS_OK;
+  }
+
+  CERTCertificateCleaner tmpCertCleaner(tmpCert);
+
+  nsXPIDLCString nickname;
+  nickname.Adopt(CERT_MakeCANickname(tmpCert));
+
+  PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("Created nick \"%s\"\n", nickname.get()));
+
+  SECStatus srv = CERT_AddTempCertToPerm(tmpCert, 
+                                         NS_CONST_CAST(char*,nickname.get()), 
+                                         trust.GetTrust()); 
+
+
+  return (srv == SECSuccess) ? NS_OK : NS_ERROR_FAILURE;
 }

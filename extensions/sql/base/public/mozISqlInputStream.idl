@@ -13,13 +13,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 2001
+ * The Initial Developer of the Original Code is Jan Varga
+ * Portions created by the Initial Developer are Copyright (C) 2003
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Jan Varga <varga@utcru.sk>
+ *   Neil Deakin <enndeakin@sympatico.ca>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -38,15 +37,28 @@
 #include "nsISupports.idl"
 
 /**
+ * This interface is a utility for reading SQL result contents as a stream.
+ *
  * @status UNDER_DEVELOPMENT
  */
 
 [scriptable, uuid(555f2485-ba82-4c5c-9dd2-d801104dc09e)]
 interface mozISqlInputStream : nsISupports
 {
-
+  /**
+   * Retrieves the name of a column given its index. Indicies start at zero.
+   *
+   * @param aColumnIndex   the index of the column to return
+   * @return               the column name
+   */
   AString getColumnHeader(in long aColumnIndex);
 
+  /**
+   * Sets the name of a column given its index. Indicies start at zero.
+   *
+   * @param aColumnIndex   the index of the column to change
+   * @param aLabel         the column name
+   */
   void setColumnHeader(in long aColumnIndex, in AString aLabel);
 
 };

@@ -19,6 +19,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s): Mostafa Hosseini <mostafah@oeone.com>
+ * Cristian Tapus <cristian_tapus@yahoo.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -33,6 +34,10 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+ 
+ /* This file implements an XPCOM object which represents a calendar object. It is a container
+ of events and prepares responses for queries made upon the calendar in whole. The task of reading from
+ and writing to the calendar data storage is currently performed by this object */
 
 #ifndef WIN32
 #include <unistd.h>
@@ -58,6 +63,8 @@
 #include "nsIDOMWindowInternal.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMElement.h"
+#include "nsIPrefBranch.h"
+#include "nsIPrefService.h"
 
 
 extern "C" {
@@ -96,6 +103,96 @@ icalcomponent* icalcomponent_fetch( icalcomponent* parent,const char* uid )
     }
     return nsnull;
 }
+
+/*
+ * This function adds the first component of the child component to the
+ * first component of the parent icalfileset (which is a icalfileset_impl)
+ *
+ * This is used in the following member functions: AddEvent, ModifyEvent,
+ * AddTodo, ModifyTodo
+ *
+ */
+icalerrorenum icalfileset_add_first_to_first_component(icalfileset *parent,
+                                       icalcomponent* child)
+{
+
+#ifdef ICAL_DEBUG
+    printf("icalfileset_add_first_to_first_component()::\n");
+#endif
+
+    struct icalfileset_impl* impl = (struct icalfileset_impl*)parent;
+
+    icalerror_check_arg_re((parent!=0),"parent", ICAL_BADARG_ERROR);
+    icalerror_check_arg_re((child!=0),"child",ICAL_BADARG_ERROR);
+
+    // get the first component of the child which is either a vevent or a vtodo 
+    icalcomponent* vfirst = icalcomponent_get_first_component(child, ICAL_VEVENT_COMPONENT);
+    if (vfirst==0) {
+      vfirst = icalcomponent_get_first_component(child, ICAL_VTODO_COMPONENT);
+    }
+    if (vfirst==0) return ICAL_INTERNAL_ERROR;
+        
+    // extract the first (presumably) vcalendar component of the parent stream 
+    struct icalfileset_impl* firstc = (struct icalfileset_impl*)icalfileset_get_first_component(impl);
+    
+    icalcomponent_kind kind_firstc;
+
+    if (firstc!=0) 
+      kind_firstc = icalcomponent_isa (firstc);
+    else 
+      // the check below will fail due to firstc==0
+      kind_firstc = ICAL_VCALENDAR_COMPONENT;
+
+    if ( (firstc==0) || (kind_firstc != ICAL_VCALENDAR_COMPONENT) ) {
+      // if parent stream is empty or first component is not a VCALENDAR
+      // then create a new vcalendar component 
+      firstc = (struct icalfileset_impl*)icalcomponent_new(ICAL_VCALENDAR_COMPONENT);
+      
+      if (firstc==0) {
+#ifdef ICAL_DEBUG
+	printf("icalfileset_add_first_to_first_component():: firstc is still NULL\n");
+#endif
+	return ICAL_INTERNAL_ERROR;
+      }
+   
+      // add component to parent stream
+      icalfileset_add_component(parent, firstc);
+    } else {
+      // I need to remove the version and the prodid
+            
+      //version
+      icalproperty *prop = icalcomponent_get_first_property(firstc, ICAL_VERSION_PROPERTY );
+      icalcomponent_remove_property( firstc, prop );
+      
+      //prodid
+      prop = icalcomponent_get_first_property( firstc, ICAL_PRODID_PROPERTY );
+      icalcomponent_remove_property( firstc, prop );
+    }
+    
+      
+    //version
+    icalproperty *prop = icalproperty_new_version( ICALEVENT_VERSION );
+    icalcomponent_add_property( firstc, prop );
+    
+    //prodid
+    prop = icalproperty_new_prodid( ICALEVENT_PRODID );
+    icalcomponent_add_property( firstc, prop );
+
+    // get the timezone component if any 
+    icalcomponent* timezone = icalcomponent_get_first_component(child, ICAL_VTIMEZONE_COMPONENT);
+
+    // we know that we have at most one timezone component inside the child component
+    if (timezone!=0) icalcomponent_add_component(firstc, timezone);
+    
+    // add first component of child into the first component of stream
+    icalcomponent_add_component(firstc, vfirst);
+    
+    icalfileset_mark(parent);
+    
+    return ICAL_NO_ERROR;
+
+}
+
 
 oeEventEnumerator::oeEventEnumerator( ) 
 :
@@ -298,7 +395,7 @@ oeICalImpl::~oeICalImpl()
  * Notice that the second parameter to the macro is the static IID accessor
  * method, and NOT the #defined IID.
  */
-NS_IMPL_ISUPPORTS1(oeICalImpl, oeIICal);
+NS_IMPL_ISUPPORTS1(oeICalImpl, oeIICal)
 
 EventList *oeICalImpl::GetEventList()
 {
@@ -899,10 +996,9 @@ NS_IMETHODIMP oeICalImpl::AddEvent(oeIICalEvent *icalevent,char **retid)
     }
 
     vcalendar = ((oeICalEventImpl *)icalevent)->AsIcalComponent();
-	
-    icalfileset_add_component( stream, vcalendar );
+    icalfileset_add_first_to_first_component( stream, vcalendar );
 
-	if( icalfileset_commit(stream) != ICAL_NO_ERROR ) {
+    if( icalfileset_commit(stream) != ICAL_NO_ERROR ) {
         #ifdef ICAL_DEBUG
 	    printf( "oeICalImpl::AddEvent() : WARNING icalfileset_commit() unsuccessful\n" );
         #endif
@@ -951,6 +1047,14 @@ NS_IMETHODIMP oeICalImpl::ModifyEvent(oeIICalEvent *icalevent, char **retid)
 #endif
     icalset *stream;
     icalcomponent *vcalendar;
+    nsresult rv;
+
+    //This might be a TODO object. If so then call the appropriate function.
+    nsCOMPtr<oeIICalTodo> icaltodo;
+    rv = icalevent->QueryInterface(NS_GET_IID(oeIICalTodo), (void **)&icaltodo);
+    if( NS_SUCCEEDED( rv ) ) {
+        return ModifyTodo( icaltodo, retid );
+    }
 
     stream = icalfileset_new(serveraddr);
     if ( !stream ) {
@@ -980,7 +1084,6 @@ NS_IMETHODIMP oeICalImpl::ModifyEvent(oeIICalEvent *icalevent, char **retid)
                 icalfileset_remove_component( stream, fetchedvcal );
                 icalcomponent_free( fetchedvcal );
             }
-            nsresult rv;
             if( NS_FAILED( rv = NS_NewICalEvent((oeIICalEvent**) &oldevent ))) {
                 nsMemory::Free( *retid );
                 *retid = nsnull;
@@ -1008,30 +1111,13 @@ NS_IMETHODIMP oeICalImpl::ModifyEvent(oeIICalEvent *icalevent, char **retid)
         return NS_OK;
     }
     
+    //Update Last-Modified
+    icalevent->UpdateLastModified();
+
     vcalendar = ((oeICalEventImpl *)icalevent)->AsIcalComponent();
-
-    //Add Last-Modified property
-    icalcomponent *vevent = icalcomponent_get_first_component( vcalendar, ICAL_VEVENT_COMPONENT );
-    if( vevent ) {
-        PRInt64 nowinusec = PR_Now();
-        PRExplodedTime ext;
-        PR_ExplodeTime( nowinusec, PR_GMTParameters, &ext);
-        icaltimetype now = icaltime_null_time();
-        now.year = ext.tm_year;
-        now.month = ext.tm_month + 1;
-        now.day = ext.tm_mday;
-        now.hour = ext.tm_hour;
-        now.minute = ext.tm_min;
-        now.second = ext.tm_sec;
-        now.is_utc = true;
-
-        icalproperty *prop = icalproperty_new_lastmodified( now );
-        icalcomponent_add_property( vevent, prop );
-    }
-
-    icalfileset_add_component( stream, vcalendar );
-    
-	if( icalfileset_commit(stream) != ICAL_NO_ERROR ) {
+    icalfileset_add_first_to_first_component( stream, vcalendar );  
+  
+    if( icalfileset_commit(stream) != ICAL_NO_ERROR ) {
         #ifdef ICAL_DEBUG
 	    printf( "oeICalImpl::ModifyEvent() : WARNING icalfileset_commit() unsuccessful\n" );
         #endif
@@ -1043,7 +1129,6 @@ NS_IMETHODIMP oeICalImpl::ModifyEvent(oeIICalEvent *icalevent, char **retid)
     for( unsigned int i=0; i<observercount; i++ ) {
         nsCOMPtr<oeIICalObserver>observer;
         m_observerlist->QueryElementAt( i, NS_GET_IID(oeIICalObserver), getter_AddRefs(observer));
-        nsresult rv;
         rv = observer->OnModifyItem( icalevent, oldevent );
         #ifdef ICAL_DEBUG
         if( NS_FAILED( rv ) ) {
@@ -1653,7 +1738,7 @@ oeICalImpl::RemoveTodoObserver(oeIICalTodoObserver *observer)
         PRUint32 observercount;
         m_todoobserverlist->Count( &observercount );
         for( unsigned int i=0; i<observercount; i++ ) {
-            nsCOMPtr<oeIICalObserver>tmpobserver;
+            nsCOMPtr<oeIICalTodoObserver>tmpobserver;
             m_todoobserverlist->QueryElementAt( i, NS_GET_IID(oeIICalTodoObserver), getter_AddRefs(tmpobserver));
             if( observer == tmpobserver ) {
                 m_todoobserverlist->RemoveElementAt( i );
@@ -1739,6 +1824,8 @@ void oeICalImpl::SetupAlarmManager() {
         return;
     }
 
+    static icaltimetype lastcheck = icaltime_null_time();
+
     UpdateCalendarIcon( false );
 
     PRTime todayinms = PR_Now();
@@ -1750,6 +1837,9 @@ void oeICalImpl::SetupAlarmManager() {
 
     icaltimetype nextalarm = icaltime_null_time();
     EventList *tmplistptr = &m_eventlist;
+
+    int processmissed = -1; // -1 means the value has not been read from the preferences. 0 or 1 are valid values.
+
     while( tmplistptr ) {
         oeICalEventImpl *event = (oeICalEventImpl *)(tmplistptr->event);
         if( event ) {
@@ -1765,9 +1855,24 @@ void oeICalImpl::SetupAlarmManager() {
                     printf( "ALARM WENT OFF: %s\n", icaltime_as_ical_string( alarmtime ) );
                     #endif
                     
+                    nsresult rv;
+                    if( processmissed == -1 ) {
+                        nsCOMPtr<nsIPrefBranch> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+                        if ( NS_SUCCEEDED(rv) && prefBranch ) {
+                            rv = prefBranch->GetBoolPref("calendar.alarms.showmissed", &processmissed);
+                        } else {
+                            processmissed = true; //if anything goes wrong just consider the default setting
+                        }
+                    }
+
+                    if( !processmissed ) {
+                        time_t timediff = icaltime_as_timet( now ) - icaltime_as_timet( alarmtime );
+                        if( timediff > 30 ) //if alarmtime is older than 30 seconds it won't be processed.
+                            continue;
+                    }
+
                     UpdateCalendarIcon( true );
 
-                    nsresult rv;
                     oeIICalEventDisplay* eventDisplay;
                     rv = NS_NewICalEventDisplay( event, &eventDisplay );
                     #ifdef ICAL_DEBUG
@@ -1802,6 +1907,82 @@ void oeICalImpl::SetupAlarmManager() {
         }
         tmplistptr = tmplistptr->next;
     }
+
+    TodoList *tmptodolistptr = &m_todolist;
+    while( tmptodolistptr ) {
+        oeIICalTodo *todo = tmptodolistptr->todo;
+        if( todo ) {
+            oeICalEventImpl *event = ((oeICalTodoImpl *)todo)->GetBaseEvent();
+            icaltimetype begin=icaltime_null_time();
+            begin.year = 1970; begin.month=1; begin.day=1;
+            icaltimetype alarmtime = begin;
+            do {
+                alarmtime = event->GetNextAlarmTime( alarmtime );
+                if( icaltime_is_null_time( alarmtime ) )
+                    break;
+                if( icaltime_compare( alarmtime, now ) <= 0 ) {
+                    #ifdef ICAL_DEBUG
+                    printf( "ALARM WENT OFF: %s\n", icaltime_as_ical_string( alarmtime ) );
+                    #endif
+                    
+                    nsresult rv;
+                    if( processmissed == -1 ) {
+                        nsCOMPtr<nsIPrefBranch> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+                        if ( NS_SUCCEEDED(rv) && prefBranch ) {
+                            rv = prefBranch->GetBoolPref("calendar.alarms.showmissed", &processmissed);
+                        } else {
+                            processmissed = true; //if anything goes wrong just consider the default setting
+                        }
+                    }
+
+                    if( !processmissed ) {
+                        time_t timediff = icaltime_as_timet( now ) - icaltime_as_timet( alarmtime );
+                        if( timediff > 30 ) //if alarmtime is older than 30 seconds it won't be processed.
+                            continue;
+                    }
+
+                    UpdateCalendarIcon( true );
+
+                    oeIICalEventDisplay* eventDisplay;
+                    rv = NS_NewICalEventDisplay( todo, &eventDisplay );
+                    #ifdef ICAL_DEBUG
+                    if( NS_FAILED( rv ) ) {
+                        printf( "oeICalImpl::SetupAlarmManager() : WARNING Cannot create oeIICalEventDisplay instance: %x\n", rv );
+                    }
+                    #endif
+                    icaltimetype eventtime = event->CalculateEventTime( alarmtime );
+                    eventDisplay->SetDisplayDate( ConvertToPrtime( eventtime ) );
+                    PRUint32 observercount;
+                    //Here we should be using the todo observer list but nothing implements 
+                    //alarm handling for todos yet so we'll just use the one for events
+                    m_observerlist->Count( &observercount ); 
+                    for( unsigned int i=0; i<observercount; i++ ) {
+                        nsCOMPtr<oeIICalObserver>observer;
+                        m_observerlist->QueryElementAt( i, NS_GET_IID(oeIICalObserver), getter_AddRefs(observer));
+                        rv = observer->OnAlarm( eventDisplay );
+                        #ifdef ICAL_DEBUG
+                        if( NS_FAILED( rv ) ) {
+                            printf( "oeICalImpl::SetupAlarmManager() : WARNING Call to observer's onAlarm() unsuccessful: %x\n", rv );
+                        }
+                        #endif
+                    }
+                    NS_RELEASE( eventDisplay );
+                }
+                else {
+                    if( icaltime_is_null_time( nextalarm ) )
+                        nextalarm = alarmtime;
+                    else if( icaltime_compare( nextalarm, alarmtime ) > 0 )
+                        nextalarm = alarmtime;
+                    break;
+                }
+            } while ( 1 );
+        }
+        tmptodolistptr = tmptodolistptr->next;
+    }
+
+
+    lastcheck = now;
+
     if( m_alarmtimer  ) {
         PRUint32 delay = 0;
         #ifdef NS_INIT_REFCNT //A temporary way of keeping backward compatibility with Mozilla 1.0 source compile
@@ -1873,7 +2054,7 @@ NS_IMETHODIMP oeICalImpl::AddTodo(oeIICalTodo *icaltodo,char **retid)
 
     vcalendar = ((oeICalTodoImpl *)icaltodo)->AsIcalComponent();
 	
-    icalfileset_add_component( stream, vcalendar );
+    icalfileset_add_first_to_first_component( stream, vcalendar );  
 
 	if( icalfileset_commit(stream) != ICAL_NO_ERROR ) {
         #ifdef ICAL_DEBUG
@@ -1900,7 +2081,7 @@ NS_IMETHODIMP oeICalImpl::AddTodo(oeIICalTodo *icaltodo,char **retid)
         #endif
     }
 
-//    SetupAlarmManager();
+    SetupAlarmManager();
     return NS_OK;
 }
 
@@ -1915,14 +2096,14 @@ oeICalImpl::DeleteTodo( const char *id )
     stream = icalfileset_new(serveraddr);
     if ( !stream ) {
         #ifdef ICAL_DEBUG
-        printf( "oeICalImpl::DeleteEvent() failed: Cannot open stream: %s!\n", serveraddr );
+        printf( "oeICalImpl::DeleteTodo() failed: Cannot open stream: %s!\n", serveraddr );
         #endif
         return NS_OK;
     }
     
     if( id == nsnull ) {
         #ifdef ICAL_DEBUG
-        printf( "oeICalImpl::DeleteEvent() - Invalid Id.\n" );
+        printf( "oeICalImpl::DeleteTodo() - Invalid Id.\n" );
         #endif
         icalfileset_free(stream);
         return NS_OK;
@@ -1933,7 +2114,7 @@ oeICalImpl::DeleteTodo( const char *id )
     if( !fetchedvcal ) {
         icalfileset_free(stream);
         #ifdef ICAL_DEBUG
-        printf( "oeICalImpl::DeleteEvent() - WARNING Event not found.\n" );
+        printf( "oeICalImpl::DeleteTodo() - WARNING Event not found.\n" );
         #endif
         return NS_OK;
     }
@@ -1942,7 +2123,7 @@ oeICalImpl::DeleteTodo( const char *id )
     if( !fetchedvevent ) {
         icalfileset_free(stream);
         #ifdef ICAL_DEBUG
-        printf( "oeICalImpl::DeleteEvent() - WARNING Event not found.\n" );
+        printf( "oeICalImpl::DeleteTodo() - WARNING Event not found.\n" );
         #endif
         return NS_OK;
     }
@@ -1957,7 +2138,7 @@ oeICalImpl::DeleteTodo( const char *id )
     icalfileset_mark( stream ); //Make sure stream is marked as dirty
 	if( icalfileset_commit(stream) != ICAL_NO_ERROR ) {
         #ifdef ICAL_DEBUG
-	    printf( "oeICalImpl::DeleteEvent() : WARNING icalfileset_commit() unsuccessful\n" );
+	    printf( "oeICalImpl::DeleteTodo() : WARNING icalfileset_commit() unsuccessful\n" );
         #endif
     }
     icalfileset_free(stream);
@@ -1983,7 +2164,7 @@ oeICalImpl::DeleteTodo( const char *id )
 
     icalevent->Release();
 
-//    SetupAlarmManager();
+    SetupAlarmManager();
 	return NS_OK;
 }
 
@@ -1995,7 +2176,7 @@ NS_IMETHODIMP oeICalImpl::FetchTodo( const char *id, oeIICalTodo **ev)
 
     if( id == nsnull ) {
         #ifdef ICAL_DEBUG
-        printf( "oeICalImpl::FetchEvent() - Invalid Id.\n" );
+        printf( "oeICalImpl::FetchTodo() - Invalid Id.\n" );
         #endif
         *ev = nsnull;
         return NS_OK;
@@ -2012,7 +2193,7 @@ NS_IMETHODIMP oeICalImpl::FetchTodo( const char *id, oeIICalTodo **ev)
 NS_IMETHODIMP oeICalImpl::ModifyTodo(oeIICalTodo *icalevent, char **retid)
 {
 #ifdef ICAL_DEBUG
-    printf( "oeICalImpl::ModifyEvent()\n" );
+    printf( "oeICalImpl::ModifyTodo()\n" );
 #endif
     icalset *stream;
     icalcomponent *vcalendar;
@@ -2020,7 +2201,7 @@ NS_IMETHODIMP oeICalImpl::ModifyTodo(oeIICalTodo *icalevent, char **retid)
     stream = icalfileset_new(serveraddr);
     if ( !stream ) {
         #ifdef ICAL_DEBUG
-        printf( "oeICalImpl::ModifyEvent() failed: Cannot open stream: %s!\n", serveraddr );
+        printf( "oeICalImpl::ModifyTodo() failed: Cannot open stream: %s!\n", serveraddr );
         #endif
         return NS_OK;
     }
@@ -2028,7 +2209,7 @@ NS_IMETHODIMP oeICalImpl::ModifyTodo(oeIICalTodo *icalevent, char **retid)
     icalevent->GetId( retid );
     if( *retid == nsnull ) {
         #ifdef ICAL_DEBUG
-        printf( "oeICalImpl::ModifyEvent() - Invalid Id.\n" );
+        printf( "oeICalImpl::ModifyTodo() - Invalid Id.\n" );
         #endif
         icalfileset_free(stream);
         return NS_OK;
@@ -2056,7 +2237,7 @@ NS_IMETHODIMP oeICalImpl::ModifyTodo(oeIICalTodo *icalevent, char **retid)
             icalcomponent_free( fetchedvevent );
         } else {
             #ifdef ICAL_DEBUG
-            printf( "oeICalImpl::ModifyEvent() - WARNING Event not found.\n" );
+            printf( "oeICalImpl::ModifyTodo() - WARNING Event not found.\n" );
             #endif
             nsMemory::Free( *retid );
             *retid = nsnull;
@@ -2065,7 +2246,7 @@ NS_IMETHODIMP oeICalImpl::ModifyTodo(oeIICalTodo *icalevent, char **retid)
         }
     } else {
         #ifdef ICAL_DEBUG
-        printf( "oeICalImpl::ModifyEvent() - WARNING Event not found.\n" );
+        printf( "oeICalImpl::ModifyTodo() - WARNING Event not found.\n" );
         #endif
         nsMemory::Free( *retid );
         *retid = nsnull;
@@ -2073,12 +2254,16 @@ NS_IMETHODIMP oeICalImpl::ModifyTodo(oeIICalTodo *icalevent, char **retid)
         return NS_OK;
     }
     
+    //Update Last-Modified
+    icalevent->UpdateLastModified();
+
     vcalendar = ((oeICalTodoImpl *)icalevent)->AsIcalComponent();
-    icalfileset_add_component( stream, vcalendar );
-    
+
+    icalfileset_add_first_to_first_component( stream, vcalendar );  
+      
 	if( icalfileset_commit(stream) != ICAL_NO_ERROR ) {
         #ifdef ICAL_DEBUG
-	    printf( "oeICalImpl::ModifyEvent() : WARNING icalfileset_commit() unsuccessful\n" );
+	    printf( "oeICalImpl::ModifyTodo() : WARNING icalfileset_commit() unsuccessful\n" );
         #endif
     }
     icalfileset_free(stream);
@@ -2099,7 +2284,7 @@ NS_IMETHODIMP oeICalImpl::ModifyTodo(oeIICalTodo *icalevent, char **retid)
 
     oldevent->Release();
 
-//    SetupAlarmManager();
+    SetupAlarmManager();
     return NS_OK;
 }
 
@@ -2135,7 +2320,7 @@ oeICalImpl::GetAllTodos(nsISimpleEnumerator **resultList )
 
 NS_IMETHODIMP oeICalImpl::ReportError( PRInt16 severity, PRUint32 errorid, const char *errorstring ) {
 
-    if( severity >= oeIICalError::PROBLEM ) {
+    if( severity >= oeIICalError::CAL_PROBLEM ) {
         #ifdef ICAL_DEBUG
             printf( "oeICalImpl::ReportError(%d,%x) : %s\n", severity, errorid, errorstring );
         #endif
@@ -2234,6 +2419,11 @@ oeICalFilter::~oeICalFilter()
 {
     if( m_completed )
         m_completed->Release();
+}
+
+NS_IMETHODIMP oeICalFilter::GetType(Componenttype *aRetVal)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP oeICalFilter::GetId(char **aRetVal)
@@ -2454,6 +2644,15 @@ NS_IMETHODIMP oeICalFilter::SetRecurForever(PRBool aNewVal)
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
+NS_IMETHODIMP oeICalFilter::GetLastModified(PRTime *aRetVal)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+NS_IMETHODIMP oeICalFilter::UpdateLastModified()
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 NS_IMETHODIMP oeICalFilter::GetLastAlarmAck(PRTime *aRetVal)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -2632,6 +2831,14 @@ NS_IMETHODIMP oeICalFilter::GetDuration(PRBool *is_negative, PRUint16 *weeks, PR
 }
 
 NS_IMETHODIMP oeICalFilter::ReportError( PRInt16 severity, PRUint32 errorid, const char *errorstring ) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP oeICalFilter::SetParameter( const char *name, const char *value ) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP oeICalFilter::GetParameter( const char *name, char **value ) {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 

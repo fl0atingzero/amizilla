@@ -20,6 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Paul Ashford <arougthopher@lizardland.net>
+ *   Sergei Dolgov <sergei_d@fi.tartu.ee>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or 
@@ -117,8 +119,9 @@ public:
 	                                             nsNativeWidget aNativeParent = nsnull);
 
 	NS_IMETHOD              Destroy();
-	virtual nsIWidget*      GetParent(void);
+	virtual nsIWidget*        GetParent(void);
 	NS_IMETHOD              Show(PRBool bState);
+ 	NS_IMETHOD              CaptureMouse(PRBool aCapture);
 	NS_IMETHOD              CaptureRollupEvents(nsIRollupListener *aListener,
 	                                            PRBool aDoCapture,
 	                                            PRBool aConsumeRollupEvent);
@@ -139,9 +142,9 @@ public:
 	NS_IMETHOD              IsEnabled(PRBool *aState);
 	NS_IMETHOD              SetFocus(PRBool aRaise);
 	NS_IMETHOD              GetBounds(nsRect &aRect);
-	NS_IMETHOD              GetClientBounds(nsRect &aRect);
 	NS_IMETHOD              GetScreenBounds(nsRect &aRect);
 	NS_IMETHOD              SetBackgroundColor(const nscolor &aColor);
+	NS_IMETHOD              SetForegroundColor(const nscolor &aColor);
 	virtual nsIFontMetrics* GetFont(void);
 	NS_IMETHOD              SetFont(const nsFont &aFont);
 	NS_IMETHOD              SetCursor(nsCursor aCursor);
@@ -154,11 +157,8 @@ public:
 	NS_IMETHOD              SetColorMap(nsColorMap *aColorMap);
 	NS_IMETHOD              Scroll(PRInt32 aDx, PRInt32 aDy, nsRect *aClipRect);
 	NS_IMETHOD              SetTitle(const nsString& aTitle);
-	NS_IMETHOD              SetMenuBar(nsIMenuBar * aMenuBar);
-	NS_IMETHOD              ShowMenuBar(PRBool aShow);
-	NS_IMETHOD              SetTooltips(PRUint32 aNumberOfTips,nsRect* aTooltipAreas[]);
-	NS_IMETHOD              RemoveTooltips();
-	NS_IMETHOD              UpdateTooltips(nsRect* aNewTips[]);
+	NS_IMETHOD              SetMenuBar(nsIMenuBar * aMenuBar) { return NS_ERROR_FAILURE; }
+	NS_IMETHOD              ShowMenuBar(PRBool aShow) { return NS_ERROR_FAILURE; }
 	NS_IMETHOD              WidgetToScreen(const nsRect& aOldRect, nsRect& aNewRect);
 	NS_IMETHOD              ScreenToWidget(const nsRect& aOldRect, nsRect& aNewRect);
 	NS_IMETHOD              BeginResizingChildren(void);
@@ -168,21 +168,20 @@ public:
 	NS_IMETHOD              DispatchEvent(nsGUIEvent* event, nsEventStatus & aStatus);
 	NS_IMETHOD              EnableFileDrop(PRBool aEnable);
 
-	virtual void            ConvertToDeviceCoordinates(nscoord	&aX,nscoord	&aY) {}
+	virtual void             ConvertToDeviceCoordinates(nscoord	&aX,nscoord	&aY) {}
 
 
 	// nsSwitchToUIThread interface
-	virtual bool            CallMethod(MethodInfo *info);
+	virtual bool             CallMethod(MethodInfo *info);
 	virtual PRBool          DispatchMouseEvent(PRUint32 aEventType, 
 	                                           nsPoint aPoint, 
 	                                           PRUint32 clicks, 
 	                                           PRUint32 mod);
+
+
 	virtual PRBool          AutoErase();
-
-	//    PRInt32                 GetNewCmdMenuId() { mMenuCmdId++; return mMenuCmdId;}
-
-	void InitEvent(nsGUIEvent& event, PRUint32 aEventType, nsPoint* aPoint = nsnull);
-
+	void                   InitEvent(nsGUIEvent& event, nsPoint* aPoint = nsnull);
+	
 protected:
 
 	static PRBool           EventIsInsideWindow(nsWindow* aWindow, nsPoint pos) ;
@@ -191,7 +190,7 @@ protected:
 	// Allow Derived classes to modify the height that is passed
 	// when the window is created or resized.
 	virtual PRInt32         GetHeight(PRInt32 aProposedHeight);
-	virtual void            OnDestroy();
+	virtual void             OnDestroy();
 	virtual PRBool          OnMove(PRInt32 aX, PRInt32 aY);
 	virtual PRBool          OnPaint(nsRect &r);
 	virtual PRBool          OnResize(nsRect &aWindowRect);
@@ -211,34 +210,14 @@ protected:
 	virtual PRBool          DispatchFocus(PRUint32 aEventType);
 	virtual PRBool          OnScroll();
 	static PRBool           ConvertStatus(nsEventStatus aStatus);
-	PRBool                  DispatchStandardEvent(PRUint32 aMsg);
-	void                    AddTooltip(BView *hwndOwner, nsRect* aRect, int aId);
+	PRBool                DispatchStandardEvent(PRUint32 aMsg);
 
 	virtual PRBool          DispatchWindowEvent(nsGUIEvent* event);
 	virtual BView          *CreateBeOSView();
 
-#if 0
-	virtual PRBool          ProcessMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT *aRetValue);
-	nsIMenuItem            *FindMenuItem(nsIMenu * aMenu, PRUint32 aId);
-	nsIMenu                *FindMenu(nsIMenu * aMenu, HMENU aNativeMenu, PRInt32 &aDepth);
-	nsresult                MenuHasBeenSelected(HMENU aNativeMenu, UINT aItemNum, UINT aFlags, UINT aCommand);
-
-	virtual LPCTSTR         WindowClass();
-	virtual DWORD           WindowStyle();
-	virtual DWORD           WindowExStyle();
-
-	static LRESULT CALLBACK WindowProc(BWindow * hWnd,
-	                                   UINT msg,
-	                                   WPARAM wParam,
-	                                   LPARAM lParam);
-
-	void RelayMouseEvent(UINT aMsg, WPARAM wParam, LPARAM lParam);
-
-	BWindow         *mTooltip;
-#endif
 
 	BView           *mView;
-
+	nsIWidget       *mParent;
 	PRBool           mIsTopWidgetWindow;
 	BView           *mBorderlessParent;
 
@@ -254,21 +233,9 @@ protected:
 	PRInt32          mPreferredWidth;
 	PRInt32          mPreferredHeight;
 
-	nsIMenuBar      *mMenuBar;
-	PRInt32          mMenuCmdId;
-	nsIMenu         *mHitMenu;
-	nsVoidArray     *mHitSubMenus;
-
-#if 0
-	// Drag & Drop
-
-#ifdef DRAG_DROP
-	//nsDropTarget * mDropTarget;
-	CfDropSource * mDropSource;
-	CfDropTarget * mDropTarget;
-	CfDragDrop   * mDragDrop;
-#endif
-#endif
+	PRBool           mEnabled;
+	PRBool           mJustGotActivate;
+	PRBool           mJustGotDeactivate;	
 
 public:	// public on BeOS to allow BViews to access it
 	// Enumeration of the methods which are accessable on the "main GUI thread"
@@ -294,7 +261,7 @@ public:	// public on BeOS to allow BViews to access it
 	    BTNCLICK,
 	    ONACTIVATE,
 	    ONMOVE,
-	    ONWORKSPACE
+	    ONWORKSPACE,
 	};
 	nsToolkit *GetToolkit() { return (nsToolkit *)nsBaseWidget::GetToolkit(); }
 };
@@ -331,19 +298,11 @@ public:
 	virtual void            MessageReceived(BMessage *msg);
 	virtual void            DispatchMessage(BMessage *msg, BHandler *handler);
 	virtual void            WindowActivated(bool active);
-	virtual void            FrameResized(float width, float height);
 	virtual void            FrameMoved(BPoint origin);
 	virtual void            WorkspacesChanged(uint32 oldworkspace, uint32 newworkspace);
 
-
-	void                    ResizeToWithoutEvent(float width, float height);
-
 private:
-	void                    DoFrameResized();
-
-	float            lastWidth, lastHeight;
-	BPoint           lastpoint;
-	BMessageRunner  *resizeRunner;
+	BPoint          lastWindowPoint;
 };
 
 //
@@ -362,16 +321,25 @@ public:
 
 	virtual void            AttachedToWindow();
 	virtual void            Draw(BRect updateRect);
+	virtual void            DrawAfterChildren(BRect updateRect);
 	virtual void            MouseDown(BPoint point);
 	virtual void            MouseMoved(BPoint point, 
 	                                   uint32 transit, 
 	                                   const BMessage *message);
 	virtual void            MouseUp(BPoint point);
-	bool                    GetPaintRect(nsRect &r);
-	void                    KeyDown(const char *bytes, int32 numBytes);
-	void                    KeyUp(const char *bytes, int32 numBytes);
+	bool                  GetPaintRegion(BRegion *breg);
+	void                  KeyDown(const char *bytes, int32 numBytes);
+	void                  KeyUp(const char *bytes, int32 numBytes);
 	virtual void            MakeFocus(bool focused);
 	virtual void            MessageReceived(BMessage *msg);
+	virtual void            FrameResized(float width, float height);
+	virtual void            FrameMoved(BPoint origin);
+
+private:
+	void                  DoDraw(BRect updateRect);
+	float                 lastViewWidth;
+	float                 lastViewHeight;
+	BPoint               lastViewPoint;
 };
 
 //

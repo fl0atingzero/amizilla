@@ -21,7 +21,7 @@
  *
  * Contributor(s):
  * Seth Spitzer <sspitzer@netscape.com>
- * David Bienvenu <bienvenu@netscape.com>
+ * David Bienvenu <bienvenu@nventure.com>
  * Henrik Gemal <mozilla@gemal.dk>
  *
  * Alternatively, the contents of this file may be used under the terms of
@@ -44,7 +44,7 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
 #include "nsIMsgNewsFolder.h"
-#include "nsIFolder.h"
+#include "nsIMsgFolder.h"
 #include "nsIFileSpec.h"
 #include "nsCOMPtr.h"
 #include "nsINntpService.h"
@@ -64,6 +64,7 @@
 #define VALID_VERSION           1
 #define NEW_NEWS_DIR_NAME       "News"
 #define PREF_MAIL_NEWSRC_ROOT   "mail.newsrc_root"
+#define PREF_MAIL_NEWSRC_ROOT_REL "mail.newsrc_root-rel"
 #define HOSTINFO_FILE_NAME      "hostinfo.dat"
 
 #define NEWS_DELIMITER          '.'
@@ -114,8 +115,8 @@ nsNntpIncomingServer::nsNntpIncomingServer() : nsMsgLineBuffer(nsnull, PR_FALSE)
   mLastUpdatedTime = 0;
 
   // these atoms are used for subscribe search
-  mSubscribedAtom = getter_AddRefs(NS_NewAtom("subscribed"));
-  mNntpAtom = getter_AddRefs(NS_NewAtom("nntp"));
+  mSubscribedAtom = do_GetAtom("subscribed");
+  mNntpAtom = do_GetAtom("nntp");
 
   // our filters are on the server, they are on a per newsgroup basis
   // but this will make the filter UI enable for news accounts
@@ -152,11 +153,12 @@ nsNntpIncomingServer::~nsNntpIncomingServer()
     NS_ASSERTION(NS_SUCCEEDED(rv), "CloseCachedConnections failed");
 }
 
-NS_IMPL_SERVERPREF_BOOL(nsNntpIncomingServer, NotifyOn, "notify.on");
-NS_IMPL_SERVERPREF_BOOL(nsNntpIncomingServer, MarkOldRead, "mark_old_read");
-NS_IMPL_SERVERPREF_BOOL(nsNntpIncomingServer, Abbreviate, "abbreviate");
-NS_IMPL_SERVERPREF_BOOL(nsNntpIncomingServer, PushAuth, "always_authenticate");
-NS_IMPL_SERVERPREF_INT(nsNntpIncomingServer, MaxArticles, "max_articles");
+NS_IMPL_SERVERPREF_BOOL(nsNntpIncomingServer, NotifyOn, "notify.on")
+NS_IMPL_SERVERPREF_BOOL(nsNntpIncomingServer, MarkOldRead, "mark_old_read")
+NS_IMPL_SERVERPREF_BOOL(nsNntpIncomingServer, Abbreviate, "abbreviate")
+NS_IMPL_SERVERPREF_BOOL(nsNntpIncomingServer, PushAuth, "always_authenticate")
+NS_IMPL_SERVERPREF_BOOL(nsNntpIncomingServer, SingleSignon, "singleSignon")
+NS_IMPL_SERVERPREF_INT(nsNntpIncomingServer, MaxArticles, "max_articles")
 
 NS_IMETHODIMP
 nsNntpIncomingServer::GetNewsrcFilePath(nsIFileSpec **aNewsrcFilePath)
@@ -230,15 +232,16 @@ nsNntpIncomingServer::GetLocalStoreType(char **type)
 NS_IMETHODIMP
 nsNntpIncomingServer::SetNewsrcRootPath(nsIFileSpec *aNewsrcRootPath)
 {
-    nsresult rv;
-    
-    nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-    if (NS_SUCCEEDED(rv) && prefBranch) {
-        return prefBranch->SetComplexValue(PREF_MAIL_NEWSRC_ROOT, NS_GET_IID(nsIFileSpec),
-                                           aNewsrcRootPath);
-    }
+    NS_ENSURE_ARG(aNewsrcRootPath);
+    nsFileSpec spec;
 
-    return NS_ERROR_FAILURE;
+    nsresult rv = aNewsrcRootPath->GetFileSpec(&spec);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsILocalFile> localFile;
+    NS_FileSpecToIFile(&spec, getter_AddRefs(localFile));
+    if (!localFile) return NS_ERROR_FAILURE;
+    
+    return NS_SetPersistentFile(PREF_MAIL_NEWSRC_ROOT_REL, PREF_MAIL_NEWSRC_ROOT, localFile);
 }
 
 NS_IMETHODIMP
@@ -247,42 +250,35 @@ nsNntpIncomingServer::GetNewsrcRootPath(nsIFileSpec **aNewsrcRootPath)
     NS_ENSURE_ARG_POINTER(aNewsrcRootPath);
     *aNewsrcRootPath = nsnull;
     
-    nsresult rv;
-    nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-    if (NS_FAILED(rv)) return rv;
-    
-    PRBool havePref = PR_FALSE;
-    nsCOMPtr<nsIFile> localFile;
-    nsCOMPtr<nsILocalFile> prefLocal;
-    rv = prefBranch->GetComplexValue(PREF_MAIL_NEWSRC_ROOT, NS_GET_IID(nsILocalFile),
-                                     getter_AddRefs(prefLocal));
-    if (NS_SUCCEEDED(rv)) {
-        localFile = prefLocal;
-        havePref = PR_TRUE;
-    }
-    if (!localFile) {
-        rv = NS_GetSpecialDirectory(NS_APP_NEWS_50_DIR, getter_AddRefs(localFile));
-        if (NS_FAILED(rv)) return rv;
-        havePref = PR_FALSE;
-    }
+    PRBool havePref;
+    nsCOMPtr<nsILocalFile> localFile;    
+    nsresult rv = NS_GetPersistentFile(PREF_MAIL_NEWSRC_ROOT_REL,
+                              PREF_MAIL_NEWSRC_ROOT,
+                              NS_APP_NEWS_50_DIR,
+                              havePref,
+                              getter_AddRefs(localFile));
+
+    NS_ENSURE_SUCCESS(rv, rv);
 
     PRBool exists;
     rv = localFile->Exists(&exists);
     if (NS_SUCCEEDED(rv) && !exists)
         rv = localFile->Create(nsIFile::DIRECTORY_TYPE, 0775);
-    if (NS_FAILED(rv)) return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
     
     // Make the resulting nsIFileSpec
     // TODO: Convert arg to nsILocalFile and avoid this
     nsCOMPtr<nsIFileSpec> outSpec;
     rv = NS_NewFileSpecFromIFile(localFile, getter_AddRefs(outSpec));
-    if (NS_FAILED(rv)) return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
     
-    if (!havePref || !exists)
-        rv = SetNewsrcRootPath(outSpec);
+    if (!havePref || !exists) 
+    {
+        rv = NS_SetPersistentFile(PREF_MAIL_NEWSRC_ROOT_REL, PREF_MAIL_NEWSRC_ROOT, localFile);
+        NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to set root dir pref.");
+    }
         
-    *aNewsrcRootPath = outSpec;
-    NS_IF_ADDREF(*aNewsrcRootPath);
+    NS_IF_ADDREF(*aNewsrcRootPath = outSpec);
     return rv;
 }
 
@@ -341,7 +337,7 @@ nsNntpIncomingServer::WriteNewsrcFile()
         nsIOFileStream newsrcStream(newsrcFileSpec, (PR_RDWR | PR_CREATE_FILE | PR_TRUNCATE));
 
         nsCOMPtr<nsIEnumerator> subFolders;
-        nsCOMPtr<nsIFolder> rootFolder;
+        nsCOMPtr<nsIMsgFolder> rootFolder;
         rv = GetRootFolder(getter_AddRefs(rootFolder));
         if (NS_FAILED(rv)) return rv;
 
@@ -463,7 +459,7 @@ nsNntpIncomingServer::CloseCachedConnections()
 }
 
 NS_IMPL_SERVERPREF_INT(nsNntpIncomingServer, MaximumConnectionsNumber,
-                       "max_cached_connections");
+                       "max_cached_connections")
 
 PRBool
 nsNntpIncomingServer::ConnectionTimeOut(nsINNTPProtocol* aConnection)
@@ -626,7 +622,7 @@ NS_IMETHODIMP
 nsNntpIncomingServer::GetNumGroupsNeedingCounts(PRInt32 *aNumGroupsNeedingCounts)
 {
     nsCOMPtr<nsIEnumerator> subFolders;
-    nsCOMPtr<nsIFolder> rootFolder;
+    nsCOMPtr<nsIMsgFolder> rootFolder;
  
     nsresult rv = GetRootFolder(getter_AddRefs(rootFolder));
     if (NS_FAILED(rv)) return rv;
@@ -814,20 +810,20 @@ nsNntpIncomingServer::WriteHostInfoFile()
 
     if (!mHostInfoHasChanged) {
         return NS_OK;
-	}
+    }
 
-	PRInt32 firstnewdate;
+    PRInt32 firstnewdate;
 
-	LL_L2I(firstnewdate, mFirstNewDate);
+    LL_L2I(firstnewdate, mFirstNewDate);
 
-	nsXPIDLCString hostname;
-	rv = GetHostName(getter_Copies(hostname));
+    nsXPIDLCString hostname;
+    rv = GetHostName(getter_Copies(hostname));
     NS_ENSURE_SUCCESS(rv,rv);
-	
+    
     nsFileSpec hostinfoFileSpec;
 
     if (!mHostInfoFile) 
-      return NS_ERROR_UNEXPECTED;
+        return NS_ERROR_UNEXPECTED;
 
     rv = mHostInfoFile->GetFileSpec(&hostinfoFileSpec);
     NS_ENSURE_SUCCESS(rv,rv);
@@ -835,34 +831,35 @@ nsNntpIncomingServer::WriteHostInfoFile()
     if (mHostInfoStream) {
         mHostInfoStream->close();
         delete mHostInfoStream;
-        mHostInfoStream = nsnull;
     }
 
     mHostInfoStream = new nsIOFileStream(hostinfoFileSpec, (PR_RDWR | PR_CREATE_FILE | PR_TRUNCATE));
-    NS_ASSERTION(mHostInfoStream, "no stream!");
+    if (!mHostInfoStream)
+        return NS_ERROR_OUT_OF_MEMORY;
 
     // todo, missing some formatting, see the 4.x code
-    *mHostInfoStream << "# News host information file." << MSG_LINEBREAK;
-	*mHostInfoStream << "# This is a generated file!  Do not edit." << MSG_LINEBREAK;
-	*mHostInfoStream << "" << MSG_LINEBREAK;
-	*mHostInfoStream << "version=" << VALID_VERSION << MSG_LINEBREAK;
-	*mHostInfoStream << "newsrcname=" << (const char*)hostname << MSG_LINEBREAK;
-	*mHostInfoStream << "lastgroupdate=" << mLastGroupDate << MSG_LINEBREAK;
-	*mHostInfoStream << "firstnewdate=" << firstnewdate << MSG_LINEBREAK;
-	*mHostInfoStream << "uniqueid=" << mUniqueId << MSG_LINEBREAK;
-	*mHostInfoStream << "" << MSG_LINEBREAK;
-	*mHostInfoStream << "begingroups" << MSG_LINEBREAK;
+    *mHostInfoStream
+         << "# News host information file." << MSG_LINEBREAK
+         << "# This is a generated file!  Do not edit." << MSG_LINEBREAK
+         << "" << MSG_LINEBREAK
+         << "version=" << VALID_VERSION << MSG_LINEBREAK
+         << "newsrcname=" << (const char*)hostname << MSG_LINEBREAK
+         << "lastgroupdate=" << mLastGroupDate << MSG_LINEBREAK
+         << "firstnewdate=" << firstnewdate << MSG_LINEBREAK
+         << "uniqueid=" << mUniqueId << MSG_LINEBREAK
+         << "" << MSG_LINEBREAK
+         << "begingroups" << MSG_LINEBREAK;
 
-	// XXX todo, sort groups first?
+    // XXX todo, sort groups first?
 
-	mGroupsOnServer.EnumerateForwards((nsCStringArrayEnumFunc)writeGroupToHostInfoFile, (void *)mHostInfoStream);
+    mGroupsOnServer.EnumerateForwards((nsCStringArrayEnumFunc)writeGroupToHostInfoFile, (void *)mHostInfoStream);
 
     mHostInfoStream->close();
     delete mHostInfoStream;
     mHostInfoStream = nsnull;
 
-	mHostInfoHasChanged = PR_FALSE;
-	return NS_OK;
+    mHostInfoHasChanged = PR_FALSE;
+    return NS_OK;
 }
 
 nsresult
@@ -1007,7 +1004,7 @@ nsNntpIncomingServer::AddNewsgroupToList(const char *aName)
 {
 	nsresult rv;
 
-	rv = AddTo(aName, PR_FALSE, PR_TRUE);
+	rv = AddTo(aName, PR_FALSE, PR_TRUE, PR_TRUE);
 	if (NS_FAILED(rv)) return rv;
 	return NS_OK;
 }
@@ -1115,7 +1112,7 @@ nsNntpIncomingServer::UpdateSubscribed()
 }
 
 NS_IMETHODIMP
-nsNntpIncomingServer::AddTo(const char *aName, PRBool addAsSubscribed, PRBool changeIfExists)
+nsNntpIncomingServer::AddTo(const char *aName, PRBool addAsSubscribed, PRBool aSubscribable, PRBool changeIfExists)
 {
     nsresult rv = EnsureInner();
     NS_ENSURE_SUCCESS(rv,rv);
@@ -1129,7 +1126,7 @@ nsNntpIncomingServer::AddTo(const char *aName, PRBool addAsSubscribed, PRBool ch
     rv = AddGroupOnServer(escapedName);
     NS_ENSURE_SUCCESS(rv,rv);
  
-    rv = mInner->AddTo(escapedName,addAsSubscribed,changeIfExists);
+    rv = mInner->AddTo(escapedName,addAsSubscribed, aSubscribable, changeIfExists);
     NS_ENSURE_SUCCESS(rv,rv);
 
     PR_FREEIF(escapedName);
@@ -1204,12 +1201,8 @@ nsNntpIncomingServer::Unsubscribe(const PRUnichar *aUnicharName)
   rv = NS_MsgEscapeEncodeURLPath(aUnicharName, getter_Copies(escapedName));
   NS_ENSURE_SUCCESS(rv,rv);
 
-  nsCOMPtr <nsIFolder> subFolder;
-  rv = serverFolder->FindSubFolder(escapedName.get(), getter_AddRefs(subFolder));
-  if (NS_FAILED(rv)) 
-    return rv;
-
-  nsCOMPtr <nsIMsgFolder> newsgroupFolder = do_QueryInterface(subFolder, &rv);
+  nsCOMPtr <nsIMsgFolder> newsgroupFolder;
+  rv = serverFolder->FindSubFolder(escapedName.get(), getter_AddRefs(newsgroupFolder));
   if (NS_FAILED(rv)) 
     return rv;
 
@@ -1243,7 +1236,7 @@ nsNntpIncomingServer::HandleLine(char* line, PRUint32 line_size)
 		char *commaPos = PL_strchr(line,',');
 		if (commaPos) *commaPos = 0;
 
-		nsresult rv = AddTo(line, PR_FALSE, PR_TRUE);
+		nsresult rv = AddTo(line, PR_FALSE, PR_TRUE, PR_TRUE);
 		NS_ASSERTION(NS_SUCCEEDED(rv),"failed to add line");
 		if (NS_SUCCEEDED(rv)) {
           // since we've seen one group, we can claim we've loaded the hostinfo file
@@ -1329,6 +1322,14 @@ nsNntpIncomingServer::IsSubscribed(const char *path, PRBool *aIsSubscribed)
 }
 
 NS_IMETHODIMP
+nsNntpIncomingServer::IsSubscribable(const char *path, PRBool *aIsSubscribable)
+{
+    nsresult rv = EnsureInner();
+    NS_ENSURE_SUCCESS(rv,rv);
+    return mInner->IsSubscribable(path, aIsSubscribable);
+}
+
+NS_IMETHODIMP
 nsNntpIncomingServer::GetLeafName(const char *path, PRUnichar **aLeafName)
 {
     nsresult rv = EnsureInner();
@@ -1370,7 +1371,7 @@ nsNntpIncomingServer::ForgetPassword()
     nsresult rv;
 
     // clear password of root folder (for the news account)
-    nsCOMPtr<nsIFolder> rootFolder;
+    nsCOMPtr<nsIMsgFolder> rootFolder;
     rv = GetRootFolder(getter_AddRefs(rootFolder));
     NS_ENSURE_SUCCESS(rv,rv);
     if (!rootFolder) return NS_ERROR_FAILURE;
@@ -1532,7 +1533,7 @@ nsNntpIncomingServer::FindGroup(const char *name, nsIMsgNewsFolder **result)
 
   if (!serverFolder) return NS_ERROR_FAILURE;
 
-  nsCOMPtr <nsIFolder> subFolder;
+  nsCOMPtr <nsIMsgFolder> subFolder;
   rv = serverFolder->FindSubFolder(name, getter_AddRefs(subFolder));
   NS_ENSURE_SUCCESS(rv,rv);
   if (!subFolder) return NS_ERROR_FAILURE;
@@ -1708,17 +1709,17 @@ nsNntpIncomingServer::SetSearchValue(const char *searchValue)
     // so that we can do case insensitive searching
     ToLowerCase(mSearchValue);
 
-    PRInt32 oldCount = mSubscribeSearchResult.Count();
+    if (mTree) {
+        mTree->BeginUpdateBatch();
+        mTree->RowCountChanged(0, -mSubscribeSearchResult.Count());
+    }
 
     mSubscribeSearchResult.Clear();
     mGroupsOnServer.EnumerateForwards((nsCStringArrayEnumFunc)buildSubscribeSearchResult, (void *)this);
 
-    PRInt32 newCount = mSubscribeSearchResult.Count();
-
     if (mTree) {
-     mTree->RowCountChanged(0, oldCount - newCount);
-     mTree->Invalidate();
-     mTree->InvalidateScrollbar();
+        mTree->RowCountChanged(0, mSubscribeSearchResult.Count());
+        mTree->EndUpdateBatch();
     }
     return NS_OK;
 }

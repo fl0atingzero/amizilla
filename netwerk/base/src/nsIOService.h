@@ -44,7 +44,6 @@
 #include "nsIIOService.h"
 #include "nsVoidArray.h"
 #include "nsISocketTransportService.h" 
-#include "nsIStreamTransportService.h" 
 #include "nsIDNSService.h" 
 #include "nsIProtocolProxyService.h"
 #include "nsCOMPtr.h"
@@ -68,6 +67,7 @@
 static const char *gScheme[] = {"chrome", "file", "http", "jar", "resource"};
 
 class nsIPrefBranch;
+class nsIPrefBranchInternal;
 
 class nsIOService : public nsIIOService
                   , public nsIObserver
@@ -103,14 +103,13 @@ protected:
 
     // Prefs wrangling
     void PrefsChanged(nsIPrefBranch *prefs, const char *pref = nsnull);
-    void GetPrefBranch(nsIPrefBranch **);
+    void GetPrefBranch(nsIPrefBranchInternal **);
     void ParsePortList(nsIPrefBranch *prefBranch, const char *pref, PRBool remove);
 
 protected:
     PRPackedBool                        mOffline;
     PRPackedBool                        mOfflineForProfileChange;
     nsCOMPtr<nsISocketTransportService> mSocketTransportService;
-    nsCOMPtr<nsIStreamTransportService> mStreamTransportService;
     nsCOMPtr<nsIDNSService>             mDNSService;
     nsCOMPtr<nsIProtocolProxyService>   mProxyService;
     nsCOMPtr<nsIEventQueueService>      mEventQueueService;

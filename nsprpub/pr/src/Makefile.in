@@ -143,6 +143,7 @@ endif
 
 ifeq ($(OS_ARCH),OS2)
 MAPFILE = $(OBJDIR)/$(LIBRARY_NAME)$(LIBRARY_VERSION).def
+ADD_TO_DEF_FILE = cat $(srcdir)/os2extra.def >> $(MAPFILE)
 GARBAGE += $(MAPFILE)
 MKSHLIB += $(MAPFILE)
 endif
@@ -192,7 +193,7 @@ endif
 
 ifeq ($(OS_ARCH),WINNT)
 ifdef NS_USE_GCC
-OS_LIBS		= -ladvapi32 -lws2_32
+OS_LIBS		= -ladvapi32 -lwsock32
 else
 OS_LIBS		= advapi32.lib wsock32.lib
 endif

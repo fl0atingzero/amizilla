@@ -46,7 +46,8 @@
 #include "nsMsgBaseCID.h"
 #include "nsIMsgMailSession.h"
 #include "nsIMsgFolderCache.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsIDOMWindow.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
@@ -54,12 +55,10 @@
 #include "nsString.h"
 #include "nsIURI.h"
 #include "nsIDialogParamBlock.h"
-static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);
-static NS_DEFINE_CID(kPrefServiceCID, NS_PREF_CID);
 
-NS_IMPL_THREADSAFE_ADDREF(nsMessengerBootstrap);
-NS_IMPL_THREADSAFE_RELEASE(nsMessengerBootstrap);
-NS_IMPL_QUERY_INTERFACE2(nsMessengerBootstrap, nsICmdLineHandler, nsIMessengerWindowService);
+NS_IMPL_THREADSAFE_ADDREF(nsMessengerBootstrap)
+NS_IMPL_THREADSAFE_RELEASE(nsMessengerBootstrap)
+NS_IMPL_QUERY_INTERFACE2(nsMessengerBootstrap, nsICmdLineHandler, nsIMessengerWindowService)
 
 nsMessengerBootstrap::nsMessengerBootstrap()
 {
@@ -69,17 +68,18 @@ nsMessengerBootstrap::~nsMessengerBootstrap()
 {
 }
 
-CMDLINEHANDLER3_IMPL(nsMessengerBootstrap,"-mail","general.startup.mail","Start with mail.",NS_MAILSTARTUPHANDLER_CONTRACTID,"Mail Cmd Line Handler",PR_FALSE,"", PR_TRUE)
+CMDLINEHANDLER3_IMPL(nsMessengerBootstrap,"-mail","general.startup.mail","Start with mail.",NS_MAILSTARTUPHANDLER_CONTRACTID,"Mail Cmd Line Handler",PR_TRUE,"", PR_TRUE)
 
 NS_IMETHODIMP nsMessengerBootstrap::GetChromeUrlForTask(char **aChromeUrlForTask) 
 { 
+#ifndef MOZ_THUNDERBIRD
   if (!aChromeUrlForTask) return NS_ERROR_FAILURE; 
-  nsresult rv;
-  nsCOMPtr<nsIPref> prefService(do_GetService(kPrefServiceCID, &rv));
-  if (NS_SUCCEEDED(rv))
+  nsCOMPtr<nsIPrefBranch> pPrefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
+  if (pPrefBranch)
   {
+    nsresult rv;
     PRInt32 layout;
-    rv = prefService->GetIntPref("mail.pane_config", &layout);		
+    rv = pPrefBranch->GetIntPref("mail.pane_config", &layout);		
     if(NS_SUCCEEDED(rv))
     {
       if(layout == 0)
@@ -92,15 +92,18 @@ NS_IMETHODIMP nsMessengerBootstrap::GetChromeUrlForTask(char **aChromeUrlForTask
     }	
   }
   *aChromeUrlForTask = PL_strdup("chrome://messenger/content/messenger.xul"); 
+#else
+  NS_ENSURE_ARG_POINTER(aChromeUrlForTask);
+  *aChromeUrlForTask = PL_strdup("chrome://messenger/content/"); 
+#endif
+
   return NS_OK; 
 }
 
 NS_IMETHODIMP nsMessengerBootstrap::OpenMessengerWindowWithUri(const char *windowType, const char * aFolderURI, nsMsgKey aMessageKey)
 {
-	nsresult rv = NS_OK;
-
 	nsXPIDLCString chromeurl;
-	rv = GetChromeUrlForTask(getter_Copies(chromeurl));
+	nsresult rv = GetChromeUrlForTask(getter_Copies(chromeurl));
 	if (NS_FAILED(rv)) return rv;
 
   nsCOMPtr<nsISupportsArray> argsArray;

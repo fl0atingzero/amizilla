@@ -65,8 +65,7 @@ NS_IMETHODIMP nsBaseFilePicker::DOMWindowToWidget(nsIDOMWindowInternal *dw, nsIW
 
   nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(dw);
   if (sgo) {
-    nsCOMPtr<nsIDocShell> docShell;
-    sgo->GetDocShell(getter_AddRefs(docShell));
+    nsIDocShell *docShell = sgo->GetDocShell();
     
     if (docShell) {
 
@@ -74,24 +73,12 @@ NS_IMETHODIMP nsBaseFilePicker::DOMWindowToWidget(nsIDOMWindowInternal *dw, nsIW
       rv = docShell->GetPresShell(getter_AddRefs(presShell));
 
       if (NS_SUCCEEDED(rv) && presShell) {
-        nsCOMPtr<nsIViewManager> viewManager;
-        rv = presShell->GetViewManager(getter_AddRefs(viewManager));
-            
-        if (NS_SUCCEEDED(rv)) {
-          nsIView *view;
-          rv = viewManager->GetRootView(view);
+        nsIView *view;
+        rv = presShell->GetViewManager()->GetRootView(view);
               
-          if (NS_SUCCEEDED(rv)) {
-            nsCOMPtr<nsIWidget> widget;
-            rv = view->GetWidget(*getter_AddRefs(widget));
-
-            if (NS_SUCCEEDED(rv)) {
-              *aResult = widget;
-              NS_ADDREF(*aResult);
-              return NS_OK;
-            }
-		
-          }
+        if (NS_SUCCEEDED(rv)) {
+          *aResult = view->GetWidget();
+          NS_IF_ADDREF(*aResult);
         }
       }
     }

@@ -209,7 +209,6 @@ static pascal void EventFilter (EventRecord *ev)
 #pragma mark -
 #endif
 
-static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 
 //=================================================================
 /*  Constructor
@@ -768,10 +767,6 @@ void nsMacMessagePump::DoMouseDown(EventRecord &anEvent)
         nsWatchTask::GetTask().Suspend();       
         if (::TrackBox(whichWindow, anEvent.where, partCode))
         {
-          Rect windRect;
-          ::GetWindowPortBounds(whichWindow, &windRect);
-          ::EraseRect(&windRect);
-        
           if (partCode == inZoomOut)
           {
             nsCOMPtr<nsIWidget> topWidget;

@@ -42,7 +42,7 @@
 @namespace url(http://www.w3.org/1999/xhtml); /* set default namespace to HTML */
 @namespace xul url(http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul);
 
-*|*:-moz-fieldset-content {
+*|*::-moz-fieldset-content {
   display: block;
   height: inherit;   /* Need this so percentage heights of kids work right */
 }
@@ -64,7 +64,7 @@ fieldset {
   display: block;
   margin-left: 2px;
   margin-right: 2px;
-  padding: 0.75em 0.625em;
+  padding: 0.35em 0.625em 0.75em;
   border: 2px groove ThreeDFace;
 }
 
@@ -94,7 +94,8 @@ input {
   letter-spacing: normal;
   cursor: text;
   -moz-user-focus: normal;
-  -moz-binding: url("resource:///res/builtin/platformHTMLBindings.xml#inputFields");
+  -moz-binding: url("resource://gre/res/builtin/platformHTMLBindings.xml#inputFields");
+  text-indent: 0;
 }
 
 textarea {
@@ -111,16 +112,17 @@ textarea {
   vertical-align: text-bottom;
   cursor: text;
   -moz-user-focus: normal;
-  -moz-binding: url("resource:///res/builtin/platformHTMLBindings.xml#textAreas");
+  -moz-binding: url("resource://gre/res/builtin/platformHTMLBindings.xml#textAreas");
   -moz-appearance: textfield;
+  text-indent: 0;
 }
 
 textarea > scrollbar {
   cursor: default;
 }
 
-*|*:-moz-singleline-textcontrol-frame {
-  overflow: hidden;
+*|*::-moz-singleline-textcontrol-frame {
+  overflow: -moz-hidden-unscrollable;
   white-space: nowrap;
   background-color: inherit;
   text-align: inherit;
@@ -133,7 +135,7 @@ select {
   color: -moz-FieldText;
   font: -moz-list;
   line-height: normal !important;
-  white-space: nowrap;
+  white-space: nowrap !important;
   text-align: start; 
   cursor: default;
   -moz-box-sizing: border-box;
@@ -143,14 +145,22 @@ select {
   border-width: 2px !important;
   border-style: inset !important;
   -moz-border-radius: 0 !important;
+  text-indent: 0;
 }
 
-select[size] {
+/* Need the "select[size][multiple]" selector to override the settings on
+   'select[size="1"]', eg if one has <select size="1" multiple> */
+   
+select[size],
+select[multiple],
+select[size][multiple] {
   /* Different alignment and padding for listbox vs combobox */
   vertical-align: text-bottom;
   padding: 1px 0 1px 0;
+  -moz-appearance: listbox;
 }
 
+select[size="0"],
 select[size="1"] {
   /* Except this is not a listbox */
   vertical-align: baseline;
@@ -175,17 +185,13 @@ select > input[type="button"]:active {
   background-image: url("arrowd.gif") !important;
 }
 
-select[size] {
-   -moz-appearance: listbox;
-}
-
-select:-moz-dummy-option { 
+select::-moz-dummy-option { 
   visibility: hidden; 
   content: "XX"; /* demo 8, edge case test 1 */
 }
 
-*|*:-moz-display-comboboxcontrol-frame {
-  overflow: hidden;
+*|*::-moz-display-comboboxcontrol-frame {
+  overflow: -moz-hidden-unscrollable;
   /* This top/bottom padding plus the combobox top/bottom border need to
      add up to the top/bottom borderpadding of text inputs and buttons */ 
   padding: 1px 0 1px 4px;
@@ -202,6 +208,7 @@ option {
   line-height: normal !important;
   -moz-user-select: none;
   -moz-user-focus: none;
+  text-indent: 0;
 }
 
 select > option {
@@ -221,6 +228,7 @@ optgroup {
   font-weight: bold;
   -moz-user-select: none;
   -moz-user-focus: none;
+  text-indent: 0;
 }
 
 optgroup > option {
@@ -234,7 +242,7 @@ optgroup:before {
   content: attr(label);
 }
 
-*|*:-moz-dropdown-list {
+*|*::-moz-dropdown-list {
   z-index: 2147483647;
   background-color: inherit;
   -moz-user-select: none;
@@ -322,7 +330,7 @@ input[type="radio"] {
   width: 13px;
   height: 13px;
   margin: 3px 3px 0px 5px;
-  padding: 0;
+  padding: 0 !important;
   cursor: default;
   -moz-binding: none;
 
@@ -335,7 +343,7 @@ input[type="checkbox"] {
   width: 13px;
   height: 13px;
   margin: 3px 3px 3px 4px;
-  padding: 0;
+  padding: 0 !important;
   vertical-align: text-bottom;
   cursor: default;
   -moz-binding: none;
@@ -380,7 +388,7 @@ input[type="radio"]:hover:active {
   border-style: inset !important;
 }
 
-*|*:-moz-radio {
+*|*::-moz-radio {
   width: 4px;
   height: 4px;
   background-color: -moz-FieldText ! important;
@@ -417,9 +425,10 @@ input[type="submit"] {
 button {
   /* Buttons should lay out like "normal" html, mostly */
   white-space: normal;  
+  text-indent: 0;
 }
 
-*|*:-moz-button-content {
+*|*::-moz-button-content {
   display: block;
   text-align: center;
 }
@@ -432,20 +441,20 @@ input[type="submit"]:active:hover {
   border-style: inset;
 }
 
-button:-moz-focus-inner,
-input[type="reset"]:-moz-focus-inner,
-input[type="button"]:-moz-focus-inner,
-input[type="submit"]:-moz-focus-inner,
-input[type="file"] > input[type="button"]:-moz-focus-inner {
+button::-moz-focus-inner,
+input[type="reset"]::-moz-focus-inner,
+input[type="button"]::-moz-focus-inner,
+input[type="submit"]::-moz-focus-inner,
+input[type="file"] > input[type="button"]::-moz-focus-inner {
   padding: 0px 2px 0px 2px;
   border: 1px dotted transparent;
 }
 
-button:focus:-moz-focus-inner,
-input[type="reset"]:focus:-moz-focus-inner,
-input[type="button"]:focus:-moz-focus-inner,
-input[type="submit"]:focus:-moz-focus-inner,
-input[type="file"] > input[type="button"]:focus:-moz-focus-inner {
+button:focus::-moz-focus-inner,
+input[type="reset"]:focus::-moz-focus-inner,
+input[type="button"]:focus::-moz-focus-inner,
+input[type="submit"]:focus::-moz-focus-inner,
+input[type="file"] > input[type="button"]:focus::-moz-focus-inner {
   border-color: ButtonText;
 }
 

@@ -184,6 +184,9 @@ public:
   NS_IMETHOD Cancel(nsresult status);  // handle stop button
   NS_IMETHOD GetContentType(nsACString &aContentType);
   NS_IMETHOD AsyncOpen(nsIStreamListener *listener, nsISupports *ctxt);
+  NS_IMETHOD GetOriginalURI(nsIURI* *aURI);
+  NS_IMETHOD SetOriginalURI(nsIURI* aURI);
+
   nsresult LoadUrl(nsIURI * aURL, nsISupports * aConsumer);
 
 private:
@@ -255,6 +258,7 @@ private:
 
 	// variables for ReadNewsRC
 	PRInt32   m_newsRCListIndex;
+	PRInt32   m_RCIndexToResumeAfterAuthRequest;
 	PRInt32   m_newsRCListCount;
 
 	// variable for ReadNewsList
@@ -406,7 +410,6 @@ private:
 	void SetProgressBarPercent(PRUint32 aProgress, PRUint32 aProgressMax);
 	nsresult SetProgressStatus(const PRUnichar *aMessage);
   nsresult SetCheckingForNewNewsStatus(PRInt32 current, PRInt32 total);
-  nsresult MarkCurrentMsgRead(); // marks the message corresponding to the currently running url read.
 	nsresult InitializeNewsFolderFromUri(const char *uri);
 	void TimerCallback();
 	nsCOMPtr <nsIInputStream> mInputStream;
@@ -420,6 +423,9 @@ private:
 
   nsresult SetCurrentGroup(); /* sets m_currentGroup.  should be called after doing a successful GROUP command */
   nsresult CleanupNewsgroupList(); /* cleans up m_newsgroupList, and set it to null */
+
+  void    GotAuthorizationRequest(); /* called when we got an authorization request, which potentially disrupted something */
+  PRInt32 GetNextGroupNeedingCounts( nsISupports** pNextGroup, PRInt32* returnStatus );
 
     // cache related helper methods
   void FinishMemCacheEntry(PRBool valid); // either mark it valid, or doom it

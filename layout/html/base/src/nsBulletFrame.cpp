@@ -62,7 +62,7 @@
 
 #include "nsIServiceManager.h"
 #include "nsIComponentManager.h"
-
+#include "nsContentUtils.h"
 
 class nsBulletListener : public imgIDecoderObserver
 {
@@ -124,9 +124,8 @@ nsBulletFrame::Init(nsIPresContext*  aPresContext,
   
   nsresult  rv = nsFrame::Init(aPresContext, aContent, aParent, aContext, aPrevInFlow);
 
-  const nsStyleList* myList = GetStyleList();
-
-  if (!myList->mListStyleImage.IsEmpty()) {
+  nsIURI *imgURI = GetStyleList()->mListStyleImage;
+  if (imgURI) {
     nsCOMPtr<imgILoader> il(do_GetService("@mozilla.org/image/loader;1", &rv));
     if (NS_FAILED(rv))
       return rv;
@@ -134,19 +133,13 @@ nsBulletFrame::Init(nsIPresContext*  aPresContext,
     nsCOMPtr<nsILoadGroup> loadGroup;
     GetLoadGroup(aPresContext, getter_AddRefs(loadGroup));
 
-    nsCOMPtr<nsIURI> baseURI;
-    GetBaseURI(getter_AddRefs(baseURI));
-
-    nsCOMPtr<nsIURI> imgURI;
-    NS_NewURI(getter_AddRefs(imgURI), myList->mListStyleImage, nsnull, baseURI);
-
     // Get the document URI for the referrer...
-    nsCOMPtr<nsIURI> documentURI;
+    nsIURI *documentURI = nsnull;
     nsCOMPtr<nsIDocument> doc;
     if (mContent) {
-      (void) mContent->GetDocument(getter_AddRefs(doc));
+      doc = mContent->GetDocument();
       if (doc) {
-        doc->GetDocumentURL(getter_AddRefs(documentURI));
+        documentURI = doc->GetDocumentURI();
       }
     }
 
@@ -160,8 +153,10 @@ nsBulletFrame::Init(nsIPresContext*  aPresContext,
       NS_RELEASE(listener);
     }
 
-    // XXX: initialDocumentURI is NULL !
-    il->LoadImage(imgURI, nsnull, documentURI, loadGroup, mListener, aPresContext, nsIRequest::LOAD_NORMAL, nsnull, nsnull, getter_AddRefs(mImageRequest));
+    if (imgURI && NS_SUCCEEDED(nsContentUtils::CanLoadImage(imgURI, doc, doc))) {
+      // XXX: initialDocumentURI is NULL !
+      il->LoadImage(imgURI, nsnull, documentURI, loadGroup, mListener, aPresContext, nsIRequest::LOAD_NORMAL, nsnull, nsnull, getter_AddRefs(mImageRequest));
+    }
   }
 
   return NS_OK;
@@ -175,13 +170,10 @@ nsBulletFrame::GetFrameName(nsAString& aResult) const
 }
 #endif
 
-NS_IMETHODIMP
-nsBulletFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsBulletFrame::GetType() const
 {
-  NS_PRECONDITION(nsnull != aType, "null OUT parameter pointer");
-  *aType = nsLayoutAtoms::bulletFrame; 
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsLayoutAtoms::bulletFrame;
 }
 
 #include "nsIDOMNode.h"
@@ -201,7 +193,7 @@ nsBulletFrame::Paint(nsIPresContext*      aPresContext,
     const nsStyleList* myList = GetStyleList();
     PRUint8 listStyleType = myList->mListStyleType;
 
-    if (!myList->mListStyleImage.IsEmpty() && mImageRequest) {
+    if (myList->mListStyleImage && mImageRequest) {
       PRUint32 status;
       mImageRequest->GetImageStatus(&status);
       if (status & imgIRequest::STATUS_LOAD_COMPLETE &&
@@ -240,7 +232,6 @@ nsBulletFrame::Paint(nsIPresContext*      aPresContext,
       break;
 
     default:
-    case NS_STYLE_LIST_STYLE_BASIC:
     case NS_STYLE_LIST_STYLE_DISC:
       aRenderingContext.FillEllipse(mPadding.left, mPadding.top,
                                     mRect.width - (mPadding.left + mPadding.right),
@@ -407,8 +398,7 @@ nsBulletFrame::SetListItemOrdinal(PRInt32 aNextOrdinal,
   // value attribute. Note: we do this with our parent's content
   // because our parent is the list-item.
   nsHTMLValue value;
-  nsCOMPtr<nsIContent> parentContent;
-  mParent->GetContent(getter_AddRefs(parentContent));
+  nsIContent* parentContent = mParent->GetContent();
   if (parentContent) {
     nsCOMPtr<nsIHTMLContent> hc = do_QueryInterface(parentContent);
     if (hc) {
@@ -454,7 +444,7 @@ static PRBool OtherDecimalToText(PRInt32 ordinal, PRUnichar zeroChar, nsString& 
 {
    PRUnichar diff = zeroChar - PRUnichar('0');
    DecimalToText(ordinal, result);
-   PRUnichar* p = NS_CONST_CAST(PRUnichar*, result.get());
+   PRUnichar* p = result.BeginWriting();
    if (ordinal < 0) {
      // skip the leading '-'
      ++p;
@@ -471,7 +461,7 @@ static PRBool TamilToText(PRInt32 ordinal,  nsString& result)
      // Can't do those in this system.
      return PR_FALSE;
    }
-   PRUnichar* p = (PRUnichar*)result.get();
+   PRUnichar* p = result.BeginWriting();
    for(; nsnull != *p ; p++) 
       if(*p != PRUnichar('0'))
          *p += diff;
@@ -1051,62 +1041,74 @@ static PRBool GeorgianToText(PRInt32 ordinal, nsString& result)
 
 // Convert ordinal to Ethiopic numeric representation.
 // The detail is available at http://www.ethiopic.org/Numerals/
-// The algorithm used here was almost a verbatim copy of 
-// the pseudo-code put up there by Daniel Yacob <yacob@geez.org>.
-// Another reference is Unicode 3.0 standard section 11.1. 
+// The algorithm used here is based on the pseudo-code put up there by
+// Daniel Yacob <yacob@geez.org>.
+// Another reference is Unicode 3.0 standard section 11.1.
+#define ETHIOPIC_ONE             0x1369
+#define ETHIOPIC_TEN             0x1372
+#define ETHIOPIC_HUNDRED         0x137B
+#define ETHIOPIC_TEN_THOUSAND    0x137C
 
 static PRBool EthiopicToText(PRInt32 ordinal, nsString& result)
-{  
+{
   nsAutoString asciiNumberString;      // decimal string representation of ordinal
   DecimalToText(ordinal, asciiNumberString);
   if (ordinal < 1) {
     result.Append(asciiNumberString);
     return PR_FALSE;
   }
-  PRInt32 n = asciiNumberString.Length() - 1;
+  PRUint8 asciiStringLength = asciiNumberString.Length();
 
-  // Iterate from the lowest digit to higher digits
-  for (PRInt32 place = 0; place <= n; place++) {
-    PRUnichar asciiTen = '0'; 
-    PRUnichar asciiOne = asciiNumberString.CharAt(n - place);
+  // If number length is odd, add a leading "0"
+  // the leading "0" preconditions the string to always have the
+  // leading tens place populated, this avoids a check within the loop.
+  // If we didn't add the leading "0", decrement asciiStringLength so
+  // it will be equivalent to a zero-based index in both cases.
+  if (asciiStringLength & 1) {
+    asciiNumberString.Insert(NS_LITERAL_STRING("0"), 0);
+  } else {
+    asciiStringLength--;
+  }
 
-    place++;
+  // Iterate from the highest digits to lowest
+  // indexFromLeft       indexes digits (0 = most significant)
+  // groupIndexFromRight indexes pairs of digits (0 = least significant)
+  for (PRUint8 indexFromLeft = 0, groupIndexFromRight = asciiStringLength >> 1;
+       indexFromLeft <= asciiStringLength;
+       indexFromLeft += 2, groupIndexFromRight--) {
+    PRUint8 tensValue  = asciiNumberString.CharAt(indexFromLeft) & 0x0F;
+    PRUint8 unitsValue = asciiNumberString.CharAt(indexFromLeft + 1) & 0x0F;
+    PRUint8 groupValue = tensValue * 10 + unitsValue;
 
-    if (place <= n) 
-      asciiTen = asciiNumberString.CharAt(n - place);
+    PRBool oddGroup = (groupIndexFromRight & 1);
 
-    // '00' is not represented and has to be skipped.
-    if (asciiOne == '0' && asciiTen == '0' && place < n) 
-      continue;
-
-    nsAutoString ethioNumber;
-
-    // calculate digits at  10^(2*place) and 10^(2*place+1) 
-    if (asciiTen > '0' || asciiOne > '1' || place == 1) 
-    {
-      if (asciiTen > '0') 
-      {
-        // map onto Ethiopic "tens": U+1372=Ethiopic number ten
-        ethioNumber += (PRUnichar) ((PRInt32) asciiTen +  0x1372 - 0x31); 
-      }
-      if (asciiOne > '0') 
-      {
-        //map onto Ethiopic "ones": 0x1369=Ethiopic digit one
-        ethioNumber += (PRUnichar) ((PRInt32) asciiOne + 0x1369 - 0x31); 
-      }
+    // we want to clear ETHIOPIC_ONE when it is superfluous
+    if (ordinal > 1 &&
+        groupValue == 1 &&                  // one without a leading ten
+        (oddGroup || indexFromLeft == 0)) { // preceding (100) or leading the sequence
+      unitsValue = 0;
     }
 
-   // Now add 'cental-place' specifiers in terms of power of hundred
-
-   // if (place > 1) : The lowest two digits don't need 'cental-place' specifier
-     if (place & 2)   // if odd power of hundred 
-       ethioNumber += (PRUnichar) 0x137B;   // append Ethiopic number hundred 
-
-     // append Ethiopic number ten thousand every four decimal digits
-     for (PRInt32 j = 0; j < place / 4; j++) 
-       ethioNumber += (PRUnichar) 0x137C;   // 0x137C = Ethiopic number ten thousand
-
-     result.Insert(ethioNumber, 0);
+    // put it all together...
+    if (tensValue) {
+      // map onto Ethiopic "tens":
+      result.Append((PRUnichar) (tensValue +  ETHIOPIC_TEN - 1));
+    }
+    if (unitsValue) {
+      //map onto Ethiopic "units":
+      result.Append((PRUnichar) (unitsValue + ETHIOPIC_ONE - 1));
+    }
+    // Add a separator for all even groups except the last,
+    // and for odd groups with non-zero value.
+    if (oddGroup) {
+      if (groupValue) {
+        result.Append((PRUnichar) ETHIOPIC_HUNDRED);
+      }
+    } else {
+      if (groupIndexFromRight) {
+        result.Append((PRUnichar) ETHIOPIC_TEN_THOUSAND);
+      }
+    }
   }
   return PR_TRUE;
 }
@@ -1365,10 +1367,13 @@ nsBulletFrame::GetDesiredSize(nsIPresContext*  aCX,
                               const nsHTMLReflowState& aReflowState,
                               nsHTMLReflowMetrics& aMetrics)
 {
+  // Reset our padding.  If we need it, we'll set it below.
+  mPadding.SizeTo(0, 0, 0, 0);
+  
   const nsStyleList* myList = GetStyleList();
   nscoord ascent;
 
-  if (!myList->mListStyleImage.IsEmpty() && mImageRequest) {
+  if (myList->mListStyleImage && mImageRequest) {
     PRUint32 status;
     mImageRequest->GetImageStatus(&status);
     if (status & imgIRequest::STATUS_SIZE_AVAILABLE &&
@@ -1480,16 +1485,15 @@ nsBulletFrame::GetDesiredSize(nsIPresContext*  aCX,
 
     case NS_STYLE_LIST_STYLE_DISC:
     case NS_STYLE_LIST_STYLE_CIRCLE:
-    case NS_STYLE_LIST_STYLE_BASIC:
     case NS_STYLE_LIST_STYLE_SQUARE:
-      aCX->GetTwipsToPixels(&t2p);
+      t2p = aCX->TwipsToPixels();
       fm->GetMaxAscent(ascent);
       bulletSize = NSTwipsToIntPixels(
         (nscoord)NSToIntRound(0.8f * (float(ascent) / 2.0f)), t2p);
       if (bulletSize < 1) {
         bulletSize = MIN_BULLET_SIZE;
       }
-      aCX->GetPixelsToTwips(&p2t);
+      p2t = aCX->PixelsToTwips();
       bulletSize = NSIntPixelsToTwips(bulletSize, p2t);
       mPadding.bottom = NSIntPixelsToTwips((nscoord) NSToIntRound((float)ascent / (8.0f * p2t)),p2t);
       aMetrics.width = mPadding.right + bulletSize;
@@ -1584,12 +1588,9 @@ nsBulletFrame::Reflow(nsIPresContext* aPresContext,
   }
 
   if (isStyleChange) {
-    nsCOMPtr<nsIURI> baseURI;
-    GetBaseURI(getter_AddRefs(baseURI));
+    nsIURI *newURI = GetStyleList()->mListStyleImage;
 
-    const nsStyleList* myList = GetStyleList();
-
-    if (!myList->mListStyleImage.IsEmpty()) {
+    if (newURI) {
 
       if (!mListener) {
         nsBulletListener *listener;
@@ -1600,10 +1601,6 @@ nsBulletFrame::Reflow(nsIPresContext* aPresContext,
         NS_ASSERTION(mListener, "queryinterface for the listener failed");
         NS_RELEASE(listener);
       }
-
-
-      nsCOMPtr<nsIURI> newURI;
-      NS_NewURI(getter_AddRefs(newURI), myList->mListStyleImage, nsnull, baseURI);
 
       PRBool needNewRequest = PR_TRUE;
 
@@ -1633,12 +1630,12 @@ nsBulletFrame::Reflow(nsIPresContext* aPresContext,
         GetLoadGroup(aPresContext, getter_AddRefs(loadGroup));
 
         // Get the document URI for the referrer...
-        nsCOMPtr<nsIURI> documentURI;
+        nsIURI* documentURI = nsnull;
         nsCOMPtr<nsIDocument> doc;
         if (mContent) {
-          (void) mContent->GetDocument(getter_AddRefs(doc));
+          doc = mContent->GetDocument();
           if (doc) {
-            doc->GetDocumentURL(getter_AddRefs(documentURI));
+            documentURI = doc->GetDocumentURI();
           }
         }
 
@@ -1689,7 +1686,7 @@ NS_IMETHODIMP nsBulletFrame::OnStartContainer(imgIRequest *aRequest,
   aImage->GetHeight(&h);
 
   float p2t;
-  mPresContext->GetPixelsToTwips(&p2t);
+  p2t = mPresContext->PixelsToTwips();
 
   nsSize newsize(NSIntPixelsToTwips(w, p2t), NSIntPixelsToTwips(h, p2t));
 
@@ -1698,29 +1695,30 @@ NS_IMETHODIMP nsBulletFrame::OnStartContainer(imgIRequest *aRequest,
 
     // Now that the size is available (or an error occurred), trigger
     // a reflow of the bullet frame.
-    nsCOMPtr<nsIPresShell> shell;
-    nsresult rv = mPresContext->GetShell(getter_AddRefs(shell));
-    if (NS_SUCCEEDED(rv) && shell) {
+    nsIPresShell *shell = mPresContext->GetPresShell();
+    if (shell) {
       NS_ASSERTION(mParent, "No parent to pass the reflow request up to.");
       if (mParent) {
         // Reflow the first child of the parent not the bullet frame.
         // The bullet frame is not in a line list so marking it dirty
         // has no effect. The reflowing of the bullet frame is done 
         // indirectly.
-        nsIFrame* frame = nsnull;
-        mParent->FirstChild(mPresContext, nsnull, &frame);
+        nsIFrame* frame = mParent->GetFirstChild(nsnull);
         NS_ASSERTION(frame, "No frame to mark dirty for bullet frame.");
         if (frame) {
-          nsFrameState state;
-          frame->GetFrameState(&state);
-          state |= NS_FRAME_IS_DIRTY;
-          frame->SetFrameState(state);
+          frame->AddStateBits(NS_FRAME_IS_DIRTY);
           mParent->ReflowDirtyChild(shell, frame);
         }
       }
     }
   }
 
+  // Handle animations
+  aImage->SetAnimationMode(mPresContext->ImageAnimationMode());
+  // Ensure the animation (if any) is started.
+  aImage->StartAnimation();
+
+  
   return NS_OK;
 }
 
@@ -1728,31 +1726,10 @@ NS_IMETHODIMP nsBulletFrame::OnDataAvailable(imgIRequest *aRequest,
                                              gfxIImageFrame *aFrame,
                                              const nsRect *aRect)
 {
-  if (!aRect) return NS_ERROR_NULL_POINTER;
-  NS_ENSURE_TRUE(mPresContext, NS_ERROR_UNEXPECTED); // Why are we bothering?
-  
-
-  // XXX Should we do anything here if an error occured in the decode?
-  
-  nsRect r(*aRect);
-
-  /* XXX Why do we subtract 1 here?  The rect is (for example): (0, 0, 600, 1)..
-         Why do we have to make y -1?
-   */
-
-  // The y coordinate of aRect is passed as a scanline where the first scanline is given
-  // a value of 1. We need to convert this to the nsFrames coordinate space by subtracting
-  // 1.
-  r.y -= 1;
-
-  float p2t;
-  mPresContext->GetPixelsToTwips(&p2t);
-  r.x = NSIntPixelsToTwips(r.x, p2t);
-  r.y = NSIntPixelsToTwips(r.y, p2t);
-  r.width = NSIntPixelsToTwips(r.width, p2t);
-  r.height = NSIntPixelsToTwips(r.height, p2t);
-
-  Invalidate(mPresContext, r, PR_FALSE);
+  // The image has changed.
+  // Invalidate the entire content area. Maybe it's not optimal but it's simple and
+  // always correct, and I'll be a stunned mullet if it ever matters for performance
+  Invalidate(nsRect(0, 0, mRect.width, mRect.height), PR_FALSE);
 
   return NS_OK;
 }
@@ -1767,10 +1744,6 @@ NS_IMETHODIMP nsBulletFrame::OnStopDecode(imgIRequest *aRequest,
 #if 0
   NS_ENSURE_TRUE(mPresContext, NS_ERROR_UNEXPECTED); // Why are we bothering?
   
-  nsCOMPtr<nsIPresShell> presShell;
-  mPresContext->GetShell(getter_AddRefs(presShell));
-
-
   if (NS_FAILED(aStatus)) {
     // We failed to load the image. Notify the pres shell
     if (NS_FAILED(aStatus) && (mImageRequest == aRequest || !mImageRequest)) {
@@ -1786,44 +1759,11 @@ NS_IMETHODIMP nsBulletFrame::FrameChanged(imgIContainer *aContainer,
                                           gfxIImageFrame *aNewFrame,
                                           nsRect *aDirtyRect)
 {
-  NS_ENSURE_TRUE(mPresContext, NS_ERROR_UNEXPECTED); // Why are we bothering?
-
-  nsRect r(*aDirtyRect);
-
-  float p2t;
-  mPresContext->GetPixelsToTwips(&p2t);
-  r.x = NSIntPixelsToTwips(r.x, p2t);
-  r.y = NSIntPixelsToTwips(r.y, p2t);
-  r.width = NSIntPixelsToTwips(r.width, p2t);
-  r.height = NSIntPixelsToTwips(r.height, p2t);
-
-  Invalidate(mPresContext, r, PR_FALSE);
+  // Invalidate the entire content area. Maybe it's not optimal but it's simple and
+  // always correct.
+  Invalidate(nsRect(0, 0, mRect.width, mRect.height), PR_FALSE);
 
   return NS_OK;
-}
-
-
-
-void
-nsBulletFrame::GetBaseURI(nsIURI **aURI)
-{
-  NS_PRECONDITION(nsnull != aURI, "null OUT parameter pointer");
-
-  nsresult rv;
-  nsCOMPtr<nsIURI> baseURI;
-  nsCOMPtr<nsIHTMLContent> htmlContent(do_QueryInterface(mContent, &rv));
-  if (NS_SUCCEEDED(rv)) {
-    htmlContent->GetBaseURL(getter_AddRefs(baseURI));
-  }
-  else {
-    nsCOMPtr<nsIDocument> doc;
-    mContent->GetDocument(getter_AddRefs(doc));
-    if (doc) {
-      doc->GetBaseURL(getter_AddRefs(baseURI));
-    }
-  }
-  *aURI = baseURI;
-  NS_IF_ADDREF(*aURI);
 }
 
 void
@@ -1834,8 +1774,7 @@ nsBulletFrame::GetLoadGroup(nsIPresContext *aPresContext, nsILoadGroup **aLoadGr
 
   NS_PRECONDITION(nsnull != aLoadGroup, "null OUT parameter pointer");
 
-  nsCOMPtr<nsIPresShell> shell;
-  aPresContext->GetShell(getter_AddRefs(shell));
+  nsIPresShell *shell = aPresContext->GetPresShell();
 
   if (!shell)
     return;
@@ -1845,7 +1784,7 @@ nsBulletFrame::GetLoadGroup(nsIPresContext *aPresContext, nsILoadGroup **aLoadGr
   if (!doc)
     return;
 
-  doc->GetDocumentLoadGroup(aLoadGroup);
+  *aLoadGroup = doc->GetDocumentLoadGroup().get();  // already_AddRefed
 }
 
 

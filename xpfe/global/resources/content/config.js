@@ -282,7 +282,8 @@ function fetchPref(prefName, prefIndex)
       case gPrefBranch.PREF_STRING:
         pref.valueCol = gPrefBranch.getComplexValue(prefName, nsISupportsString).data;
         // Try in case it's a localized string (will throw an exception if not)
-        if (pref.lockCol == PREF_IS_DEFAULT_VALUE)
+        if (pref.lockCol == PREF_IS_DEFAULT_VALUE &&
+            /^chrome:\/\/.+\/locale\/.+\.properties/.test(pref.valueCol))
           pref.valueCol = gPrefBranch.getComplexValue(prefName, nsIPrefLocalizedString).data;
         break;
     }
@@ -337,6 +338,8 @@ function onConfigLoad()
   gPrefBranch.addObserver("", gPrefListener, false);
 
   document.getElementById("configTree").view = view;
+  
+  document.getElementById("textbox").focus();
 }
 
 function onConfigUnload()
@@ -347,7 +350,7 @@ function onConfigUnload()
 
 function FilterPrefs()
 {
-  var substring = document.getElementById("textbox").value.toString();
+  var substring = document.getElementById("textbox").value.toLowerCase();
   var prefCol = view.selection.currentIndex < 0 ? null : gPrefView[view.selection.currentIndex].prefCol;
   var array = gPrefView;
   gPrefView = gPrefArray;

@@ -50,7 +50,6 @@ NS_END_EXTERN_C
 
 
 
-#define	IMAP_OUT_OF_MEMORY                                 -1000
 #define	IMAP_STATUS_SELECTING_MAILBOX                                  5000
 #define	IMAP_STATUS_CREATING_MAILBOX                                  5001
 #define	IMAP_STATUS_DELETING_MAILBOX                                  5002
@@ -82,11 +81,11 @@ NS_END_EXTERN_C
 #define	IMAP_RECEIVING_MESSAGE_HEADERS_OF                                  5036
 #define	IMAP_RECEIVING_MESSAGE_FLAGS_OF                                  5037
 #define	IMAP_DELETING_MESSAGES                                  5038
-#define	IMAP_DELETING_MESSAGE                                  5039
-#define	IMAP_MOVING_MESSAGES_TO                                  5040
-#define	IMAP_MOVING_MESSAGE_TO                                  5041
-#define	IMAP_COPYING_MESSAGES_TO                                  5042
-#define	IMAP_COPYING_MESSAGE_TO                               5043
+#define	IMAP_DELETING_MESSAGE                   5039
+#define	IMAP_MOVING_MESSAGES_TO                 5040
+#define	IMAP_MOVING_MESSAGE_TO                  5041
+#define	IMAP_COPYING_MESSAGES_TO                5042
+#define	IMAP_COPYING_MESSAGE_TO                 5043
 #define	IMAP_SELECTING_MAILBOX                  5044
 #define IMAP_FOLDER_RECEIVING_MESSAGE_OF	5045
 #define IMAP_DISCOVERING_MAILBOX		5046
@@ -104,6 +103,7 @@ NS_END_EXTERN_C
 #define IMAP_DELETE_NO_TRASH                        5058
 #define IMAP_HTML_NO_CACHED_BODY_TITLE              5059
 #define IMAP_HTML_NO_CACHED_BODY_BODY               5060
+#define IMAP_EMPTY_TRASH_CONFIRM                    5061
 #define IMAP_PERSONAL_FILING_CABINET                5062
 #define IMAP_PFC_READ_MAIL                          5063
 #define IMAP_PFC_SENT_MAIL                          5064
@@ -134,4 +134,6 @@ NS_END_EXTERN_C
 #define IMAP_QUOTA_STATUS_FOLDERNOTOPEN             5095
 #define IMAP_QUOTA_STATUS_NOTSUPPORTED              5096
 #define IMAP_QUOTA_STATUS_NOQUOTA                   5097
+#define	IMAP_OUT_OF_MEMORY                          5100
+#define IMAP_AUTH_SECURE_NOTSUPPORTED               5102
 #endif /* _nsImapStringBundle_H__ */

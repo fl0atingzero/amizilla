@@ -21,6 +21,7 @@
  *
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
+ *   Mike Calmus
  *
  *
  * Alternatively, the contents of this file may be used under the terms of
@@ -914,7 +915,6 @@ PRIVATE PRInt32
 si_SetChosenUser(si_SignonURLStruct *url, si_SignonUserStruct *chosen_user)
 {
   PRInt32 index;
-  si_SignonUserStruct *user;
 
   index = url->signonUser_list.IndexOf(chosen_user);
   if (index < 0) {
@@ -1001,9 +1001,6 @@ si_RemoveUser(const char *passwordRealm, const nsString& userName, PRBool save, 
     si_unlock_signon_list();
     return PR_FALSE; /* user not found so nothing to remove */
     foundUser: ;
-    if (loginFailure && (user->time + 300) < SecondsFromPRTime(PR_Now())) {
-      return PR_FALSE; /* password was set more than 5 minutes (300 seconds) ago */
-    }
   }
 
   /* free the user node */
@@ -2114,7 +2111,7 @@ si_SaveSignonDataLocked(char * state, PRBool notify) {
     return 0;
   }
 
-  nsOutputFileStream strm(dirSpec + signonFileName);
+  nsOutputFileStream strm(dirSpec + signonFileName, nsOutputFileStream::kDefaultMode, 0600);
   if (!strm.is_open()) {
     return 0;
   }
@@ -2635,7 +2632,7 @@ si_DoDialogIfPrefIsOff(
     PRUint32 savePassword,
     DialogType dlg) {
 
-  nsresult res;
+  nsresult res = NS_ERROR_FAILURE;
   const PRUnichar * prompt_string = dialogTitle;
   if (dialogTitle == nsnull || !dialogTitle[0]) {
     prompt_string = Wallet_Localize("PromptForData");
@@ -2668,8 +2665,7 @@ si_DoDialogIfPrefIsOff(
 #ifdef DEBUG
       break;
     default:
-      NS_ASSERTION(PR_FALSE, "Undefined DialogType in si_DoDialogIfPrefIsOff");
-      res = NS_ERROR_FAILURE;
+      NS_ERROR("Undefined DialogType in si_DoDialogIfPrefIsOff");
 #endif
   }
 
@@ -2942,7 +2938,8 @@ SINGSIGN_ReencryptAll()
                               user->signonData_list.ElementAt(k));
         nsAutoString userName;
         if (NS_FAILED(si_Decrypt(data->value, userName))) {
-          return PR_FALSE;
+          //Don't try to re-encrypt. Just go to the next one.
+          continue;
         }
         if (NS_FAILED(si_Encrypt(userName, data->value))) {
           return PR_FALSE;

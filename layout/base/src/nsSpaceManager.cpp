@@ -969,7 +969,7 @@ nsSpaceManager::PushState()
   // of mBandList and mFrameInfoMap and restore them when pop is
   // called, but I'm not sure it's worth the effort/bloat at this
   // point, since this push/pop mechanism is only used to undo any
-  // floaters that were added during the unconstrained reflow
+  // floats that were added during the unconstrained reflow
   // in nsBlockReflowContext::DoReflowBlock(). (See bug 96736)
   //
   // It should also be noted that the state for mFloatDamage is
@@ -1413,9 +1413,7 @@ nsAutoSpaceManager::CreateSpaceManagerFor(nsIPresContext *aPresContext, nsIFrame
   // Create a new space manager and install it in the reflow
   // state. `Remember' the old space manager so we can restore it
   // later.
-  nsCOMPtr<nsIPresShell> shell;
-  aPresContext->GetShell(getter_AddRefs(shell));
-  mNew = new nsSpaceManager(shell, aFrame);
+  mNew = new nsSpaceManager(aPresContext->PresShell(), aFrame);
   if (! mNew)
     return NS_ERROR_OUT_OF_MEMORY;
 

@@ -64,9 +64,8 @@ txStylesheet::init()
     
     // Create default templates
     // element/root template
-    txInstruction** instrp = mContainerTemplate.StartAssignment();
-    *instrp = new txPushParams;
-    NS_ENSURE_TRUE(*instrp, NS_ERROR_OUT_OF_MEMORY);
+    mContainerTemplate = new txPushParams;
+    NS_ENSURE_TRUE(mContainerTemplate, NS_ERROR_OUT_OF_MEMORY);
 
     nsAutoPtr<txNodeTest> nt(new txNodeTypeTest(txNodeTypeTest::NODE_TYPE));
     NS_ENSURE_TRUE(nt, NS_ERROR_OUT_OF_MEMORY);
@@ -74,28 +73,25 @@ txStylesheet::init()
     nsAutoPtr<Expr> nodeExpr(new LocationStep(nt, LocationStep::CHILD_AXIS));
     NS_ENSURE_TRUE(nodeExpr, NS_ERROR_OUT_OF_MEMORY);
 
-    instrp = &(*instrp)->mNext;
     txPushNewContext* pushContext = new txPushNewContext(nodeExpr);
-    *instrp = pushContext;
-    NS_ENSURE_TRUE(*instrp, NS_ERROR_OUT_OF_MEMORY);
+    mContainerTemplate->mNext = pushContext;
+    NS_ENSURE_TRUE(pushContext, NS_ERROR_OUT_OF_MEMORY);
 
-    instrp = &(*instrp)->mNext;
     txApplyDefaultElementTemplate* applyTemplates =
         new txApplyDefaultElementTemplate;
-    *instrp = applyTemplates;
-    NS_ENSURE_TRUE(*instrp, NS_ERROR_OUT_OF_MEMORY);
+    pushContext->mNext = applyTemplates;
+    NS_ENSURE_TRUE(applyTemplates, NS_ERROR_OUT_OF_MEMORY);
 
-    instrp = &(*instrp)->mNext;
-    *instrp = new txLoopNodeSet(applyTemplates);
-    NS_ENSURE_TRUE(*instrp, NS_ERROR_OUT_OF_MEMORY);
+    txLoopNodeSet* loopNodeSet = new txLoopNodeSet(applyTemplates);
+    applyTemplates->mNext = loopNodeSet;
+    NS_ENSURE_TRUE(loopNodeSet, NS_ERROR_OUT_OF_MEMORY);
 
-    instrp = &(*instrp)->mNext;
-    pushContext->mBailTarget = *instrp = new txPopParams;
-    NS_ENSURE_TRUE(*instrp, NS_ERROR_OUT_OF_MEMORY);
+    txPopParams* popParams = new txPopParams;
+    pushContext->mBailTarget = loopNodeSet->mNext = popParams;
+    NS_ENSURE_TRUE(popParams, NS_ERROR_OUT_OF_MEMORY);
 
-    instrp = &(*instrp)->mNext;
-    *instrp = new txReturn();
-    NS_ENSURE_TRUE(*instrp, NS_ERROR_OUT_OF_MEMORY);
+    popParams->mNext = new txReturn();
+    NS_ENSURE_TRUE(popParams->mNext, NS_ERROR_OUT_OF_MEMORY);
 
     // attribute/textnode template
     nt = new txNodeTypeTest(txNodeTypeTest::NODE_TYPE);
@@ -105,10 +101,10 @@ txStylesheet::init()
     NS_ENSURE_TRUE(nodeExpr, NS_ERROR_OUT_OF_MEMORY);
 
     mCharactersTemplate = new txValueOf(nodeExpr, PR_FALSE);
-    NS_ENSURE_TRUE(mContainerTemplate, NS_ERROR_OUT_OF_MEMORY);
+    NS_ENSURE_TRUE(mCharactersTemplate, NS_ERROR_OUT_OF_MEMORY);
 
     mCharactersTemplate->mNext = new txReturn();
-    NS_ENSURE_TRUE(mContainerTemplate->mNext, NS_ERROR_OUT_OF_MEMORY);
+    NS_ENSURE_TRUE(mCharactersTemplate->mNext, NS_ERROR_OUT_OF_MEMORY);
 
     // pi/comment/namespace template
     mEmptyTemplate = new txReturn();
@@ -140,14 +136,13 @@ txStylesheet::~txStylesheet()
 }
 
 txInstruction*
-txStylesheet::findTemplate(Node* aNode,
+txStylesheet::findTemplate(const txXPathNode& aNode,
                            const txExpandedName& aMode,
                            txIMatchContext* aContext,
                            ImportFrame* aImportedBy,
                            ImportFrame** aImportFrame)
 {
     NS_ASSERTION(aImportFrame, "missing ImportFrame pointer");
-    NS_ASSERTION(aNode, "missing node");
 
     *aImportFrame = nsnull;
     txInstruction* matchTemplate = nsnull;
@@ -195,12 +190,11 @@ txStylesheet::findTemplate(Node* aNode,
     }
 
 #ifdef PR_LOGGING
-    nsAutoString mode;
+    nsAutoString mode, nodeName;
     if (aMode.mLocalName) {
         aMode.mLocalName->ToString(mode);
     }
-    nsAutoString nodeName;
-    aNode->getNodeName(nodeName);
+    txXPathNodeUtils::getNodeName(aNode, nodeName);
     if (matchTemplate) {
         nsAutoString matchAttr;
         match->toString(matchAttr);
@@ -219,21 +213,25 @@ txStylesheet::findTemplate(Node* aNode,
 #endif
 
     if (!matchTemplate) {
-        switch(aNode->getNodeType()) {
-            case Node::ELEMENT_NODE :
-            case Node::DOCUMENT_NODE :
+        switch (txXPathNodeUtils::getNodeType(aNode)) {
+            case txXPathNodeType::ELEMENT_NODE:
+            case txXPathNodeType::DOCUMENT_NODE:
+            {
                 matchTemplate = mContainerTemplate;
                 break;
-
-            case Node::ATTRIBUTE_NODE :
-            case Node::TEXT_NODE :
-            case Node::CDATA_SECTION_NODE :
+            }
+            case txXPathNodeType::ATTRIBUTE_NODE:
+            case txXPathNodeType::TEXT_NODE:
+            case txXPathNodeType::CDATA_SECTION_NODE:
+            {
                 matchTemplate = mCharactersTemplate;
                 break;
-
+            }
             default:
+            {
                 matchTemplate = mEmptyTemplate;
                 break;
+            }
         }
     }
 
@@ -277,43 +275,41 @@ txStylesheet::getKeyMap()
 }
 
 PRBool
-txStylesheet::isStripSpaceAllowed(Node* aNode, txIMatchContext* aContext)
+txStylesheet::isStripSpaceAllowed(const txXPathNode& aNode, txIMatchContext* aContext)
 {
-    if (!aNode) {
-        return MB_FALSE;
+    PRInt32 frameCount = mStripSpaceTests.Count();
+    if (frameCount == 0) {
+        return PR_FALSE;
     }
 
-    switch (aNode->getNodeType()) {
-        case Node::ELEMENT_NODE:
-        {
-            // check Whitespace stipping handling list against given Node
-            PRInt32 i, frameCount = mStripSpaceTests.Count();
-            for (i = 0; i < frameCount; ++i) {
-                txStripSpaceTest* sst =
-                    NS_STATIC_CAST(txStripSpaceTest*, mStripSpaceTests[i]);
-                if (sst->matches(aNode, aContext)) {
-                    if (sst->stripsSpace() && 
-                        !XMLUtils::getXMLSpacePreserve(aNode)) {
-                        return MB_TRUE;
-                    }
-                    return MB_FALSE;
-                }
-            }
-            break;
+    txXPathTreeWalker walker(aNode);
+
+    PRUint16 nodeType = walker.getNodeType();
+    if (nodeType == txXPathNodeType::TEXT_NODE ||
+        nodeType == txXPathNodeType::CDATA_SECTION_NODE) {
+        if (!txXPathNodeUtils::isWhitespace(aNode) || !walker.moveToParent()) {
+            return PR_FALSE;
         }
-        case Node::TEXT_NODE:
-        case Node::CDATA_SECTION_NODE:
-        {
-            if (!XMLUtils::isWhitespace(aNode))
-                return MB_FALSE;
-            return isStripSpaceAllowed(aNode->getParentNode(), aContext);
-        }
-        case Node::DOCUMENT_NODE:
-        {
-            return MB_TRUE;
+        nodeType = walker.getNodeType();
+    }
+
+    if (nodeType != txXPathNodeType::ELEMENT_NODE) {
+        return PR_FALSE;
+    }
+
+    const txXPathNode& node = walker.getCurrentPosition();
+
+    // check Whitespace stipping handling list against given Node
+    PRInt32 i;
+    for (i = 0; i < frameCount; ++i) {
+        txStripSpaceTest* sst =
+            NS_STATIC_CAST(txStripSpaceTest*, mStripSpaceTests[i]);
+        if (sst->matches(node, aContext)) {
+            return sst->stripsSpace() && !XMLUtils::getXMLSpacePreserve(node);
         }
     }
-    return MB_FALSE;
+
+    return PR_FALSE;
 }
 
 nsresult

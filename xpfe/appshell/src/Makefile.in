@@ -34,9 +34,10 @@ EXPORT_LIBRARY  = 1
 SHORT_LIBNAME	= appshell
 GRE_MODULE	= 1
 
+PACKAGE_FILE = appshell.pkg
+
 REQUIRES	= xpcom \
 		  string \
-		  xpcom_obsolete \
 		  widget \
 		  docshell \
 		  webshell \
@@ -52,16 +53,18 @@ REQUIRES	= xpcom \
 		  pref \
 		  xpconnect \
 		  intl \
-		  xul \
 		  windowwatcher \
 		  browser \
 		  caps \
 		  profile \
 		  unicharutil \
-		  embed_base \
 		  uconv \
 		  exthandler \
 		  $(NULL)
+
+ifdef MOZ_PHOENIX
+REQUIRES += profilemanager
+endif
 
 CPPSRCS		= \
 		nsChromeTreeOwner.cpp \
@@ -74,7 +77,6 @@ CPPSRCS		= \
 		nsWindowMediator.cpp \
 		nsAbout.cpp \
 		nsAppShellFactory.cpp \
-		nsTimingService.cpp \
 		$(NULL)
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),os2)

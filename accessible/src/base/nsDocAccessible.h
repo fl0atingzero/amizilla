@@ -41,7 +41,7 @@
 
 #include "nsBaseWidgetAccessible.h"
 #include "nsIAccessibleDocument.h"
-#include "nsIAccessibleEventReceiver.h"
+#include "nsPIAccessibleDocument.h"
 #include "nsIDocument.h"
 #include "nsIDOMMutationListener.h"
 #include "nsIEditor.h"
@@ -58,7 +58,7 @@ const PRUint32 kDefaultCacheSize = 256;
 
 class nsDocAccessible : public nsBlockAccessible,
                         public nsIAccessibleDocument,
-                        public nsIAccessibleEventReceiver,
+                        public nsPIAccessibleDocument,
                         public nsIWebProgressListener,
                         public nsIObserver,
                         public nsIDOMMutationListener,
@@ -69,17 +69,17 @@ class nsDocAccessible : public nsBlockAccessible,
   
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIACCESSIBLEDOCUMENT
-  NS_DECL_NSIACCESSIBLEEVENTRECEIVER
+  NS_DECL_NSPIACCESSIBLEDOCUMENT
   NS_DECL_NSIOBSERVER
 
   public:
     nsDocAccessible(nsIDOMNode *aNode, nsIWeakReference* aShell);
     virtual ~nsDocAccessible();
 
-    NS_IMETHOD GetAccRole(PRUint32 *aAccRole);
-    NS_IMETHOD GetAccName(nsAString& aAccName);
-    NS_IMETHOD GetAccValue(nsAString& aAccValue);
-    NS_IMETHOD GetAccState(PRUint32 *aAccState);
+    NS_IMETHOD GetRole(PRUint32 *aRole);
+    NS_IMETHOD GetName(nsAString& aName);
+    NS_IMETHOD GetValue(nsAString& aValue);
+    NS_IMETHOD GetState(PRUint32 *aState);
 
     // ----- nsIScrollPositionListener ---------------------------
     NS_IMETHOD ScrollPositionWillChange(nsIScrollableView *aView, nscoord aX, nscoord aY);
@@ -104,10 +104,10 @@ class nsDocAccessible : public nsBlockAccessible,
     NS_IMETHOD Init();
 
   protected:
-    virtual void GetBounds(nsRect& aRect, nsIFrame** aRelativeFrame);
+    virtual void GetBoundsRect(nsRect& aRect, nsIFrame** aRelativeFrame);
     virtual nsIFrame* GetFrame();
-    void AddContentDocListeners();
-    void RemoveContentDocListeners();
+    virtual nsresult AddEventListeners();
+    virtual nsresult RemoveEventListeners();
     void AddScrollListener(nsIPresShell *aPresShell);
     void RemoveScrollListener(nsIPresShell *aPresShell);
     void FireDocLoadFinished();
@@ -117,9 +117,9 @@ class nsDocAccessible : public nsBlockAccessible,
     void GetEventShell(nsIDOMNode *aNode, nsIPresShell **aEventShell);
     void GetEventDocAccessible(nsIDOMNode *aNode, 
                                nsIAccessibleDocument **aAccessibleDoc);
-    void CheckForEditor();
+    virtual void CheckForEditor();
 
-    nsInterfaceHashtable<nsVoidHashKey, nsIAccessNode> *mAccessNodeCache;
+    nsInterfaceHashtable<nsVoidHashKey, nsIAccessNode> mAccessNodeCache;
     void *mWnd;
     nsCOMPtr<nsIDocument> mDocument;
     nsCOMPtr<nsITimer> mScrollWatchTimer;

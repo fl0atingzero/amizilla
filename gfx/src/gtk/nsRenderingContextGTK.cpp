@@ -58,7 +58,7 @@
 #include <gdk/gdkwindow.h>
 #endif
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsRenderingContextGTK, nsIRenderingContext)
+NS_IMPL_ISUPPORTS1(nsRenderingContextGTK, nsIRenderingContext)
 
 static NS_DEFINE_CID(kRegionCID, NS_REGION_CID);
 
@@ -159,6 +159,9 @@ NS_IMETHODIMP nsRenderingContextGTK::Init(nsIDeviceContext* aContext,
                            w->allocation.width,
                            w->allocation.height,
                            gdk_rgb_get_visual()->depth);
+#ifdef MOZ_WIDGET_GTK2
+      gdk_drawable_set_colormap(win, gdk_rgb_get_colormap());
+#endif
     }
 
     GdkGC *gc = (GdkGC *)aWindow->GetNativeData(NS_NATIVE_GRAPHIC);
@@ -191,9 +194,9 @@ NS_IMETHODIMP nsRenderingContextGTK::Init(nsIDeviceContext* aContext,
 
 NS_IMETHODIMP nsRenderingContextGTK::CommonInit()
 {
-  mContext->GetDevUnitsToAppUnits(mP2T);
+  mP2T = mContext->DevUnitsToAppUnits();
   float app2dev;
-  mContext->GetAppUnitsToDevUnits(app2dev);
+  app2dev = mContext->AppUnitsToDevUnits();
   mTranMatrix->AddScale(app2dev, app2dev);
 
   return NS_OK;
@@ -879,9 +882,6 @@ NS_IMETHODIMP nsRenderingContextGTK::DrawPolyline(const nsPoint aPoints[], PRInt
     mTranMatrix->TransformCoord(&p.x,&p.y);
     pts[i].x = p.x;
     pts[i].y = p.y;
-#ifdef DEBUG
-    printf("(%i,%i)\n", p.x, p.y);
-#endif
   }
 
   UpdateGC();

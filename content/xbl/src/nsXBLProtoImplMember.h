@@ -50,6 +50,52 @@
 #include "nsReadableUtils.h"
 
 class nsIScriptContext;
+class JSRuntime;
+class nsIJSRuntimeService;
+
+MOZ_DECL_CTOR_COUNTER(nsXBLTextWithLineNumber)
+
+struct nsXBLTextWithLineNumber
+{
+  PRUnichar* mText;
+  PRUint32 mLineNumber;
+
+  nsXBLTextWithLineNumber() :
+    mText(nsnull),
+    mLineNumber(0)
+  {
+    MOZ_COUNT_CTOR(nsXBLTextWithLineNumber);
+  }
+
+  ~nsXBLTextWithLineNumber() {
+    MOZ_COUNT_DTOR(nsXBLTextWithLineNumber);
+    if (mText) {
+      nsMemory::Free(mText);
+    }
+  }
+
+  void AppendText(const nsAString& aText) {
+    if (mText) {
+      PRUnichar* temp = mText;
+      mText = ToNewUnicode(nsDependentString(temp) + aText);
+      nsMemory::Free(temp);
+    } else {
+      mText = ToNewUnicode(aText);
+    }
+  }
+
+  PRUnichar* GetText() {
+    return mText;
+  }
+
+  void SetLineNumber(PRUint32 aLineNumber) {
+    mLineNumber = aLineNumber;
+  }
+
+  PRUint32 GetLineNumber() {
+    return mLineNumber;
+  }
+};
 
 class nsXBLProtoImplMember
 {
@@ -61,13 +107,24 @@ public:
   nsXBLProtoImplMember* GetNext() { return mNext; };
   void SetNext(nsXBLProtoImplMember* aNext) { mNext = aNext; };
 
-  virtual nsresult InstallMember(nsIScriptContext* aContext, nsIContent* aBoundElement, 
-                                 void* aScriptObject, void* aTargetClassObject)=0;
-  virtual nsresult CompileMember(nsIScriptContext* aContext, const nsCString& aClassStr, void* aClassObject)=0;
+  virtual nsresult InstallMember(nsIScriptContext* aContext,
+                                 nsIContent* aBoundElement, 
+                                 void* aScriptObject,
+                                 void* aTargetClassObject,
+                                 const nsCString& aClassStr) = 0;
+  virtual nsresult CompileMember(nsIScriptContext* aContext,
+                                 const nsCString& aClassStr,
+                                 void* aClassObject)=0;
 
 protected:
   nsXBLProtoImplMember* mNext;  // The members of an implementation are chained.
   PRUnichar* mName;               // The name of the field, method, or property.
+  static nsIJSRuntimeService* gJSRuntimeService;
+  static JSRuntime* gScriptRuntime;
+  static PRInt32 gScriptRuntimeRefcnt;
+
+  static nsresult AddJSGCRoot(void* aScriptObjectRef, const char* aName);
+  static nsresult RemoveJSGCRoot(void* aScriptObjectRef);
 };
 
 #endif // nsXBLProtoImplMember_h__

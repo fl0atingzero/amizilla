@@ -58,15 +58,15 @@
 #define XPTC_PUBLIC_API(t)    PR_IMPLEMENT(t)
 #define XPTC_PUBLIC_DATA(t)   PR_IMPLEMENT_DATA(t)
 #ifdef _WIN32
-#    define XPTC_EXPORT           _declspec(dllexport)
+#    define XPTC_EXPORT           __declspec(dllexport)
 #else
 #    define XPTC_EXPORT
 #endif
 #else
 #ifdef _WIN32
-#    define XPTC_PUBLIC_API(t)    _declspec(dllimport) t
-#    define XPTC_PUBLIC_DATA(t)   _declspec(dllimport) t
-#    define XPTC_EXPORT           _declspec(dllimport)
+#    define XPTC_PUBLIC_API(t)    __declspec(dllimport) t
+#    define XPTC_PUBLIC_DATA(t)   __declspec(dllimport) t
+#    define XPTC_EXPORT           __declspec(dllimport)
 #else
 #    define XPTC_PUBLIC_API(t)    PR_IMPLEMENT(t)
 #    define XPTC_PUBLIC_DATA(t)   t
@@ -186,14 +186,17 @@ struct nsXPTCVariant : public nsXPTCMiniVariant
 
 /***************************************************************************/
 
-class nsXPTCStubBase : public nsISupports
+#undef  IMETHOD_VISIBILITY
+#define IMETHOD_VISIBILITY NS_VISIBILITY_DEFAULT
+
+class XPTC_EXPORT nsXPTCStubBase : public nsISupports
 {
 public:
     // We are going to implement this to force the compiler to generate a 
     // vtbl for this class. Since this is overridden in the inheriting class
     // we expect it to never be called. 
     // *This is needed by the Irix implementation.*
-    XPTC_EXPORT NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
+    NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
 
     // Include generated vtbl stub declarations.
     // These are virtual and *also* implemented by this class..
@@ -211,6 +214,8 @@ public:
                           nsXPTCMiniVariant* params) = 0;
 };
 
+#undef  IMETHOD_VISIBILITY
+#define IMETHOD_VISIBILITY NS_VISIBILITY_HIDDEN
 
 PR_BEGIN_EXTERN_C
 

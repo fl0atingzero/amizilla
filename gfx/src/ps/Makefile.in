@@ -43,10 +43,9 @@ REQUIRES	= xpcom \
 		  view \
 		  necko \
 		  imglib2 \
+		  unicharutil \
 		  $(NULL)
 EXTRA_DSO_LIBS += gkgfx
-
-CSRCS		= font_metrics.c
 
 CPPSRCS		= \
 		nsDeviceContextPS.cpp \
@@ -55,13 +54,15 @@ CPPSRCS		= \
 		nsPostScriptObj.cpp \
 		nsAFMObject.cpp \
 		nsGfxFactoryPS.cpp \
+		nsTempfilePS.cpp \
 		$(NULL)
 
 EXPORTS		= \
 		nsIDeviceContextPS.h \
 		nsGfxPSCID.h \
 		nsIDeviceContextSpecPS.h \
-		nsPostScriptObj.h \
+		nsTempfilePS.h \
+		nsPaperPS.h \
 		$(NULL)
 
 EXPORT_RESOURCE	= \
@@ -73,6 +74,7 @@ EXTRA_DSO_LDOPTS = \
 		-lgfxshared_s \
 		$(EXTRA_DSO_LIBS) \
 		$(MOZ_COMPONENT_LIBS) \
+		$(MOZ_UNICHARUTIL_LIBS) \
 		$(NULL)
 
 ifdef MOZ_ENABLE_FREETYPE2

@@ -48,7 +48,7 @@
 
 #include "nsIURL.h"
 #include "nsCOMPtr.h"
-#include "nsCom.h"
+#include "nscore.h"
 #include "nsWeakPtr.h"
 
 #include "nsIDOMWindow.h"
@@ -60,6 +60,9 @@
 #include "nsIPresContext.h"
 #include "nsIStringBundle.h"
 #include "nsIScriptSecurityManager.h"
+
+#include "nsITransport.h"
+#include "nsISocketTransport.h"
 
 static NS_DEFINE_CID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
 
@@ -97,22 +100,24 @@ static NS_DEFINE_IID(kIContentViewerContainerIID,  NS_ICONTENTVIEWERCONTAINER_II
 struct nsRequestInfo : public PLDHashEntryHdr
 {
   nsRequestInfo(const void *key)
-    : mKey(key), mCurrentProgress(0), mMaxProgress(0)
+    : mKey(key), mCurrentProgress(0), mMaxProgress(0), mUploading(PR_FALSE)
   {
   }
 
   const void* mKey; // Must be first for the pldhash stubs to work
   PRInt32 mCurrentProgress;
   PRInt32 mMaxProgress;
+  PRBool mUploading;
 };
 
 
-PR_STATIC_CALLBACK(void)
+PR_STATIC_CALLBACK(PRBool)
 RequestInfoHashInitEntry(PLDHashTable *table, PLDHashEntryHdr *entry,
                          const void *key)
 {
   // Initialize the entry with placement new
   new (entry) nsRequestInfo(key);
+  return PR_TRUE;
 }
 
 
@@ -417,30 +422,23 @@ NS_IMETHODIMP
 nsDocLoaderImpl::GetContentViewerContainer(nsISupports* aDocumentID,
                                            nsIContentViewerContainer** aResult)
 {
-  nsISupports* base = aDocumentID;
-  nsIDocument* doc;
-  nsresult rv;
+  nsCOMPtr<nsIDocument> doc(do_QueryInterface(aDocumentID));
 
-  rv = base->QueryInterface(kIDocumentIID, (void**)&doc);
-  if (NS_SUCCEEDED(rv)) {
-    nsCOMPtr<nsIPresShell> pres;
-    doc->GetShellAt(0, getter_AddRefs(pres));
-    if (nsnull != pres) {
-      nsIPresContext* presContext;
-      rv = pres->GetPresContext(&presContext);
-      if (NS_SUCCEEDED(rv) && nsnull != presContext) {
-        nsISupports* supp;
-        rv = presContext->GetContainer(&supp);
-        if (NS_SUCCEEDED(rv) && nsnull != supp) {          
-          rv = supp->QueryInterface(kIContentViewerContainerIID, (void**)aResult);          
-          NS_RELEASE(supp);
+  if (doc) {
+    nsIPresShell *pres = doc->GetShellAt(0);
+    if (pres) {
+      nsCOMPtr<nsIPresContext> presContext;
+      pres->GetPresContext(getter_AddRefs(presContext));
+      if (presContext) {
+        nsCOMPtr<nsISupports> supp = presContext->GetContainer();
+        if (supp) {
+          return CallQueryInterface(supp, aResult);          
         }
-        NS_RELEASE(presContext);
       }
     }
-    NS_RELEASE(doc);
   }
-  return rv;
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -889,7 +887,7 @@ nsDocLoaderImpl::AddProgressListener(nsIWebProgressListener *aListener,
                                      PRUint32 aNotifyMask)
 {
   nsresult rv;
-  nsWeakPtr listener = getter_AddRefs(NS_GetWeakReference(aListener));
+  nsWeakPtr listener = do_GetWeakReference(aListener);
   if (!listener) {
     return NS_ERROR_INVALID_ARG;
   }
@@ -913,7 +911,7 @@ NS_IMETHODIMP
 nsDocLoaderImpl::RemoveProgressListener(nsIWebProgressListener *aListener)
 {
   nsresult rv;
-  nsWeakPtr listener = getter_AddRefs(NS_GetWeakReference(aListener));
+  nsWeakPtr listener = do_GetWeakReference(aListener);
   if (!listener) {
     return NS_ERROR_INVALID_ARG;
   }
@@ -1012,7 +1010,8 @@ NS_IMETHODIMP nsDocLoaderImpl::OnProgress(nsIRequest *aRequest, nsISupports* ctx
   //
   info = GetRequestInfo(aRequest);
   if (info) {
-    if ((0 == info->mCurrentProgress) && (0 == info->mMaxProgress)) {
+    // suppress sending STATE_TRANSFERRING if this is upload progress (see bug 240053)
+    if (!info->mUploading && (0 == info->mCurrentProgress) && (0 == info->mMaxProgress)) {
       //
       // This is the first progress notification for the entry.  If
       // (aMaxProgress > 0) then the content-length of the data is known,
@@ -1084,6 +1083,25 @@ NS_IMETHODIMP nsDocLoaderImpl::OnStatus(nsIRequest* aRequest, nsISupports* ctxt,
   // Fire progress notifications out to any registered nsIWebProgressListeners
   //
   if (aStatus) {
+    // Remember the current status for this request
+    nsRequestInfo *info;
+    info = GetRequestInfo(aRequest);
+    if (info) {
+      PRBool uploading = (aStatus == nsITransport::STATUS_WRITING ||
+                          aStatus == nsISocketTransport::STATUS_SENDING_TO);
+      // If switching from uploading to downloading (or vice versa), then we
+      // need to reset our progress counts.  This is designed with HTTP form
+      // submission in mind, where an upload is performed followed by download
+      // of possibly several documents.
+      if (info->mUploading != uploading) {
+        mCurrentSelfProgress  = mMaxSelfProgress  = 0;
+        mCurrentTotalProgress = mMaxTotalProgress = 0;
+        info->mUploading = uploading;
+        info->mCurrentProgress = 0;
+        info->mMaxProgress = 0;
+      }
+    }
+    
     nsresult rv;
     nsCOMPtr<nsIStringBundleService> sbs = do_GetService(kStringBundleServiceCID, &rv);
     if (NS_FAILED(rv)) return rv;
@@ -1143,7 +1161,7 @@ void nsDocLoaderImpl::FireOnProgressChange(nsDocLoaderImpl *aLoadInitiator,
   while (--count >= 0) {
     nsListenerInfo *info;
 
-    info = NS_STATIC_CAST(nsListenerInfo*,mListenerInfoList.ElementAt(count));
+    info = NS_STATIC_CAST(nsListenerInfo*,mListenerInfoList.SafeElementAt(count));
     if (!info || !(info->mNotifyMask & nsIWebProgress::NOTIFY_PROGRESS)) {
       continue;
     }
@@ -1214,7 +1232,7 @@ void nsDocLoaderImpl::FireOnStateChange(nsIWebProgress *aProgress,
   while (--count >= 0) {
     nsListenerInfo *info;
 
-    info = NS_STATIC_CAST(nsListenerInfo*,mListenerInfoList.ElementAt(count));
+    info = NS_STATIC_CAST(nsListenerInfo*,mListenerInfoList.SafeElementAt(count));
     if (!info || !(info->mNotifyMask & (aStateFlags >>16))) {
       continue;
     }
@@ -1257,7 +1275,7 @@ nsDocLoaderImpl::FireOnLocationChange(nsIWebProgress* aWebProgress,
   while (--count >= 0) {
     nsListenerInfo *info;
 
-    info = NS_STATIC_CAST(nsListenerInfo*,mListenerInfoList.ElementAt(count));
+    info = NS_STATIC_CAST(nsListenerInfo*,mListenerInfoList.SafeElementAt(count));
     if (!info || !(info->mNotifyMask & nsIWebProgress::NOTIFY_LOCATION)) {
       continue;
     }
@@ -1301,7 +1319,7 @@ nsDocLoaderImpl::FireOnStatusChange(nsIWebProgress* aWebProgress,
   while (--count >= 0) {
     nsListenerInfo *info;
 
-    info = NS_STATIC_CAST(nsListenerInfo*,mListenerInfoList.ElementAt(count));
+    info = NS_STATIC_CAST(nsListenerInfo*,mListenerInfoList.SafeElementAt(count));
     if (!info || !(info->mNotifyMask & nsIWebProgress::NOTIFY_STATUS)) {
       continue;
     }
@@ -1334,7 +1352,7 @@ nsDocLoaderImpl::GetListenerInfo(nsIWeakReference *aListener)
 
   count = mListenerInfoList.Count();
   for (i=0; i<count; i++) {
-    info = NS_STATIC_CAST(nsListenerInfo* ,mListenerInfoList.ElementAt(i));
+    info = NS_STATIC_CAST(nsListenerInfo* ,mListenerInfoList.SafeElementAt(i));
 
     NS_ASSERTION(info, "There should NEVER be a null listener in the list");
     if (info && (aListener == info->mWeakListener)) {
@@ -1489,7 +1507,7 @@ NS_IMETHODIMP nsDocLoaderImpl::OnSecurityChange(nsISupports * aContext,
   while (--count >= 0) {
     nsListenerInfo *info;
 
-    info = NS_STATIC_CAST(nsListenerInfo*,mListenerInfoList.ElementAt(count));
+    info = NS_STATIC_CAST(nsListenerInfo*,mListenerInfoList.SafeElementAt(count));
     if (!info || !(info->mNotifyMask & nsIWebProgress::NOTIFY_SECURITY)) {
       continue;
     }

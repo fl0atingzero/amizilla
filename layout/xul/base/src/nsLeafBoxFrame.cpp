@@ -114,15 +114,10 @@ nsLeafBoxFrame::Init(nsIPresContext*  aPresContext,
     PRBool needsWidget = PR_FALSE;
     parent->ChildrenMustHaveWidgets(needsWidget);
     if (needsWidget) {
-        if (!HasView()) {
-           nsHTMLContainerFrame::CreateViewForFrame(aPresContext,this,mStyleContext,nsnull,PR_TRUE); 
-        }
-        nsIView* view = GetView(aPresContext);
+        nsHTMLContainerFrame::CreateViewForFrame(this, nsnull, PR_TRUE); 
+        nsIView* view = GetView();
 
-        nsCOMPtr<nsIWidget> widget;
-        view->GetWidget(*getter_AddRefs(widget));
-
-        if (!widget)
+        if (!view->HasWidget())
            view->CreateWidget(kWidgetCID);   
     }
   }
@@ -136,17 +131,17 @@ nsLeafBoxFrame::Init(nsIPresContext*  aPresContext,
 
 NS_IMETHODIMP
 nsLeafBoxFrame::AttributeChanged(nsIPresContext* aPresContext,
-                               nsIContent* aChild,
-                               PRInt32 aNameSpaceID,
-                               nsIAtom* aAttribute,
-                               PRInt32 aModType, 
-                               PRInt32 aHint)
+                                 nsIContent* aChild,
+                                 PRInt32 aNameSpaceID,
+                                 nsIAtom* aAttribute,
+                                 PRInt32 aModType)
 {
-    nsresult rv = nsLeafFrame::AttributeChanged(aPresContext, aChild,
-                                              aNameSpaceID, aAttribute, aModType, aHint);
+  nsresult rv = nsLeafFrame::AttributeChanged(aPresContext, aChild,
+                                              aNameSpaceID, aAttribute,
+                                              aModType);
 
-    if (aAttribute == nsXULAtoms::mousethrough) 
-       UpdateMouseThrough();
+  if (aAttribute == nsXULAtoms::mousethrough) 
+    UpdateMouseThrough();
 
   return rv;
 }
@@ -156,9 +151,9 @@ void nsLeafBoxFrame::UpdateMouseThrough()
   if (mContent) {
     nsAutoString value;
     if (NS_CONTENT_ATTR_HAS_VALUE == mContent->GetAttr(kNameSpaceID_None, nsXULAtoms::mousethrough, value)) {
-        if (value.EqualsIgnoreCase("never")) 
+        if (value.Equals(NS_LITERAL_STRING("never")))
           mMouseThrough = never;
-        else if (value.EqualsIgnoreCase("always")) 
+        else if (value.Equals(NS_LITERAL_STRING("always")))
           mMouseThrough = always;
       
     }
@@ -395,12 +390,12 @@ nsLeafBoxFrame::Release(void)
 }
 
 NS_IMETHODIMP
-nsLeafBoxFrame::ContentChanged(nsIPresContext* aPresContext,
-                            nsIContent*     aChild,
-                            nsISupports*    aSubContent)
+nsLeafBoxFrame::CharacterDataChanged(nsIPresContext* aPresContext,
+                                     nsIContent*     aChild,
+                                     PRBool          aAppend)
 {
   NeedsRecalc();
-  return nsLeafFrame::ContentChanged(aPresContext, aChild, aSubContent);
+  return nsLeafFrame::CharacterDataChanged(aPresContext, aChild, aAppend);
 }
 
 

@@ -44,7 +44,7 @@
 #include "nsIPresContext.h"
 
 
-class nsHTMLBaseFontElement : public nsGenericHTMLLeafElement,
+class nsHTMLBaseFontElement : public nsGenericHTMLElement,
                               public nsIDOMHTMLBaseFontElement
 {
 public:
@@ -55,24 +55,21 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLLeafElement::)
+  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLElement::)
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLLeafElement::)
+  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLLeafElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLBaseElement
   NS_DECL_NSIDOMHTMLBASEFONTELEMENT
-
-  NS_IMETHOD GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                      nsChangeHint& aHint) const;
 };
 
 nsresult
 NS_NewHTMLBaseFontElement(nsIHTMLContent** aInstancePtrResult,
-                          nsINodeInfo *aNodeInfo)
+                          nsINodeInfo *aNodeInfo, PRBool aFromParser)
 {
   NS_ENSURE_ARG_POINTER(aInstancePtrResult);
 
@@ -112,7 +109,7 @@ NS_IMPL_RELEASE(nsHTMLBaseFontElement)
 
 // QueryInterface implementation for nsHTMLBaseFontElement
 NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLBaseFontElement,
-                                    nsGenericHTMLLeafElement)
+                                    nsGenericHTMLElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLBaseFontElement)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLBaseFontElement)
 NS_HTML_CONTENT_INTERFACE_MAP_END
@@ -137,7 +134,7 @@ nsHTMLBaseFontElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   if (NS_FAILED(rv))
     return rv;
 
-  CopyInnerTo(this, it, aDeep);
+  CopyInnerTo(it, aDeep);
 
   *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
 
@@ -198,29 +195,5 @@ nsHTMLBaseFontElement::GetSize(PRInt32 *aSize)
 NS_IMETHODIMP
 nsHTMLBaseFontElement::SetSize(PRInt32 aSize)
 {
-  nsHTMLValue value(aSize, eHTMLUnit_Integer);
-
-  return SetHTMLAttribute(nsHTMLAtoms::size, value, PR_TRUE);
-}
-
-NS_IMETHODIMP
-nsHTMLBaseFontElement::GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                                nsChangeHint& aHint) const
-{
-  static const AttributeImpactEntry attributes[] = {
-    // XXX this seems a bit harsh, perhaps we need a reflow_all?    
-    { &nsHTMLAtoms::color, NS_STYLE_HINT_RECONSTRUCT_ALL },
-    { &nsHTMLAtoms::face, NS_STYLE_HINT_RECONSTRUCT_ALL },
-    { &nsHTMLAtoms::size, NS_STYLE_HINT_RECONSTRUCT_ALL },
-    { nsnull, NS_STYLE_HINT_NONE }
-  };
-
-  static const AttributeImpactEntry* const map[] = {
-    attributes,
-    sCommonAttributeMap,
-  };
-  
-  FindAttributeImpact(aAttribute, aHint, map, NS_ARRAY_LENGTH(map));
-  
-  return NS_OK;
+  return SetIntAttr(nsHTMLAtoms::size, aSize);
 }

@@ -112,12 +112,16 @@ nsXMLProcessingInstruction::GetAttrValue(const nsAString& aAttr,
   return nsParserUtils::GetQuotedAttributeValue(data, aAttr, aValue);
 }
 
-NS_IMETHODIMP
-nsXMLProcessingInstruction::GetTag(nsIAtom** aResult) const
+nsIAtom *
+nsXMLProcessingInstruction::Tag() const
 {
-  *aResult = nsLayoutAtoms::processingInstructionTagName;
-  NS_ADDREF(*aResult);
-  return NS_OK;
+  return nsLayoutAtoms::processingInstructionTagName;
+}
+
+PRBool
+nsXMLProcessingInstruction::IsContentOfType(PRUint32 aFlags) const
+{
+  return !(aFlags & ~ePROCESSING_INSTRUCTION);
 }
 
 NS_IMETHODIMP
@@ -125,6 +129,18 @@ nsXMLProcessingInstruction::GetNodeName(nsAString& aNodeName)
 {
   aNodeName.Assign(mTarget);
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXMLProcessingInstruction::GetNodeValue(nsAString& aNodeValue)
+{
+  return nsGenericDOMDataNode::GetNodeValue(aNodeValue);
+}
+
+NS_IMETHODIMP
+nsXMLProcessingInstruction::SetNodeValue(const nsAString& aNodeValue)
+{
+  return nsGenericDOMDataNode::SetNodeValue(aNodeValue);
 }
 
 NS_IMETHODIMP
@@ -151,7 +167,7 @@ nsXMLProcessingInstruction::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
 }
 
 #ifdef DEBUG
-NS_IMETHODIMP
+void
 nsXMLProcessingInstruction::List(FILE* out, PRInt32 aIndent) const
 {
   NS_PRECONDITION(mDocument, "bad content");
@@ -167,12 +183,11 @@ nsXMLProcessingInstruction::List(FILE* out, PRInt32 aIndent) const
   fputs(NS_LossyConvertUCS2toASCII(tmp).get(), out);
 
   fputs(">\n", out);
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsXMLProcessingInstruction::DumpContent(FILE* out, PRInt32 aIndent,
-                                        PRBool aDumpAll) const {
-  return NS_OK;
+                                        PRBool aDumpAll) const
+{
 }
 #endif

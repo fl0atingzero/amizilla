@@ -122,6 +122,10 @@ public:
   // from nsIAnonymousContentCreator
   NS_IMETHOD CreateAnonymousContent(nsIPresContext* aPresContext,
                                     nsISupportsArray& aChildList);
+  NS_IMETHOD CreateFrameFor(nsIPresContext*   aPresContext,
+                               nsIContent *      aContent,
+                               nsIFrame**        aFrame);
+  virtual void PostCreateFrames();
 
   // Utility methods to set current widget state
   void SetValue(const nsAString& aValue);
@@ -130,7 +134,7 @@ public:
                                   nsIFrame*       aChildList);
 
 //==== BEGIN NSIFORMCONTROLFRAME
-  NS_IMETHOD_(PRInt32) GetType() const; //*
+  NS_IMETHOD_(PRInt32) GetFormControlType() const; //*
   NS_IMETHOD GetName(nsAString* aName);//*
   virtual void SetFocus(PRBool aOn , PRBool aRepaint); 
   virtual void ScrollIntoView(nsIPresContext* aPresContext);
@@ -172,15 +176,14 @@ public:
 
 //==== END NSIGFXTEXTCONTROLFRAME2
 //==== OVERLOAD of nsIFrame
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
 
   /** handler for attribute changes to mContent */
   NS_IMETHOD AttributeChanged(nsIPresContext* aPresContext,
                               nsIContent*     aChild,
                               PRInt32         aNameSpaceID,
                               nsIAtom*        aAttribute,
-                              PRInt32         aModType, 
-                              PRInt32         aHint);
+                              PRInt32         aModType);
 
   NS_IMETHOD GetText(nsString* aText);
 
@@ -279,10 +282,6 @@ protected:
                                  nsIRenderingContext*  aRendContext,
                                  nsSize&               aDesiredSize,
                                  nsSize&               aMinSize);
-
-  NS_IMETHOD CreateFrameFor(nsIPresContext*   aPresContext,
-                               nsIContent *      aContent,
-                               nsIFrame**        aFrame);
 
   PRInt32 GetWidthInCharacters() const;
 

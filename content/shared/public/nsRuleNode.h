@@ -310,11 +310,6 @@ public:
                  // callback to trigger the normal checking codepath)
   };
 
-  enum { // Types of RuleBits
-    eNoneBits,
-    eDependentBits
-  };
-
 private:
   nsIPresContext* mPresContext; // Our pres context.
 
@@ -488,18 +483,36 @@ protected:
                                       nsStyleContext* aContext,  
                                       nsRuleNode* aHighestNode,
                                       const RuleDetail& aRuleDetail, PRBool aInherited);
+  const nsStyleStruct* ComputeSVGResetData(nsStyleStruct* aStartSVG, const nsRuleDataStruct& aSVGData, 
+                                           nsStyleContext* aContext,  
+                                           nsRuleNode* aHighestNode,
+                                           const RuleDetail& aRuleDetail, PRBool aInherited);
 #endif
+
+  // helpers for |ComputeFontData| that need access to |mNoneBits|:
+  static void SetFont(nsIPresContext* aPresContext, nsStyleContext* aContext,
+                      nscoord aMinFontSize, PRBool aUseDocumentFonts,
+                      PRBool aIsGeneric, const nsRuleDataFont& aFontData,
+                      const nsFont& aDefaultFont,
+                      const nsStyleFont* aParentFont,
+                      nsStyleFont* aFont, PRBool& aInherited);
+  static void SetGenericFont(nsIPresContext* aPresContext,
+                             nsStyleContext* aContext,
+                             const nsRuleDataFont& aFontData,
+                             PRUint8 aGenericFontID, nscoord aMinFontSize,
+                             PRBool aUseDocumentFonts, nsStyleFont* aFont);
+
+  void AdjustLogicalBoxProp(nsStyleContext* aContext,
+                            const nsCSSValue& aLTRSource,
+                            const nsCSSValue& aRTLSource,
+                            const nsCSSValue& aLTRLogicalValue,
+                            const nsCSSValue& aRTLLogicalValue,
+                            const nsStyleSides& aParentRect,
+                            nsStyleSides& aRect,
+                            PRUint8 aSide,
+                            PRInt32 aMask,
+                            PRBool& aInherited);
   
-  typedef const nsStyleStruct*
-  (nsRuleNode::*ComputeStyleDataFn)(nsStyleStruct* aStartStruct,
-                                    const nsRuleDataStruct& aStartData,
-                                    nsStyleContext* aContext,
-                                    nsRuleNode* aHighestNode,
-                                    const RuleDetail& aRuleDetail,
-                                    PRBool aInherited);
-
-  static ComputeStyleDataFn gComputeStyleDataFn[];
-
   inline RuleDetail CheckSpecifiedProperties(const nsStyleStructID aSID, const nsRuleDataStruct& aRuleDataStruct);
 
   const nsStyleStruct* GetParentData(const nsStyleStructID aSID);
@@ -525,10 +538,8 @@ protected:
   const nsStyleStruct* GetXULData(nsStyleContext* aContext);
 #ifdef MOZ_SVG
   const nsStyleStruct* GetSVGData(nsStyleContext* aContext);
+  const nsStyleStruct* GetSVGResetData(nsStyleContext* aContext);
 #endif
-
-  typedef const nsStyleStruct* (nsRuleNode::*GetStyleDataFn)(nsStyleContext*);
-  static GetStyleDataFn gGetStyleDataFn[];
 
 public:
   nsRuleNode(nsIPresContext* aPresContext, nsIStyleRule* aRule,
@@ -537,7 +548,6 @@ public:
 
   static nsRuleNode* CreateRootNode(nsIPresContext* aPresContext);
 
-  nsresult GetBits(PRInt32 aType, PRUint32* aResult);
   nsresult Transition(nsIStyleRule* aRule, nsRuleNode** aResult);
   nsRuleNode* GetParent() const { return mParent; }
   PRBool IsRoot() const { return mParent == nsnull; }

@@ -58,7 +58,7 @@
 
 #define NS_TO_XLIBRGB_RGB(ns) (ns & 0xff) << 16 | (ns & 0xff00) | ((ns >> 16) & 0xff)
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsRenderingContextXlib, nsIRenderingContext)
+NS_IMPL_ISUPPORTS1(nsRenderingContextXlib, nsIRenderingContext)
 
 #ifdef PR_LOGGING 
 static PRLogModuleInfo * RenderingContextXlibLM = PR_NewLogModule("RenderingContextXlib");
@@ -251,9 +251,9 @@ nsresult nsRenderingContextXlib::CommonInit(void)
   mClipRegion->Init();
   mClipRegion->SetTo(0, 0, width, height);
 
-  mContext->GetDevUnitsToAppUnits(mP2T);
+  mP2T = mContext->DevUnitsToAppUnits();
   float app2dev;
-  mContext->GetAppUnitsToDevUnits(app2dev);
+  app2dev = mContext->AppUnitsToDevUnits();
   mTranMatrix->AddScale(app2dev, app2dev);
   return NS_OK;
 }

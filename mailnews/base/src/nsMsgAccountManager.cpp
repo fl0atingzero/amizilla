@@ -79,6 +79,8 @@
 #include "nsIImapIncomingServer.h" 
 #include "nsIImapUrl.h"
 #include "nsIMessengerOSIntegration.h"
+#include "nsICategoryManager.h"
+#include "nsISupportsPrimitives.h"
 
 #define PREF_MAIL_ACCOUNTMANAGER_ACCOUNTS "mail.accountmanager.accounts"
 #define PREF_MAIL_ACCOUNTMANAGER_DEFAULTACCOUNT "mail.accountmanager.defaultaccount"
@@ -95,7 +97,6 @@
 
 static NS_DEFINE_CID(kMsgAccountCID, NS_MSGACCOUNT_CID);
 static NS_DEFINE_CID(kPrefServiceCID, NS_PREF_CID);
-static NS_DEFINE_CID(kMsgBiffManagerCID, NS_MSGBIFFMANAGER_CID);
 static NS_DEFINE_CID(kMsgFolderCacheCID, NS_MSGFOLDERCACHE_CID);
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 
@@ -145,6 +146,7 @@ nsMsgAccountManager::nsMsgAccountManager() :
   m_cleanupInboxInProgress(PR_FALSE),
   m_haveShutdown(PR_FALSE),
   m_shutdownInProgress(PR_FALSE),
+  m_userAuthenticated(PR_FALSE),
   m_prefs(0)
 {
 }
@@ -234,6 +236,23 @@ nsMsgAccountManager::GetShutdownInProgress(PRBool *_retval)
 {
     NS_ENSURE_ARG_POINTER(_retval);
     *_retval = m_shutdownInProgress;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMsgAccountManager::GetUserNeedsToAuthenticate(PRBool *aRetval)
+{
+  NS_ENSURE_ARG_POINTER(aRetval);
+  if (!m_userAuthenticated)
+    return m_prefs->GetBoolPref("mail.password_protect_local_cache", aRetval);
+  *aRetval = !m_userAuthenticated;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMsgAccountManager::SetUserNeedsToAuthenticate(PRBool aUserNeedsToAuthenticate)
+{
+    m_userAuthenticated = !aUserNeedsToAuthenticate;
     return NS_OK;
 }
 
@@ -398,7 +417,7 @@ nsMsgAccountManager::createKeyedIdentity(const char* key,
                                           getter_AddRefs(identity));
   if (NS_FAILED(rv)) return rv;
   
-  identity->SetKey(NS_CONST_CAST(char *,key));
+  identity->SetKey(key);
   
   nsCStringKey hashKey(key);
 
@@ -525,10 +544,10 @@ nsMsgAccountManager::createKeyedServer(const char* key,
 
   // now add all listeners that are supposed to be
   // waiting on root folders
-  nsCOMPtr<nsIFolder> rootFolder;
+  nsCOMPtr<nsIMsgFolder> rootFolder;
   rv = server->GetRootFolder(getter_AddRefs(rootFolder));
   mFolderListeners->EnumerateForwards(addListenerToFolder,
-                                      (void *)(nsIFolder*)rootFolder);
+                                      (void *)(nsIMsgFolder*)rootFolder);
 
   *aServer = server;
   NS_ADDREF(*aServer);
@@ -540,7 +559,7 @@ PRBool
 nsMsgAccountManager::addListenerToFolder(nsISupports *element, void *data)
 {
   nsresult rv;
-  nsIFolder *rootFolder = (nsIFolder *)data;
+  nsIMsgFolder *rootFolder = (nsIMsgFolder *)data;
   nsCOMPtr<nsIFolderListener> listener = do_QueryInterface(element, &rv);
   NS_ENSURE_SUCCESS(rv, PR_TRUE);
 
@@ -552,7 +571,7 @@ PRBool
 nsMsgAccountManager::removeListenerFromFolder(nsISupports *element, void *data)
 {
   nsresult rv;
-  nsIFolder *rootFolder = (nsIFolder *)data;
+  nsIMsgFolder *rootFolder = (nsIMsgFolder *)data;
   nsCOMPtr<nsIFolderListener> listener = do_QueryInterface(element, &rv);
   NS_ENSURE_SUCCESS(rv, PR_TRUE);
 
@@ -636,7 +655,7 @@ nsMsgAccountManager::RemoveAccount(nsIMsgAccount *aAccount)
     // remove reference from hashtable
     NS_IF_RELEASE(removedServer);
     
-    nsCOMPtr<nsIFolder> rootFolder;
+    nsCOMPtr<nsIMsgFolder> rootFolder;
     server->GetRootFolder(getter_AddRefs(rootFolder));
     nsCOMPtr<nsISupportsArray> allDescendents;
     NS_NewISupportsArray(getter_AddRefs(allDescendents));
@@ -711,7 +730,7 @@ nsMsgAccountManager::removeKeyedAccount(const char *key)
   // the one with 'key'
   nsCAutoString newAccountList;
   char *newStr;
-  char *rest = NS_CONST_CAST(char *,(const char*)accountList);
+  char *rest = accountList.BeginWriting();
   
   char *token = nsCRT::strtok(rest, ",", &newStr);
   while (token) {
@@ -833,7 +852,7 @@ nsMsgAccountManager::notifyDefaultServerChange(nsIMsgAccount *aOldAccount,
   nsresult rv;
 
   nsCOMPtr<nsIMsgIncomingServer> server;
-  nsCOMPtr<nsIFolder> rootFolder;
+  nsCOMPtr<nsIMsgFolder> rootFolder;
   
   // first tell old server it's no longer the default
   if (aOldAccount) {
@@ -906,11 +925,11 @@ nsMsgAccountManager::hashUnloadServer(nsHashKey *aKey, void *aData,
 	nsMsgAccountManager *accountManager = (nsMsgAccountManager*)closure;
 	accountManager->NotifyServerUnloaded(server);
 
-	nsCOMPtr<nsIFolder> rootFolder;
+	nsCOMPtr<nsIMsgFolder> rootFolder;
 	rv = server->GetRootFolder(getter_AddRefs(rootFolder));
 
     accountManager->mFolderListeners->EnumerateForwards(removeListenerFromFolder,
-                                        (void *)(nsIFolder*)rootFolder);
+                                        (void *)(nsIMsgFolder*)rootFolder);
 
 	if(NS_SUCCEEDED(rv))
 		rootFolder->Shutdown(PR_TRUE);
@@ -1004,7 +1023,7 @@ PRBool PR_CALLBACK nsMsgAccountManager::cleanupOnExit(nsHashKey *aKey, void *aDa
     imapserver->GetCleanupInboxOnExit(&cleanupInboxOnExit);
   if (emptyTrashOnExit || cleanupInboxOnExit)
   {
-    nsCOMPtr<nsIFolder> root;
+    nsCOMPtr<nsIMsgFolder> root;
     server->GetRootFolder(getter_AddRefs(root));
     nsXPIDLCString type;
     server->GetType(getter_Copies(type));
@@ -1409,14 +1428,13 @@ nsMsgAccountManager::LoadAccounts()
   m_accountsLoaded = PR_TRUE;  //It is ok to return null accounts like when we create new profile
   m_haveShutdown = PR_FALSE;
   
-  if (!accountList || !accountList[0]) {
+  if (!accountList || !accountList[0])
     return NS_OK;
-  }
   
     /* parse accountList and run loadAccount on each string, comma-separated */   
     nsCOMPtr<nsIMsgAccount> account;
     char *newStr;
-    char *rest = NS_CONST_CAST(char*,(const char*)accountList);
+    char *rest = accountList.BeginWriting();
     nsCAutoString str;
 
     char *token = nsCRT::strtok(rest, ",", &newStr);
@@ -1424,9 +1442,8 @@ nsMsgAccountManager::LoadAccounts()
       str = token;
       str.StripWhitespace();
       
-      if (!str.IsEmpty()) {
+      if (!str.IsEmpty()) 
           rv = GetAccount(str.get(), getter_AddRefs(account));
-      }
 
       // force load of accounts (need to find a better way to do this
       nsCOMPtr<nsISupportsArray> identities;
@@ -1507,7 +1524,7 @@ nsMsgAccountManager::SetSpecialFolders()
       if (folderUri && NS_SUCCEEDED(rdf->GetResource(folderUri, getter_AddRefs(res))))
       {
         folder = do_QueryInterface(res, &rv);
-        nsCOMPtr <nsIFolder> parent;
+        nsCOMPtr <nsIMsgFolder> parent;
         if (folder && NS_SUCCEEDED(rv))
         {
           rv = folder->GetParent(getter_AddRefs(parent));
@@ -1528,7 +1545,7 @@ nsMsgAccountManager::SetSpecialFolders()
         folder = do_QueryInterface(res, &rv);
         if (folder && NS_SUCCEEDED(rv))
         {
-          nsCOMPtr <nsIFolder> parent;
+          nsCOMPtr <nsIMsgFolder> parent;
           rv = folder->GetParent(getter_AddRefs(parent));
           if (NS_SUCCEEDED(rv) && parent) // only set flag if folder is real
             rv = folder->SetFlag(MSG_FOLDER_FLAG_TEMPLATES);
@@ -1602,7 +1619,7 @@ nsMsgAccountManager::createKeyedAccount(const char* key,
                                           (void **)getter_AddRefs(account));
   
   if (NS_FAILED(rv)) return rv;
-  account->SetKey(NS_CONST_CAST(char*,(const char*)key));
+  account->SetKey(key);
 
   // add to internal nsISupportsArray
   m_accounts->AppendElement(NS_STATIC_CAST(nsISupports*, account));
@@ -2164,7 +2181,7 @@ nsMsgAccountManager::addListener(nsHashKey *aKey, void *element, void *aData)
 
   nsresult rv;
   
-  nsCOMPtr<nsIFolder> rootFolder;
+  nsCOMPtr<nsIMsgFolder> rootFolder;
   rv = server->GetRootFolder(getter_AddRefs(rootFolder));
   NS_ENSURE_SUCCESS(rv, PR_TRUE);
 
@@ -2182,7 +2199,7 @@ nsMsgAccountManager::removeListener(nsHashKey *aKey, void *element, void *aData)
 
   nsresult rv;
   
-  nsCOMPtr<nsIFolder> rootFolder;
+  nsCOMPtr<nsIMsgFolder> rootFolder;
   rv = server->GetRootFolder(getter_AddRefs(rootFolder));
   NS_ENSURE_SUCCESS(rv, PR_TRUE);
 
@@ -2341,4 +2358,50 @@ nsMsgAccountManager::SaveAccountInfo()
   NS_ENSURE_SUCCESS(rv,rv);
   return m_prefs->SavePrefFile(nsnull);
 }
+
+NS_IMETHODIMP
+nsMsgAccountManager::GetChromePackageName(const char *aExtensionName, char **aChromePackageName)
+{
+  NS_ENSURE_ARG_POINTER(aExtensionName);
+  NS_ENSURE_ARG_POINTER(aChromePackageName);
+ 
+  nsresult rv;
+  nsCOMPtr<nsICategoryManager> catman = do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv,rv);
+
+  nsCOMPtr<nsISimpleEnumerator> e;
+  rv = catman->EnumerateCategory(MAILNEWS_ACCOUNTMANAGER_EXTENSIONS, getter_AddRefs(e));
+  if(NS_SUCCEEDED(rv) && e) {
+    while (PR_TRUE) {
+      nsCOMPtr<nsISupportsCString> catEntry;
+      rv = e->GetNext(getter_AddRefs(catEntry));
+      if (NS_FAILED(rv) || !catEntry) 
+        break;
+
+      nsCAutoString entryString;
+      rv = catEntry->GetData(entryString);
+      if (NS_FAILED(rv))
+         break;
+
+      nsXPIDLCString contractidString;
+      rv = catman->GetCategoryEntry(MAILNEWS_ACCOUNTMANAGER_EXTENSIONS, entryString.get(), getter_Copies(contractidString));
+      if (NS_FAILED(rv)) 
+        break;
+
+      nsCOMPtr <nsIMsgAccountManagerExtension> extension = do_GetService(contractidString.get(), &rv);
+      if (NS_FAILED(rv) || !extension)
+        break;
+      
+      nsXPIDLCString name;
+      rv = extension->GetName(getter_Copies(name));
+      if (NS_FAILED(rv))
+        break;
+      
+      if (!strcmp(name.get(), aExtensionName))
+        return extension->GetChromePackageName(aChromePackageName);
+    }
+  }
+  return NS_ERROR_UNEXPECTED;
+}
+
 

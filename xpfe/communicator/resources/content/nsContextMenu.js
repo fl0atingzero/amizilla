@@ -62,6 +62,11 @@ nsContextMenu.prototype = {
     },
     // Initialize context menu.
     initMenu : function ( popup ) {
+        const xulNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
+        if ( document.popupNode.namespaceURI == xulNS ) {
+          this.shouldDisplay = false;
+          return;
+        }
         // Save menu.
         this.menu = popup;
 
@@ -113,15 +118,17 @@ nsContextMenu.prototype = {
         //this.setItemAttrFromNode( "context-stop", "disabled", "canStop" );
     },
     initSaveItems : function () {
-        this.showItem( "context-savepage", !( this.inDirList || this.isTextSelected || this.onTextInput ) && !( this.onLink && this.onImage ) );
+        this.showItem( "context-savepage", 
+                       !( this.inDirList || this.isTextSelected || this.onTextInput || this.onStandaloneImage ||
+                         (this.onLink && this.onImage)));
 
         // Save link depends on whether we're in a link.
         this.showItem( "context-savelink", this.onSaveableLink );
 
         // Save image depends on whether there is one.
-        this.showItem( "context-saveimage", this.onImage );
+        this.showItem( "context-saveimage", this.onImage || this.onStandaloneImage);
         
-        this.showItem( "context-sendimage", this.onImage );
+        this.showItem( "context-sendimage", this.onImage || this.onStandaloneImage);
     },
     initViewItems : function () {
         // View source is always OK, unless in directory listing.
@@ -136,9 +143,9 @@ nsContextMenu.prototype = {
         this.showItem( "context-sep-properties", !( this.inDirList || this.isTextSelected || this.onTextInput ) );
         // Set As Wallpaper depends on whether an image was clicked on, and only works on Windows.
         var isWin = navigator.appVersion.indexOf("Windows") != -1;
-        this.showItem( "context-setWallpaper", isWin && this.onImage );
+        this.showItem( "context-setWallpaper", isWin && (this.onImage || this.onStandaloneImage));
 
-        this.showItem( "context-sep-image", this.onImage );
+        this.showItem( "context-sep-image", this.onImage || this.onStandaloneImage);
 
         if( isWin && this.onImage )
             // Disable the Set As Wallpaper menu item if we're still trying to load the image
@@ -154,13 +161,13 @@ nsContextMenu.prototype = {
         this.showItem( "context-viewimage", this.onImage && !this.onStandaloneImage);
 
         // View background image depends on whether there is one.
-        this.showItem( "context-viewbgimage", showView );
-        this.showItem( "context-sep-viewbgimage", showView );
+        this.showItem( "context-viewbgimage", showView && !this.onStandaloneImage);
+        this.showItem( "context-sep-viewbgimage", showView && !this.onStandaloneImage);
         this.setItemAttr( "context-viewbgimage", "disabled", this.hasBGImage ? null : "true");
     },
     initMiscItems : function () {
         // Use "Bookmark This Link" if on a link.
-        this.showItem( "context-bookmarkpage", !( this.isTextSelected || this.onTextInput ) );
+        this.showItem( "context-bookmarkpage", !( this.isTextSelected || this.onTextInput || this.onStandaloneImage ) );
         this.showItem( "context-bookmarklink", this.onLink && !this.onMailtoLink );
         this.showItem( "context-searchselect", this.isTextSelected && !this.onTextInput );
         this.showItem( "frame", this.inFrame );
@@ -224,11 +231,6 @@ nsContextMenu.prototype = {
     },
     // Set various context menu attributes based on the state of the world.
     setTarget : function ( node ) {
-        const xulNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
-        if ( node.namespaceURI == xulNS ) {
-          this.shouldDisplay = false;
-          return;
-        }
         // Initialize contextual info.
         this.onImage    = false;
         this.onStandaloneImage = false;
@@ -608,6 +610,21 @@ nsContextMenu.prototype = {
         openTopWin( this.bgImageURL );
     },
     setWallpaper: function() {
+      // Confirm since it's annoying if you hit this accidentally.
+      var promptService       = Components.classes["@mozilla.org/embedcomp/prompt-service;1"].getService(Components.interfaces.nsIPromptService);
+      var gNavigatorBundle    = document.getElementById("bundle_navigator");
+      var promptTitle         = gNavigatorBundle.getString("wallpaperConfirmTitle");
+      var promptMsg           = gNavigatorBundle.getString("wallpaperConfirmMsg");
+      var promptConfirmButton = gNavigatorBundle.getString("wallpaperConfirmButton");
+
+      var buttonPressed = promptService.confirmEx(window, promptTitle, promptMsg,
+                                                   (promptService.BUTTON_TITLE_IS_STRING * promptService.BUTTON_POS_0) +
+                                                   (promptService.BUTTON_TITLE_CANCEL    * promptService.BUTTON_POS_1),
+                                                   promptConfirmButton, null, null, null, {value:0});
+ 
+      if (buttonPressed != 0)
+        return;
+
       var winhooks = Components.classes[ "@mozilla.org/winhooks;1" ].
                        getService(Components.interfaces.nsIWindowsHooks);
       
@@ -638,6 +655,19 @@ nsContextMenu.prototype = {
             addresses = url.substring( 7, qmark );
         } else {
             addresses = url.substr( 7 );
+        }
+
+        // Let's try to unescape it using a character set
+        // in case the address is not ASCII.
+        try {
+          var characterSet = Components.lookupMethod(this.target.ownerDocument, "characterSet")
+                                       .call(this.target.ownerDocument);
+          const textToSubURI = Components.classes["@mozilla.org/intl/texttosuburi;1"]
+                                         .getService(Components.interfaces.nsITextToSubURI);
+          addresses = textToSubURI.unEscapeNonAsciiURI(characterSet, addresses);
+        }
+        catch(ex) {
+          // Do nothing.
         }
 
         var clipboard = this.getService( "@mozilla.org/widget/clipboardhelper;1",
@@ -769,7 +799,7 @@ nsContextMenu.prototype = {
     //selected text.   Only use the first 15 chars.
     isTextSelection : function() {
         var result = false;
-        var selection = this.searchSelected();
+        var selection = this.searchSelected(16);
 
         var bundle = srGetStrBundle("chrome://communicator/locale/contentAreaCommands.properties");
 
@@ -788,13 +818,21 @@ nsContextMenu.prototype = {
         return result;
     },
     
-    searchSelected : function() {
+    searchSelected : function( charlen ) {
         var focusedWindow = document.commandDispatcher.focusedWindow;
         var searchStr = focusedWindow.__proto__.getSelection.call(focusedWindow);
         searchStr = searchStr.toString();
-        searchStr = searchStr.replace( /^\s+/, "" );
-        searchStr = searchStr.replace(/(\n|\r|\t)+/g, " ");
-        searchStr = searchStr.replace(/\s+$/,"");
+        // searching for more than 150 chars makes no sense
+        if (!charlen)
+            charlen = 150;
+        if (charlen < searchStr.length) {
+            // only use the first charlen important chars. see bug 221361
+            var pattern = new RegExp("^(?:\\s*.){0," + charlen + "}");
+            pattern.test(searchStr);
+            searchStr = RegExp.lastMatch;
+        }
+        searchStr = searchStr.replace(/\s*(.*?)\s*$/, "$1");
+        searchStr = searchStr.replace(/\s+/g, " ");
         return searchStr;
     },
     

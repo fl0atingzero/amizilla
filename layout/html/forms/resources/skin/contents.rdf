@@ -20,7 +20,7 @@
    - the Initial Developer. All Rights Reserved.
    -
    - Contributor(s):
-   -  Brian Ryner <bryner@netscape.com>
+   -  Brian Ryner <bryner@brianryner.com>
    -
    - Alternatively, the contents of this file may be used under the terms of
    - either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -56,5 +56,5 @@
   <!-- Version Information.  State that we work only with major version 1 of this
        package. -->
   <RDF:Description about="urn:mozilla:skin:classic/1.0:forms"
-    chrome:skinVersion="1.2"/>
+#expand     chrome:skinVersion="__MOZILLA_SKIN_VERSION__"/>
 </RDF:RDF>

@@ -56,7 +56,8 @@ public:
     nsRootAccessibleWrap(nsIDOMNode *aDOMNode, nsIWeakReference* aShell);
     virtual ~nsRootAccessibleWrap();
 
-    NS_IMETHOD GetAccParent(nsIAccessible **  aAccParent);
+    NS_IMETHOD GetParent(nsIAccessible **  aParent);
+    NS_IMETHOD GetRole(PRUint32 *aRole);
 };
 
 #endif   /* __NS_ROOT_ACCESSIBLE_WRAP_H__ */

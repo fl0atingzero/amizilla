@@ -58,26 +58,18 @@
 #include "nsIHTMLContent.h"
 #include "nsIWidget.h"
 #include "nsIComponentManager.h"
-#include "nsIView.h"
-#include "nsIViewManager.h"
-#include "nsViewsCID.h"
-#include "nsColor.h"
 #include "nsIDocument.h"
 #include "nsButtonFrameRenderer.h"
 #include "nsFormControlFrame.h"
-#include "nsIFrameManager.h"
+#include "nsFrameManager.h"
 #include "nsINameSpaceManager.h"
 #include "nsReflowPath.h"
 #include "nsIServiceManager.h"
 #include "nsIDOMHTMLButtonElement.h"
 #include "nsIDOMHTMLInputElement.h"
+#include "nsStyleSet.h"
 #ifdef ACCESSIBILITY
 #include "nsIAccessibilityService.h"
-#endif
-
-#if 0
-// see nsHTMLButtonControlFrame::Reflow()
-static NS_DEFINE_IID(kViewCID, NS_VIEW_CID);
 #endif
 
 nsresult
@@ -99,9 +91,6 @@ nsHTMLButtonControlFrame::nsHTMLButtonControlFrame()
   : nsHTMLContainerFrame()
 {
   mInline = PR_TRUE;
-  mPreviousCursor = eCursor_standard;
-  mTranslatedRect = nsRect(0,0,0,0);
-  mDidInit = PR_FALSE;
 
   mCacheSize.width             = -1;
   mCacheSize.height            = -1;
@@ -136,17 +125,16 @@ nsHTMLButtonControlFrame::Init(nsIPresContext*  aPresContext,
     flags |= NS_BLOCK_SHRINK_WRAP;
   }
 
-  nsCOMPtr<nsIPresShell> shell;
-  aPresContext->GetShell(getter_AddRefs(shell));
   nsIFrame* areaFrame;
+  nsIPresShell *shell = aPresContext->PresShell();
   NS_NewAreaFrame(shell, &areaFrame, flags);
   mFrames.SetFrames(areaFrame);
 
   // Resolve style and initialize the frame
   nsRefPtr<nsStyleContext> styleContext;
-  styleContext = aPresContext->ResolvePseudoStyleContextFor(mContent,
-                                            nsCSSAnonBoxes::buttonContent,
-                                            mStyleContext);
+  styleContext = shell->StyleSet()->ResolvePseudoStyleFor(mContent,
+                                                          nsCSSAnonBoxes::buttonContent,
+                                                          mStyleContext);
   mFrames.FirstChild()->Init(aPresContext, mContent, this, styleContext, nsnull);
 
   return rv;
@@ -186,8 +174,7 @@ NS_IMETHODIMP nsHTMLButtonControlFrame::GetAccessible(nsIAccessible** aAccessibl
   nsCOMPtr<nsIAccessibilityService> accService = do_GetService("@mozilla.org/accessibilityService;1");
 
   if (accService) {
-    nsCOMPtr<nsIContent> content;
-    GetContent(getter_AddRefs(content));
+    nsIContent* content = GetContent();
     nsCOMPtr<nsIDOMHTMLButtonElement> buttonElement(do_QueryInterface(content));
     if (buttonElement) //If turned XBL-base form control off, the frame contains HTML 4 button
       return accService->CreateHTML4ButtonAccessible(NS_STATIC_CAST(nsIFrame*, this), aAccessible);
@@ -202,7 +189,7 @@ NS_IMETHODIMP nsHTMLButtonControlFrame::GetAccessible(nsIAccessible** aAccessibl
 
 
 NS_IMETHODIMP_(PRInt32)
-nsHTMLButtonControlFrame::GetType() const
+nsHTMLButtonControlFrame::GetFormControlType() const
 {
   return nsFormControlHelper::GetType(mContent);
 }
@@ -217,6 +204,22 @@ NS_IMETHODIMP
 nsHTMLButtonControlFrame::GetValue(nsAString* aResult)
 {
   return nsFormControlHelper::GetValueAttr(mContent, aResult);
+}
+
+void
+nsHTMLButtonControlFrame::ReParentFrameList(nsFrameManager* aFrameManager,
+                                            nsIFrame* aFrameList)
+{
+  // get the new parent context from the first child: that is the
+  // frame that the subsequent children will be made children of
+  nsStyleContext* newParentContext = mFrames.FirstChild()->GetStyleContext();
+
+  // Set the parent for each of the child frames
+  for (nsIFrame* frame = aFrameList; frame; frame = frame->GetNextSibling()) {
+    frame->SetParent(mFrames.FirstChild());
+    // now reparent the contexts for the reparented frame too
+    aFrameManager->ReParentStyleContext(frame, newParentContext);
+  }
 }
 
 PRBool
@@ -256,8 +259,7 @@ void
 nsHTMLButtonControlFrame::ScrollIntoView(nsIPresContext* aPresContext)
 {
   if (aPresContext) {
-    nsCOMPtr<nsIPresShell> presShell;
-    aPresContext->GetShell(getter_AddRefs(presShell));
+    nsIPresShell *presShell = aPresContext->GetPresShell();
     if (presShell) {
      presShell->ScrollFrameIntoView(this,
                    NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE,NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE);
@@ -265,23 +267,6 @@ nsHTMLButtonControlFrame::ScrollIntoView(nsIPresContext* aPresContext)
     }
   }
 }
-
-void
-nsHTMLButtonControlFrame::GetTranslatedRect(nsIPresContext* aPresContext, nsRect& aRect)
-{
-  nsIView* view;
-  nsPoint viewOffset(0,0);
-  GetOffsetFromView(aPresContext, viewOffset, &view);
-  while (nsnull != view) {
-    nsPoint tempOffset;
-    view->GetPosition(&tempOffset.x, &tempOffset.y);
-    viewOffset += tempOffset;
-    view->GetParent(view);
-  }
-  aRect = nsRect(viewOffset.x, viewOffset.y, mRect.width, mRect.height);
-}
-
-            
 
 NS_IMETHODIMP
 nsHTMLButtonControlFrame::HandleEvent(nsIPresContext* aPresContext, 
@@ -320,31 +305,9 @@ nsHTMLButtonControlFrame::SetInitialChildList(nsIPresContext* aPresContext,
                                               nsIAtom*        aListName,
                                               nsIFrame*       aChildList)
 {
-  // get the frame manager and the style context of the new parent frame
-  // this is used whent he children are reparented below
   // NOTE: the whole reparenting should not need to happen: see bugzilla bug 51767
-  //
-  nsCOMPtr<nsIPresShell> shell;
-  nsCOMPtr<nsIFrameManager> frameManager;
-  nsStyleContext* newParentContext;
-  aPresContext->GetShell(getter_AddRefs(shell));
-  if (shell) {
-    shell->GetFrameManager(getter_AddRefs(frameManager));
-  }
-  // get the new parent context from the first child: that is the frame that the
-  // subsequent children will be made children of
-  newParentContext = mFrames.FirstChild()->GetStyleContext();
-
-  // Set the parent for each of the child frames
-  for (nsIFrame* frame = aChildList; nsnull != frame; frame->GetNextSibling(&frame)) {
-    frame->SetParent(mFrames.FirstChild());
-    // now reparent the contexts for the reparented frame too
-    if (frameManager) {
-      frameManager->ReParentStyleContext(frame, newParentContext);
-    }
-  }
-
-  // Queue up the frames for the inline frame
+  ReParentFrameList(aPresContext->FrameManager(), aChildList);
+  
   return mFrames.FirstChild()->SetInitialChildList(aPresContext, nsnull, aChildList);
 }
 
@@ -366,7 +329,7 @@ nsHTMLButtonControlFrame::Paint(nsIPresContext*      aPresContext,
 
 #if 0 // old way
   PaintChildren(aPresContext, aRenderingContext, aDirtyRect, NS_FRAME_PAINT_LAYER_BACKGROUND);
-  PaintChildren(aPresContext, aRenderingContext, aDirtyRect, NS_FRAME_PAINT_LAYER_FLOATERS);
+  PaintChildren(aPresContext, aRenderingContext, aDirtyRect, NS_FRAME_PAINT_LAYER_FLOATS);
   PaintChildren(aPresContext, aRenderingContext, aDirtyRect, NS_FRAME_PAINT_LAYER_FOREGROUND);
 
 #else // temporary
@@ -387,7 +350,7 @@ nsHTMLButtonControlFrame::Paint(nsIPresContext*      aPresContext,
   aRenderingContext.SetClipRect(rect, nsClipCombine_kIntersect, clipEmpty);
 
   PaintChildren(aPresContext, aRenderingContext, aDirtyRect, NS_FRAME_PAINT_LAYER_BACKGROUND);
-  PaintChildren(aPresContext, aRenderingContext, aDirtyRect, NS_FRAME_PAINT_LAYER_FLOATERS);
+  PaintChildren(aPresContext, aRenderingContext, aDirtyRect, NS_FRAME_PAINT_LAYER_FLOATS);
   PaintChildren(aPresContext, aRenderingContext, aDirtyRect, NS_FRAME_PAINT_LAYER_FOREGROUND);
 
   aRenderingContext.PopState(clipEmpty);
@@ -428,45 +391,6 @@ nsHTMLButtonControlFrame::Reflow(nsIPresContext* aPresContext,
   }
 #endif
 
-  // commenting this out for now. We need a view to do mouse grabbing but
-  // it doesn't really seem to work correctly. When you press the only event
-  // you can get after that is a release. You need mouse enter and exit.
-  // the view also breaks the outline code. For some reason you can not reset 
-  // the clip rect to draw outside you bounds if you have a view. And you need to
-  // because the outline must be drawn outside of our bounds according to CSS. -EDV
-
-  // XXX If you do decide you need a view, then create it in the Init() function
-  // and not here...
-#if 0
-  if (!mDidInit) {
-    // create our view, we need a view to grab the mouse 
-    nsIView* view;
-    GetView(&view);
-    if (!view) {
-      nsresult result = nsComponentManager::CreateInstance(kViewCID, nsnull, NS_GET_IID(nsIView), (void **)&view);
-      nsCOMPtr<nsIPresShell> presShell;
-      aPresContext->GetShell(getter_AddRefs(presShell));
-      nsCOMPtr<nsIViewManager> viewMan;
-      presShell->GetViewManager(getter_AddRefs(viewMan));
-
-      nsIFrame* parWithView;
-      nsIView *parView;
-      GetParentWithView(&parWithView);
-      parWithView->GetView(&parView);
-      // the view's size is not know yet, but its size will be kept in synch with our frame.
-      nsRect boundBox(0, 0, 500, 500); 
-      result = view->Init(viewMan, boundBox, parView, nsnull);
-      viewMan->InsertChild(parView, view, 0);
-      SetView(view);
-
-      // set the opacity
-      viewMan->SetViewOpacity(view, GetStyleColor()->mOpacity);
-
-    }
-    mDidInit = PR_TRUE;
-  }
-#endif
-
   // Reflow the child
   nsIFrame* firstKid = mFrames.FirstChild();
   nsSize availSize(aReflowState.mComputedWidth, NS_INTRINSICSIZE);
@@ -491,7 +415,8 @@ nsHTMLButtonControlFrame::Reflow(nsIPresContext* aPresContext,
     // See if it's targeted at us
     nsHTMLReflowCommand *command = aReflowState.path->mReflowCommand;
     if (command) {
-      Invalidate(aPresContext, nsRect(0,0,mRect.width,mRect.height), PR_FALSE);
+      // I'm not sure what exactly this Invalidate is for
+      Invalidate(nsRect(0,0,mRect.width,mRect.height), PR_FALSE);
 
       nsReflowType  reflowType;
       command->GetType(reflowType);
@@ -601,6 +526,10 @@ nsHTMLButtonControlFrame::ReflowButtonContents(nsIPresContext* aPresContext,
     yoff = (minInternalHeight - aDesiredSize.height) / 2;
   }
 
+  // Adjust the ascent by our offset (since we moved the child's
+  // baseline by that much).
+  aDesiredSize.ascent += yoff;
+  
   // Place the child.  If we have a non-intrinsic width, we want to
   // reduce the left padding as needed to try and fit the text in the
   // button
@@ -628,13 +557,11 @@ nsHTMLButtonControlFrame::ReflowButtonContents(nsIPresContext* aPresContext,
                     yoff + aFocusPadding.top + aReflowState.mComputedBorderPadding.top, 0);
 }
 
-NS_IMETHODIMP
-nsHTMLButtonControlFrame::IsPercentageBase(PRBool& aBase) const
+/* virtual */ PRBool
+nsHTMLButtonControlFrame::IsContainingBlock() const
 {
-  aBase = PR_TRUE;
-  return NS_OK;
+  return PR_TRUE;
 }
-
 
 PRIntn
 nsHTMLButtonControlFrame::GetSkipSides() const
@@ -652,12 +579,9 @@ nsHTMLButtonControlFrame::GetFont(nsIPresContext* aPresContext,
 NS_IMETHODIMP
 nsHTMLButtonControlFrame::GetFormContent(nsIContent*& aContent) const
 {
-  nsIContent* content;
-  nsresult    rv;
-
-  rv = GetContent(&content);
-  aContent = content;
-  return rv;
+  aContent = GetContent();
+  NS_IF_ADDREF(aContent);
+  return NS_OK;
 }
 
 nscoord 
@@ -736,10 +660,53 @@ nsHTMLButtonControlFrame::AppendFrames(nsIPresContext* aPresContext,
                                        nsIAtom*        aListName,
                                        nsIFrame*       aFrameList)
 {
+  ReParentFrameList(aPresContext->FrameManager(), aFrameList);
   return mFrames.FirstChild()->AppendFrames(aPresContext,
-                                     aPresShell,
-                                     aListName,
-                                     aFrameList);
+                                            aPresShell,
+                                            aListName,
+                                            aFrameList);
+}
+
+NS_IMETHODIMP
+nsHTMLButtonControlFrame::InsertFrames(nsIPresContext* aPresContext,
+                                       nsIPresShell&   aPresShell,
+                                       nsIAtom*        aListName,
+                                       nsIFrame*       aPrevFrame,
+                                       nsIFrame*       aFrameList)
+{
+  ReParentFrameList(aPresContext->FrameManager(), aFrameList);
+  return mFrames.FirstChild()->InsertFrames(aPresContext,
+                                            aPresShell,
+                                            aListName,
+                                            aPrevFrame,
+                                            aFrameList);
+}
+
+NS_IMETHODIMP
+nsHTMLButtonControlFrame::RemoveFrame(nsIPresContext* aPresContext,
+                                      nsIPresShell&   aPresShell,
+                                      nsIAtom*        aListName,
+                                      nsIFrame*       aOldFrame)
+{
+  return mFrames.FirstChild()->RemoveFrame(aPresContext,
+                                           aPresShell,
+                                           aListName,
+                                           aOldFrame);
+}
+
+NS_IMETHODIMP
+nsHTMLButtonControlFrame::ReplaceFrame(nsIPresContext* aPresContext,
+                                       nsIPresShell&   aPresShell,
+                                       nsIAtom*        aListName,
+                                       nsIFrame*       aOldFrame,
+                                       nsIFrame*       aNewFrame)
+{
+  ReParentFrameList(aPresContext->FrameManager(), aNewFrame);
+  return mFrames.FirstChild()->ReplaceFrame(aPresContext,
+                                            aPresShell,
+                                            aListName,
+                                            aOldFrame,
+                                            aNewFrame);
 }
 
 NS_IMETHODIMP

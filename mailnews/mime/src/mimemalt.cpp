@@ -46,8 +46,6 @@
 #include "mimemoz2.h" // for prefs
 #include "nsCRT.h"
 
-static NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
-
 extern "C" MimeObjectClass mimeMultipartRelatedClass;
 
 #define MIME_SUPERCLASS mimeMultipartClass
@@ -352,7 +350,7 @@ MimeMultipartAlternative_display_cached_part(MimeObject *obj)
   status = MimePartBufferRead (malt->part_buffer,
                   /* The (nsresult (*) ...) cast is to turn the
                    `void' argument into `MimeObject'. */
-                  ((nsresult (*) (char *, PRInt32, void *))
+                  ((nsresult (*) (const char *, PRInt32, void *))
                   body->clazz->parse_buffer),
                   body);
 

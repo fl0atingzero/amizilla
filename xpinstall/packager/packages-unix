@@ -24,6 +24,7 @@ bin/chrome/en-win.jar
 bin/chrome/US.jar
 bin/defaults/profile/US/*
 bin/defaults/messenger/US/*
+bin/defaults/isp/US/movemail.rdf
 bin/searchplugins/*
 
 [deflenus]
@@ -35,6 +36,7 @@ bin/defaults/profile/localstore.rdf
 bin/defaults/profile/search.rdf
 bin/defaults/profile/mimeTypes.rdf
 bin/defaults/messenger/mailViews.dat
+bin/defaults/isp/movemail.rdf
 
 [xpcom]
 bin/libmozjs.so
@@ -53,6 +55,9 @@ bin/components/libxpcom_compat_c.so
 [browser]
 bin/mozilla
 bin/mozilla-bin
+bin/init.d/README
+bin/init.d/S02solaris_patchchecker.sh
+bin/moz_patch_checker.dtksh
 bin/icons/*
 bin/libgtksuperwin.so
 bin/libgtkxtbin.so
@@ -79,7 +84,6 @@ bin/components/bookmarks.xpt
 bin/components/directory.xpt
 bin/components/downloadmanager.xpt
 bin/components/history.xpt
-bin/components/timebomb.xpt
 bin/components/related.xpt
 bin/components/urlbarhistory.xpt
 bin/components/search.xpt
@@ -89,7 +93,6 @@ bin/components/caps.xpt
 bin/components/cookie.xpt
 bin/components/libjsd.so
 bin/components/jsdservice.xpt
-bin/components/libjsdom.so
 bin/components/dom.xpt
 bin/components/dom_base.xpt
 bin/components/dom_core.xpt
@@ -240,6 +243,15 @@ bin/components/typeaheadfind.xpt
 bin/components/libtypeaheadfind.so
 bin/components/nsCloseAllWindows.js
 
+; Kerberos NegotiateAuth
+bin/components/libnegotiateauth.so
+
+; GnomeVFS support
+bin/components/libnkgnomevfs.so
+
+; Kerberos NegotiateAuth
+bin/components/libnegotiateauth.so
+
 ; webservices
 bin/components/libwebsrvcs.so
 bin/components/websrvcs.xpt
@@ -281,6 +293,7 @@ bin/chrome/icons/default/main-window*.xpm
 
 ; all the pref files must be part of base
 ; to prevent migration bugs
+bin/greprefs/*
 bin/defaults/pref/*
 bin/defaults/autoconfig/*
 ; this is only here if you have plugins -blizzard
@@ -308,10 +321,27 @@ bin/res/quirk.css
 bin/res/forms.css
 bin/res/platform-forms.css
 bin/res/EditorOverride.css
+bin/res/grabber.gif
+bin/res/table-add-column-after-active.gif
+bin/res/table-add-column-after-hover.gif
+bin/res/table-add-column-after.gif
+bin/res/table-add-column-before-active.gif
+bin/res/table-add-column-before-hover.gif
+bin/res/table-add-column-before.gif
+bin/res/table-add-row-after-active.gif
+bin/res/table-add-row-after-hover.gif
+bin/res/table-add-row-after.gif
+bin/res/table-add-row-before-active.gif
+bin/res/table-add-row-before-hover.gif
+bin/res/table-add-row-before.gif
+bin/res/table-remove-column-active.gif
+bin/res/table-remove-column-hover.gif
+bin/res/table-remove-column.gif
+bin/res/table-remove-row-active.gif
+bin/res/table-remove-row-hover.gif
+bin/res/table-remove-row.gif
 bin/res/viewsource.css
 bin/res/mathml.css
-bin/res/rdf/article.gif
-bin/res/rdf/document.gif
 bin/res/rdf/folder-closed.gif
 bin/res/rdf/folder-open.gif
 bin/res/rdf/loading.gif
@@ -363,6 +393,8 @@ bin/components/mdn-service.js
 bin/components/libbayesflt.so
 bin/components/mailview.xpt
 bin/components/libmailview.so
+bin/components/offlineStartup.js
+
 
 ; window icons
 bin/chrome/icons/default/abcardWindow*.xpm
@@ -389,6 +421,9 @@ bin/chrome/icons/default/venkman-window*.xpm
 ;       developers to create an installer.  Release builds contain 
 ;       a legitimate, working talkback.xpi.
 bin/components/nsSample.js
+bin/components/libqfaservices.so
+bin/components/qfaservices.xpt
+bin/components/talkback/*
 
 [psm]
 bin/libnssckbi.so
@@ -420,3 +455,9 @@ bin/defaults/pref/inspector.js
 bin/res/inspector/viewer-registry.rdf
 bin/res/inspector/search-registry.rdf
 bin/chrome/icons/default/winInspectorMain*.xpm
+
+[spellcheck]
+bin/components/libmyspell.so
+bin/components/libspellchecker.so
+bin/components/spellchecker.xpt
+bin/components/myspell/*

@@ -51,6 +51,8 @@ typedef struct {
     int i;	    // edge number: edge i goes from mPointList[i] to mPointList[i+1] 
 } Edge;
 
+#undef  IMETHOD_VISIBILITY
+#define IMETHOD_VISIBILITY NS_VISIBILITY_DEFAULT
 
 class nsRenderingContextImpl : public nsIRenderingContext
 {
@@ -136,6 +138,7 @@ public:
   NS_IMETHOD DrawScaledImage(imgIContainer *aImage, const nsRect * aSrcRect, const nsRect * aDestRect);
   NS_IMETHOD DrawTile(imgIContainer *aImage, nscoord aXOffset, nscoord aYOffset, const nsRect * aTargetRect);
 
+  NS_IMETHOD RenderPostScriptDataFragment(const unsigned char *aData, unsigned long aDatalen);
 
 protected:
   virtual ~nsRenderingContextImpl();
@@ -207,6 +210,8 @@ private:
 
 };
 
+#undef  IMETHOD_VISIBILITY
+#define IMETHOD_VISIBILITY NS_VISIBILITY_HIDDEN
 
 /** ---------------------------------------------------
  *  Class QBezierCurve, a quadratic bezier curve

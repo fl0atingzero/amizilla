@@ -50,16 +50,16 @@ public:
     Doit(void);
 
     MyService();
-    virtual ~MyService();
-
     NS_DECL_ISUPPORTS
 
+private:
+    ~MyService();
 };
 
 ////////////////////////////////////////////////////////////////////////////////
 // MyService Implementation
 
-NS_IMPL_ISUPPORTS1(MyService, IMyService);
+NS_IMPL_ISUPPORTS1(MyService, IMyService)
 
 MyService::MyService()
 {

@@ -103,7 +103,7 @@ typedef void
 
 /**
  * Indication of how the frame can be split. This is used when doing runaround
- * of floaters, and when pulling up child frames from a next-in-flow.
+ * of floats, and when pulling up child frames from a next-in-flow.
  *
  * The choices are splittable, not splittable at all, and splittable in
  * a non-rectangular fashion. This last type only applies to block-level
@@ -165,11 +165,6 @@ typedef PRUint32 nsFrameState;
 
 // If this bit is set, then the frame corresponds to generated content
 #define NS_FRAME_GENERATED_CONTENT                    0x00000040
-
-// If this bit is set, then the frame has requested one or more image
-// loads via the nsIPresContext.StartLoadImage API at some time during
-// its lifetime.
-#define NS_FRAME_HAS_LOADED_IMAGES                    0x00000080
 
 // If this bit is set, then the frame has been moved out of the flow,
 // e.g., it is absolutely positioned or floated
@@ -265,7 +260,7 @@ enum nsSpread {
 // For HTML reflow we rename with the different paint layers are
 // actually used for.
 #define NS_FRAME_PAINT_LAYER_BACKGROUND eFramePaintLayer_Underlay
-#define NS_FRAME_PAINT_LAYER_FLOATERS   eFramePaintLayer_Content
+#define NS_FRAME_PAINT_LAYER_FLOATS   eFramePaintLayer_Content
 #define NS_FRAME_PAINT_LAYER_FOREGROUND eFramePaintLayer_Overlay
 #define NS_FRAME_PAINT_LAYER_DEBUG      eFramePaintLayer_Overlay
 
@@ -669,23 +664,18 @@ public:
    *
    * Note that the list is only the additional named child lists and does not
    * include the unnamed principal child list.
-   *
-   * @return NS_ERROR_INVALID_ARG if the index is < 0 and NS_OK otherwise
    */
-  NS_IMETHOD  GetAdditionalChildListName(PRInt32   aIndex,
-                                         nsIAtom** aListName) const = 0;
+  virtual nsIAtom* GetAdditionalChildListName(PRInt32 aIndex) const = 0;
 
   /**
    * Get the first child frame from the specified child list.
    *
    * @param   aListName the name of the child list. A NULL pointer for the atom
    *            name means the unnamed principal child list
-   * @return  NS_ERROR_INVALID_ARG if there is no child list with the specified name
+   * @return  the child frame, or NULL if there is no such child
    * @see     #GetAdditionalListName()
    */
-  NS_IMETHOD  FirstChild(nsIPresContext* aPresContext,
-                         nsIAtom*        aListName,
-                         nsIFrame**      aFirstChild) const = 0;
+  virtual nsIFrame* GetFirstChild(nsIAtom* aListName) const = 0;
 
   /**
    * Child frames are linked together in a singly-linked list
@@ -788,7 +778,7 @@ public:
    * Get the current frame-state value for this frame. aResult is
    * filled in with the state bits. 
    */
-  nsFrameState GetStateBits() { return mState; }
+  nsFrameState GetStateBits() const { return mState; }
 
   /**
    * Update the current frame-state value for this frame. 
@@ -803,11 +793,11 @@ public:
    *
    * @param aPresContext the presentation context
    * @param aContent     the content node that was changed
-   * @param aSubContent  a hint to the frame about the change
+   * @param aAppend      a hint to the frame about the change
    */
-  NS_IMETHOD  ContentChanged(nsIPresContext* aPresContext,
-                             nsIContent*     aChild,
-                             nsISupports*    aSubContent) = 0;
+  NS_IMETHOD  CharacterDataChanged(nsIPresContext* aPresContext,
+                                   nsIContent*     aChild,
+                                   PRBool          aAppend) = 0;
 
   /**
    * This call is invoked when the value of a content objects's attribute
@@ -823,8 +813,7 @@ public:
                                nsIContent*     aChild,
                                PRInt32         aNameSpaceID,
                                nsIAtom*        aAttribute,
-                               PRInt32         aModType, 
-                               PRInt32         aHint) = 0;
+                               PRInt32         aModType) = 0;
 
   /**
    * Return how your frame can be split.
@@ -1014,12 +1003,33 @@ public:
    *
    * @see nsLayoutAtoms
    */
-  NS_IMETHOD  GetFrameType(nsIAtom** aType) const = 0;
+  virtual nsIAtom* GetType() const = 0;
   
   /**
-   * Is this frame a "containing block"?
+   * Is this frame a containing block for non-positioned elements?
    */
-  NS_IMETHOD  IsPercentageBase(PRBool& aBase) const = 0;
+  virtual PRBool IsContainingBlock() const = 0;
+
+  /**
+   * Invalidate part of the frame by asking the view manager to repaint.
+   * aDamageRect is allowed to extend outside the frame's bounds. We'll do the right
+   * thing. But it must be within the bounds of the view enclosing this frame.
+   * We deliberately don't have an Invalidate() method that defaults to the frame's bounds.
+   * We want all callers to *think* about what has changed in the frame and what area might
+   * need to be repainted.
+   *
+   * @param aDamageRect is in the frame's local coordinate space
+   */
+  void Invalidate(const nsRect& aDamageRect, PRBool aImmediate = PR_FALSE) const;
+
+  /**
+   * Computes a rect that includes this frame's outline. The returned rect is
+   * relative to this frame's origin.
+   *
+   * @param if nonnull, we record whether this rect is bigger than the frame's bounds
+   * @return the rect relative to this frame's origin
+   */
+  nsRect GetOutlineRect(PRBool* aAnyOutline = nsnull) const;
 
   /** Selection related calls
    */
@@ -1144,18 +1154,15 @@ public:
                                   PRBool*              aIsVisible) = 0;
 
   /**
-   * Determine whether the frame is logically empty, i.e., whether the
-   * layout would be the same whether or not the frame is present.
-   * Placeholder frames should return true.  Block frames should be
-   * considered empty whenever margins collapse through them, even
-   * though those margins are relevant.
-   *
-   * aIsPre should be ignored by frames to which the 'white-space'
-   * property applies.
+   * Determine whether the frame is logically empty, which is roughly
+   * whether the layout would be the same whether or not the frame is
+   * present.  Placeholder frames should return true.  Block frames
+   * should be considered empty whenever margins collapse through them,
+   * even though those margins are relevant.  Text frames containing
+   * only whitespace that does not contribute to the height of the line
+   * should return true.
    */
-  NS_IMETHOD IsEmpty(nsCompatibility aCompatMode,
-                     PRBool aIsPre,
-                     PRBool* aResult) = 0;
+  virtual PRBool IsEmpty() = 0;
 
   /**
    * IsGeneratedContentFrame returns whether a frame corresponds to
@@ -1218,72 +1225,6 @@ public:
    * this means children can't be made visible again.
    */
   virtual PRBool SupportsVisibilityHidden() { return PR_TRUE; }
-
-  // DEPRECATED COMPATIBILITY METHODS
-  nsresult GetContent(nsIContent** aContent) const {  *aContent = mContent; NS_IF_ADDREF(*aContent); return NS_OK; }
-  nsresult GetParent(nsIFrame** aParent) const { *aParent = mParent; return NS_OK; }
-  nsresult GetRect(nsRect& aRect) const {
-    aRect = mRect;
-    return NS_OK;
-  }
-  nsresult GetOrigin(nsPoint& aPoint) const {
-    aPoint.x = mRect.x;
-    aPoint.y = mRect.y;
-    return NS_OK;
-  }
-  nsresult GetSize(nsSize& aSize) const {
-    aSize.width = mRect.width;
-    aSize.height = mRect.height;
-    return NS_OK;
-  }
-  nsresult SetRect(nsIPresContext* aPresContext,
-               const nsRect&   aRect) {
-    MoveTo(aPresContext, aRect.x, aRect.y);
-    SizeTo(aPresContext, aRect.width, aRect.height);
-    return NS_OK;
-  }
-  nsresult MoveTo(nsIPresContext* aPresContext,
-                  nscoord         aX,
-                  nscoord         aY) {
-    mRect.x = aX;
-    mRect.y = aY;
-    return NS_OK;
-  }
-  nsresult SizeTo(nsIPresContext* aPresContext,
-                  nscoord         aWidth,
-                  nscoord         aHeight) {
-    mRect.width = aWidth;
-    mRect.height = aHeight;
-    return NS_OK;
-  }
-  nsresult GetNextSibling(nsIFrame** aNextSibling) const {
-    *aNextSibling = mNextSibling;
-    return NS_OK;
-  }
-  nsresult GetFrameState(nsFrameState* aResult) {
-    *aResult = mState;
-    return NS_OK;
-  }
-  nsresult SetFrameState(nsFrameState aState) {
-    mState = aState;
-    return NS_OK;
-  }
-  nsIView* GetView(nsIPresContext* aPresContext) const { return GetView(); }
-  nsIView* GetViewExternal(nsIPresContext* aPresContext) const { return GetViewExternal(); }
-  nsresult SetView(nsIPresContext* aPresContext, nsIView* aView) { return SetView(aView); }
-  nsIView* GetClosestView(nsIPresContext* aPresContext) const { return GetClosestView(); }
-  nsresult GetParentWithView(nsIPresContext* aPresContext, nsIFrame** aParent) const {
-    *aParent = GetAncestorWithViewExternal();
-    return NS_OK;
-  }
-  PRBool AreAncestorViewsVisible(nsIPresContext* aPresContext) const {
-    return AreAncestorViewsVisible();
-  }
-  nsresult GetWindow(nsIPresContext* aPresContext,
-                     nsIWidget**     aWidget) const {
-    *aWidget = GetWindow();
-    return NS_OK;
-  }
 
 protected:
   // Members

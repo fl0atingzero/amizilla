@@ -39,6 +39,8 @@
 #define INCL_WIN
 #include <os2.h>
 #include <string.h>
+#include <stdio.h>
+#include <assert.h>
 
 #include "npnulos2.h"
 
@@ -418,11 +420,15 @@ void CPlugin::showGetPluginDialog()
 
   m_bOnline = !bOffline;
 
+#ifdef OJI
   if(m_bOnline && m_bJavaScript && m_bSmartUpdate && useDefaultURL_P())
   {
     JRIEnv *penv = NPN_GetJavaEnv();
     m_bJava = (penv != NULL);
   }
+#else
+  m_bJava = FALSE;
+#endif
   
   dbgOut1("Environment:");
   dbgOut2("%s", m_bOnline ? "On-line" : "Off-line");

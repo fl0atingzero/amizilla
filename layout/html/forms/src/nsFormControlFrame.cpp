@@ -412,12 +412,12 @@ nsFormControlFrame::Paint(nsIPresContext*      aPresContext,
       return rv;
 
     rv = nsLeafFrame::Paint(aPresContext, aRenderingContext, aDirtyRect,
-                            NS_FRAME_PAINT_LAYER_FLOATERS);
+                            NS_FRAME_PAINT_LAYER_FLOATS);
     if (NS_FAILED(rv))
       return rv;
     // draw selection borders when appropriate
     rv = nsFrame::Paint(aPresContext, aRenderingContext, aDirtyRect,
-                            NS_FRAME_PAINT_LAYER_FLOATERS);
+                            NS_FRAME_PAINT_LAYER_FLOATS);
     if (NS_FAILED(rv))
       return rv;
 
@@ -445,7 +445,7 @@ nsFormControlFrame::GetFrameForPoint(nsIPresContext* aPresContext,
     if (NS_SUCCEEDED(rv))
       return NS_OK;
     rv = nsLeafFrame::GetFrameForPoint(aPresContext, aPoint,
-                                       NS_FRAME_PAINT_LAYER_FLOATERS, aFrame);
+                                       NS_FRAME_PAINT_LAYER_FLOATS, aFrame);
     if (NS_SUCCEEDED(rv))
       return NS_OK;
     rv = nsLeafFrame::GetFrameForPoint(aPresContext, aPoint,
@@ -496,17 +496,14 @@ nsFormControlFrame::DidReflow(nsIPresContext*           aPresContext,
   // The view is created hidden; once we have reflowed it and it has been
   // positioned then we show it.
   if (NS_FRAME_REFLOW_FINISHED == aStatus) {
-    nsIView* view = GetView(aPresContext);
+    nsIView* view = GetView();
     if (view) {
       nsViewVisibility newVis = GetStyleVisibility()->IsVisible()
                                   ? nsViewVisibility_kShow
                                   : nsViewVisibility_kHide;
-      nsViewVisibility oldVis;
       // only change if different.
-      view->GetVisibility(oldVis);
-      if (newVis != oldVis) {
-        nsCOMPtr<nsIViewManager> vm;
-        view->GetViewManager(*getter_AddRefs(vm));
+      if (newVis != view->GetVisibility()) {
+        nsIViewManager* vm = view->GetViewManager();
         if (vm) {
           vm->SetViewVisibility(view, newVis);
         }
@@ -573,9 +570,8 @@ nsFormControlFrame::RegUnRegAccessKey(nsIPresContext* aPresContext, nsIFrame * a
   nsresult rv = NS_ERROR_FAILURE;
   nsAutoString accessKey;
 
-  if (aFrame != nsnull) {
-    nsCOMPtr<nsIContent> content;
-    if (NS_SUCCEEDED(aFrame->GetContent(getter_AddRefs(content)))) {
+  if (aFrame) {
+    nsIContent* content = aFrame->GetContent();
 #if 1
       nsAutoString resultValue;
       rv = content->GetAttr(kNameSpaceID_None,
@@ -606,19 +602,14 @@ nsFormControlFrame::RegUnRegAccessKey(nsIPresContext* aPresContext, nsIFrame * a
         }
       }
 #endif
-    }
   }
 
   if (NS_CONTENT_ATTR_NOT_THERE != rv) {
-    nsCOMPtr<nsIEventStateManager> stateManager;
-    if (NS_SUCCEEDED(aPresContext->GetEventStateManager(getter_AddRefs(stateManager)))) {
-      nsCOMPtr<nsIContent> content;
-      aFrame->GetContent(getter_AddRefs(content));
-      if (aDoReg) {
-        return stateManager->RegisterAccessKey(content, (PRUint32)accessKey.First());
-      } else {
-        return stateManager->UnregisterAccessKey(content, (PRUint32)accessKey.First());
-      }
+    nsIEventStateManager *stateManager = aPresContext->EventStateManager();
+    if (aDoReg) {
+      return stateManager->RegisterAccessKey(aFrame->GetContent(), (PRUint32)accessKey.First());
+    } else {
+      return stateManager->UnregisterAccessKey(aFrame->GetContent(), (PRUint32)accessKey.First());
     }
   }
   return NS_ERROR_FAILURE;
@@ -639,8 +630,7 @@ void
 nsFormControlFrame::ScrollIntoView(nsIPresContext* aPresContext)
 {
   if (aPresContext) {
-    nsCOMPtr<nsIPresShell> presShell;
-    aPresContext->GetShell(getter_AddRefs(presShell));
+    nsIPresShell *presShell = aPresContext->GetPresShell();
     if (presShell) {
       presShell->ScrollFrameIntoView(this,
                    NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE,NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE);
@@ -703,7 +693,7 @@ nsFormControlFrame::GetSizeFromContent(PRInt32* aSize) const
 }
 
 NS_IMETHODIMP_(PRInt32)
-nsFormControlFrame::GetType() const
+nsFormControlFrame::GetFormControlType() const
 {
   return nsFormControlHelper::GetType(mContent);
 }
@@ -784,12 +774,9 @@ nsFormControlFrame::GetStyleSize(nsIPresContext* aPresContext,
 NS_IMETHODIMP
 nsFormControlFrame::GetFormContent(nsIContent*& aContent) const
 {
-  nsIContent* content;
-  nsresult    rv;
-
-  rv = GetContent(&content);
-  aContent = content;
-  return rv;
+  aContent = GetContent();
+  NS_IF_ADDREF(aContent);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -873,31 +860,25 @@ nsFormControlFrame::SetSuggestedSize(nscoord aWidth, nscoord aHeight)
 }
 
 nsresult 
-nsFormControlFrame::GetScreenHeight(nsIPresContext* aPresContext, nscoord& aHeight)
+nsFormControlFrame::GetScreenHeight(nsIPresContext* aPresContext,
+                                    nscoord& aHeight)
 {
-  aHeight = 0;
-  nsCOMPtr<nsIDeviceContext> context;
-  aPresContext->GetDeviceContext( getter_AddRefs(context) );
-  if ( context ) {
-    nsRect screen;
+  nsRect screen;
 
-    PRBool dropdownCanOverlapOSBar = PR_FALSE;
-    nsCOMPtr<nsILookAndFeel> lookAndFeel;
-    aPresContext->GetLookAndFeel(getter_AddRefs(lookAndFeel));
-    if ( lookAndFeel )
-      lookAndFeel->GetMetric(nsILookAndFeel::eMetric_MenusCanOverlapOSBar, dropdownCanOverlapOSBar);
-    if ( dropdownCanOverlapOSBar )
-      context->GetRect ( screen );
-    else
-      context->GetClientRect(screen);
+  nsIDeviceContext *context = aPresContext->DeviceContext();
+  PRBool dropdownCanOverlapOSBar = PR_FALSE;
+  nsILookAndFeel *lookAndFeel = aPresContext->LookAndFeel();
+  lookAndFeel->GetMetric(nsILookAndFeel::eMetric_MenusCanOverlapOSBar,
+                         dropdownCanOverlapOSBar);
+  if ( dropdownCanOverlapOSBar )
+    context->GetRect ( screen );
+  else
+    context->GetClientRect(screen);
       
-    float devUnits;
-    context->GetDevUnitsToAppUnits(devUnits);
-    aHeight = NSToIntRound(float(screen.height) / devUnits );
-    return NS_OK;
-  }
-
-  return NS_ERROR_FAILURE;
+  float devUnits;
+  devUnits = context->DevUnitsToAppUnits();
+  aHeight = NSToIntRound(float(screen.height) / devUnits );
+  return NS_OK;
 }
 
 // Calculate a frame's position in screen coordinates
@@ -909,7 +890,7 @@ nsFormControlFrame::GetAbsoluteFramePosition(nsIPresContext* aPresContext,
 {
   nsresult rv = NS_OK;
  
-  aFrame->GetRect(aAbsoluteTwipsRect);
+  aAbsoluteTwipsRect = aFrame->GetRect();
   // zero these out, 
   // because the GetOffsetFromView figures them out
   // XXXbz why do we need to do this, really?  Will we ever fail to
@@ -920,8 +901,8 @@ nsFormControlFrame::GetAbsoluteFramePosition(nsIPresContext* aPresContext,
   // Get conversions between twips and pixels
   float t2p;
   float p2t;
-  aPresContext->GetTwipsToPixels(&t2p);
-  aPresContext->GetPixelsToTwips(&p2t);
+  t2p = aPresContext->TwipsToPixels();
+  p2t = aPresContext->PixelsToTwips();
 
   // Start with frame's offset from it it's containing view
   nsIView *view = nsnull;
@@ -931,21 +912,18 @@ nsFormControlFrame::GetAbsoluteFramePosition(nsIPresContext* aPresContext,
   if (NS_SUCCEEDED(rv) && view) {
     aAbsoluteTwipsRect.MoveTo(frameOffset);
 
-    nsCOMPtr<nsIWidget> widget;
+    nsIWidget* widget;
     // Walk up the views, looking for a widget
     do { 
       // add in the offset of the view from its parent.
-      nsPoint viewPosition;
-      view->GetPosition(&viewPosition.x, &viewPosition.y);
-      aAbsoluteTwipsRect += viewPosition;
+      aAbsoluteTwipsRect += view->GetPosition();
 
-      view->GetWidget(*getter_AddRefs(widget));
+      widget = view->GetWidget();
       if (widget) {
         // account for space above and to the left of the view origin.
         // the widget is aligned with view's bounds, not its origin
         
-        nsRect bounds;
-        view->GetBounds(bounds);
+        nsRect bounds = view->GetBounds();
         aAbsoluteTwipsRect.x -= bounds.x;
         aAbsoluteTwipsRect.y -= bounds.y;
 
@@ -960,7 +938,7 @@ nsFormControlFrame::GetAbsoluteFramePosition(nsIPresContext* aPresContext,
         break;
       }
 
-      view->GetParent(view);
+      view = view->GetParent();
     } while (view);
   }
   

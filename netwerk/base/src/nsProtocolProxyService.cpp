@@ -43,13 +43,13 @@
 #include "nsIIOService.h"
 #include "nsIEventQueueService.h"
 #include "nsIProtocolHandler.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranchInternal.h"
 #include "nsReadableUtils.h"
+#include "nsString.h"
 #include "nsNetUtil.h"
 #include "nsCRT.h"
 #include "prnetdb.h"
-
-static NS_DEFINE_CID(kPrefServiceCID, NS_PREF_CID);
-static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID);
 
 #define IS_ASCII_SPACE(_c) ((_c) == ' ' || (_c) == '\t')
 
@@ -58,7 +58,8 @@ static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID);
 //
 // NOTE: we do the byte swapping here to minimize overall swapping.
 //
-static void MaskIPv6Addr(PRIPv6Addr &addr, PRUint16 mask_len)
+static void
+proxy_MaskIPv6Addr(PRIPv6Addr &addr, PRUint16 mask_len)
 {
     if (mask_len == 128)
         return;
@@ -87,18 +88,41 @@ static void MaskIPv6Addr(PRIPv6Addr &addr, PRUint16 mask_len)
     }
 }
 
-static const char PROXY_PREFS[] = "network.proxy";
-static PRInt32 PR_CALLBACK ProxyPrefsCallback(const char* pref, void* instance)
+static void
+proxy_GetStringPref(nsIPrefBranch *aPrefBranch,
+                    const char    *aPref,
+                    nsCString     &aResult)
 {
-    nsProtocolProxyService* proxyServ = (nsProtocolProxyService*) instance;
-    NS_ASSERTION(proxyServ, "bad instance data");
-    if (proxyServ) proxyServ->PrefsChanged(pref);
-    return 0;
+    nsXPIDLCString temp;
+    nsresult rv = aPrefBranch->GetCharPref(aPref, getter_Copies(temp));
+    if (NS_FAILED(rv))
+        aResult.Truncate();
+    else {
+        aResult.Assign(temp);
+        // all of our string prefs are hostnames, so we should remove any
+        // whitespace characters that the user might have unknowingly entered.
+        aResult.StripWhitespace();
+    }
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsProtocolProxyService, nsIProtocolProxyService);
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsProtocolProxyService::nsProxyInfo, nsIProxyInfo);
+static void
+proxy_GetIntPref(nsIPrefBranch *aPrefBranch,
+                 const char    *aPref,
+                 PRInt32       &aResult)
+{
+    PRInt32 temp;
+    nsresult rv = aPrefBranch->GetIntPref(aPref, &temp);
+    if (NS_FAILED(rv)) 
+        aResult = -1;
+    else
+        aResult = temp;
+}
 
+NS_IMPL_THREADSAFE_ISUPPORTS2(nsProtocolProxyService,
+                              nsIProtocolProxyService,
+                              nsIObserver)
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsProtocolProxyService::nsProxyInfo,
+                              nsIProxyInfo)
 
 nsProtocolProxyService::nsProtocolProxyService()
     : mUseProxy(0)
@@ -123,61 +147,40 @@ nsProtocolProxyService::~nsProtocolProxyService()
 nsresult
 nsProtocolProxyService::Init()
 {
-    nsresult rv;
-    mPrefs = do_GetService(kPrefServiceCID, &rv);
-    if (NS_FAILED(rv)) return rv;
+    // failure to access prefs is non-fatal
+    nsCOMPtr<nsIPrefBranchInternal> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID);
+    if (prefBranch) {
+        // monitor proxy prefs
+        prefBranch->AddObserver("network.proxy", this, PR_FALSE);
 
-    // register for change callbacks
-    rv = mPrefs->RegisterCallback(PROXY_PREFS, ProxyPrefsCallback, (void*)this);
-    if (NS_FAILED(rv)) return rv;
+        // read all prefs
+        PrefsChanged(prefBranch, nsnull);
+    }
+    return NS_OK;
+}
 
-    PrefsChanged(nsnull);
+NS_IMETHODIMP
+nsProtocolProxyService::Observe(nsISupports     *aSubject,
+                                const char      *aTopic,
+                                const PRUnichar *aData)
+{
+    nsCOMPtr<nsIPrefBranch> prefs = do_QueryInterface(aSubject);
+    if (prefs)
+        PrefsChanged(prefs, NS_LossyConvertUTF16toASCII(aData).get());
     return NS_OK;
 }
 
 void
-nsProtocolProxyService::GetStringPref(const char *aPref, nsCString &aResult)
+nsProtocolProxyService::PrefsChanged(nsIPrefBranch *prefBranch,
+                                     const char    *pref)
 {
-    nsXPIDLCString temp;
-    nsresult rv;
-    
-    rv = mPrefs->CopyCharPref(aPref, getter_Copies(temp));
-    if (NS_FAILED(rv))
-        aResult.Truncate();
-    else {
-        aResult.Assign(temp);
-        // all of our string prefs are hostnames, so we should remove any
-        // whitespace characters that the user might have unknowingly entered.
-        aResult.StripWhitespace();
-    }
-}
-
-void
-nsProtocolProxyService::GetIntPref(const char *aPref, PRInt32 &aResult)
-{
-    PRInt32 temp;
-    nsresult rv;
-
-    rv = mPrefs->GetIntPref(aPref, &temp);
-    if (NS_FAILED(rv)) 
-        aResult = -1;
-    else
-        aResult = temp;
-}
-
-void
-nsProtocolProxyService::PrefsChanged(const char* pref)
-{
-    NS_ASSERTION(mPrefs, "No preference service available!");
-    if (!mPrefs) return;
-
     nsresult rv = NS_OK;
     PRBool reloadPAC = PR_FALSE;
     nsXPIDLCString tempString;
 
     if (!pref || !strcmp(pref, "network.proxy.type")) {
         PRInt32 type = -1;
-        rv = mPrefs->GetIntPref("network.proxy.type",&type);
+        rv = prefBranch->GetIntPref("network.proxy.type",&type);
         if (NS_SUCCEEDED(rv)) {
             // bug 115720 - type 3 is the same as 0 (no proxy),
             // for ns4.x backwards compatability
@@ -188,7 +191,7 @@ nsProtocolProxyService::PrefsChanged(const char* pref)
                 // I'm paranoid about a loop of some sort - only do this
                 // if we're enumerating all prefs, and ignore any error
                 if (!pref)
-                    mPrefs->SetIntPref("network.proxy.type", 0);
+                    prefBranch->SetIntPref("network.proxy.type", 0);
             }
             mUseProxy = type; // type == 2 is autoconfig stuff
             reloadPAC = PR_TRUE;
@@ -196,38 +199,38 @@ nsProtocolProxyService::PrefsChanged(const char* pref)
     }
 
     if (!pref || !strcmp(pref, "network.proxy.http"))
-        GetStringPref("network.proxy.http", mHTTPProxyHost);
+        proxy_GetStringPref(prefBranch, "network.proxy.http", mHTTPProxyHost);
 
     if (!pref || !strcmp(pref, "network.proxy.http_port"))
-        GetIntPref("network.proxy.http_port", mHTTPProxyPort);
+        proxy_GetIntPref(prefBranch, "network.proxy.http_port", mHTTPProxyPort);
 
     if (!pref || !strcmp(pref, "network.proxy.ssl"))
-        GetStringPref("network.proxy.ssl", mHTTPSProxyHost);
+        proxy_GetStringPref(prefBranch, "network.proxy.ssl", mHTTPSProxyHost);
 
     if (!pref || !strcmp(pref, "network.proxy.ssl_port"))
-        GetIntPref("network.proxy.ssl_port", mHTTPSProxyPort);
+        proxy_GetIntPref(prefBranch, "network.proxy.ssl_port", mHTTPSProxyPort);
 
     if (!pref || !strcmp(pref, "network.proxy.ftp"))
-        GetStringPref("network.proxy.ftp", mFTPProxyHost);
+        proxy_GetStringPref(prefBranch, "network.proxy.ftp", mFTPProxyHost);
 
     if (!pref || !strcmp(pref, "network.proxy.ftp_port"))
-        GetIntPref("network.proxy.ftp_port", mFTPProxyPort);
+        proxy_GetIntPref(prefBranch, "network.proxy.ftp_port", mFTPProxyPort);
 
     if (!pref || !strcmp(pref, "network.proxy.gopher"))
-        GetStringPref("network.proxy.gopher", mGopherProxyHost);
+        proxy_GetStringPref(prefBranch, "network.proxy.gopher", mGopherProxyHost);
 
     if (!pref || !strcmp(pref, "network.proxy.gopher_port"))
-        GetIntPref("network.proxy.gopher_port", mGopherProxyPort);
+        proxy_GetIntPref(prefBranch, "network.proxy.gopher_port", mGopherProxyPort);
 
     if (!pref || !strcmp(pref, "network.proxy.socks"))
-        GetStringPref("network.proxy.socks", mSOCKSProxyHost);
+        proxy_GetStringPref(prefBranch, "network.proxy.socks", mSOCKSProxyHost);
     
     if (!pref || !strcmp(pref, "network.proxy.socks_port"))
-        GetIntPref("network.proxy.socks_port", mSOCKSProxyPort);
+        proxy_GetIntPref(prefBranch, "network.proxy.socks_port", mSOCKSProxyPort);
 
     if (!pref || !strcmp(pref, "network.proxy.socks_version")) {
         PRInt32 version;
-        GetIntPref("network.proxy.socks_version", version);
+        proxy_GetIntPref(prefBranch, "network.proxy.socks_version", version);
         // make sure this preference value remains sane
         if (version == 5)
             mSOCKSProxyVersion = 5;
@@ -236,15 +239,15 @@ nsProtocolProxyService::PrefsChanged(const char* pref)
     }
 
     if (!pref || !strcmp(pref, "network.proxy.no_proxies_on")) {
-        rv = mPrefs->CopyCharPref("network.proxy.no_proxies_on",
-                                  getter_Copies(tempString));
+        rv = prefBranch->GetCharPref("network.proxy.no_proxies_on",
+                                     getter_Copies(tempString));
         if (NS_SUCCEEDED(rv))
             LoadFilters(tempString.get());
     }
 
     if ((!pref || !strcmp(pref, "network.proxy.autoconfig_url") || reloadPAC) && (mUseProxy == 2)) {
-        rv = mPrefs->CopyCharPref("network.proxy.autoconfig_url", 
-                                  getter_Copies(tempString));
+        rv = prefBranch->GetCharPref("network.proxy.autoconfig_url", 
+                                     getter_Copies(tempString));
         if (NS_SUCCEEDED(rv) && (!reloadPAC || strcmp(tempString.get(), mPACURL.get()))) 
             ConfigureFromPAC(tempString);
     }
@@ -275,7 +278,7 @@ nsProtocolProxyService::HandlePACLoadEvent(PLEvent* aEvent)
         return NULL;
     }
 
-    nsCOMPtr<nsIIOService> pIOService(do_GetService(kIOServiceCID, &rv));
+    nsCOMPtr<nsIIOService> pIOService(do_GetIOService(&rv));
     if (!pIOService || NS_FAILED(rv)) {
         NS_ERROR("Cannot get IO Service");
         return NULL;
@@ -358,7 +361,7 @@ nsProtocolProxyService::CanUseProxy(nsIURI *aURI, PRInt32 defaultPort)
             // generate masked version of target IPv6 address
             PRIPv6Addr masked;
             memcpy(&masked, &ipv6, sizeof(PRIPv6Addr));
-            MaskIPv6Addr(masked, hinfo->ip.mask_len);
+            proxy_MaskIPv6Addr(masked, hinfo->ip.mask_len);
 
             // check for a match
             if (memcmp(&masked, &hinfo->ip.addr, sizeof(PRIPv6Addr)) == 0)
@@ -418,7 +421,9 @@ nsProtocolProxyService::ExtractProxyInfo(const char *start, PRBool permitHttp, n
         else if (PL_strncasecmp(start, kProxyType_SOCKS4, 6) == 0)
             type = kProxyType_SOCKS4;
         else if (PL_strncasecmp(start, kProxyType_SOCKS5, 6) == 0)
-            type = kProxyType_SOCKS5;
+            // map "SOCKS5" to "socks" to match contract-id of registered
+            // SOCKS-v5 socket provider.
+            type = kProxyType_SOCKS;
         break;
     }
     if (type) {
@@ -524,33 +529,33 @@ nsProtocolProxyService::ExamineForProxy(nsIURI *aURI, nsIProxyInfo **aResult)
     if (!mHTTPProxyHost.IsEmpty() && mHTTPProxyPort > 0 &&
         scheme.Equals(NS_LITERAL_CSTRING("http"))) {
         host = ToNewCString(mHTTPProxyHost);
-        type = "http";
+        type = kProxyType_HTTP;
         port = mHTTPProxyPort;
     }
     else if (!mHTTPSProxyHost.IsEmpty() && mHTTPSProxyPort > 0 &&
              scheme.Equals(NS_LITERAL_CSTRING("https"))) {
         host = ToNewCString(mHTTPSProxyHost);
-        type = "http";
+        type = kProxyType_HTTP;
         port = mHTTPSProxyPort;
     }
     else if (!mFTPProxyHost.IsEmpty() && mFTPProxyPort > 0 &&
              scheme.Equals(NS_LITERAL_CSTRING("ftp"))) {
         host = ToNewCString(mFTPProxyHost);
-        type = "http";
+        type = kProxyType_HTTP;
         port = mFTPProxyPort;
     }
     else if (!mGopherProxyHost.IsEmpty() && mGopherProxyPort > 0 &&
              scheme.Equals(NS_LITERAL_CSTRING("gopher"))) {
         host = ToNewCString(mGopherProxyHost);
-        type = "http";
+        type = kProxyType_HTTP;
         port = mGopherProxyPort;
     }
     else if (!mSOCKSProxyHost.IsEmpty() && mSOCKSProxyPort > 0) {
         host = ToNewCString(mSOCKSProxyHost);
         if (mSOCKSProxyVersion == 4) 
-            type = "socks4";
+            type = kProxyType_SOCKS4;
         else
-            type = "socks";
+            type = kProxyType_SOCKS;
         port = mSOCKSProxyPort;
     }
 
@@ -566,17 +571,22 @@ nsProtocolProxyService::NewProxyInfo(const char *aType,
                                      PRInt32 aPort,
                                      nsIProxyInfo **aResult)
 {
-    const char *type = nsnull;
+    static const char *types[] = {
+        kProxyType_HTTP,
+        kProxyType_SOCKS,
+        kProxyType_SOCKS4
+    };
 
-    // canonicalize type
-    if (PL_strcasecmp(aType, "http") == 0)
-        type = "http";
-    else if (PL_strcasecmp(aType, "socks") == 0)
-        type = "socks";
-    else if (PL_strcasecmp(aType, "socks4") == 0)
-        type = "socks4";
-    else
-        return NS_ERROR_INVALID_ARG;
+    // resolve type; this allows us to avoid copying the type string into each
+    // proxy info instance.  we just reference the string literals directly :)
+    const char *type = nsnull;
+    for (PRUint32 i=0; i<NS_ARRAY_LENGTH(types); ++i) {
+        if (PL_strcasecmp(aType, types[i]) == 0) {
+            type = types[i];
+            break;
+        }
+    }
+    NS_ENSURE_TRUE(type, NS_ERROR_INVALID_ARG);
 
     if (aPort <= 0)
         aPort = -1;
@@ -621,13 +631,12 @@ nsProtocolProxyService::ConfigureFromPAC(const char *url)
             nsProtocolProxyService::DestroyPACLoadEvent);
 
     // post the event into the ui event queue
-    if (eq->PostEvent(event) == PR_FAILURE) {
+    rv = eq->PostEvent(event);
+    if (NS_FAILED(rv)) {
         NS_ERROR("Failed to post PAC load event to UI EventQueue");
-        NS_RELEASE_THIS();
-        delete event;
-        return NS_ERROR_FAILURE;
+        PL_DestroyEvent(event);
     }
-    return NS_OK;
+    return rv;
 }
 
 NS_IMETHODIMP
@@ -727,7 +736,7 @@ nsProtocolProxyService::LoadFilters(const char *filters)
             }
 
             // apply mask to IPv6 address
-            MaskIPv6Addr(hinfo->ip.addr, hinfo->ip.mask_len);
+            proxy_MaskIPv6Addr(hinfo->ip.addr, hinfo->ip.mask_len);
         }
         else {
             PRUint32 startIndex, endIndex;

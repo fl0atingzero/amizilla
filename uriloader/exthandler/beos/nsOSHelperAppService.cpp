@@ -35,6 +35,7 @@
  * ***** END LICENSE BLOCK ***** */ 
 
 #include "nsOSHelperAppService.h"
+#include "nsMIMEInfoBeOS.h"
 #include "nsISupports.h"
 #include "nsString.h"
 #include "nsXPIDLString.h"
@@ -51,17 +52,8 @@
 #include <Entry.h>
 #include <Roster.h>
 
-#ifdef MOZ_LOGGING
-#define FORCE_PR_LOG /* Allow logging in the release build */
-#endif /* MOZ_LOGGING */
-#include "prlog.h"
-
-#ifdef PR_LOGGING
-static PRLogModuleInfo *gOSHelperLog = PR_NewLogModule("nsOSHelperAppService");
-#endif /* PR_LOGGING */
-
-#define LOG(args) PR_LOG(gOSHelperLog, PR_LOG_DEBUG, args)
-#define LOG_ENABLED() PR_LOG_TEST(gOSHelperLog, PR_LOG_DEBUG)
+#define LOG(args) PR_LOG(mLog, PR_LOG_DEBUG, args)
+#define LOG_ENABLED() PR_LOG_TEST(mLog, PR_LOG_DEBUG)
 
 nsOSHelperAppService::nsOSHelperAppService() : nsExternalHelperAppService()
 {
@@ -69,55 +61,6 @@ nsOSHelperAppService::nsOSHelperAppService() : nsExternalHelperAppService()
 
 nsOSHelperAppService::~nsOSHelperAppService()
 {}
-
-NS_IMETHODIMP nsOSHelperAppService::LaunchAppWithTempFile(nsIMIMEInfo * aMIMEInfo, nsIFile * aTempFile)
-{
-	nsresult rv = NS_OK;
-
-	LOG(("nsOSHelperAppService::LaunchAppWithTempFile\n"));
-
-	if (aMIMEInfo)
-	{
-		nsCOMPtr<nsIFile> application;
-		nsCAutoString path;
-		aTempFile->GetNativePath(path);
-
-		nsMIMEInfoHandleAction action = nsIMIMEInfo::useSystemDefault;
-		aMIMEInfo->GetPreferredAction(&action);
-
-		aMIMEInfo->GetPreferredApplicationHandler(getter_AddRefs(application));
-		if (application && action == nsIMIMEInfo::useHelperApp)
-		{
-			// if we were given an application to use then use it....otherwise
-			// make the registry call to launch the app
-			const char * strPath = path.get();
-			nsCOMPtr<nsIProcess> process = do_CreateInstance(NS_PROCESS_CONTRACTID);
-			nsresult rv;
-			if (NS_FAILED(rv = process->Init(application)))
-				return rv;
-			PRUint32 pid;
-			if (NS_FAILED(rv = process->Run(PR_FALSE, &strPath, 1, &pid)))
-				return rv;
-		}
-		else // use the system default
-		{
-			// Launch the temp file, unless it is an executable.
-			nsCOMPtr<nsILocalFile> local(do_QueryInterface(aTempFile));
-			if (!local)
-				return NS_ERROR_FAILURE;
-
-			PRBool executable = PR_TRUE;
-			local->IsExecutable(&executable);
-			if (executable)
-				return NS_ERROR_FAILURE;
-			
-			rv = local->Launch();
-		}
-	}
-
-	return rv;
-}
-
 
 NS_IMETHODIMP nsOSHelperAppService::ExternalProtocolHandlerExists(const char * aProtocolScheme, PRBool * aHandlerExists)
 {
@@ -169,8 +112,9 @@ nsresult nsOSHelperAppService::SetMIMEInfoForType(const char *aMIMEType, nsIMIME
 
 	nsresult rv = NS_ERROR_FAILURE;
 
-	nsCOMPtr<nsIMIMEInfo> mimeInfo (do_CreateInstance(NS_MIMEINFO_CONTRACTID));
+	nsMIMEInfoBeOS* mimeInfo = new nsMIMEInfoBeOS();
 	if (mimeInfo) {
+		NS_ADDREF(mimeInfo);
 		BMimeType mimeType(aMIMEType);
 		BMessage data;
 		mimeInfo->SetMIMEType(aMIMEType);
@@ -220,9 +164,9 @@ nsresult nsOSHelperAppService::SetMIMEInfoForType(const char *aMIMEType, nsIMIME
 				rv = GetFileTokenForPath(NS_ConvertUTF8toUCS2(path.Path()).get(), getter_AddRefs(handlerFile));
 
 				if (NS_SUCCEEDED(rv)) {
-					mimeInfo->SetPreferredApplicationHandler(handlerFile);
-					mimeInfo->SetPreferredAction(nsIMIMEInfo::useHelperApp);
-					mimeInfo->SetApplicationDescription(NS_ConvertUTF8toUCS2(path.Leaf()).get());
+					mimeInfo->SetDefaultApplication(handlerFile);
+					mimeInfo->SetPreferredAction(nsIMIMEInfo::useSystemDefault);
+					mimeInfo->SetDefaultDescription(NS_ConvertUTF8toUCS2(path.Leaf()).get());
 					LOG(("    Preferred App: %s\n",path.Leaf()));
 					doSave = false;
 				}
@@ -234,7 +178,6 @@ nsresult nsOSHelperAppService::SetMIMEInfoForType(const char *aMIMEType, nsIMIME
 		}
 
 		*_retval = mimeInfo;
-		NS_ADDREF(*_retval);
 		rv = NS_OK;
 	}
 	else
@@ -243,15 +186,11 @@ nsresult nsOSHelperAppService::SetMIMEInfoForType(const char *aMIMEType, nsIMIME
 	return rv;
 }
 
-NS_IMETHODIMP nsOSHelperAppService::GetFromExtension(const char *aFileExt,
+nsresult nsOSHelperAppService::GetMimeInfoFromExtension(const char *aFileExt,
         nsIMIMEInfo ** _retval) {
 	// if the extension is null, return immediately
 	if (!aFileExt || !*aFileExt)
 		return NS_ERROR_INVALID_ARG;
-
-	// first, see if the base class already has an entry....
-	nsresult rv = nsExternalHelperAppService::GetFromExtension(aFileExt, _retval);
-	if (NS_SUCCEEDED(rv) && *_retval) return NS_OK; // okay we got an entry so we are done.
 
 	LOG(("Here we do an extension lookup for '%s'\n", aFileExt));
 
@@ -287,22 +226,19 @@ NS_IMETHODIMP nsOSHelperAppService::GetFromExtension(const char *aFileExt,
 			mimeIndex++;
 		}
 		if (found) {
-			rv = SetMIMEInfoForType(mimeStr.String(), _retval);
+			return SetMIMEInfoForType(mimeStr.String(), _retval);
 		}
 	}
 
-	return rv;
+	// Extension not found
+	return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP nsOSHelperAppService::GetFromMIMEType(const char *aMIMEType,
+nsresult nsOSHelperAppService::GetMimeInfoFromMIMEType(const char *aMIMEType,
         nsIMIMEInfo ** _retval) {
 	// if the mime type is null, return immediately
-	if (!aMIMEType)
+	if (!aMIMEType || !*aMIMEType)
 		return NS_ERROR_INVALID_ARG;
-
-	// first, see if the base class already has an entry....
-	nsresult rv = nsExternalHelperAppService::GetFromMIMEType(aMIMEType, _retval);
-	if (NS_SUCCEEDED(rv) && *_retval) return NS_OK; // okay we got an entry so we are done.
 
 	LOG(("Here we do a mimetype lookup for '%s'\n", aMIMEType));
 
@@ -320,11 +256,39 @@ NS_IMETHODIMP nsOSHelperAppService::GetFromMIMEType(const char *aMIMEType,
 				index++;
 		}
 		if (found) {
-			rv = SetMIMEInfoForType(aMIMEType, _retval);
+			return SetMIMEInfoForType(aMIMEType, _retval);
 		}
 	}
 
-	return rv;
+	return NS_ERROR_FAILURE;
+}
+
+already_AddRefed<nsIMIMEInfo>
+nsOSHelperAppService::GetMIMEInfoFromOS(const char *aMIMEType, const char *aFileExt, PRBool* aFound)
+{
+  *aFound = PR_TRUE;
+  nsIMIMEInfo* mi = nsnull;
+  GetMimeInfoFromMIMEType(aMIMEType, &mi);
+  if (mi)
+    return mi;
+
+  GetMimeInfoFromExtension(aFileExt, &mi);
+  if (mi && aMIMEType && *aMIMEType)
+    mi->SetMIMEType(aMIMEType);
+  if (mi)
+    return mi;
+
+  *aFound = PR_FALSE;
+  mi = new nsMIMEInfoBeOS();
+  if (!mi)
+    return nsnull;
+  NS_ADDREF(mi);
+  if (aMIMEType && *aMIMEType)
+    mi->SetMIMEType(aMIMEType);
+  if (aFileExt && *aFileExt)
+    mi->AppendExtension(aFileExt);
+
+  return mi;
 }
 
 nsresult nsOSHelperAppService::GetFileTokenForPath(const PRUnichar* platformAppPath, nsIFile ** aFile)

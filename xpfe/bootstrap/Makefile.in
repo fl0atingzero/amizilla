@@ -16,7 +16,7 @@
 # Copyright (C) 1998 Netscape Communications Corporation. All
 # Rights Reserved.
 #
-# Contributor(s): 
+# Contributor(s): Jeremy Morton (jez9999@runbox.com)
 #
 
 DEPTH		= ../..
@@ -25,6 +25,8 @@ srcdir		= @srcdir@
 VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
+
+DIRS		= init.d
 
 # This code removes the console from release builds
 # (unless you've set MOZ_WINCONSOLE=1).
@@ -51,44 +53,33 @@ endif
 
 MODULE		= apprunner
 REQUIRES	= xpcom \
-		  xpconnect \
 		  string \
 		  webbrwsr \
 		  widget \
 		  dom \
 		  necko \
+		  content \
 		  pref \
 		  appshell \
 		  gfx \
-		  chrome \
 		  xpinstall \
 		  uriloader \
-		  view \
 		  windowwatcher \
 		  embed_base \
 		  embedcomponents \
-		  browser \
 		  docshell \
-		  uconv \
 		  locale \
-		  xremoteservice \
 		  profile \
 		  $(NULL)
 # for jprof
 REQUIRES	+= jprof
-ifeq ($(MOZ_WIDGET_TOOLKIT),os2)
-REQUIRES	+= \
-		  intl \
-		  profile \
-		  $(NULL)
-DIRS		+= os2turbo
-endif
-ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
-REQUIRES	+= intl profile appcomps
-endif
 
 ifdef NS_TRACE_MALLOC
 REQUIRES	+= tracemalloc
+endif
+
+ifdef MOZ_ENABLE_XREMOTE
+REQUIRES	+= xremoteservice
 endif
 
 include $(topsrcdir)/config/config.mk
@@ -108,6 +99,8 @@ ifdef MOZ_COMPONENTLIB
 DEFINES += -D_MOZCOMPS_SHARED_LIBRARY -D_BUILD_STATIC_BIN
 endif
 endif
+
+PREF_JS_EXPORTS = $(srcdir)/browser-prefs.js
 
 CPPSRCS		= \
 		nsAppRunner.cpp \
@@ -158,7 +151,7 @@ DEFINES		+= $(STATIC_DEFINES)
 CPPSRCS		+= $(STATIC_CPPSRCS)
 EXTRA_DSO_LIBS	+= $(STATIC_EXTRA_DSO_LIBS)
 REQUIRES	+= $(STATIC_REQUIRES)
-LIBS		+= $(STATIC_EXTRA_LIBS)
+EXTRA_LIBS	+= $(STATIC_EXTRA_LIBS)
 
 endif
 
@@ -166,9 +159,7 @@ endif
 ifdef GRE_BUILD
 LIBS            += \
 		$(DIST)/lib/$(LIB_PREFIX)string_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)string_obsolete_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)xpcomglue.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)embedstring_s.$(LIB_SUFFIX) \
 		$(NULL)
 else
 LIBS		+= $(XPCOM_LIBS)
@@ -187,10 +178,6 @@ ifdef GC_LEAK_DETECTOR
 LIBS += -lboehm
 endif
 
-ifdef MOZ_DEMANGLE_SYMBOLS
-LIBS += -liberty
-endif
-
 ifeq ($(MOZ_WIDGET_TOOLKIT),beos)
 BEOS_PROGRAM_RESOURCE = $(srcdir)/apprunner-beos.rsrc
 CPPSRCS += nsNativeAppSupportBeOS.cpp
@@ -203,6 +190,8 @@ LIBS += -lphexlib -lph
 endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),os2)
+DIRS += os2turbo
+REQUIRES += xpconnect intl profile
 CPPSRCS += nsNativeAppSupportOS2.cpp
 CPPSRCS += nsNativeAppSupportBase.cpp
 RESFILE = splashos2.res
@@ -230,7 +219,17 @@ DEFINES += -DSPLASH_XPM=\"$(SPLASH_XPM)\"
 LIBS += $(MOZ_GTK2_LIBS)
 endif
 
+# Add explicit X11 dependency when building against X11 toolkits
+ifneq (,$(filter gtk gtk2 xlib,$(MOZ_WIDGET_TOOLKIT)))
+LIBS += $(XLDFLAGS) $(XLIBS)
+endif
+
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
+REQUIRES += xpconnect intl appcomps
+ifdef MOZ_PHOENIX
+REQUIRES += winhooks
+endif
+
 RCINCLUDE = splash.rc
 CPPSRCS += nsNativeAppSupportWin.cpp nsNativeAppSupportBase.cpp
 OS_LIBS	+= $(call EXPAND_LIBNAME,comctl32 comdlg32 uuid shell32 ole32 oleaut32 version winspool gdi32)
@@ -249,6 +248,9 @@ else
 ICON_DIR=$(MOZ_WIDGET_TOOLKIT)
 endif
 
+# Include icons based on widget toolkit; not all platforms need the same set.
+
+# All-platform icons
 DESKTOP_ICONS = \
 	abcardWindow \
 	addressbookWindow \
@@ -268,6 +270,20 @@ DESKTOP_ICONS = \
 	venkman-window \
 	winInspectorMain \
 	$(NULL) 
+
+ifeq (windows,$(MOZ_WIDGET_TOOLKIT))
+# Windows icons
+DESKTOP_ICONS += \
+	gif-file \
+	html-file \
+	misc-file \
+	image-file \
+	jpeg-file \
+	script-file \
+	xml-file \
+	xul-file \
+	$(NULL)
+endif
 
 ifeq ($(ICON_DIR),gtk)
 DESKTOP_ICONS_SMALL=$(patsubst %,%16,$(DESKTOP_ICONS))
@@ -292,11 +308,6 @@ endif
 ifeq ($(OS_ARCH),OS2)
 ifdef BUILD_STATIC_LIBS
 EXE_DEF_FILE = mozilla.def
-ifeq ($(MOZ_OS2_TOOLS),VACPP)
-OS_LIBS += libuls.lib libconv.lib
-else
-OS_LIBS += -llibuni -luconv
-endif
 endif
 endif
 
@@ -323,7 +334,7 @@ endif
 
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 ifdef BUILD_STATIC_LIBS
-LIBS	+= -framework QuickTime
+LIBS	+= -framework QuickTime -framework IOKit
 endif
 
 endif
@@ -342,6 +353,10 @@ ifeq ($(OS_ARCH),WINNT)
 ifndef GNU_CC
 LDFLAGS += /HEAP:0x40000
 endif
+# Get rid of console window
+ifdef GNU_CC
+LDFLAGS += -mwindows
+endif
 endif
 
 CXXFLAGS	+= $(MOZ_TOOLKIT_REGISTRY_CFLAGS)
@@ -349,22 +364,23 @@ CXXFLAGS	+= $(MOZ_TOOLKIT_REGISTRY_CFLAGS)
 LOCAL_INCLUDES	= -I$(srcdir) -I.
 
 ifneq (,$(filter-out OS2 WINNT,$(OS_ARCH)))
-mozilla.1: mozilla.man.in Makefile.in Makefile $(DEPTH)/config/autoconf.mk
+$(MOZ_APP_NAME).1: mozilla.man.in Makefile.in Makefile $(DEPTH)/config/autoconf.mk
 	@sed -e "s|\@bindir\@|${bindir}|" -e "s|\@libdir\@|${libdir}|" \
-		-e "s|\@mozilla_version\@|${MOZILLA_VERSION}|" < $< > $@
+		-e "s|\@mozilla_version\@|${MOZ_APP_VERSION}|" < $< > $@
 
-libs:: mozilla.1
+libs:: $(MOZ_APP_NAME).1
 	$(INSTALL) $< $(DIST)/man/man1
 
-install:: mozilla.1
+install:: $(MOZ_APP_NAME).1
 	$(SYSINSTALL) $(IFLAGS1) $< $(DESTDIR)$(mandir)/man1
 
 MOZILLA_SCRIPT=mozilla
 
 $(MOZILLA_SCRIPT):: mozilla.in Makefile.in Makefile $(DEPTH)/config/autoconf.mk
 	cat $< | sed -e "s|%MOZAPPDIR%|$(mozappdir)|" \
+		-e "s|%MOZ_USER_DIR%|.mozilla|" \
 		-e "s|%MREDIR%|$(mredir)|" \
-		-e "s|mozilla-bin|$(PROGRAM)|g" > $@
+		-e "s|%MOZILLA-BIN%|$(PROGRAM)|g" > $@
 	chmod +x $@
 
 libs:: $(MOZILLA_SCRIPT)
@@ -373,7 +389,7 @@ libs:: $(MOZILLA_SCRIPT)
 install:: $(MOZILLA_SCRIPT)
 	$(SYSINSTALL) $(IFLAGS2) $< $(DESTDIR)$(bindir)
 
-GARBAGE += mozilla.1 $(MOZILLA_SCRIPT)
+GARBAGE += $(MOZ_APP_NAME).1 $(MOZILLA_SCRIPT)
 
 endif
 
@@ -383,11 +399,7 @@ libs:: $(srcdir)/splash.bmp
 endif
 
 ifeq ($(OS_ARCH),OS2)
-ifeq ($(MOZ_OS2_TOOLS),VACPP)
-LDFLAGS += /NOE
-else
 LDFLAGS += -Zlinker /NOE
-endif
 ifdef BUILD_STATIC_LIBS
 $(EXE_DEF_FILE):
 	rm -f $@

@@ -123,6 +123,8 @@ public:
 class nsSliderFrame : public nsBoxFrame
 {
 public:
+  friend class nsSliderMediator;
+
   nsSliderFrame(nsIPresShell* aShell);
   virtual ~nsSliderFrame();
 
@@ -165,23 +167,22 @@ public:
                    nsFramePaintLayer    aWhichLayer,
                    PRUint32             aFlags = 0);
  
-    NS_IMETHOD AttributeChanged(nsIPresContext* aPresContext,
+  NS_IMETHOD AttributeChanged(nsIPresContext* aPresContext,
                               nsIContent* aChild,
                               PRInt32 aNameSpaceID,
                               nsIAtom* aAttribute,
-                              PRInt32 aModType, 
-                              PRInt32 aHint);
+                              PRInt32 aModType);
 
-    virtual nsresult CurrentPositionChanged(nsIPresContext* aPresContext);
+  virtual nsresult CurrentPositionChanged(nsIPresContext* aPresContext);
 
-     NS_IMETHOD  Init(nsIPresContext*  aPresContext,
+  NS_IMETHOD  Init(nsIPresContext*  aPresContext,
                    nsIContent*      aContent,
                    nsIFrame*        aParent,
                    nsStyleContext*  aContext,
                    nsIFrame*        asPrevInFlow);
 
 
-   NS_IMETHOD HandleEvent(nsIPresContext* aPresContext, 
+  NS_IMETHOD HandleEvent(nsIPresContext* aPresContext, 
                          nsGUIEvent* aEvent,
                          nsEventStatus* aEventStatus);
 
@@ -190,7 +191,7 @@ public:
                               nsFramePaintLayer aWhichLayer,    
                               nsIFrame**     aFrame);
 
-    NS_IMETHOD SetInitialChildList(nsIPresContext* aPresContext,
+  NS_IMETHOD SetInitialChildList(nsIPresContext* aPresContext,
                                  nsIAtom*        aListName,
                                  nsIFrame*       aChildList);
 
@@ -226,8 +227,6 @@ public:
                            nsEventStatus*  aEventStatus);
 
   NS_IMETHOD_(void) Notify(nsITimer *timer);
-  //friend nsSliderMediator;
-
  
 private:
 
@@ -235,10 +234,10 @@ private:
 
   void PageUpDown(nsIFrame* aThumbFrame, nscoord change);
   void SetCurrentPosition(nsIContent* scrollbar, nsIFrame* aThumbFrame, nscoord pos, PRBool aIsSmooth);
-  NS_IMETHOD DragThumb(nsIPresContext* aPresContext, PRBool aGrabMouseEvents);
+  void DragThumb(PRBool aGrabMouseEvents);
   void AddListener();
   void RemoveListener();
-  PRBool isDraggingThumb(nsIPresContext* aPresContext);
+  PRBool isDraggingThumb();
 
   float mRatio;
 
@@ -246,19 +245,17 @@ private:
   nscoord mThumbStart;
 
   PRInt32 mCurPos;
-  PRBool mMiddlePref;
-  PRInt32 mSnapMultiplier;
 
   nsIScrollbarListener* mScrollbarListener;
 
-  // XXX Hack
-  nsIPresContext* mPresContext;  // weak reference
-
   nscoord mChange;
-  nsPoint mClickPoint;
-  PRBool mRedrawImmediate;
+  nsPoint mDestinationPoint;
   nsSliderMediator* mMediator;
 
+  PRPackedBool mRedrawImmediate;
+
+  static PRBool gMiddlePref;
+  static PRInt32 gSnapMultiplier;
 }; // class nsSliderFrame
 
 #endif

@@ -41,7 +41,7 @@
 #include "prlong.h"
 #include "nsGenericFactory.h"
 
-NS_IMPL_ISUPPORTS1(nsBinaryOutputStream, nsIBinaryOutputStream)
+NS_IMPL_ISUPPORTS3(nsBinaryOutputStream, nsIObjectOutputStream, nsIBinaryOutputStream, nsIOutputStream)
 
 NS_IMETHODIMP
 nsBinaryOutputStream::Flush() { return mOutputStream->Flush(); }
@@ -273,7 +273,7 @@ nsBinaryOutputStream::PutBuffer(char* aBuffer, PRUint32 aLength)
         mBufferAccess->PutBuffer(aBuffer, aLength);
 }
 
-NS_IMPL_ISUPPORTS1(nsBinaryInputStream, nsIBinaryInputStream)
+NS_IMPL_ISUPPORTS3(nsBinaryInputStream, nsIObjectInputStream, nsIBinaryInputStream, nsIInputStream)
 
 NS_IMETHODIMP
 nsBinaryInputStream::Available(PRUint32* aResult)

@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Brian Ryner <bryner@netscape.com>
+ *  Brian Ryner <bryner@brianryner.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or 
@@ -77,7 +77,6 @@
 #include "nsILookAndFeel.h"
 #include "nsColor.h"
 #include "nsWidgetSupport.h"
-#include "nsVector.h"
 
 
 // XXX For font setting below
@@ -98,6 +97,7 @@
 #endif
 
 // cookie
+#include "nsNetCID.h"
 #include "nsICookieService.h"
 
 #define DIALOG_FONT      "Helvetica"
@@ -116,19 +116,14 @@
 
 extern nsresult NS_NewXPBaseWindowFactory(nsIFactory** aFactory);
 
-static NS_DEFINE_IID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 static NS_DEFINE_IID(kAppShellCID, NS_APPSHELL_CID);
 static NS_DEFINE_IID(kXPBaseWindowCID, NS_XPBASE_WINDOW_CID);
 static NS_DEFINE_IID(kCookieServiceCID, NS_COOKIESERVICE_CID);
 
-static NS_DEFINE_IID(kIEventQueueServiceIID, NS_IEVENTQUEUESERVICE_IID);
 static NS_DEFINE_IID(kIAppShellIID, NS_IAPPSHELL_IID);
-static NS_DEFINE_IID(kIPrefIID, NS_IPREF_IID);
 static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);
-static NS_DEFINE_IID(kIXPBaseWindowIID, NS_IXPBASE_WINDOW_IID);
 
 static NS_DEFINE_CID(kFormProcessorCID,   NS_FORMPROCESSOR_CID);
-static NS_DEFINE_IID(kIDOMHTMLSelectElementIID, NS_IDOMHTMLSELECTELEMENT_IID);
 
 #define DEFAULT_WIDTH 620
 #define DEFAULT_HEIGHT 400
@@ -224,7 +219,7 @@ public:
 
 
 
-NS_IMPL_ISUPPORTS1(nsTestFormProcessor, nsIFormProcessor);
+NS_IMPL_ISUPPORTS1(nsTestFormProcessor, nsIFormProcessor)
 
 nsTestFormProcessor::nsTestFormProcessor()
 {
@@ -925,7 +920,7 @@ PRBool CreateRobotDialog(nsIWidget * aParent)
 
   nsIDeviceContext* dc = aParent->GetDeviceContext();
   float t2d;
-  dc->GetTwipsToDevUnits(t2d);
+  t2d = dc->TwipsToDevUnits();
   nsFont font(DIALOG_FONT, NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
               NS_FONT_WEIGHT_NORMAL, 0,
               nscoord(t2d * NSIntPointsToTwips(DIALOG_FONT_SIZE)));
@@ -1093,9 +1088,7 @@ nsViewerApp::CreateRobot(nsBrowserWindow* aWindow)
       shell->GetDocument(getter_AddRefs(doc));
       if (doc) {
         nsCAutoString str;
-        nsCOMPtr<nsIURI> uri;
-        doc->GetDocumentURL(getter_AddRefs(uri));
-        nsresult rv = uri->GetSpec(str);
+        nsresult rv = doc->GetDocumentURI()->GetSpec(str);
         if (NS_FAILED(rv)) {
           return rv;
         }
@@ -1104,7 +1097,7 @@ nsViewerApp::CreateRobot(nsBrowserWindow* aWindow)
         {
           nsString* tempStr = new nsString;
           if ( tempStr )
-            tempStr->Assign(NS_ConvertUTF8toUCS2(str));
+            CopyUTF8toUTF16(str, *tempStr);
           gWorkList->AppendElement(tempStr);
         }
 #if defined(XP_WIN) && defined(NS_DEBUG)
@@ -1370,7 +1363,7 @@ PRBool CreateSiteDialog(nsIWidget * aParent)
 
     nsIDeviceContext* dc = aParent->GetDeviceContext();
     float t2d;
-    dc->GetTwipsToDevUnits(t2d);
+    t2d = dc->TwipsToDevUnits();
     nsFont font(DIALOG_FONT, NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
                 NS_FONT_WEIGHT_NORMAL, 0,
                 nscoord(t2d * NSIntPointsToTwips(DIALOG_FONT_SIZE)));
@@ -1565,10 +1558,10 @@ static void ShowConsole(nsBrowserWindow* aWindow)
                                                   MAKEINTRESOURCE(ACCELERATOR_TABLE));
       }
       
-      nsIScriptContext *context = nsnull;
       nsCOMPtr<nsIScriptGlobalObject> scriptGlobal(do_GetInterface(aWindow->mDocShell));
-      if (scriptGlobal) {       
-        if ((NS_OK == scriptGlobal->GetContext(&context)) && context) {
+      if (scriptGlobal) {
+        nsIScriptContext *context;
+        if ((context = scriptGlobal->GetContext())) {
 
           // create the console
           gConsole = JSConsole::CreateConsole();

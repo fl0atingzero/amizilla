@@ -47,13 +47,14 @@
 #include "nsStyleCoord.h"
 #include "nsStyleConsts.h"
 #include "nsChangeHint.h"
-#include "nsIStyleSet.h"
 #include "nsIPresContext.h"
 #include "nsIPresShell.h"
 #include "nsCOMPtr.h"
 #include "nsILanguageAtom.h"
+#include "nsIURI.h"
 
 class nsIFrame;
+class imgIRequest;
 
 enum nsStyleStructID {
 
@@ -84,7 +85,7 @@ nsStyleStructID_Length /* one past the end; length of 0-based list */
 #define NS_RULE_NODE_GC_MARK              0x02000000
 
 #define NS_DEFINE_STATIC_STYLESTRUCTID_ACCESSOR(the_sid) \
-  static const nsStyleStructID GetStyleStructID() {return the_sid;}
+  static nsStyleStructID GetStyleStructID() {return the_sid;}
 
 #define NS_GET_STYLESTRUCTID(type) (type::GetStyleStructID())
 
@@ -147,7 +148,7 @@ struct nsStyleColor : public nsStyleStruct {
 struct nsStyleBackground : public nsStyleStruct {
   nsStyleBackground(nsIPresContext* aPresContext);
   nsStyleBackground(const nsStyleBackground& aOther);
-  ~nsStyleBackground() {};
+  ~nsStyleBackground();
 
   NS_DEFINE_STATIC_STYLESTRUCTID_ACCESSOR(eStyleStruct_Background)
 
@@ -183,7 +184,7 @@ struct nsStyleBackground : public nsStyleStruct {
     mBackgroundYPosition;         // [reset]
 
   nscolor mBackgroundColor;       // [reset]
-  nsString mBackgroundImage;      // [reset] absolute url string
+  nsCOMPtr<imgIRequest> mBackgroundImage; // [reset]
 
   PRBool IsTransparent() const
   {
@@ -586,7 +587,7 @@ struct nsStyleList : public nsStyleStruct {
   
   PRUint8   mListStyleType;             // [inherited] See nsStyleConsts.h
   PRUint8   mListStylePosition;         // [inherited] 
-  nsString  mListStyleImage;            // [inherited] absolute url string
+  nsCOMPtr<nsIURI> mListStyleImage;     // [inherited]
   nsRect        mImageRegion;           // [inherited] the rect to use within an image  
 };
 
@@ -701,7 +702,6 @@ struct nsStyleVisibility : public nsStyleStruct {
   PRUint8 mDirection;                  // [inherited] see nsStyleConsts.h NS_STYLE_DIRECTION_*
   PRUint8   mVisible;                  // [inherited]
   nsCOMPtr<nsILanguageAtom> mLanguage; // [inherited]
-  float mOpacity;                      // [inherited]
  
   PRBool IsVisible() const {
 		return (mVisible == NS_STYLE_VISIBILITY_VISIBLE);
@@ -732,7 +732,7 @@ struct nsStyleDisplay : public nsStyleStruct {
 
   nsChangeHint CalcDifference(const nsStyleDisplay& aOther) const;
   
-  nsString  mBinding;           // [reset] absolute url string
+  nsCOMPtr<nsIURI> mBinding;    // [reset]
 #if 0
   // XXX This is how it is defined in the CSS2 spec, but the errata
   // changed it to be consistent with the positioning draft and how
@@ -741,6 +741,7 @@ struct nsStyleDisplay : public nsStyleStruct {
 #else
   nsRect    mClip;              // [reset] offsets from upper-left border edge
 #endif
+  float   mOpacity;             // [reset]
   PRUint8 mDisplay;             // [reset] see nsStyleConsts.h NS_STYLE_DISPLAY_*
   PRUint8 mOriginalDisplay;     // [reset] saved mDisplay for position:absolute/fixed
   PRUint8 mAppearance;          // [reset]
@@ -750,7 +751,6 @@ struct nsStyleDisplay : public nsStyleStruct {
   PRPackedBool mBreakBefore;    // [reset] 
   PRPackedBool mBreakAfter;     // [reset] 
   PRUint8   mOverflow;          // [reset] see nsStyleConsts.h
-
   PRUint8   mClipFlags;         // [reset] see nsStyleConsts.h
   
   PRBool IsBlockLevel() const {return (NS_STYLE_DISPLAY_BLOCK == mDisplay) ||
@@ -834,7 +834,51 @@ enum nsStyleContentType {
 
 struct nsStyleContentData {
   nsStyleContentType  mType;
-  nsString            mContent;
+  union {
+    PRUnichar *mString;
+    nsIURI    *mURL;
+  } mContent;
+
+  // empty constructor to keep Sun compiler happy
+  nsStyleContentData() {}
+
+  ~nsStyleContentData() {
+    if (mType == eStyleContentType_URL) {
+      NS_IF_RELEASE(mContent.mURL);
+    } else if (mContent.mString) {
+      nsCRT::free(mContent.mString);
+    }
+  }
+
+  nsStyleContentData& operator=(const nsStyleContentData& aOther) {
+    mType = aOther.mType;
+    if (mType == eStyleContentType_URL) {
+      mContent.mURL = aOther.mContent.mURL;
+      NS_IF_ADDREF(mContent.mURL);
+    } else if (aOther.mContent.mString) {
+      mContent.mString = nsCRT::strdup(aOther.mContent.mString);
+    } else {
+      mContent.mString = nsnull;
+    }
+    return *this;
+  }
+
+  PRBool operator==(const nsStyleContentData& aOther) {
+    if (mType != aOther.mType)
+      return PR_FALSE;
+    if (mType == eStyleContentType_URL) {
+      PRBool eq;
+      return mContent.mURL == aOther.mContent.mURL ||  // handles null==null
+             (mContent.mURL && aOther.mContent.mURL &&
+              NS_SUCCEEDED(mContent.mURL->Equals(aOther.mContent.mURL, &eq)) &&
+              eq);
+    }
+    return mContent.mString == aOther.mContent.mString;
+  }
+
+  PRBool operator!=(const nsStyleContentData& aOther) {
+    return !(*this == aOther);
+  }
 };
 
 struct nsStyleCounterData {
@@ -926,13 +970,15 @@ struct nsStyleContent: public nsStyleStruct {
   nsChangeHint CalcDifference(const nsStyleContent& aOther) const;
 
   PRUint32  ContentCount(void) const  { return mContentCount; } // [reset]
-  nsresult  GetContentAt(PRUint32 aIndex, nsStyleContentType& aType, nsString& aContent) const {
-    if (aIndex < mContentCount) {
-      aType = mContents[aIndex].mType;
-      aContent = mContents[aIndex].mContent;
-      return NS_OK;
-    }
-    return NS_ERROR_ILLEGAL_VALUE;
+
+  const nsStyleContentData& ContentAt(PRUint32 aIndex) const {
+    NS_ASSERTION(aIndex < mContentCount, "out of range");
+    return mContents[aIndex];
+  }
+
+  nsStyleContentData& ContentAt(PRUint32 aIndex) {
+    NS_ASSERTION(aIndex < mContentCount, "out of range");
+    return mContents[aIndex];
   }
 
   nsresult  AllocateContents(PRUint32 aCount) {
@@ -948,20 +994,6 @@ struct nsStyleContent: public nsStyleStruct {
       mContentCount = aCount;
     }
     return NS_OK;
-  }
-
-  nsresult  SetContentAt(PRUint32 aIndex, nsStyleContentType aType, const nsString& aContent) {
-    if (aIndex < mContentCount) {
-      mContents[aIndex].mType = aType;
-      if (aType < eStyleContentType_OpenQuote) {
-        mContents[aIndex].mContent = aContent;
-      }
-      else {
-        mContents[aIndex].mContent.Truncate();
-      }
-      return NS_OK;
-    }
-    return NS_ERROR_ILLEGAL_VALUE;
   }
 
   PRUint32  CounterIncrementCount(void) const { return mIncrementCount; }  // [reset]
@@ -1093,8 +1125,7 @@ struct nsStyleUserInterface: public nsStyleStruct {
   PRUint8   mUserModify;      // [inherited] (modify-content)
   PRUint8   mUserFocus;       // [inherited] (auto-select)
   
-  PRUint8 mCursor;                // [inherited] See nsStyleConsts.h NS_STYLE_CURSOR_*
-  nsString mCursorImage;          // [inherited] url string
+  PRUint8   mCursor;          // [inherited] See nsStyleConsts.h
 };
 
 struct nsStyleXUL : public nsStyleStruct {
@@ -1156,18 +1187,43 @@ struct nsStyleSVG : public nsStyleStruct {
 
   nsChangeHint CalcDifference(const nsStyleSVG& aOther) const;
 
-  // all [inherit]ed
-  nsStyleSVGPaint  mFill;              // [inherited]
-  float            mFillOpacity;       // [inherited]
-  PRUint8          mFillRule;          // [inherited] see nsStyleConsts.h
-  nsStyleSVGPaint  mStroke;            // [inherited]
-  nsString         mStrokeDasharray;   // [inherited] XXX we want a parsed value here
-  float            mStrokeDashoffset;  // [inherited]
-  PRUint8          mStrokeLinecap;     // [inherited] see nsStyleConsts.h
-  PRUint8          mStrokeLinejoin;    // [inherited] see nsStyleConsts.h
-  float            mStrokeMiterlimit;  // [inherited]
-  float            mStrokeOpacity;     // [inherited]
-  float            mStrokeWidth;       // [inherited] in pixels
+  nsStyleSVGPaint  mFill;             // [inherited]
+  float            mFillOpacity;      // [inherited]
+  PRUint8          mFillRule;         // [inherited] see nsStyleConsts.h
+  PRUint8          mPointerEvents;    // [inherited] see nsStyleConsts.h
+  PRUint8          mShapeRendering;   // [inherited] see nsStyleConsts.h
+  nsStyleSVGPaint  mStroke;           // [inherited]
+  nsString         mStrokeDasharray;  // [inherited] XXX we want a parsed value here
+  float            mStrokeDashoffset; // [inherited]
+  PRUint8          mStrokeLinecap;    // [inherited] see nsStyleConsts.h
+  PRUint8          mStrokeLinejoin;   // [inherited] see nsStyleConsts.h
+  float            mStrokeMiterlimit; // [inherited]
+  float            mStrokeOpacity;    // [inherited]
+  float            mStrokeWidth;      // [inherited] in pixels
+  PRUint8          mTextAnchor;       // [inherited] see nsStyleConsts.h
+  PRUint8          mTextRendering;    // [inherited] see nsStyleConsts.h
+};
+
+struct nsStyleSVGReset : public nsStyleStruct {
+  nsStyleSVGReset();
+  nsStyleSVGReset(const nsStyleSVGReset& aSource);
+  ~nsStyleSVGReset();
+
+  NS_DEFINE_STATIC_STYLESTRUCTID_ACCESSOR(eStyleStruct_SVGReset)
+  
+  void* operator new(size_t sz, nsIPresContext* aContext) CPP_THROW_NEW {
+    void* result = nsnull;
+    aContext->AllocateFromShell(sz, &result);
+    return result;
+  }
+  void Destroy(nsIPresContext* aContext) {
+    this->~nsStyleSVGReset();
+    aContext->FreeToShell(sizeof(nsStyleSVGReset), this);
+  };
+
+  nsChangeHint CalcDifference(const nsStyleSVGReset& aOther) const;
+
+  PRUint8          mDominantBaseline; // [reset] see nsStyleConsts.h
 };
 #endif
 
@@ -1203,7 +1259,7 @@ inline nsBorderEdge::nsBorderEdge()
   mColor=0;
   mSide=NS_SIDE_LEFT;
   mInsideNeighbor = nsnull;
-};
+}
 
 /** an encapsulation of a border defined by its edges 
   * owner of this struct is responsible for freeing any data stored in mEdges
@@ -1221,6 +1277,6 @@ inline nsBorderEdges::nsBorderEdges()
 {
   mMaxBorderWidth.SizeTo(0,0,0,0);
   mOutsideEdge = PR_TRUE;
-};
+}
 
 #endif /* nsStyleStruct_h___ */

@@ -20,7 +20,7 @@
  */
 
 #include <os2.h>
-#include "resource.h"
+#include "wdgtos2rc.h"
 
 POINTER IDC_SELECTANCHOR   res\select.ptr
 POINTER IDC_ARROWNORTH     res\arrow_north.ptr
@@ -42,4 +42,7 @@ POINTER IDC_ZOOMOUT        res\zoom_out.ptr
 POINTER IDC_ARROWWAIT      res\arrow_wait.ptr
 POINTER IDC_CROSS          res\crosshair.ptr
 POINTER IDC_HELP           res\help.ptr
+
+ICON    IDC_DNDURL         res\dndurl.ico
+ICON    IDC_DNDTEXT        res\dndtext.ico
 

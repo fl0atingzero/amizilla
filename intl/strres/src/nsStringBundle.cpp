@@ -125,13 +125,13 @@ nsStringBundle::LoadProperties()
   rv = NS_NewChannel(getter_AddRefs(channel), uri);
   if (NS_FAILED(rv)) return rv;
 
+  // It's a string bundle.  We expect a text/plain type, so set that as hint
+  channel->SetContentType(NS_LITERAL_CSTRING("text/plain"));
+  
   nsCOMPtr<nsIInputStream> in;
   rv = channel->Open(getter_AddRefs(in));
   if (NS_FAILED(rv)) return rv;
 
-  // It's a string bundle.  We know what MIME type it is!
-  channel->SetContentType(NS_LITERAL_CSTRING("text/plain"));
-  
   NS_TIMELINE_MARK_FUNCTION("loading properties");
 
   NS_ASSERTION(NS_SUCCEEDED(rv) && in, "Error in OpenBlockingStream");
@@ -547,6 +547,7 @@ nsStringBundleService::Init()
   if (os) {
     os->AddObserver(this, "memory-pressure", PR_TRUE);
     os->AddObserver(this, "profile-do-change", PR_TRUE);
+    os->AddObserver(this, "chrome-flush-caches", PR_TRUE);
   }
 
   // instantiate the override service, if there is any.
@@ -562,8 +563,9 @@ nsStringBundleService::Observe(nsISupports* aSubject,
                                const char* aTopic,
                                const PRUnichar* aSomeData)
 {
-  if (nsCRT::strcmp("memory-pressure", aTopic) == 0 ||
-      nsCRT::strcmp("profile-do-change", aTopic) == 0)
+  if (strcmp("memory-pressure", aTopic) == 0 ||
+      strcmp("profile-do-change", aTopic) == 0 ||
+      strcmp("chrome-flush-caches", aTopic) == 0)
     flushBundleCache();
   return NS_OK;
 }
@@ -804,7 +806,7 @@ nsStringBundleService::FormatStatusMessage(nsresult aStatus,
       PRInt32 pos = args.FindChar('\n', offset);
       if (pos == -1) 
         pos = args.Length();
-      argArray[i] = ToNewUnicode(Substring(args, offset, pos));
+      argArray[i] = ToNewUnicode(Substring(args, offset, pos - offset));
       if (argArray[i] == nsnull) {
         rv = NS_ERROR_OUT_OF_MEMORY;
         argCount = i - 1; // don't try to free uninitialized memory

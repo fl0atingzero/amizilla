@@ -304,7 +304,8 @@ typedef struct _PRInterruptTable {
 #define _PR_CPU_PTR(_qp) \
     ((_PRCPU*) ((char*) (_qp) - offsetof(_PRCPU,links)))
 
-#if !defined(IRIX) && !defined(WIN32) && !defined(XP_OS2)
+#if !defined(IRIX) && !defined(WIN32) && !defined(XP_OS2) \
+        && !(defined(SOLARIS) && defined(_PR_GLOBAL_THREADS_ONLY))
 #define _MD_GET_ATTACHED_THREAD()        (_PR_MD_CURRENT_THREAD())
 #endif
 
@@ -1394,7 +1395,7 @@ extern PRUintn _PR_NetAddrSize(const PRNetAddr* addr);
 ** struct sockaddr_in6.
 */
 
-#if defined(XP_UNIX)
+#if defined(XP_UNIX) || defined(XP_OS2)
 #define PR_NETADDR_SIZE(_addr) 					\
         ((_addr)->raw.family == PR_AF_INET		\
         ? sizeof((_addr)->inet)					\
@@ -1410,7 +1411,7 @@ extern PRUintn _PR_NetAddrSize(const PRNetAddr* addr);
 
 #else
 
-#if defined(XP_UNIX)
+#if defined(XP_UNIX) || defined(XP_OS2)
 #define PR_NETADDR_SIZE(_addr) 					\
         ((_addr)->raw.family == PR_AF_INET		\
         ? sizeof((_addr)->inet)					\
@@ -1459,8 +1460,12 @@ struct PRCondVar {
     pthread_cond_t cv;          /* underlying pthreads condition */
     PRInt32 notify_pending;     /* CV has destroy pending notification */
 #elif defined(_PR_BTHREADS)
-    sem_id	isem;		/* Semaphore used to lock threadQ */
-    int32	benaphoreCount; /* Number of people in lock */
+    sem_id    sem;              /* the underlying lock */
+    sem_id    handshakeSem;     /* the lock for 'notify'-threads waiting for confirmation */
+    sem_id    signalSem;        /* the lock for threads waiting for someone to notify */
+    volatile int32    nw;       /* the number waiting */
+    volatile int32    ns;       /* the number signalling */
+    long signalBenCount;        /* the number waiting on the underlying sem */
 #else /* not pthreads or Be threads */
     PRCList condQ;              /* Condition variable wait Q */
     _MDLock ilock;              /* Internal Lock to protect condQ */

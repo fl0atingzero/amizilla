@@ -78,7 +78,8 @@ public:
                   nsIFrame* aParent, nsStyleContext* aContext, nsIFrame* aPrevInFlow);
   NS_IMETHOD Destroy(nsIPresContext* aPresContext);
   NS_IMETHOD AttributeChanged(nsIPresContext* aPresContext, nsIContent* aChild,
-                                 PRInt32 aNameSpaceID, nsIAtom* aAttribute, PRInt32 aModType, PRInt32 aHint) ;
+                              PRInt32 aNameSpaceID, nsIAtom* aAttribute,
+                              PRInt32 aModType);
 
   // nsIScrollbarMediator
   NS_IMETHOD PositionChanged(PRInt32 aOldIndex, PRInt32& aNewIndex);
@@ -110,7 +111,6 @@ public:
 
   // frames
   nsIFrame* GetFirstFrame();
-  nsIFrame* GetNextFrame(nsIFrame* aCurrFrame);
   nsIFrame* GetLastFrame();
 
   // lazy row creation and destruction
@@ -127,8 +127,6 @@ public:
 
   void GetListItemContentAt(PRInt32 aIndex, nsIContent** aContent);
   void GetListItemNextSibling(nsIContent* aListItem, nsIContent** aContent, PRInt32& aSiblingIndex);
-
-  static void ForceDrawFrame ( nsIPresContext* aPresContext, nsIFrame * aFrame ) ;
 
   void PostReflowCallback();
 

@@ -20,8 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Adam Lock <adamlock@netscape.com>
  *
+ *   Adam Lock <adamlock@eircom.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -46,6 +46,8 @@
 #include "nsIDOMNSDocument.h"
 
 #include "MozillaBrowser.h"
+
+#include "IEHtmlSelectionObject.h"
 
 CIEHtmlDocument::CIEHtmlDocument() :
     mControl(NULL)
@@ -323,8 +325,34 @@ HRESULT STDMETHODCALLTYPE CIEHtmlDocument::get_designMode(BSTR __RPC_FAR *p)
 
 HRESULT STDMETHODCALLTYPE CIEHtmlDocument::get_selection(IHTMLSelectionObject __RPC_FAR *__RPC_FAR *p)
 {
+    if (p == NULL)
+    {
+        return E_INVALIDARG;
+    }
     *p = NULL;
-    return E_NOTIMPL;
+
+    // create com object:
+    CIEHtmlSelectionObjectInstance *pSelectionObject = NULL;
+    CIEHtmlSelectionObjectInstance::CreateInstance(&pSelectionObject);
+    if (!pSelectionObject)
+        return E_FAIL;
+    // get selection:
+    nsCOMPtr<nsIDOMWindow> domWindow;
+    mControl->GetDOMWindow(getter_AddRefs(domWindow));
+    if (!domWindow)
+        return E_FAIL;
+    nsCOMPtr<nsISelection> selection;
+    domWindow->GetSelection(getter_AddRefs(selection));
+    if (!selection)
+        return E_FAIL;
+    // gives the selection to the com object:
+    pSelectionObject->SetSelection(selection);
+    nsCOMPtr<nsIDOMDocumentRange> domDocumentRange = do_QueryInterface(mDOMDocument);
+    pSelectionObject->SetDOMDocumentRange(domDocumentRange);
+    // return com object:
+    pSelectionObject->QueryInterface(IID_IHTMLSelectionObject, (void **)p);
+
+    return S_OK;
 }
 
 

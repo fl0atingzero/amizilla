@@ -44,7 +44,8 @@
 #include "nsMimeBaseEmitter.h"
 #include "nsMailHeaders.h"
 #include "nscore.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsIServiceManager.h"
 #include "nsEscape.h"
 #include "prmem.h"
@@ -70,7 +71,6 @@ static PRLogModuleInfo * gMimeEmitterLogModule = nsnull;
 
 #define   MIME_HEADER_URL      "chrome://messenger/locale/mimeheader.properties"
 #define   MIME_URL             "chrome://messenger/locale/mime.properties"
-static    NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
 
 NS_IMPL_THREADSAFE_ADDREF(nsMimeBaseEmitter)
 NS_IMPL_THREADSAFE_RELEASE(nsMimeBaseEmitter)
@@ -120,20 +120,15 @@ nsMimeBaseEmitter::nsMimeBaseEmitter()
 //  mBody = "";
 
   // This is needed for conversion of I18N Strings...
-  nsComponentManager::CreateInstance(NS_MIME_CONVERTER_CONTRACTID, nsnull, 
-                                     NS_GET_IID(nsIMimeConverter), 
-                                     getter_AddRefs(mUnicodeConverter));
-
-  // Do prefs last since we can live without this if it fails...
-  nsresult rv = nsServiceManager::GetService(kPrefCID, NS_GET_IID(nsIPref), (nsISupports**)&(mPrefs));
-  if (! (mPrefs && NS_SUCCEEDED(rv)))
-    return;
-
-  if ((mPrefs && NS_SUCCEEDED(rv)))
-    mPrefs->GetIntPref("mail.show_headers", &mHeaderDisplayType);
+  mUnicodeConverter = do_GetService(NS_MIME_CONVERTER_CONTRACTID);
 
   if (!gMimeEmitterLogModule)
     gMimeEmitterLogModule = PR_NewLogModule("MIME");
+
+  // Do prefs last since we can live without this if it fails...
+  nsCOMPtr<nsIPrefBranch> pPrefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
+  if (pPrefBranch)
+    pPrefBranch->GetIntPref("mail.show_headers", &mHeaderDisplayType);
 }
 
 nsMimeBaseEmitter::~nsMimeBaseEmitter(void)
@@ -146,10 +141,6 @@ nsMimeBaseEmitter::~nsMimeBaseEmitter(void)
     delete mBufferMgr;
     mBufferMgr = nsnull;
   }
-
-  // Release the prefs service...
-  if (mPrefs)
-    nsServiceManager::ReleaseService(kPrefCID, mPrefs);
 
   // Clean up the attachment array structures...
   if (mAttachArray)
@@ -541,19 +532,19 @@ nsMimeBaseEmitter::WriteHelper(const char *buf, PRUint32 count, PRUint32 *countW
 //
 // Find a cached header! Note: Do NOT free this value!
 //
-char *
-nsMimeBaseEmitter::GetHeaderValue(const char  *aHeaderName,
-                                  nsVoidArray *aArray)
+const char *
+nsMimeBaseEmitter::GetHeaderValue(const char  *aHeaderName)
 {
   PRInt32     i;
   char        *retVal = nsnull;
+  nsVoidArray *array = mDocHeader? mHeaderArray : mEmbeddedHeaderArray;
 
-  if (!aArray)
+  if (!array)
     return nsnull;
 
-  for (i=0; i<aArray->Count(); i++)
+  for (i = 0; i < array->Count(); i++)
   {
-    headerInfoType *headerInfo = (headerInfoType *)aArray->ElementAt(i);
+    headerInfoType *headerInfo = (headerInfoType *)array->ElementAt(i);
     if ( (!headerInfo) || (!headerInfo->name) || (!(*headerInfo->name)) )
       continue;
     
@@ -618,11 +609,13 @@ nsMimeBaseEmitter::UpdateCharacterSet(const char *aCharset)
     
     if (NS_SUCCEEDED(mChannel->GetContentType(contentType)) && !contentType.IsEmpty())
     {
-      char *cPtr = (char *) PL_strcasestr(contentType.get(), "charset=");
+      char *cBegin = contentType.BeginWriting();
+
+      const char *cPtr = PL_strcasestr(cBegin, "charset=");
 
       if (cPtr)
       {
-        char  *ptr = (char *) contentType.get();
+        char  *ptr = cBegin;
         while (*ptr)
         {
           if ( (*ptr == ' ') || (*ptr == ';') ) 
@@ -638,8 +631,8 @@ nsMimeBaseEmitter::UpdateCharacterSet(const char *aCharset)
         }
       }
 
-      // have to recompute strlen since contentType could have an embedded null byte
-      mChannel->SetContentType(nsDependentCString(contentType.get()));
+      // have to set content-type since it could have an embedded null byte
+      mChannel->SetContentType(nsDependentCString(cBegin));
       mChannel->SetContentCharset(nsDependentCString(aCharset));
     }
   }
@@ -816,7 +809,8 @@ nsMimeBaseEmitter::WriteHTMLHeaders()
 
   // Do the rest of the headers, but these will only be written if
   // the user has the "show all headers" pref set
-  DumpRestOfHeaders();
+  if (mHeaderDisplayType == nsMimeHeaderDisplayTypes::AllHeaders)
+    DumpRestOfHeaders();
 
   WriteHeaderFieldHTMLPostfix();
 
@@ -852,10 +846,10 @@ nsMimeBaseEmitter::DumpSubjectFromDate()
 nsresult
 nsMimeBaseEmitter::DumpToCC()
 {
-  char * toField = GetHeaderValue(HEADER_TO, mHeaderArray);
-  char * ccField = GetHeaderValue(HEADER_CC, mHeaderArray);
-  char * bccField = GetHeaderValue(HEADER_BCC, mHeaderArray);
-  char * newsgroupField = GetHeaderValue(HEADER_NEWSGROUPS, mHeaderArray);
+  const char * toField = GetHeaderValue(HEADER_TO);
+  const char * ccField = GetHeaderValue(HEADER_CC);
+  const char * bccField = GetHeaderValue(HEADER_BCC);
+  const char * newsgroupField = GetHeaderValue(HEADER_NEWSGROUPS);
 
   // only dump these fields if we have at least one of them! When displaying news
   // messages that didn't have a To or Cc field, we'd always get an empty box
@@ -864,10 +858,14 @@ nsMimeBaseEmitter::DumpToCC()
   {
     mHTMLHeaders.Append("<table border=0 cellspacing=0 cellpadding=0 width=\"100%\" class=\"header-part2\">");
 
-    OutputGenericHeader(HEADER_TO);
-    OutputGenericHeader(HEADER_CC);
-    OutputGenericHeader(HEADER_BCC);
-    OutputGenericHeader(HEADER_NEWSGROUPS);
+    if (toField)
+      WriteHeaderFieldHTML(HEADER_TO, toField);
+    if (ccField)
+      WriteHeaderFieldHTML(HEADER_CC, ccField);
+    if (bccField)
+      WriteHeaderFieldHTML(HEADER_BCC, bccField);
+    if (newsgroupField)
+      WriteHeaderFieldHTML(HEADER_NEWSGROUPS, newsgroupField);
 
     mHTMLHeaders.Append("</table>");
   }
@@ -879,15 +877,13 @@ nsresult
 nsMimeBaseEmitter::DumpRestOfHeaders()
 {
   PRInt32     i;
-  
-  if (mHeaderDisplayType != nsMimeHeaderDisplayTypes::AllHeaders)
-    return NS_OK;
+  nsVoidArray *array = mDocHeader? mHeaderArray : mEmbeddedHeaderArray;
 
   mHTMLHeaders.Append("<table border=0 cellspacing=0 cellpadding=0 width=\"100%\" class=\"header-part3\">");
   
-  for (i=0; i<mHeaderArray->Count(); i++)
+  for (i = 0; i < array->Count(); i++)
   {
-    headerInfoType *headerInfo = (headerInfoType *)mHeaderArray->ElementAt(i);
+    headerInfoType *headerInfo = (headerInfoType *)array->ElementAt(i);
     if ( (!headerInfo) || (!headerInfo->name) || (!(*headerInfo->name)) ||
       (!headerInfo->value) || (!(*headerInfo->value)))
       continue;
@@ -909,21 +905,12 @@ nsMimeBaseEmitter::DumpRestOfHeaders()
 nsresult
 nsMimeBaseEmitter::OutputGenericHeader(const char *aHeaderVal)
 {
-  char      *val = nsnull;
-  nsresult  rv;
-
-  if (mDocHeader)
-    val = GetHeaderValue(aHeaderVal, mHeaderArray);
-  else
-    val = GetHeaderValue(aHeaderVal, mEmbeddedHeaderArray);
+  const char *val = GetHeaderValue(aHeaderVal);
 
   if (val)
-  {
-    rv = WriteHeaderFieldHTML(aHeaderVal, val);
-    return rv;
-  }
-  else
-    return NS_ERROR_FAILURE;
+    return WriteHeaderFieldHTML(aHeaderVal, val);
+
+  return NS_ERROR_FAILURE;
 }
 
 //////////////////////////////////////////////////////////////////////////

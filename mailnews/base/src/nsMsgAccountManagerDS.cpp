@@ -291,7 +291,7 @@ nsMsgAccountManagerDataSource::Init()
     // get a weak ref to the account manager
     if (!mAccountManager) {
         am = do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID, &rv);
-        mAccountManager = getter_AddRefs(NS_GetWeakReference(am));
+        mAccountManager = do_GetWeakReference(am);
     } else
         am = do_QueryReferent(mAccountManager);
 
@@ -403,10 +403,19 @@ nsMsgAccountManagerDataSource::GetTarget(nsIRDFResource *source,
             // make sure the pointer math we're about to do is safe.
             NS_ENSURE_TRUE(sourceValue && (strlen(sourceValue) > strlen(NC_RDF_PAGETITLE_PREFIX)), NS_ERROR_UNEXPECTED);
 
-            nsCAutoString bundleURL;
-            bundleURL = "chrome://messenger/locale/";
-            bundleURL += "am-";
+            nsCOMPtr<nsIMsgAccountManager> am =
+              do_QueryReferent(mAccountManager, &rv);
+            NS_ENSURE_SUCCESS(rv, PR_FALSE);
+            
             // turn NC#PageTitlefoobar into foobar, so we can get the am-foobar.properties bundle
+            nsXPIDLCString chromePackageName;
+            rv = am->GetChromePackageName((sourceValue + strlen(NC_RDF_PAGETITLE_PREFIX)), getter_Copies(chromePackageName));
+            NS_ENSURE_SUCCESS(rv,rv);
+
+            nsCAutoString bundleURL;
+            bundleURL = "chrome://";
+            bundleURL += chromePackageName;
+            bundleURL += "/locale/am-";
             bundleURL += (sourceValue + strlen(NC_RDF_PAGETITLE_PREFIX));
             bundleURL += ".properties";
 
@@ -886,7 +895,7 @@ nsMsgAccountManagerDataSource::createServerResources(nsISupports *element,
   nsCOMPtr<nsIMsgIncomingServer> server = do_QueryInterface(element, &rv);
   if (NS_FAILED(rv)) return PR_TRUE;
 
-	nsCOMPtr <nsIFolder> serverFolder;
+	nsCOMPtr <nsIMsgFolder> serverFolder;
 	rv = server->GetRootFolder(getter_AddRefs(serverFolder));
 	if(NS_FAILED(rv)) return PR_TRUE;
 
@@ -1250,7 +1259,7 @@ nsMsgAccountManagerDataSource::OnServerLoaded(nsIMsgIncomingServer* aServer)
 {
   nsresult rv;
 
-  nsCOMPtr<nsIFolder> serverFolder;
+  nsCOMPtr<nsIMsgFolder> serverFolder;
   rv = aServer->GetRootFolder(getter_AddRefs(serverFolder));
   if (NS_FAILED(rv)) return rv;
 
@@ -1283,7 +1292,7 @@ nsMsgAccountManagerDataSource::OnServerUnloaded(nsIMsgIncomingServer* aServer)
 {
   nsresult rv;
   
-  nsCOMPtr<nsIFolder> serverFolder;
+  nsCOMPtr<nsIMsgFolder> serverFolder;
   rv = aServer->GetRootFolder(getter_AddRefs(serverFolder));
   if (NS_FAILED(rv)) return rv;
 
@@ -1366,7 +1375,7 @@ nsMsgAccountManagerDataSource::OnItemBoolPropertyChanged(nsISupports *aItem,
 }
 
 nsresult
-nsMsgAccountManagerDataSource::OnItemEvent(nsIFolder *, nsIAtom *)
+nsMsgAccountManagerDataSource::OnItemEvent(nsIMsgFolder *, nsIAtom *)
 {
     return NS_OK;
 }

@@ -36,16 +36,25 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* This file implements an XPCOM object which represents a calendar event. It provides access to individual 
+fields of an event and performs calculations concerning its behaviour. The code for the eventDisplay object
+which is an event with display information added to it is included here as well.
+*/
+
 #include <stdlib.h> // for atol
 
 #include "oeICalEventImpl.h"
 #include "nsMemory.h"
 #include "nsCOMPtr.h"
 #include "plbase64.h"
-#include "nsMsgCompCID.h"
-#include "nsAbBaseCID.h"
+#include "nsComponentManagerUtils.h"
+#ifdef MOZ_MAIL_NEWS
 #include "nsIAbCard.h"
 #include "nsIMsgAttachment.h"
+#endif
+#include "nsIPrefBranch.h"
+#include "nsIPrefService.h"
+#include "nsIServiceManager.h"
 
 #define strcasecmp strcmp
 
@@ -66,6 +75,7 @@
 #define DEFAULT_ALARM_UNITS "minutes"
 #define DEFAULT_ALARM_LENGTH 15
 #define DEFAULT_RECUR_UNITS "weeks"
+#define DEFAULT_ALARMTRIGGER_RELATION ICAL_RELATED_START
 
 extern oeIICalContainer *gContainer;
 
@@ -259,6 +269,7 @@ oeICalEventImpl::oeICalEventImpl()
         m_stamp->m_datetime.second = ext.tm_sec;
         m_stamp->m_datetime.is_utc = true;
     }
+    m_type = ICAL_VEVENT_COMPONENT;
     m_id = nsnull;
     m_title.SetIsVoid(true);
     m_description.SetIsVoid(true);
@@ -273,6 +284,7 @@ oeICalEventImpl::oeICalEventImpl()
     m_allday = false;
     m_hasalarm = false;
     m_alarmlength = DEFAULT_ALARM_LENGTH;
+    m_alarmtriggerrelation = DEFAULT_ALARMTRIGGER_RELATION;
     m_alarmemail = nsnull;
     m_inviteemail = nsnull;
     m_recurinterval = 1;
@@ -284,6 +296,7 @@ oeICalEventImpl::oeICalEventImpl()
     m_recurweekdays = 0;
     m_recurweeknumber = 0;
     m_lastalarmack = icaltime_null_time();
+    m_lastmodified = icaltime_null_time();
     m_duration = icaldurationtype_null_duration();
     SetAlarmUnits( DEFAULT_ALARM_UNITS );
     SetRecurUnits( DEFAULT_RECUR_UNITS );
@@ -291,6 +304,26 @@ oeICalEventImpl::oeICalEventImpl()
     NS_NewISupportsArray(getter_AddRefs(m_attachments));
     NS_NewISupportsArray(getter_AddRefs(m_contacts));
     m_calendar=nsnull;
+
+    //Some defaults may have been changed in the prefs
+    nsCOMPtr<nsIPrefBranch> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+    if ( NS_SUCCEEDED(rv) && prefBranch ) {
+        nsXPIDLCString tmpstr;
+        PRInt32 tmpint;
+        rv = prefBranch->GetIntPref("calendar.alarms.onforevents", &tmpint);
+        if (NS_SUCCEEDED(rv))
+            m_hasalarm = tmpint;
+        rv = prefBranch->GetIntPref("calendar.alarms.eventalarmlen", &tmpint);
+        if (NS_SUCCEEDED(rv))
+            m_alarmlength = tmpint;
+        rv = prefBranch->GetCharPref("calendar.alarms.eventalarmunit", getter_Copies(tmpstr));
+        if (NS_SUCCEEDED(rv))
+            SetAlarmUnits( PromiseFlatCString( tmpstr ).get() );
+        rv = prefBranch->GetCharPref("calendar.alarms.emailaddress", getter_Copies(tmpstr));
+        if (NS_SUCCEEDED(rv)) {
+            SetAlarmEmailAddress( PromiseFlatCString( tmpstr ).get() );
+        }
+    }
 }
 
 oeICalEventImpl::~oeICalEventImpl()
@@ -345,6 +378,23 @@ NS_IMETHODIMP oeICalEventImpl::GetParent( oeIICal **calendar )
     *calendar = m_calendar;
     NS_ADDREF( *calendar );
     return NS_OK;
+}
+
+/* readonly attribute Componenttype type; */
+NS_IMETHODIMP oeICalEventImpl::GetType(Componenttype *aRetVal)
+{
+#ifdef ICAL_DEBUG_ALL
+    printf( "GetType() = " );
+#endif
+    *aRetVal= m_type;
+#ifdef ICAL_DEBUG_ALL
+    printf( "\"%d\"\n", *aRetVal );
+#endif
+    return NS_OK;
+}
+
+void oeICalEventImpl::SetType(Componenttype aNewVal) {
+    m_type = aNewVal;
 }
 
 /* attribute string Id; */
@@ -882,6 +932,38 @@ NS_IMETHODIMP oeICalEventImpl::SetRecurForever(PRBool aNewVal)
     return NS_OK;
 }
 
+NS_IMETHODIMP oeICalEventImpl::GetLastModified(PRTime *aRetVal)
+{
+#ifdef ICAL_DEBUG_ALL
+    printf( "GetLastModified()\n" );
+#endif
+    if( icaltime_is_null_time( m_lastmodified ) )
+        return NS_ERROR_NOT_INITIALIZED;
+
+    *aRetVal = ConvertToPrtime( m_lastmodified );
+    return NS_OK;
+}
+NS_IMETHODIMP oeICalEventImpl::UpdateLastModified()
+{
+#ifdef ICAL_DEBUG_ALL
+    printf( "UpdateLastModified()\n" );
+#endif
+
+    PRInt64 nowinusec = PR_Now();
+    PRExplodedTime ext;
+    PR_ExplodeTime( nowinusec, PR_GMTParameters, &ext);
+    m_lastmodified = icaltime_null_time();
+    m_lastmodified.year = ext.tm_year;
+    m_lastmodified.month = ext.tm_month + 1;
+    m_lastmodified.day = ext.tm_mday;
+    m_lastmodified.hour = ext.tm_hour;
+    m_lastmodified.minute = ext.tm_min;
+    m_lastmodified.second = ext.tm_sec;
+    m_lastmodified.is_utc = true;
+
+    return NS_OK;
+}
+
 NS_IMETHODIMP oeICalEventImpl::GetLastAlarmAck(PRTime *aRetVal)
 {
 #ifdef ICAL_DEBUG_ALL
@@ -965,7 +1047,7 @@ NS_IMETHODIMP oeICalEventImpl::GetPreviousOccurrence( PRTime beforethis, PRTime 
 //#endif
 //                continue;
                 next.day = 0;
-                icaltime_normalize( next );
+                next = icaltime_normalize( next );
             }
             PRTime nextinms = ConvertToPrtime( next );
             if( LL_CMP(nextinms, < ,beforethis) && !IsExcepted( nextinms ) ) {
@@ -1057,7 +1139,7 @@ icaltimetype oeICalEventImpl::GetNextRecurrence( icaltimetype begin, bool *isbeg
                 //#endif
                 //continue;
                 next.day = 0;
-                icaltime_normalize( next );
+                next = icaltime_normalize( next );
             }
 
             if( icaltime_compare( next, begin ) > 0 ) {
@@ -1070,7 +1152,7 @@ icaltimetype oeICalEventImpl::GetNextRecurrence( icaltimetype begin, bool *isbeg
             }
 
             if( icaltime_is_null_time( nextpropagation ) ) {
-                struct icaldurationtype eventlength = icaltime_subtract( m_end->m_datetime, m_start->m_datetime );
+                struct icaldurationtype eventlength = GetLength();
                 struct icaltimetype end = icaltime_add( next, eventlength );
 
                 if( icaltime_compare( end , begin ) <= 0 )
@@ -1175,6 +1257,10 @@ icaltimetype oeICalEventImpl::CalculateAlarmTime( icaltimetype date ) {
     else
         icaltime_adjust( &result, 0, 0, -(signed long)m_alarmlength, 0 );
 
+    //Add the length to the final result if alarm trigger is relative to end of event
+    if( m_alarmtriggerrelation == ICAL_RELATED_END )
+        result = icaltime_add( result, GetLength() );
+
     return result;
 }
 
@@ -1188,6 +1274,14 @@ icaltimetype oeICalEventImpl::CalculateEventTime( icaltimetype alarmtime ) {
         icaltime_adjust( &result, 0, 0, (signed long)m_alarmlength, 0 );
 
     return result;
+}
+
+icaldurationtype oeICalEventImpl::GetLength() {
+
+    if( !icaldurationtype_is_null_duration( m_duration ) )
+        return m_duration;
+
+    return icaltime_subtract( m_end->m_datetime, m_start->m_datetime );;
 }
 
 NS_IMETHODIMP oeICalEventImpl::GetStart(oeIDateTime * *start)
@@ -1457,6 +1551,7 @@ NS_IMETHODIMP oeICalEventImpl::AddAttachment(nsIMsgAttachment *attachment)
 #ifdef ICAL_DEBUG
     printf( "oeICalEventImpl::AddAttachment()\n" );
 #endif
+#ifdef MOZ_MAIL_NEWS
     PRUint32 i;
     PRUint32 attachmentCount = 0;
     m_attachments->Count(&attachmentCount);
@@ -1476,6 +1571,9 @@ NS_IMETHODIMP oeICalEventImpl::AddAttachment(nsIMsgAttachment *attachment)
     }
 
     return m_attachments->InsertElementAt(attachment, attachmentCount);
+#else
+    return NS_ERROR_NOT_IMPLEMENTED;
+#endif
 }
 
 NS_IMETHODIMP oeICalEventImpl::RemoveAttachment(nsIMsgAttachment *attachment)
@@ -1483,6 +1581,7 @@ NS_IMETHODIMP oeICalEventImpl::RemoveAttachment(nsIMsgAttachment *attachment)
 #ifdef ICAL_DEBUG
     printf( "oeICalEventImpl::RemoveAttachment()\n" );
 #endif
+#ifdef MOZ_MAIL_NEWS
     PRUint32 i;
     PRUint32 attachmentCount = 0;
     m_attachments->Count(&attachmentCount);
@@ -1504,6 +1603,9 @@ NS_IMETHODIMP oeICalEventImpl::RemoveAttachment(nsIMsgAttachment *attachment)
     }
 
     return NS_OK;
+#else
+    return NS_ERROR_NOT_IMPLEMENTED;
+#endif
 }
 
 NS_IMETHODIMP oeICalEventImpl::RemoveAttachments()
@@ -1534,6 +1636,7 @@ NS_IMETHODIMP oeICalEventImpl::AddContact(nsIAbCard *contact)
 #ifdef ICAL_DEBUG
     printf( "oeICalEventImpl::AddContact()\n" );
 #endif
+#ifdef MOZ_MAIL_NEWS
     PRUint32 i;
     PRUint32 contactCount = 0;
     m_contacts->Count(&contactCount);
@@ -1553,6 +1656,9 @@ NS_IMETHODIMP oeICalEventImpl::AddContact(nsIAbCard *contact)
     }
 
     return m_contacts->InsertElementAt(contact, contactCount);
+#else
+    return NS_ERROR_NOT_IMPLEMENTED;
+#endif
 }
 
 NS_IMETHODIMP oeICalEventImpl::RemoveContact(nsIAbCard *contact)
@@ -1560,6 +1666,7 @@ NS_IMETHODIMP oeICalEventImpl::RemoveContact(nsIAbCard *contact)
 #ifdef ICAL_DEBUG
     printf( "oeICalEventImpl::RemoveContact()\n" );
 #endif
+#ifdef MOZ_MAIL_NEWS
     PRUint32 i;
     PRUint32 contactCount = 0;
     m_contacts->Count(&contactCount);
@@ -1581,6 +1688,9 @@ NS_IMETHODIMP oeICalEventImpl::RemoveContact(nsIAbCard *contact)
     }
 
     return NS_OK;
+#else
+    return NS_ERROR_NOT_IMPLEMENTED;
+#endif
 }
 
 NS_IMETHODIMP oeICalEventImpl::RemoveContacts()
@@ -1588,6 +1698,7 @@ NS_IMETHODIMP oeICalEventImpl::RemoveContacts()
 #ifdef ICAL_DEBUG
     printf( "oeICalEventImpl::RemoveContacts()\n" );
 #endif
+#ifdef MOZ_MAIL_NEWS
     PRUint32 i;
     PRUint32 contactCount = 0;
     m_contacts->Count(&contactCount);
@@ -1596,6 +1707,9 @@ NS_IMETHODIMP oeICalEventImpl::RemoveContacts()
         m_contacts->DeleteElementAt(0);
 
     return NS_OK;
+#else
+    return NS_ERROR_NOT_IMPLEMENTED;
+#endif
 }
 
 NS_IMETHODIMP oeICalEventImpl::SetDuration(PRBool is_negative, PRUint16 weeks, PRUint16 days, PRUint16 hours, PRUint16 minutes, PRUint16 seconds)
@@ -1642,7 +1756,7 @@ void oeICalEventImpl::ChopAndAddEventToEnum( struct icaltimetype startdate, nsIS
         eventDisplay->SetDisplayEndDate( enddateinms );
     } else {
         if( isbeginning ) {
-            struct icaldurationtype eventlength = icaltime_subtract( m_end->m_datetime, m_start->m_datetime );
+            struct icaldurationtype eventlength = GetLength();
             struct icaltimetype eventenddate = icaltime_add( startdate, eventlength );
 
             if( icaltime_compare( endofday, eventenddate ) < 0 ) {
@@ -1689,6 +1803,8 @@ bool oeICalEventImpl::ParseIcalComponent( icalcomponent *comp )
         return false;
     }
 
+    m_type = icalcomponent_isa( vevent );
+
     const char *tmpstr;
     //id    
     icalproperty *prop = icalcomponent_get_first_property( vevent, ICAL_UID_PROPERTY );
@@ -1696,7 +1812,7 @@ bool oeICalEventImpl::ParseIcalComponent( icalcomponent *comp )
         tmpstr = icalproperty_get_uid( prop );
         SetId( tmpstr );
     } else {
-        ReportError( oeIICalError::WARN, oeIICalError::UID_NOT_FOUND, "oeICalEventImpl::ParseIcalComponent() : Warning UID not found! Assigning new one." );
+        ReportError( oeIICalError::CAL_WARN, oeIICalError::UID_NOT_FOUND, "oeICalEventImpl::ParseIcalComponent() : Warning UID not found! Assigning new one." );
         char uidstr[40];
         GenerateUUID( uidstr );
         SetId( uidstr );
@@ -1832,8 +1948,17 @@ bool oeICalEventImpl::ParseIcalComponent( icalcomponent *comp )
     //alarm
     icalcomponent *valarm = icalcomponent_get_first_component( vevent, ICAL_VALARM_COMPONENT );
     
-    if ( valarm != 0)
+    if ( valarm != 0) {
         m_hasalarm= true;
+        prop = icalcomponent_get_first_property( valarm, ICAL_TRIGGER_PROPERTY );
+        if( prop ) {
+            icalparameter *tmppar = icalproperty_get_first_parameter( prop, ICAL_RELATED_PARAMETER );
+            if( tmppar ) {
+                m_alarmtriggerrelation = icalparameter_get_related( tmppar );
+            } else 
+                m_alarmtriggerrelation = ICAL_RELATED_START;
+        }
+    }
     else
         m_hasalarm= false;
 
@@ -2015,10 +2140,39 @@ bool oeICalEventImpl::ParseIcalComponent( icalcomponent *comp )
                     m_end->SetTzID( tzid );
                 }
             }
-        } else if( !icaltime_is_null_time( m_start->m_datetime ) ) {
-            m_end->m_datetime = m_start->m_datetime;
         } else {
-            m_end->m_datetime = icaltime_null_time();
+            prop = icalcomponent_get_first_property( vevent, ICAL_DUE_PROPERTY );
+            if ( prop != 0) {
+                m_end->m_datetime = icalproperty_get_due( prop );
+                bool datevalue=m_end->m_datetime.is_date;
+                m_end->m_datetime.is_date = false; //Because currently we depend on m_datetime being a complete datetime value.
+                const char *tzid=nsnull;
+                if( m_end->m_datetime.is_utc  && !datevalue )
+                    tzid="/Mozilla.org/BasicTimezones/GMT";
+                m_end->m_datetime.is_utc = false;
+                if( datevalue ) {
+                    m_end->SetHour( 0 );
+                    m_end->SetMinute( 0 );
+                }
+                icalparameter *tmppar = icalproperty_get_first_parameter( prop, ICAL_TZID_PARAMETER );
+                if( tmppar )
+                    tzid = icalparameter_get_tzid( tmppar );
+                if( tzid ) {
+                    if( !datevalue ) {
+                        PRTime timeinms;
+                        m_end->GetTime( &timeinms );
+                        m_end->SetTimeInTimezone( timeinms, tzid );
+                    } else {
+                        m_end->SetTzID( tzid );
+                    }
+                }
+            } else {
+                if( m_type == ICAL_VEVENT_COMPONENT && !icaltime_is_null_time( m_start->m_datetime ) ) {
+                    m_end->m_datetime = m_start->m_datetime;
+                } else {
+                    m_end->m_datetime = icaltime_null_time();
+                }
+            }
         }
     } else {
         if( !icaltime_is_null_time( m_start->m_datetime ) ) {
@@ -2032,10 +2186,15 @@ bool oeICalEventImpl::ParseIcalComponent( icalcomponent *comp )
     prop = icalcomponent_get_first_property( vevent, ICAL_DTSTAMP_PROPERTY );
     if ( prop != 0) {
         m_stamp->m_datetime = icalproperty_get_dtstamp( prop );
-    } else {
-        m_stamp->m_datetime = icaltime_null_time();
     }
 
+    //lastmodifed
+    prop = icalcomponent_get_first_property( vevent, ICAL_LASTMODIFIED_PROPERTY );
+    if ( prop != 0) {
+        m_lastmodified = icalproperty_get_dtstamp( prop );
+    } else {
+        m_lastmodified = icaltime_null_time();
+    }
 
     // scan for X- properties
 
@@ -2150,6 +2309,7 @@ bool oeICalEventImpl::ParseIcalComponent( icalcomponent *comp )
         }
     }
 
+#ifdef MOZ_MAIL_NEWS
     //attachments
     for( prop = icalcomponent_get_first_property( vevent, ICAL_X_PROPERTY );
         prop != 0 ;
@@ -2160,7 +2320,7 @@ bool oeICalEventImpl::ParseIcalComponent( icalcomponent *comp )
             if( strcmp( tmpstr, "Attachment" ) == 0 ) {
                 nsresult rv;
                 tmpstr = (char *)icalproperty_get_value_as_string( prop );
-                nsCOMPtr<nsIMsgAttachment> attachment = do_CreateInstance(NS_MSGATTACHMENT_CONTRACTID, &rv);
+                nsCOMPtr<nsIMsgAttachment> attachment = do_CreateInstance( "@mozilla.org/messengercompose/attachment;1", &rv);
                 if ( NS_SUCCEEDED(rv) && attachment ) {
                     attachment->SetUrl( tmpstr );
                     AddAttachment( attachment );
@@ -2168,14 +2328,16 @@ bool oeICalEventImpl::ParseIcalComponent( icalcomponent *comp )
             }
         }
     }
+#endif
 
+#ifdef MOZ_MAIL_NEWS
     //contacts
     for(prop = icalcomponent_get_first_property( vevent, ICAL_CONTACT_PROPERTY );
         prop != 0 ;
         prop = icalcomponent_get_next_property( vevent, ICAL_CONTACT_PROPERTY ) ) {
         tmpstr = icalproperty_get_contact( prop );
         nsresult rv;
-        nsCOMPtr<nsIAbCard> contact = do_CreateInstance(NS_ABCARDPROPERTY_CONTRACTID, &rv);
+        nsCOMPtr<nsIAbCard> contact = do_CreateInstance( "@mozilla.org/addressbook/cardproperty;1", &rv);
         if ( NS_SUCCEEDED(rv) && contact ) {
             nsAutoString email;
             email.AssignWithConversion( tmpstr );
@@ -2183,6 +2345,7 @@ bool oeICalEventImpl::ParseIcalComponent( icalcomponent *comp )
             AddContact( contact );
         }
     }
+#endif
 
     return true;
 }
@@ -2298,6 +2461,12 @@ icalcomponent* oeICalEventImpl::AsIcalComponent()
             trig.duration.seconds = 1;
 
         prop = icalproperty_new_trigger( trig );
+
+        if( m_alarmtriggerrelation != DEFAULT_ALARMTRIGGER_RELATION ) {
+            icalparameter *tmppar = icalparameter_new_related( m_alarmtriggerrelation );
+            icalproperty_add_parameter( prop, tmppar );
+        }
+
         icalcomponent_add_property( valarm, prop );
         icalcomponent_add_component( vevent, valarm );
     }
@@ -2311,7 +2480,7 @@ icalcomponent* oeICalEventImpl::AsIcalComponent()
 
     char tmpstr[20];
     //alarmlength
-    if( m_alarmlength && m_alarmlength != DEFAULT_ALARM_LENGTH ) {
+    if( m_alarmlength != DEFAULT_ALARM_LENGTH ) {
         sprintf( tmpstr, "%lu", m_alarmlength );
         prop = icalproperty_new_x( tmpstr );
         icalproperty_set_x_name( prop, XPROP_ALARMLENGTH);
@@ -2342,9 +2511,8 @@ icalcomponent* oeICalEventImpl::AsIcalComponent()
 
     //Create enddate if does not exist
     if( icaltime_is_null_time( m_end->m_datetime ) && !icaltime_is_null_time( m_start->m_datetime ) ) {
-        //Set to the same as start date 23:59
+        //Set to the same as start date
         m_end->m_datetime = m_start->m_datetime;
-        m_end->SetHour( 23 ); m_end->SetMinute( 59 );
     }
 
     //recurunits
@@ -2560,9 +2728,15 @@ icalcomponent* oeICalEventImpl::AsIcalComponent()
     if( starttzid )
         nsMemory::Free( starttzid );
 
+    //stampdate
     if( m_stamp && !icaltime_is_null_time( m_stamp->m_datetime ) ) {
-        //stampdate
         prop = icalproperty_new_dtstamp( m_stamp->m_datetime );
+        icalcomponent_add_property( vevent, prop );
+    }
+
+    //lastmodified
+    if( !icaltime_is_null_time( m_lastmodified ) ) {
+        prop = icalproperty_new_lastmodified( m_lastmodified );
         icalcomponent_add_property( vevent, prop );
     }
 
@@ -2579,6 +2753,7 @@ icalcomponent* oeICalEventImpl::AsIcalComponent()
     if( tmpcomp )
         icalcomponent_add_component( vevent, tmpcomp );
 
+#ifdef MOZ_MAIL_NEWS
     PRUint32 attachmentCount = 0;
     m_attachments->Count(&attachmentCount);
     nsCOMPtr<nsIMsgAttachment> element;
@@ -2628,6 +2803,7 @@ icalcomponent* oeICalEventImpl::AsIcalComponent()
             icalcomponent_add_property( vevent, prop );
         }
     }
+#endif
 
     //add event to newcalendar
     icalcomponent_add_component( newcalendar, vevent );
@@ -2641,6 +2817,42 @@ NS_IMETHODIMP oeICalEventImpl::ReportError( PRInt16 severity, PRUint32 errorid, 
         gContainer->ReportError( severity, errorid, errorstring );
     }
     return NS_OK;
+}
+
+NS_IMETHODIMP oeICalEventImpl::SetParameter( const char *name, const char *value ) {
+    if( strcmp( name, "ICAL_RELATED_PARAMETER" ) == 0 ) {
+        if( strcmp( value, "ICAL_RELATED_START" ) == 0 ) 
+            m_alarmtriggerrelation = ICAL_RELATED_START;
+        else if( strcmp( value, "ICAL_RELATED_END" ) == 0 )
+            m_alarmtriggerrelation = ICAL_RELATED_END;
+        else
+            return NS_ERROR_ILLEGAL_VALUE;
+
+        return NS_OK;
+    }
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP oeICalEventImpl::GetParameter( const char *name, char **value ) {
+    *value = nsnull;
+    if( strcmp( name, "ICAL_RELATED_PARAMETER" ) == 0 ) {
+        char *tmpstr=nsnull;
+        switch ( m_alarmtriggerrelation ) {
+            case ICAL_RELATED_START:
+                tmpstr = "ICAL_RELATED_START";
+                break;
+            case ICAL_RELATED_END:
+                tmpstr = "ICAL_RELATED_END";
+                break;
+        }
+        if( tmpstr ) {
+            *value = (char*) nsMemory::Clone( tmpstr, strlen( tmpstr )+1);
+            return NS_OK;
+        }
+        else
+            return NS_ERROR_UNEXPECTED;
+    }
+    return NS_ERROR_NOT_AVAILABLE;
 }
 
 /********************************************************************************************/
@@ -2708,6 +2920,9 @@ oeICalEventDisplayImpl::QueryInterface(REFNSIID aIID, void** aInstancePtr)
         return NS_OK;
     }
     if (aIID.Equals(NS_GET_IID(oeIICalEvent))) {
+        return mEvent->QueryInterface( aIID, aInstancePtr );
+    }
+    if (aIID.Equals(NS_GET_IID(oeIICalTodo))) {
         return mEvent->QueryInterface( aIID, aInstancePtr );
     }
     return NS_NOINTERFACE;

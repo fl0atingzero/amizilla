@@ -119,7 +119,7 @@ STDMETHODIMP nsTextAccessibleWrap::get_clippedSubstringBounds(
   nsCOMPtr<nsIAccessible> accessible(do_QueryInterface(docAccessible));
   NS_ASSERTION(accessible, "There must always be a doc accessible, but there isn't");
 
-  accessible->AccGetBounds(&docX, &docY, &docWidth, &docHeight);
+  accessible->GetBounds(&docX, &docY, &docWidth, &docHeight);
 
   nsRect unclippedRect(x, y, width, height);
   nsRect docRect(docX, docY, docWidth, docHeight);
@@ -153,7 +153,7 @@ STDMETHODIMP nsTextAccessibleWrap::get_unclippedSubstringBounds(
 
   // Add offsets for entire accessible
   PRInt32 nodeX, nodeY, nodeWidth, nodeHeight;
-  AccGetBounds(&nodeX, &nodeY, &nodeWidth, &nodeHeight);
+  GetBounds(&nodeX, &nodeY, &nodeWidth, &nodeHeight);
   *aX += nodeX;
   *aY += nodeY;
 
@@ -229,18 +229,14 @@ nsresult nsTextAccessibleWrap::GetCharacterExtents(PRInt32 aStartOffset, PRInt32
   nsCOMPtr<nsIPresContext> presContext;
   presShell->GetPresContext(getter_AddRefs(presContext));
   NS_ENSURE_TRUE(presContext, NS_ERROR_FAILURE);
-  float t2p;
-  if (NS_FAILED(presContext->GetTwipsToPixels(&t2p))) {
-    return NS_ERROR_FAILURE;
-  }
+  float t2p = presContext->TwipsToPixels();
 
   nsIFrame *frame = nsnull;
   nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMNode));
   presShell->GetPrimaryFrameFor(content, &frame);
   NS_ENSURE_TRUE(frame, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIViewManager> viewManager;
-  presShell->GetViewManager(getter_AddRefs(viewManager));
+  nsIViewManager* viewManager = presShell->GetViewManager();
   NS_ASSERTION(viewManager, "No view manager for pres shell");
 
   nsCOMPtr<nsIWidget> widget;
@@ -258,9 +254,8 @@ nsresult nsTextAccessibleWrap::GetCharacterExtents(PRInt32 aStartOffset, PRInt32
     return E_FAIL;
   }
 
-  nsRect startRect, endRect;
-  startFrame->GetRect(startRect);
-  endFrame->GetRect(endRect);
+  nsRect startRect = startFrame->GetRect();
+  nsRect endRect = endFrame->GetRect();
 
   *aX      = NSTwipsToIntPixels(startPoint.x + startRect.x, t2p);
   *aY      = NSTwipsToIntPixels(startPoint.y, t2p);

@@ -94,7 +94,7 @@ NS_IMPL_ISUPPORTS7(nsPluginInstancePeerImpl,
                    nsIPluginTagInfo,
                    nsIPluginTagInfo2,
                    nsIJVMPluginTagInfo,
-                   nsPIPluginInstancePeer);
+                   nsPIPluginInstancePeer)
 #else
 NS_IMPL_ISUPPORTS6(nsPluginInstancePeerImpl,
                    nsIPluginInstancePeer,
@@ -102,7 +102,7 @@ NS_IMPL_ISUPPORTS6(nsPluginInstancePeerImpl,
                    nsIWindowlessPluginInstancePeer,
                    nsIPluginTagInfo,
                    nsIPluginTagInfo2,
-                   nsPIPluginInstancePeer);
+                   nsPIPluginInstancePeer)
 #endif
 
 NS_IMETHODIMP nsPluginInstancePeerImpl::GetValue(nsPluginInstancePeerVariable variable, void *value)
@@ -157,8 +157,8 @@ protected:
   nsIPluginInstanceOwner* mOwner;
 };
 
-NS_IMPL_ADDREF(nsPluginStreamToFile);
-NS_IMPL_RELEASE(nsPluginStreamToFile);
+NS_IMPL_ADDREF(nsPluginStreamToFile)
+NS_IMPL_RELEASE(nsPluginStreamToFile)
 
 nsPluginStreamToFile::nsPluginStreamToFile(const char* target, nsIPluginInstanceOwner* owner) :
   mTarget(PL_strdup(target)),
@@ -745,8 +745,7 @@ NS_IMETHODIMP nsPluginInstancePeerImpl::GetJSWindow(JSObject* *outJSWindow)
   rv = mOwner->GetDocument(getter_AddRefs(document));
 
   if (NS_SUCCEEDED(rv) && document) {
-    nsCOMPtr<nsIScriptGlobalObject> global;
-    document->GetScriptGlobalObject(getter_AddRefs(global));
+    nsIScriptGlobalObject *global = document->GetScriptGlobalObject();
 
     if(global) {
       *outJSWindow = global->GetGlobalJSObject();
@@ -771,17 +770,13 @@ NS_IMETHODIMP nsPluginInstancePeerImpl::GetJSContext(JSContext* *outContext)
   rv = mOwner->GetDocument(getter_AddRefs(document));
 
   if (NS_SUCCEEDED(rv) && document) {
-    nsCOMPtr<nsIScriptGlobalObject> global;
-    document->GetScriptGlobalObject(getter_AddRefs(global));
+    nsIScriptGlobalObject *global = document->GetScriptGlobalObject();
 
     if (global) {
-      nsCOMPtr<nsIScriptContext> context;
+      nsIScriptContext *context = global->GetContext();
 
-      if (global->GetContext(getter_AddRefs(context)) == NS_OK) {
-        if (context) {
-            *outContext = (JSContext*) context->GetNativeContext();
-            rv = NS_OK;
-        }
+      if (context) {
+        *outContext = (JSContext*) context->GetNativeContext();
       }
     }
   }

@@ -20,7 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Bill Law    <law@netscape.com>
+ *  Bill Law     <law@netscape.com>
+ *  Dean Tessman <dean_tessman@hotmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or 
@@ -44,6 +45,7 @@
 #include "nsIStringBundle.h"
 #include "nsDirectoryService.h"
 #include "nsAppDirectoryServiceDefs.h"
+#include "nsNativeCharsetUtils.h"
 
 #define MOZ_HWND_BROADCAST_MSG_TIMEOUT 5000
 #define MOZ_CLIENT_BROWSER_KEY "Software\\Clients\\StartMenuInternet"
@@ -92,6 +94,24 @@ static nsCString shortAppName() {
     return result;
 }
 
+static PRBool IsNT()
+{
+    static PRBool sInitialized = PR_FALSE;
+    static PRBool sIsNT = PR_FALSE;
+
+    if (!sInitialized) {
+        OSVERSIONINFO osversion;
+        ::ZeroMemory(&osversion, sizeof(OSVERSIONINFO));
+        osversion.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
+        if (::GetVersionEx(&osversion) && 
+            osversion.dwPlatformId == VER_PLATFORM_WIN32_NT)
+            sIsNT = PR_TRUE;
+        sInitialized = PR_TRUE;
+    }
+
+    return sIsNT;
+}
+
 // RegistryEntry
 //
 // Generic registry entry (no saving of previous values).  Each is comprised of:
@@ -104,7 +124,9 @@ struct RegistryEntry {
     PRBool      isNull;    // i.e., should use ::RegDeleteValue
     nsCString   keyName;   // Key name.
     nsCString   valueName; // Value name (can be empty, which implies NULL).
-    nsCString   setting;   // What we set it to.
+    nsCString   setting;   // What we set it to (UTF-8). This had better be 
+                           // nsString to avoid extra string copies, but
+                           // this code is not performance-critical. 
 
     RegistryEntry( HKEY baseKey, const char* keyName, const char* valueName, const char* setting )
         : baseKey( baseKey ), isNull( setting == 0 ), keyName( keyName ), valueName( valueName ), setting( setting ? setting : "" ) {
@@ -324,22 +346,47 @@ else printf( "Setting %s=%s\n", fullName().get(), setting.get() );
                 result = NS_OK;
             }
         } else {
-            // Get current value to see if it is set properly already.
-            char buffer[4096] = { 0 };
-            DWORD len = sizeof buffer;
-            rc = ::RegQueryValueEx( key, valueNameArg(), NULL, NULL, (LPBYTE)buffer, &len );
-            if ( rc != ERROR_SUCCESS || strcmp( setting.get(), buffer ) != 0 ) {
-                rc = ::RegSetValueEx( key, valueNameArg(), 0, REG_SZ, (LPBYTE)setting.get(), setting.Length() );
+            NS_ConvertUTF8toUTF16 utf16Setting(setting);
+            if (!IsNT()) {
+                // Get current value to see if it is set properly already.
+               char buffer[4096] = { 0 };
+               DWORD len = sizeof buffer;
+               rc = ::RegQueryValueExA( key, valueNameArg(), NULL, NULL,
+                    (LPBYTE)buffer, &len );
+               nsCAutoString cSetting;
+               NS_CopyUnicodeToNative(utf16Setting, cSetting);
+               if ( rc != ERROR_SUCCESS || !cSetting.Equals(buffer)) {
+                   rc = ::RegSetValueExA( key, valueNameArg(), 0, REG_SZ,
+                        (LPBYTE)cSetting.get(), cSetting.Length() );
 #ifdef DEBUG_law
-NS_WARN_IF_FALSE( rc == ERROR_SUCCESS, fullName().get() );
+                   NS_WARN_IF_FALSE( rc == ERROR_SUCCESS, fullName().get() );
 #endif
-                if ( rc == ERROR_SUCCESS ) {
-                    result = NS_OK;
-                }
-            } else {
-                // Already has desired setting.
-                result = NS_OK;
-            }
+                   if ( rc == ERROR_SUCCESS ) {
+                      result = NS_OK;
+                   }
+               } else {
+                   // Already has desired setting.
+                   result = NS_OK;
+               }
+           } else {
+                // Get current value to see if it is set properly already.
+               PRUnichar buffer[4096] = { 0 };
+               DWORD len = sizeof buffer;
+               NS_ConvertASCIItoUTF16 wValueName(valueNameArg());
+               rc = ::RegQueryValueExW( key, wValueName.get(), NULL,
+                    NULL, (LPBYTE)buffer, &len );
+               if ( rc != ERROR_SUCCESS || !utf16Setting.Equals(buffer) ) {
+                   rc = ::RegSetValueExW( key, wValueName.get(), 0, REG_SZ,
+                        (LPBYTE) (utf16Setting.get()),
+                        utf16Setting.Length() * 2);
+                   if ( rc == ERROR_SUCCESS ) {
+                      result = NS_OK;
+                   }
+               } else {
+                   // Already has desired setting.
+                   result = NS_OK;
+               }
+           }  // NT
         }
         ::RegCloseKey( key );
     } else {
@@ -434,8 +481,13 @@ static void setWindowsXP() {
             }
             RegistryEntry tmp_entry5( HKEY_LOCAL_MACHINE,
                            nsCAutoString( subkey + NS_LITERAL_CSTRING( "\\shell\\properties\\command" ) ).get(),
-                           "", 
-                           nsCAutoString( thisApplication() + NS_LITERAL_CSTRING( " -chrome \"chrome://communicator/content/pref/pref.xul\"" ) ).get() );
+                           "", nsCAutoString( thisApplication() + 
+#ifndef MOZ_PHOENIX
+                                               NS_LITERAL_CSTRING(" -chrome \"chrome://communicator/content/pref/pref.xul\"") ).get()
+#else
+                                               NS_LITERAL_CSTRING(" -chrome \"chrome://browser/content/pref/pref.xul\"") ).get()
+#endif
+                          );
             tmp_entry5.set();
 
             // Now we need to select our application as the default start menu internet application.
@@ -678,13 +730,30 @@ nsCString RegistryEntry::currentSetting( PRBool *currentlyUndefined ) const {
     HKEY   key;
     LONG   rc = ::RegOpenKey( baseKey, keyName.get(), &key );
     if ( rc == ERROR_SUCCESS ) {
-        char buffer[4096] = { 0 };
-        DWORD len = sizeof buffer;
-        rc = ::RegQueryValueEx( key, valueNameArg(), NULL, NULL, (LPBYTE)buffer, &len );
-        if ( rc == ERROR_SUCCESS ) {
-            result = buffer;
-            if ( currentlyUndefined ) {
-                *currentlyUndefined = PR_FALSE; // Indicate entry is present.
+        if (!IsNT()) {
+            char buffer[4096] = { 0 };
+            DWORD len = sizeof buffer;
+            rc = ::RegQueryValueExA( key, valueNameArg(), NULL, NULL,
+                 (LPBYTE)buffer, &len );
+            if ( rc == ERROR_SUCCESS ) {
+                nsAutoString uResult;
+                NS_CopyNativeToUnicode(nsDependentCString(buffer), uResult);
+                CopyUTF16toUTF8(uResult, result);
+                if ( currentlyUndefined ) {
+                    *currentlyUndefined = PR_FALSE; // Indicate entry is present
+                }
+            }
+        } else {
+            PRUnichar buffer[4096] = { 0 };
+            DWORD len = sizeof buffer;
+            rc = ::RegQueryValueExW( key,
+                 NS_ConvertASCIItoUTF16(valueNameArg()).get(), NULL, NULL,
+                 (LPBYTE)buffer, &len );
+            if ( rc == ERROR_SUCCESS ) {
+                CopyUTF16toUTF8(buffer, result);
+                if ( currentlyUndefined ) {
+                    *currentlyUndefined = PR_FALSE; // Indicate entry is present
+                }
             }
         }
         ::RegCloseKey( key );
@@ -711,7 +780,7 @@ nsresult FileTypeRegistryEntry::set() {
 
         // If we just created this file type entry, set description and default icon.
         if ( NS_SUCCEEDED( rv ) ) {
-            nsCAutoString iconFileToUse;
+            nsCAutoString iconFileToUse( "%1" );
             nsCAutoString descKey( "Software\\Classes\\" );
             descKey += protocol;
             RegistryEntry descEntry( HKEY_LOCAL_MACHINE, descKey.get(), NULL, "" );
@@ -729,6 +798,7 @@ nsresult FileTypeRegistryEntry::set() {
             iconKey += protocol;
             iconKey += "\\DefaultIcon";
 
+            if ( !iconFile.Equals(iconFileToUse) ) {
             iconFileToUse = thisApplication() + NS_LITERAL_CSTRING( ",0" );
 
             // Check to see if there's an icon file name associated with this extension.
@@ -763,7 +833,7 @@ nsresult FileTypeRegistryEntry::set() {
                             iconFileToUse.Assign( buffer );
                             iconFileToUse.Append( NS_LITERAL_CSTRING( ",0" ) );
                         }
-
+                        }
                     }
                 }
             }
@@ -801,12 +871,17 @@ nsresult FileTypeRegistryEntry::reset() {
 nsresult EditableFileTypeRegistryEntry::set() {
     nsresult rv = FileTypeRegistryEntry::set();
     if ( NS_SUCCEEDED( rv ) ) {
-        nsCAutoString editKey( "Software\\Classes\\" );
-        editKey += protocol;
-        editKey += "\\shell\\edit\\command";
-        nsCAutoString editor( thisApplication() );
-        editor += " -edit \"%1\"";
-        rv = RegistryEntry( HKEY_LOCAL_MACHINE, editKey.get(), "", editor.get() ).set();
+        // only set this if we support "-edit" on the command-line
+        nsCOMPtr<nsICmdLineHandler> editorService =
+            do_GetService( "@mozilla.org/commandlinehandler/general-startup;1?type=edit", &rv );
+        if ( NS_SUCCEEDED( rv) ) {
+            nsCAutoString editKey( "Software\\Classes\\" );
+            editKey += protocol;
+            editKey += "\\shell\\edit\\command";
+            nsCAutoString editor( thisApplication() );
+            editor += " -edit \"%1\"";
+            rv = RegistryEntry( HKEY_LOCAL_MACHINE, editKey.get(), "", editor.get() ).set();
+        }
     }
     return rv;
 }

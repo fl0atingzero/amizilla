@@ -62,6 +62,7 @@ XUL_ATOM(button, "button")
 XUL_ATOM(spinner, "spinner")
 XUL_ATOM(scrollbar, "scrollbar")
 XUL_ATOM(nativescrollbar, "nativescrollbar")
+XUL_ATOM(scrollcorner, "scrollcorner")
 XUL_ATOM(slider, "slider")
 XUL_ATOM(palettename, "palettename")
 XUL_ATOM(fontpicker, "fontpicker")
@@ -106,6 +107,8 @@ XUL_ATOM(dropAfter, "dropAfter")
 XUL_ATOM(progressNormal, "progressNormal")
 XUL_ATOM(progressUndetermined, "progressUndetermined")
 XUL_ATOM(progressNone, "progressNone")
+XUL_ATOM(odd, "odd")
+XUL_ATOM(even, "even")
 
 XUL_ATOM(menubar, "menubar") // An XP menu bar.
 XUL_ATOM(menu, "menu") // Represents an XP menu

@@ -35,12 +35,6 @@ function DoRDFCommand(dataSource, command, srcArray, argumentArray)
     }
 }
 
-function ConvertMessagesToResourceArray(messages,  resourceArray)
-{
-    dump("fix or remove this\n");
-    // going away...
-}
-
 function GetNewMessages(selectedFolders, compositeDataSource)
 {
 	var numFolders = selectedFolders.length;
@@ -72,7 +66,53 @@ function GetNewMessages(selectedFolders, compositeDataSource)
 	}
 }
 
-function getIdentityForServer(server)
+function getBestIdentity(identities, optionalHint)
+{
+  var identity = null;
+
+  // if we have more than one identity and a hint to help us pick one
+  if (identities.Count() > 1 && optionalHint) {
+    // iterate over all of the identities
+    var tempID;
+    for (id = 0; id < identities.Count(); id++) { 
+      tempID = identities.GetElementAt(id).QueryInterface(Components.interfaces.nsIMsgIdentity);
+      if (optionalHint.search(tempID.email) >= 0) {
+        identity = tempID;
+        break;
+      }
+    }
+
+    // if we could not find an exact email address match within the hint fields then maybe the message
+    // was to a mailing list. In this scenario, we won't have a match based on email address. 
+    // Before we just give up, try and search for just a shared domain between the the hint and 
+    // the email addresses for our identities. Hey, it is better than nothing and in the case
+    // of multiple matches here, we'll end up picking the first one anyway which is what we would have done
+    // if we didn't do this second search. This helps the case for corporate users where mailing lists will have the same domain
+    // as one of your multiple identities.
+
+    if (!identity) {
+      for (id = 0; id < identities.Count(); id++) { 
+        tempID = identities.GetElementAt(id).QueryInterface(Components.interfaces.nsIMsgIdentity);
+
+        // extract out the partial domain
+        var start = tempID.email.lastIndexOf("@"); // be sure to include the @ sign in our search to reduce the risk of false positives
+  
+        if (optionalHint.search(tempID.email.slice(start, tempID.email.length)) >= 0) {
+          identity = tempID;
+          break;
+        }
+      }
+    }
+  }
+
+  // still no matches? Give up and pick the first one like we used to.
+  if (!identity)
+    identity = identities.GetElementAt(0).QueryInterface(Components.interfaces.nsIMsgIdentity); 
+
+  return identity;
+}
+
+function getIdentityForServer(server, optionalHint)
 {
     var identity = null;
     if(server) {
@@ -80,8 +120,8 @@ function getIdentityForServer(server)
         var identities = accountManager.GetIdentitiesForServer(server);
         // dump("identities = " + identities + "\n");
         // just get the first one
-        if (identities.Count() > 0 ) {
-            identity = identities.GetElementAt(0).QueryInterface(Components.interfaces.nsIMsgIdentity);  
+        if (identities.Count() > 0 ) { 
+          identity = getBestIdentity(identities, optionalHint);
         }
     }
 
@@ -121,6 +161,8 @@ function ComposeMessage(type, format, folder, messageArray)
         type = msgComposeType.NewsPost;
         newsgroup = folder.folderURL;
 			}
+
+      // 
       identity = getIdentityForServer(server);
       // dump("identity = " + identity + "\n");
 		}
@@ -169,6 +211,13 @@ function ComposeMessage(type, format, folder, messageArray)
 		for (var i = 0; i < messageArray.length; i ++)
 		{	
 			var messageUri = messageArray[i];
+
+      var hdr = messenger.messageServiceFromURI(messageUri).messageURIToMsgHdr(messageUri);
+      var hintForIdentity = (type == msgComposeType.Template) ? hdr.author : hdr.recipients + hdr.ccList;
+
+      if (server)
+        identity = getIdentityForServer(server, hintForIdentity);
+
 			if (type == msgComposeType.Reply || type == msgComposeType.ReplyAll || type == msgComposeType.ForwardInline ||
 				type == msgComposeType.ReplyToGroup || type == msgComposeType.ReplyToSender || 
 				type == msgComposeType.ReplyToSenderAndGroup ||
@@ -334,14 +383,23 @@ function SubscribeOKCallback(changeTable)
 
 function SaveAsFile(uri)
 {
-	if (uri) messenger.saveAs(uri, true, null, msgWindow);
+  if (uri) {
+    var filename = null;
+    try {
+      var subject = messenger.messageServiceFromURI(uri)
+                             .messageURIToMsgHdr(uri).subject;
+      filename = GenerateValidFilename(subject, ".eml");
+    }
+    catch (ex) {}
+    messenger.saveAs(uri, true, null, filename);
+  }
 }
 
 function SaveAsTemplate(uri, folder)
 {
 	if (uri) {
 		var identity = getIdentityForServer(folder.server);
-		messenger.saveAs(uri, false, identity, msgWindow);
+		messenger.saveAs(uri, false, identity, null);
 	}
 }
 
@@ -527,9 +585,8 @@ function analyze(aMsgHdr, aNextFunction)
     {
       var whiteListDirectory = RDF.GetResource(spamSettings.whiteListAbURI).QueryInterface(Components.interfaces.nsIAbMDBDirectory);
       var headerParser = Components.classes["@mozilla.org/messenger/headerparser;1"].getService(Components.interfaces.nsIMsgHeaderParser);
-      var authorEmailAddress = new Object;
-      headerParser.extractHeaderAddressMailboxes(null, aMsgHdr.author, authorEmailAddress);
-      if (whiteListDirectory.hasCardForEmailAddress(authorEmailAddress.value))
+      var authorEmailAddress = headerParser.extractHeaderAddressMailboxes(null, aMsgHdr.author);
+      if (whiteListDirectory.hasCardForEmailAddress(authorEmailAddress))
       {
         // skip over this message, like we do on incoming mail
         // the difference is it could be marked as junk from previous analysis
@@ -636,6 +693,7 @@ function deleteJunkInFolder()
         // since we will be deleting all selected messages
         treeSelection.clearSelection();
         clearedSelection = true;
+        treeSelection.selectEventsSuppressed = true;
       }
       treeSelection.rangedSelect(i, i, true /* augment */);
     }
@@ -646,6 +704,7 @@ function deleteJunkInFolder()
   if (!clearedSelection)
     return;
 
+  treeSelection.selectEventsSuppressed = false;
   // delete the selected messages
   //
   // XXX todo
@@ -653,4 +712,5 @@ function deleteJunkInFolder()
   // to the message selected before we did all this, if it was not junk?
   SetNextMessageAfterDelete();  
   view.doCommand(nsMsgViewCommandType.deleteMsg);
+  treeSelection.clearSelection();
 }

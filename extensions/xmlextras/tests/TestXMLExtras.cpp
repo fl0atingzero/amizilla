@@ -212,10 +212,10 @@ int main (int argc, char* argv[])
                                           &rv );
 
       if (NS_SUCCEEDED( rv )) {
-        rv = pXMLHttpRequest->OpenRequest( "GET",
-                                           argv[2],
-                                           PR_FALSE,
-                                           nsnull, nsnull );
+        const nsAString& emptyStr = EmptyString();
+        rv = pXMLHttpRequest->OpenRequest( NS_LITERAL_CSTRING("GET"),
+                                           nsDependentCString(argv[2]),
+                                           PR_FALSE, emptyStr, emptyStr );
 
         if (NS_SUCCEEDED( rv )) {
           rv = pXMLHttpRequest->Send( nsnull );
@@ -272,13 +272,18 @@ int main (int argc, char* argv[])
     nsCRT::free(s);
     nsCOMPtr<nsIDocument> doc = do_QueryInterface(pDOMDocument);
     if (doc) {
-      nsCOMPtr<nsIURI> uri;
-      doc->GetDocumentURL(getter_AddRefs(uri));
       nsCAutoString spec;
-      uri->GetSpec(spec);
+      doc->GetDocumentURI()->GetSpec(spec);
       printf("Document URI=\"%s\"\n",spec.get());
     }
   }
+
+  pURI = nsnull;
+  pChannel = nsnull;
+  pInputStream = nsnull;
+  pDOMParser = nsnull;
+  pDOMDocument = nsnull;
+  pXMLHttpRequest = nsnull;
 
   if (servMgr)
     rv = NS_ShutdownXPCOM(servMgr);

@@ -60,7 +60,7 @@
 #include "nsMsgCompCID.h"
 #include "nsIPrompt.h"
 #include "nsIMsgCompUtils.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
 #include "nsIPrefBranchInternal.h"
 #include "nsIPrefBranch.h"
 #include "nsIStringBundle.h"
@@ -195,9 +195,15 @@ PRBool nsMsgMdnGenerator::ProcessSendMode()
     if (m_identity)
     {
         m_identity->GetEmail(getter_Copies(m_email));
+        if (!m_email)
+            return m_reallySendMdn;
+
         const char *accountDomain = strchr(m_email.get(), '@');
         if (!accountDomain)
             return m_reallySendMdn;
+
+        if (MailAddrMatch(m_email.get(), m_dntRrt.get())) // return address is self, don't send
+          return PR_FALSE;
 
         // *** fix me see Bug 132504 for more information
         // *** what if the message has been filtered to different account
@@ -592,12 +598,14 @@ nsresult nsMsgMdnGenerator::CreateFirstPart()
     m_headers->ExtractHeader(HEADER_MESSAGE_ID, PR_FALSE,
                              getter_Copies(m_messageId));
     
-    if (*m_messageId.get() == '<')
-        tmpBuffer = PR_smprintf("References: %s" CRLF, m_messageId.get());
-    else
-        tmpBuffer = PR_smprintf("References: <%s>" CRLF, m_messageId.get());
-    PUSH_N_FREE_STRING(tmpBuffer);
-
+    if (!m_messageId.IsEmpty())
+    {
+      if (*m_messageId.get() == '<')
+          tmpBuffer = PR_smprintf("References: %s" CRLF, m_messageId.get());
+      else
+          tmpBuffer = PR_smprintf("References: <%s>" CRLF, m_messageId.get());
+      PUSH_N_FREE_STRING(tmpBuffer);
+    }
     tmpBuffer = PR_smprintf("%s" CRLF, "MIME-Version: 1.0");
     PUSH_N_FREE_STRING(tmpBuffer);
 
@@ -841,11 +849,10 @@ nsresult nsMsgMdnGenerator::OutputAllHeaders()
     
         if (end > start && *end == 0)
         {
-            // strip out private X-Mozilla-Status header & X-Mozilla-Draft-Info
+            // strip out private X-Mozilla-Status header & X-Mozilla-Draft-Info && envelope header
             if (!PL_strncasecmp(start, X_MOZILLA_STATUS, X_MOZILLA_STATUS_LEN)
-                || 
-                !PL_strncasecmp(start, X_MOZILLA_DRAFT_INFO,
-                                X_MOZILLA_DRAFT_INFO_LEN))
+                || !PL_strncasecmp(start, X_MOZILLA_DRAFT_INFO, X_MOZILLA_DRAFT_INFO_LEN)
+                || !PL_strncasecmp(start, "From ", 5))
             {
                 while ( end < buf_end && 
                         (*end == nsCRT::LF || *end == nsCRT::CR || *end == 0))
@@ -921,27 +928,24 @@ nsresult nsMsgMdnGenerator::InitAndProcess()
             }
             else
             {
-                nsCOMPtr<nsIPref> prefs = 
-                    do_GetService(NS_PREF_CONTRACTID, &rv);
-                if (NS_FAILED(rv)) 
-                    return rv;
+                PRBool bVal = PR_FALSE;
 
-                nsCOMPtr<nsIPrefBranch> prefBranch;
-
-                rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
+                nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
                 if (NS_FAILED(rv))
                     return rv;
 
-                PRBool bVal = PR_FALSE;
-                prefBranch->GetBoolPref("mail.mdn.report.enabled",
-                                        &bVal);
-                m_mdnEnabled = bVal;
-                prefBranch->GetIntPref("mail.mdn.report.not_in_to_cc",
-                                       &m_notInToCcOp);
-                prefBranch->GetIntPref("mail.mdn.report.outside_domain",
-                                       &m_outsideDomainOp);
-                prefBranch->GetIntPref("mail.mdn.report.other",
-                                       &m_otherOp);
+                if(prefBranch)
+                {
+                    prefBranch->GetBoolPref("mail.mdn.report.enabled",
+                                           &bVal);
+                    m_mdnEnabled = bVal;
+                    prefBranch->GetIntPref("mail.mdn.report.not_in_to_cc",
+                                           &m_notInToCcOp);
+                    prefBranch->GetIntPref("mail.mdn.report.outside_domain",
+                                           &m_outsideDomainOp);
+                    prefBranch->GetIntPref("mail.mdn.report.other",
+                                           &m_otherOp);
+                }
             }
         }
     }

@@ -49,9 +49,10 @@ public:
     NS_DECL_NSIINPUTSTREAMTEE
 
     nsInputStreamTee();
-    virtual ~nsInputStreamTee();
 
 private:
+    ~nsInputStreamTee() {}
+
     nsresult TeeSegment(const char *buf, PRUint32 count);
 
     static NS_METHOD WriteSegmentFun(nsIInputStream *, void *, const char *,
@@ -65,10 +66,6 @@ private:
 };
 
 nsInputStreamTee::nsInputStreamTee()
-{
-}
-
-nsInputStreamTee::~nsInputStreamTee()
 {
 }
 
@@ -183,6 +180,14 @@ nsInputStreamTee::GetSource(nsIInputStream **source)
 NS_IMETHODIMP
 nsInputStreamTee::SetSink(nsIOutputStream *sink)
 {
+#ifdef DEBUG
+    if (sink) {
+        PRBool nonBlocking;
+        nsresult rv = sink->IsNonBlocking(&nonBlocking);
+        if (NS_FAILED(rv) || nonBlocking)
+            NS_ERROR("sink should be a blocking stream");
+    }
+#endif
     mSink = sink;
     return NS_OK;
 }

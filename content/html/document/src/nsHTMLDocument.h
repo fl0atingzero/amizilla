@@ -45,7 +45,6 @@
 #include "nsIDOMHTMLBodyElement.h"
 #include "nsIDOMHTMLMapElement.h"
 #include "nsIDOMHTMLCollection.h"
-#include "nsIHTMLContentContainer.h"
 #include "nsIParser.h"
 #include "jsapi.h"
 #include "rdf.h"
@@ -73,8 +72,7 @@ class nsICacheEntryDescriptor;
 class nsHTMLDocument : public nsDocument,
                        public nsIHTMLDocument,
                        public nsIDOMHTMLDocument,
-                       public nsIDOMNSHTMLDocument,
-                       public nsIHTMLContentContainer
+                       public nsIDOMNSHTMLDocument
 {
 public:
   nsHTMLDocument();
@@ -86,84 +84,82 @@ public:
   NS_IMETHOD_(nsrefcnt) AddRef(void);
   NS_IMETHOD_(nsrefcnt) Release(void);
 
-  NS_IMETHOD Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup);
-  NS_IMETHOD ResetToURI(nsIURI* aURI, nsILoadGroup* aLoadGroup);
+  virtual void Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup);
+  virtual void ResetToURI(nsIURI* aURI, nsILoadGroup* aLoadGroup);
 
-  NS_IMETHOD CreateShell(nsIPresContext* aContext,
-                         nsIViewManager* aViewManager,
-                         nsIStyleSet* aStyleSet,
-                         nsIPresShell** aInstancePtrResult);
+  virtual nsresult CreateShell(nsIPresContext* aContext,
+                               nsIViewManager* aViewManager,
+                               nsStyleSet* aStyleSet,
+                               nsIPresShell** aInstancePtrResult);
 
-  NS_IMETHOD StartDocumentLoad(const char* aCommand,
-                               nsIChannel* aChannel,
-                               nsILoadGroup* aLoadGroup,
-                               nsISupports* aContainer,
-                               nsIStreamListener **aDocListener,
-                               PRBool aReset = PR_TRUE,
-                               nsIContentSink* aSink = nsnull);
+  virtual nsresult StartDocumentLoad(const char* aCommand,
+                                     nsIChannel* aChannel,
+                                     nsILoadGroup* aLoadGroup,
+                                     nsISupports* aContainer,
+                                     nsIStreamListener **aDocListener,
+                                     PRBool aReset = PR_TRUE,
+                                     nsIContentSink* aSink = nsnull);
 
-  NS_IMETHOD StopDocumentLoad();
+  virtual void StopDocumentLoad();
 
-  NS_IMETHOD EndLoad();
+  virtual void EndLoad();
 
-  NS_IMETHOD AddImageMap(nsIDOMHTMLMapElement* aMap);
+  virtual nsresult AddImageMap(nsIDOMHTMLMapElement* aMap);
 
-  NS_IMETHOD RemoveImageMap(nsIDOMHTMLMapElement* aMap);
+  virtual void RemoveImageMap(nsIDOMHTMLMapElement* aMap);
 
-  NS_IMETHOD GetImageMap(const nsAString& aMapName,
-                         nsIDOMHTMLMapElement** aResult);
+  virtual nsIDOMHTMLMapElement *GetImageMap(const nsAString& aMapName);
 
-  NS_IMETHOD GetAttributeStyleSheet(nsIHTMLStyleSheet** aStyleSheet);
-  NS_IMETHOD GetInlineStyleSheet(nsIHTMLCSSStyleSheet** aStyleSheet);
-  NS_IMETHOD GetCSSLoader(nsICSSLoader*& aLoader);
+  virtual nsICSSLoader* GetCSSLoader();
 
-  NS_IMETHOD GetBaseTarget(nsAString& aTarget);
-  NS_IMETHOD SetBaseTarget(const nsAString& aTarget);
+  virtual nsCompatibility GetCompatibilityMode();
+  virtual void SetCompatibilityMode(nsCompatibility aMode);
 
-  NS_IMETHOD SetReferrer(const nsAString& aReferrer);
-
-  NS_IMETHOD GetCompatibilityMode(nsCompatibility& aMode);
-  NS_IMETHOD SetCompatibilityMode(nsCompatibility aMode);
-
-  NS_IMETHOD_(PRBool) IsWriting()
+  virtual PRBool IsWriting()
   {
     return mWriteLevel != PRUint32(0);
   }
 
-  NS_IMETHOD ContentAppended(nsIContent* aContainer,
-                             PRInt32 aNewIndexInContainer);
-  NS_IMETHOD ContentInserted(nsIContent* aContainer,
-                             nsIContent* aChild,
-                             PRInt32 aIndexInContainer);
-  NS_IMETHOD ContentReplaced(nsIContent* aContainer,
-                             nsIContent* aOldChild,
-                             nsIContent* aNewChild,
-                             PRInt32 aIndexInContainer);
-  NS_IMETHOD ContentRemoved(nsIContent* aContainer,
-                            nsIContent* aChild,
-                            PRInt32 aIndexInContainer);
-  NS_IMETHOD AttributeChanged(nsIContent* aChild,
-                              PRInt32 aNameSpaceID,
-                              nsIAtom* aAttribute,
-                              PRInt32 aModType,
-                              nsChangeHint aHint);
-  NS_IMETHOD AttributeWillChange(nsIContent* aChild,
-                                 PRInt32 aNameSpaceID,
-                                 nsIAtom* aAttribute);
+  virtual void ContentAppended(nsIContent* aContainer,
+                               PRInt32 aNewIndexInContainer);
+  virtual void ContentInserted(nsIContent* aContainer,
+                               nsIContent* aChild,
+                               PRInt32 aIndexInContainer);
+  virtual void ContentReplaced(nsIContent* aContainer,
+                               nsIContent* aOldChild,
+                               nsIContent* aNewChild,
+                               PRInt32 aIndexInContainer);
+  virtual void ContentRemoved(nsIContent* aContainer,
+                              nsIContent* aChild,
+                              PRInt32 aIndexInContainer);
+  virtual void AttributeChanged(nsIContent* aChild,
+                                PRInt32 aNameSpaceID,
+                                nsIAtom* aAttribute,
+                                PRInt32 aModType);
+  virtual void AttributeWillChange(nsIContent* aChild,
+                                   PRInt32 aNameSpaceID,
+                                   nsIAtom* aAttribute);
 
-  NS_IMETHOD FlushPendingNotifications(PRBool aFlushReflows = PR_TRUE,
-                                       PRBool aUpdateViews = PR_FALSE);
+  virtual void FlushPendingNotifications(PRBool aFlushReflows = PR_TRUE,
+                                         PRBool aUpdateViews = PR_FALSE);
 
-  NS_IMETHOD_(PRBool) IsCaseSensitive();
+  virtual PRBool IsCaseSensitive();
 
   // nsIDOMDocument interface
   NS_DECL_NSIDOMDOCUMENT
 
+  // nsIDOM3Document interface
+  NS_IMETHOD GetXmlEncoding(nsAString& aXmlVersion);
+  NS_IMETHOD GetXmlStandalone(PRBool *aXmlStandalone);
+  NS_IMETHOD SetXmlStandalone(PRBool aXmlStandalone);
+  NS_IMETHOD GetXmlVersion(nsAString& aXmlVersion);
+  NS_IMETHOD SetXmlVersion(const nsAString& aXmlVersion);
+
   // nsIDOMNode interface
-  NS_DECL_NSIDOMNODE
+  NS_FORWARD_NSIDOMNODE(nsDocument::)
 
   // nsIDOM3Node interface
-  NS_DECL_NSIDOM3NODE
+  NS_IMETHOD GetBaseURI(nsAString& aBaseURI);
 
   // nsIDOMHTMLDocument interface
   NS_IMETHOD GetTitle(nsAString & aTitle);
@@ -192,16 +188,16 @@ public:
   /*
    * Returns true if document.domain was set for this document
    */
-  NS_IMETHOD WasDomainSet(PRBool* aDomainWasSet);
+  virtual PRBool WasDomainSet();
 
-  NS_IMETHOD ResolveName(const nsAString& aName,
+  virtual nsresult ResolveName(const nsAString& aName,
                          nsIDOMHTMLFormElement *aForm,
                          nsISupports **aResult);
 
-  NS_IMETHOD GetFormControlElements(nsIDOMNodeList** aReturn);
-  NS_IMETHOD AddedForm();
-  NS_IMETHOD RemovedForm();
-  NS_IMETHOD GetNumFormsSynchronous(PRInt32* aNumForms);
+  virtual already_AddRefed<nsIDOMNodeList> GetFormControlElements();
+  virtual void AddedForm();
+  virtual void RemovedForm();
+  virtual PRInt32 GetNumFormsSynchronous();
 
   PRBool IsXHTML()
   {
@@ -231,8 +227,8 @@ protected:
                                      PRUint32 aFlags);
   virtual void InternalInsertStyleSheetAt(nsIStyleSheet* aSheet,
                                           PRInt32 aIndex);
-  virtual already_AddRefed<nsIStyleSheet> InternalGetStyleSheetAt(PRInt32 aIndex);
-  virtual PRInt32 InternalGetNumberOfStyleSheets();
+  virtual nsIStyleSheet* InternalGetStyleSheetAt(PRInt32 aIndex) const;
+  virtual PRInt32 InternalGetNumberOfStyleSheets() const;
 
   static PRBool MatchLinks(nsIContent *aContent, nsString* aData);
   static PRBool MatchAnchors(nsIContent *aContent, nsString* aData);
@@ -240,7 +236,7 @@ protected:
   static PRBool MatchNameAttribute(nsIContent* aContent, nsString* aData);
   static PRBool MatchFormControls(nsIContent* aContent, nsString* aData);
 
-  static nsresult GetSourceDocumentURL(nsIURI** sourceURL);
+  static nsresult GetSourceDocumentURI(nsIURI** sourceURI);
 
   static void DocumentWriteTerminationFunc(nsISupports *aRef);
 
@@ -257,18 +253,12 @@ protected:
   nsresult CreateAndAddWyciwygChannel(void);
   nsresult RemoveWyciwygChannel(void);
 
-  nsresult BaseResetToURI(nsIURI* aURI);
-
-  virtual void RetrieveRelevantHeaders(nsIChannel *aChannel);
-
-  nsCOMPtr<nsIHTMLStyleSheet> mAttrStyleSheet;
-  nsCOMPtr<nsIHTMLCSSStyleSheet> mStyleAttrStyleSheet;
-
-  nsString mBaseTarget;
-  nsString mReferrer;
+  PRInt32 GetDefaultNamespaceID() const
+  {
+    return mDefaultNamespaceID;
+  };
 
   nsCOMPtr<nsIChannel>     mChannel;
-  nsCOMPtr<nsIHttpChannel> mHttpChannel;
 
   nsCompatibility mCompatMode;
 
@@ -311,9 +301,6 @@ protected:
                                  PRInt32& charsetSource, nsACString& aCharset);
   static PRBool UseWeakDocTypeDefault(PRInt32& aCharsetSource,
                                       nsACString& aCharset);
-  static PRBool TryChannelCharset(nsIChannel *aChannel,
-                                  PRInt32& aCharsetSource,
-                                  nsACString& aCharset);
   static PRBool TryDefaultCharset(nsIMarkupDocumentViewer* aMarkupDV,
                                   PRInt32& aCharsetSource,
                                   nsACString& aCharset);

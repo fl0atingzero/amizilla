@@ -58,15 +58,17 @@
 #include "prprf.h"
 #include "nsISupportsObsolete.h"
 #include "nsISupportsPrimitives.h"
+#include "nsMsgUtils.h"
 
 static NS_DEFINE_CID(kRDFServiceCID, NS_RDFSERVICE_CID);
+
+#define REL_FILE_PREF_SUFFIX NS_LITERAL_CSTRING("-rel")
 
 NS_IMPL_THREADSAFE_ISUPPORTS1(nsMsgIdentity,
                    nsIMsgIdentity)
 
 nsMsgIdentity::nsMsgIdentity():
   m_signature(0),
-  m_vCard(0),
   m_identityKey(0),
   m_prefBranch(0)
 {
@@ -389,39 +391,44 @@ nsMsgIdentity::ToString(PRUnichar **aResult)
 
 /* Identity attribute accessors */
 
-// XXX - these are a COM objects, use NS_ADDREF
-//NS_IMPL_GETSET(nsMsgIdentity, Signature, nsIMsgSignature*, m_signature);
 NS_IMETHODIMP
-nsMsgIdentity::GetSignature(nsILocalFile **sig) {
+nsMsgIdentity::GetSignature(nsILocalFile **sig) 
+{
   nsresult rv = getPrefService();
   if (NS_FAILED(rv)) return rv;
   
   char *prefName = getPrefName(m_identityKey, "sig_file");
-  rv = m_prefBranch->GetComplexValue(prefName, NS_GET_IID(nsILocalFile), (void **)sig);
-  if (NS_FAILED(rv))
-    *sig = nsnull;
+  if (!prefName)
+    return NS_ERROR_FAILURE;  
+  nsCAutoString relPrefName(prefName);
+  relPrefName.Append(REL_FILE_PREF_SUFFIX);
+  
+  PRBool gotRelPref;
+  rv = NS_GetPersistentFile(relPrefName.get(), prefName, nsnull, gotRelPref, sig);
+  if (NS_SUCCEEDED(rv) && !gotRelPref) 
+  {
+    rv = NS_SetPersistentFile(relPrefName.get(), prefName, *sig);
+    NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to write signature file pref.");
+  }
+  PR_Free(prefName);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMsgIdentity::SetSignature(nsILocalFile *sig)
 {
-
-  nsresult rv = getPrefService();
-  if (NS_FAILED(rv)) return rv;
-  
-  rv = NS_OK;
-  char *prefName = getPrefName(m_identityKey, "sig_file");
+  nsresult rv = NS_OK;
   if (sig) 
-      rv = m_prefBranch->SetComplexValue(prefName, NS_GET_IID(nsILocalFile), sig);
-  /*
-  else
-    m_prefBranch->ClearFilePref(prefName);
-  */
-  PR_Free(prefName);
-  return rv;
+  {
+    char *prefName = getPrefName(m_identityKey, "sig_file");
+    if (!prefName)
+      return NS_ERROR_FAILURE;  
   
-  return NS_OK;
+    nsCAutoString relPrefName(prefName);
+    relPrefName.Append(REL_FILE_PREF_SUFFIX);
+    rv = NS_SetPersistentFile(relPrefName.get(), prefName, sig);
+  }
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -448,31 +455,33 @@ nsMsgIdentity::ClearAllValues()
 }
 
 
-NS_IMPL_GETSET(nsMsgIdentity, VCard, nsIMsgVCard*, m_vCard);
-  
-NS_IMPL_GETTER_STR(nsMsgIdentity::GetKey, m_identityKey);
+NS_IMPL_GETTER_STR(nsMsgIdentity::GetKey, m_identityKey)
+NS_IMPL_IDPREF_STR(EscapedVCard, "escapedVCard")
+NS_IMPL_IDPREF_STR(SmtpServerKey, "smtpServer")
+NS_IMPL_IDPREF_WSTR(FullName, "fullName")
+NS_IMPL_IDPREF_STR(Email, "useremail")
+NS_IMPL_IDPREF_STR(ReplyTo, "reply_to")
+NS_IMPL_IDPREF_WSTR(Organization, "organization")
+NS_IMPL_IDPREF_BOOL(ComposeHtml, "compose_html")
+NS_IMPL_IDPREF_BOOL(AttachVCard, "attach_vcard")
+NS_IMPL_IDPREF_BOOL(AttachSignature, "attach_signature")
 
-NS_IMPL_IDPREF_STR(SmtpServerKey, "smtpServer");
-NS_IMPL_IDPREF_WSTR(FullName, "fullName");
-NS_IMPL_IDPREF_STR(Email, "useremail");
-NS_IMPL_IDPREF_STR(ReplyTo, "reply_to");
-NS_IMPL_IDPREF_WSTR(Organization, "organization");
-NS_IMPL_IDPREF_BOOL(ComposeHtml, "compose_html");
-NS_IMPL_IDPREF_BOOL(AttachVCard, "attach_vcard");
-NS_IMPL_IDPREF_BOOL(AttachSignature, "attach_signature");
+NS_IMPL_IDPREF_BOOL(AutoQuote, "auto_quote")
+NS_IMPL_IDPREF_INT(ReplyOnTop, "reply_on_top")
+NS_IMPL_IDPREF_BOOL(SigBottom, "sig_bottom")
 
-NS_IMPL_IDPREF_INT(SignatureDate,"sig_date");
+NS_IMPL_IDPREF_INT(SignatureDate,"sig_date")
 
-NS_IMPL_IDPREF_BOOL(DoFcc, "fcc");
-NS_IMPL_FOLDERPREF_STR(FccFolder, "fcc_folder");
+NS_IMPL_IDPREF_BOOL(DoFcc, "fcc")
 
-NS_IMPL_IDPREF_STR(FccFolderPickerMode, "fcc_folder_picker_mode");
-NS_IMPL_IDPREF_STR(DraftsFolderPickerMode, "drafts_folder_picker_mode");
-NS_IMPL_IDPREF_STR(TmplFolderPickerMode, "tmpl_folder_picker_mode");
+NS_IMPL_FOLDERPREF_STR(FccFolder, "fcc_folder")
+NS_IMPL_IDPREF_STR(FccFolderPickerMode, "fcc_folder_picker_mode")
+NS_IMPL_IDPREF_STR(DraftsFolderPickerMode, "drafts_folder_picker_mode")
+NS_IMPL_IDPREF_STR(TmplFolderPickerMode, "tmpl_folder_picker_mode")
 
-NS_IMPL_IDPREF_BOOL(BccSelf, "bcc_self");
-NS_IMPL_IDPREF_BOOL(BccOthers, "bcc_other");
-NS_IMPL_IDPREF_STR (BccList, "bcc_other_list");
+NS_IMPL_IDPREF_BOOL(BccSelf, "bcc_self")
+NS_IMPL_IDPREF_BOOL(BccOthers, "bcc_other")
+NS_IMPL_IDPREF_STR (BccList, "bcc_other_list")
 
 NS_IMETHODIMP
 nsMsgIdentity::GetDoBcc(PRBool *aValue)
@@ -560,14 +569,14 @@ nsMsgIdentity::SetDoBccList(const char *aValue)
   return SetCharAttribute("doBccList", aValue);
 }
 
-NS_IMPL_FOLDERPREF_STR (DraftFolder, "draft_folder");
-NS_IMPL_FOLDERPREF_STR (StationeryFolder, "stationery_folder");
+NS_IMPL_FOLDERPREF_STR (DraftFolder, "draft_folder")
+NS_IMPL_FOLDERPREF_STR (StationeryFolder, "stationery_folder")
 
-NS_IMPL_IDPREF_BOOL(ShowSaveMsgDlg, "showSaveMsgDlg");
-NS_IMPL_IDPREF_STR (DirectoryServer, "directoryServer");
-NS_IMPL_IDPREF_BOOL(OverrideGlobalPref, "overrideGlobal_Pref");
+NS_IMPL_IDPREF_BOOL(ShowSaveMsgDlg, "showSaveMsgDlg")
+NS_IMPL_IDPREF_STR (DirectoryServer, "directoryServer")
+NS_IMPL_IDPREF_BOOL(OverrideGlobalPref, "overrideGlobal_Pref")
 
-NS_IMPL_IDPREF_BOOL(Valid, "valid");
+NS_IMPL_IDPREF_BOOL(Valid, "valid")
 
 nsresult 
 nsMsgIdentity::getFolderPref(const char *prefname, char **retval, PRBool mustHaveDefault)
@@ -585,74 +594,100 @@ nsMsgIdentity::getFolderPref(const char *prefname, char **retval, PRBool mustHav
       rv = setFolderPref(prefname, (const char *)*retval);
     }
   }
+  // get the corresponding RDF resource
+  // RDF will create the folder resource if it doesn't already exist
+  nsCOMPtr<nsIRDFService> rdf(do_GetService(kRDFServiceCID, &rv));
+  if (NS_FAILED(rv)) return rv;
+  nsCOMPtr<nsIRDFResource> resource;
+  rv = rdf->GetResource(nsDependentCString(*retval), getter_AddRefs(resource));
+  if (NS_FAILED(rv)) 
+    return rv;
+
+  nsCOMPtr <nsIMsgFolder> folderResource;
+  folderResource = do_QueryInterface(resource, &rv);
+  if (NS_SUCCEEDED(rv) && folderResource) 
+  {
+    // don't check validity of folder - caller will handle creating it
+    nsCOMPtr<nsIMsgIncomingServer> server; 
+    //make sure that folder hierarchy is built so that legitimate parent-child relationship is established
+    rv = folderResource->GetServer(getter_AddRefs(server));
+    if (server)
+    {
+      nsCOMPtr <nsIMsgFolder> msgFolder;
+      rv = server->GetMsgFolderFromURI(folderResource, *retval, getter_AddRefs(msgFolder));
+      PR_Free(*retval);
+      if (NS_SUCCEEDED(rv))
+        return msgFolder->GetURI(retval);
+    }
+  }
   return rv;
 }
 
 nsresult 
 nsMsgIdentity::setFolderPref(const char *prefname, const char *value)
 {
-    nsXPIDLCString oldpref;
-    nsresult rv;
-    nsCOMPtr<nsIRDFResource> res;
-    nsCOMPtr<nsIMsgFolder> folder;
-    PRUint32 folderflag;
-    nsCOMPtr<nsIRDFService> rdf(do_GetService(kRDFServiceCID, &rv));
+  nsXPIDLCString oldpref;
+  nsresult rv;
+  nsCOMPtr<nsIRDFResource> res;
+  nsCOMPtr<nsIMsgFolder> folder;
+  PRUint32 folderflag;
+  nsCOMPtr<nsIRDFService> rdf(do_GetService(kRDFServiceCID, &rv));
+  
+  if (nsCRT::strcmp(prefname, "fcc_folder") == 0)
+  {
+    // Clear the temporary return receipt filter so that the new filter
+    // rule can be recreated (by ConfigureTemporaryReturnReceiptsFilter()).
+    nsCOMPtr<nsIMsgAccountManager> accountManager = 
+      do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv,rv);
     
-    if (nsCRT::strcmp(prefname, "fcc_folder") == 0)
+    nsCOMPtr<nsISupportsArray> servers; 
+    rv = accountManager->GetServersForIdentity(this, getter_AddRefs(servers));
+    NS_ENSURE_SUCCESS(rv,rv);
+    PRUint32 cnt = 0;
+    servers->Count(&cnt);
+    if (cnt > 0)
     {
-        // Clear the temporary return receipt filter so that the new filter
-        // rule can be recreated (by ConfigureTemporaryReturnReceiptsFilter()).
-        nsCOMPtr<nsIMsgAccountManager> accountManager = 
-          do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID, &rv);
-        NS_ENSURE_SUCCESS(rv,rv);
-
-        nsCOMPtr<nsISupportsArray> servers; 
-        rv = accountManager->GetServersForIdentity(this, getter_AddRefs(servers));
-        NS_ENSURE_SUCCESS(rv,rv);
-        PRUint32 cnt = 0;
-        servers->Count(&cnt);
-        if (cnt > 0)
-        {
-          nsCOMPtr<nsISupports> supports = getter_AddRefs(servers->ElementAt(0));
-          nsCOMPtr<nsIMsgIncomingServer> server = do_QueryInterface(supports,&rv);
-          if (NS_SUCCEEDED(rv))
-            server->ClearTemporaryReturnReceiptsFilter(); // okay to fail; no need to check for return code
-        }
-        folderflag = MSG_FOLDER_FLAG_SENTMAIL;
+      nsCOMPtr<nsISupports> supports = getter_AddRefs(servers->ElementAt(0));
+      nsCOMPtr<nsIMsgIncomingServer> server = do_QueryInterface(supports,&rv);
+      if (NS_SUCCEEDED(rv))
+        server->ClearTemporaryReturnReceiptsFilter(); // okay to fail; no need to check for return code
     }
-    else if (nsCRT::strcmp(prefname, "draft_folder") == 0)
-        folderflag = MSG_FOLDER_FLAG_DRAFTS;
-    else if (nsCRT::strcmp(prefname, "stationery_folder") == 0)
-        folderflag = MSG_FOLDER_FLAG_TEMPLATES;
-    else
-        return NS_ERROR_FAILURE;
-
-    // get the old folder, and clear the special folder flag on it
-    rv = getFolderPref(prefname, getter_Copies(oldpref), PR_FALSE);
-    if (NS_SUCCEEDED(rv) && (const char*)oldpref)
+    folderflag = MSG_FOLDER_FLAG_SENTMAIL;
+  }
+  else if (nsCRT::strcmp(prefname, "draft_folder") == 0)
+    folderflag = MSG_FOLDER_FLAG_DRAFTS;
+  else if (nsCRT::strcmp(prefname, "stationery_folder") == 0)
+    folderflag = MSG_FOLDER_FLAG_TEMPLATES;
+  else
+    return NS_ERROR_FAILURE;
+  
+  // get the old folder, and clear the special folder flag on it
+  rv = getFolderPref(prefname, getter_Copies(oldpref), PR_FALSE);
+  if (NS_SUCCEEDED(rv) && !oldpref.IsEmpty())
+  {
+    rv = rdf->GetResource(oldpref, getter_AddRefs(res));
+    if (NS_SUCCEEDED(rv) && res)
     {
-        rv = rdf->GetResource(oldpref, getter_AddRefs(res));
-        if (NS_SUCCEEDED(rv) && res)
-        {
-            folder = do_QueryInterface(res, &rv);
-            if (NS_SUCCEEDED(rv))
-                rv = folder->ClearFlag(folderflag);
-        }
+      folder = do_QueryInterface(res, &rv);
+      if (NS_SUCCEEDED(rv))
+        rv = folder->ClearFlag(folderflag);
     }
-   
-    // set the new folder, and set the special folder flags on it
-    rv = setCharPref(prefname, value);
-    if (NS_SUCCEEDED(rv))
+  }
+  
+  // set the new folder, and set the special folder flags on it
+  rv = setCharPref(prefname, value);
+  if (NS_SUCCEEDED(rv) && value && *value)
+  {
+    rv = rdf->GetResource(nsDependentCString(value), getter_AddRefs(res));
+    if (NS_SUCCEEDED(rv) && res)
     {
-        rv = rdf->GetResource(nsDependentCString(value), getter_AddRefs(res));
-        if (NS_SUCCEEDED(rv) && res)
-        {
-            folder = do_QueryInterface(res, &rv);
-            if (NS_SUCCEEDED(rv))
-                rv = folder->SetFlag(folderflag);
-        }
+      folder = do_QueryInterface(res, &rv);
+      if (NS_SUCCEEDED(rv))
+        rv = folder->SetFlag(folderflag);
     }
-    return rv;
+  }
+  return rv;
 }
 
 NS_IMETHODIMP nsMsgIdentity::SetUnicharAttribute(const char *aName, const PRUnichar *val)
@@ -700,8 +735,8 @@ NS_IMETHODIMP nsMsgIdentity::GetIntAttribute(const char *aName, PRInt32 *val)
 		nsresult macro_rv;	\
 		nsCOMPtr <nsILocalFile>macro_spec;   \
         	macro_rv = SRC_ID->MACRO_GETTER(getter_AddRefs(macro_spec)); \
-        	if (NS_FAILED(macro_rv)) return macro_rv;	\
-        	this->MACRO_SETTER(macro_spec);     \
+        	if (NS_SUCCEEDED(macro_rv)) \
+        	  this->MACRO_SETTER(macro_spec);     \
 	}
 
 #define COPY_IDENTITY_INT_VALUE(SRC_ID,MACRO_GETTER,MACRO_SETTER) 	\
@@ -709,8 +744,8 @@ NS_IMETHODIMP nsMsgIdentity::GetIntAttribute(const char *aName, PRInt32 *val)
 		    nsresult macro_rv;	\
         	PRInt32 macro_oldInt;	\
         	macro_rv = SRC_ID->MACRO_GETTER(&macro_oldInt);	\
-        	if (NS_FAILED(macro_rv)) return macro_rv;	\
-        	this->MACRO_SETTER(macro_oldInt);     \
+        	if (NS_SUCCEEDED(macro_rv)) \
+        	  this->MACRO_SETTER(macro_oldInt);     \
 	}
 
 #define COPY_IDENTITY_BOOL_VALUE(SRC_ID,MACRO_GETTER,MACRO_SETTER) 	\
@@ -718,8 +753,8 @@ NS_IMETHODIMP nsMsgIdentity::GetIntAttribute(const char *aName, PRInt32 *val)
 		    nsresult macro_rv;	\
         	PRBool macro_oldBool;	\
         	macro_rv = SRC_ID->MACRO_GETTER(&macro_oldBool);	\
-        	if (NS_FAILED(macro_rv)) return macro_rv;	\
-        	this->MACRO_SETTER(macro_oldBool);     \
+        	if (NS_SUCCEEDED(macro_rv)) \
+        	  this->MACRO_SETTER(macro_oldBool);     \
 	}
 
 #define COPY_IDENTITY_STR_VALUE(SRC_ID,MACRO_GETTER,MACRO_SETTER) 	\
@@ -727,13 +762,14 @@ NS_IMETHODIMP nsMsgIdentity::GetIntAttribute(const char *aName, PRInt32 *val)
         	nsXPIDLCString macro_oldStr;	\
 		    nsresult macro_rv;	\
         	macro_rv = SRC_ID->MACRO_GETTER(getter_Copies(macro_oldStr));	\
-        	if (NS_FAILED(macro_rv)) return macro_rv;	\
-        	if (!macro_oldStr) {	\
+            if (NS_SUCCEEDED(macro_rv)) { \
+        	  if (!macro_oldStr) {	\
                 	this->MACRO_SETTER("");	\
-        	}	\
-        	else {	\
-                	this->MACRO_SETTER(macro_oldStr);	\
-        	}	\
+              }	\
+        	  else {	\
+                  	this->MACRO_SETTER(macro_oldStr);	\
+              }	\
+            } \
 	}
 
 static const PRUnichar unicharEmptyString[] = { (PRUnichar)'\0' };
@@ -742,14 +778,15 @@ static const PRUnichar unicharEmptyString[] = { (PRUnichar)'\0' };
 	{	\
         	nsXPIDLString macro_oldStr;	\
 		    nsresult macro_rv;	\
-        	macro_rv = SRC_ID->MACRO_GETTER(getter_Copies(macro_oldStr));	\
-        	if (NS_FAILED(macro_rv)) return macro_rv;	\
-        	if (!macro_oldStr) {	\
+        	macro_rv = SRC_ID->MACRO_GETTER(getter_Copies(macro_oldStr)); \
+        	if (NS_SUCCEEDED(macro_rv)) { \
+        	  if (!macro_oldStr) {	\
                 	this->MACRO_SETTER(unicharEmptyString);	\
-        	}	\
-        	else {	\
+              }	\
+        	  else {	\
                 	this->MACRO_SETTER(macro_oldStr);	\
-        	}	\
+              }	\
+            } \
 	}
 
 NS_IMETHODIMP
@@ -764,8 +801,12 @@ nsMsgIdentity::Copy(nsIMsgIdentity *identity)
     COPY_IDENTITY_STR_VALUE(identity,GetStationeryFolder,SetStationeryFolder)
     COPY_IDENTITY_BOOL_VALUE(identity,GetAttachSignature,SetAttachSignature)
     COPY_IDENTITY_FILE_VALUE(identity,GetSignature,SetSignature)
+    COPY_IDENTITY_BOOL_VALUE(identity,GetAutoQuote,SetAutoQuote)
+    COPY_IDENTITY_INT_VALUE(identity,GetReplyOnTop,SetReplyOnTop)
+    COPY_IDENTITY_BOOL_VALUE(identity,GetSigBottom,SetSigBottom)
     COPY_IDENTITY_INT_VALUE(identity,GetSignatureDate,SetSignatureDate)
-
+    COPY_IDENTITY_BOOL_VALUE(identity,GetAttachVCard,SetAttachVCard)
+    COPY_IDENTITY_STR_VALUE(identity,GetEscapedVCard,SetEscapedVCard)
     return NS_OK;
 }
 

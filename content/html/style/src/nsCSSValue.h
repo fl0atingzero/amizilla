@@ -44,7 +44,12 @@
 #include "nsCoord.h"
 #include "nsCSSProperty.h"
 #include "nsUnitConversion.h"
+#include "nsIURI.h"
+#include "nsCOMPtr.h"
+#include "nsAutoPtr.h"
 
+class imgIRequest;
+class nsIDocument;
 
 enum nsCSSUnit {
   eCSSUnit_Null         = 0,      // (n/a) null unit, value is not specified
@@ -53,11 +58,12 @@ enum nsCSSUnit {
   eCSSUnit_Initial      = 3,      // (n/a) value is default UA value
   eCSSUnit_None         = 4,      // (n/a) value is none
   eCSSUnit_Normal       = 5,      // (n/a) value is normal (algorithmic, different than auto)
-  eCSSUnit_String       = 10,     // (nsString) a string value
-  eCSSUnit_URL          = 11,     // (nsString) a URL value
-  eCSSUnit_Attr         = 12,     // (nsString) a attr(string) value
-  eCSSUnit_Counter      = 13,     // (nsString) a counter(string,[string]) value
-  eCSSUnit_Counters     = 14,     // (nsString) a counters(string,string[,string]) value
+  eCSSUnit_String       = 10,     // (PRUnichar*) a string value
+  eCSSUnit_Attr         = 11,     // (PRUnichar*) a attr(string) value
+  eCSSUnit_Counter      = 12,     // (PRUnichar*) a counter(string,[string]) value
+  eCSSUnit_Counters     = 13,     // (PRUnichar*) a counters(string,string[,string]) value
+  eCSSUnit_URL          = 14,     // (nsCSSValue::URL*) value
+  eCSSUnit_Image        = 15,     // (nsCSSValue::Image*) value
   eCSSUnit_Integer      = 50,     // (int) simple value
   eCSSUnit_Enumerated   = 51,     // (int) value has enumerated meaning
   eCSSUnit_Color        = 80,     // (color) an RGBA value
@@ -114,6 +120,12 @@ enum nsCSSUnit {
 
 class nsCSSValue {
 public:
+  struct URL;
+  friend struct URL;
+
+  struct Image;
+  friend struct Image;
+  
   // for valueless units only (null, auto, inherit, none, normal)
   nsCSSValue(nsCSSUnit aUnit = eCSSUnit_Null)
     : mUnit(aUnit)
@@ -129,113 +141,190 @@ public:
   nsCSSValue(float aValue, nsCSSUnit aUnit);
   nsCSSValue(const nsAString& aValue, nsCSSUnit aUnit);
   nsCSSValue(nscolor aValue);
+  nsCSSValue(URL* aValue);
+  nsCSSValue(Image* aValue);
   nsCSSValue(const nsCSSValue& aCopy);
-  ~nsCSSValue(void)
-  {
-    Reset();
-  }
-
+  ~nsCSSValue();
 
   nsCSSValue&  operator=(const nsCSSValue& aCopy);
   PRBool      operator==(const nsCSSValue& aOther) const;
-  PRBool      operator!=(const nsCSSValue& aOther) const;
 
-  nsCSSUnit GetUnit(void) const { return mUnit; };
-  PRBool    IsLengthUnit(void) const
-    { return PRBool((eCSSUnit_Inch <= mUnit) && (mUnit <= eCSSUnit_Proportional)); }
-  PRBool    IsFixedLengthUnit(void) const  
-    { return PRBool((eCSSUnit_Inch <= mUnit) && (mUnit <= eCSSUnit_Cicero)); }
-  PRBool    IsRelativeLengthUnit(void) const  
-    { return PRBool((eCSSUnit_EM <= mUnit) && (mUnit <= eCSSUnit_Proportional)); }
-  PRBool    IsAngularUnit(void) const  
-    { return PRBool((eCSSUnit_Degree <= mUnit) && (mUnit <= eCSSUnit_Radian)); }
-  PRBool    IsFrequencyUnit(void) const  
-    { return PRBool((eCSSUnit_Hertz <= mUnit) && (mUnit <= eCSSUnit_Kilohertz)); }
-  PRBool    IsTimeUnit(void) const  
-    { return PRBool((eCSSUnit_Seconds <= mUnit) && (mUnit <= eCSSUnit_Milliseconds)); }
-
-  PRInt32   GetIntValue(void) const;
-  float     GetPercentValue(void) const;
-  float     GetFloatValue(void) const;
-  nsAString& GetStringValue(nsAString& aBuffer) const;
-  nscolor   GetColorValue(void) const;
-  nscoord   GetLengthTwips(void) const
+  PRBool operator!=(const nsCSSValue& aOther) const
   {
-    NS_ASSERTION(IsFixedLengthUnit(), "not a fixed length unit");
-
-    if (IsFixedLengthUnit()) {
-      switch (mUnit) {
-      case eCSSUnit_Inch:        
-        return NS_INCHES_TO_TWIPS(mValue.mFloat);
-      case eCSSUnit_Foot:        
-        return NS_FEET_TO_TWIPS(mValue.mFloat);
-      case eCSSUnit_Mile:        
-        return NS_MILES_TO_TWIPS(mValue.mFloat);
-
-      case eCSSUnit_Millimeter:
-        return NS_MILLIMETERS_TO_TWIPS(mValue.mFloat);
-      case eCSSUnit_Centimeter:
-        return NS_CENTIMETERS_TO_TWIPS(mValue.mFloat);
-      case eCSSUnit_Meter:
-        return NS_METERS_TO_TWIPS(mValue.mFloat);
-      case eCSSUnit_Kilometer:
-        return NS_KILOMETERS_TO_TWIPS(mValue.mFloat);
-
-      case eCSSUnit_Point:
-        return NSFloatPointsToTwips(mValue.mFloat);
-      case eCSSUnit_Pica:
-        return NS_PICAS_TO_TWIPS(mValue.mFloat);
-      case eCSSUnit_Didot:
-        return NS_DIDOTS_TO_TWIPS(mValue.mFloat);
-      case eCSSUnit_Cicero:
-        return NS_CICEROS_TO_TWIPS(mValue.mFloat);
-      default:
-        NS_ERROR("should never get here");
-        break;
-      }
-    }
-    return 0;
+    return !(*this == aOther);
   }
 
-  void  Reset(void)  // sets to null
+  nsCSSUnit GetUnit() const { return mUnit; };
+  PRBool    IsLengthUnit() const
+    { return PRBool((eCSSUnit_Inch <= mUnit) && (mUnit <= eCSSUnit_Proportional)); }
+  PRBool    IsFixedLengthUnit() const  
+    { return PRBool((eCSSUnit_Inch <= mUnit) && (mUnit <= eCSSUnit_Cicero)); }
+  PRBool    IsRelativeLengthUnit() const  
+    { return PRBool((eCSSUnit_EM <= mUnit) && (mUnit <= eCSSUnit_Proportional)); }
+  PRBool    IsAngularUnit() const  
+    { return PRBool((eCSSUnit_Degree <= mUnit) && (mUnit <= eCSSUnit_Radian)); }
+  PRBool    IsFrequencyUnit() const  
+    { return PRBool((eCSSUnit_Hertz <= mUnit) && (mUnit <= eCSSUnit_Kilohertz)); }
+  PRBool    IsTimeUnit() const  
+    { return PRBool((eCSSUnit_Seconds <= mUnit) && (mUnit <= eCSSUnit_Milliseconds)); }
+
+  PRInt32 GetIntValue() const
+  {
+    NS_ASSERTION(mUnit == eCSSUnit_Integer || mUnit == eCSSUnit_Enumerated,
+                 "not an int value");
+    return mValue.mInt;
+  }
+
+  float GetPercentValue() const
+  {
+    NS_ASSERTION(mUnit == eCSSUnit_Percent, "not a percent value");
+    return mValue.mFloat;
+  }
+
+  float GetFloatValue() const
+  {
+    NS_ASSERTION(eCSSUnit_Number <= mUnit, "not a float value");
+    return mValue.mFloat;
+  }
+
+  nsAString& GetStringValue(nsAString& aBuffer) const
+  {
+    NS_ASSERTION(eCSSUnit_String <= mUnit && mUnit <= eCSSUnit_Counters,
+                 "not a string value");
+    aBuffer.Truncate();
+    if (nsnull != mValue.mString) {
+      aBuffer.Append(mValue.mString);
+    }
+    return aBuffer;
+  }
+
+  const PRUnichar* GetStringBufferValue() const
+  {
+    NS_ASSERTION(eCSSUnit_String <= mUnit && mUnit <= eCSSUnit_Counters,
+                 "not a string value");
+    return mValue.mString;
+  }
+
+  nscolor GetColorValue() const
+  {
+    NS_ASSERTION((mUnit == eCSSUnit_Color), "not a color value");
+    return mValue.mColor;
+  }
+
+  nsIURI* GetURLValue() const
+  {
+    NS_ASSERTION(mUnit == eCSSUnit_URL || mUnit == eCSSUnit_Image,
+                 "not a URL value");
+    return mUnit == eCSSUnit_URL ?
+      mValue.mURL->mURI : mValue.mImage->mURI;
+  }
+
+  const PRUnichar* GetOriginalURLValue() const
+  {
+    NS_ASSERTION(mUnit == eCSSUnit_URL || mUnit == eCSSUnit_Image,
+                 "not a URL value");
+    return mUnit == eCSSUnit_URL ?
+      mValue.mURL->mString : mValue.mImage->mString;
+  }
+
+  // Not making this inline because that would force us to include
+  // imgIRequest.h, which leads to REQUIRES hell, since this header is included
+  // all over.
+  imgIRequest* GetImageValue() const;
+  
+  nscoord   GetLengthTwips() const;
+
+  void  Reset()  // sets to null
   {
     if ((eCSSUnit_String <= mUnit) && (mUnit <= eCSSUnit_Counters) &&
         (nsnull != mValue.mString)) {
       nsCRT::free(mValue.mString);
+    } else if (eCSSUnit_URL == mUnit) {
+      mValue.mURL->Release();
+    } else if (eCSSUnit_Image == mUnit) {
+      mValue.mImage->Release();
     }
     mUnit = eCSSUnit_Null;
     mValue.mInt = 0;
   }
 
   void  SetIntValue(PRInt32 aValue, nsCSSUnit aUnit);
-  void  SetPercentValue(float aValue)
-  {
-    Reset();
-    mUnit = eCSSUnit_Percent;
-    mValue.mFloat = aValue;
-  }
-
-  void  SetFloatValue(float aValue, nsCSSUnit aUnit)
-  {
-    NS_ASSERTION(eCSSUnit_Number <= aUnit, "not a float value");
-    Reset();
-    if (eCSSUnit_Number <= aUnit) {
-      mUnit = aUnit;
-      mValue.mFloat = aValue;
-    }
-  }
-
+  void  SetPercentValue(float aValue);
+  void  SetFloatValue(float aValue, nsCSSUnit aUnit);
   void  SetStringValue(const nsAString& aValue, nsCSSUnit aUnit);
   void  SetColorValue(nscolor aValue);
-  void  SetAutoValue(void);
-  void  SetInheritValue(void);
-  void  SetInitialValue(void);
-  void  SetNoneValue(void);
-  void  SetNormalValue(void);
+  void  SetURLValue(nsCSSValue::URL* aURI);
+  void  SetImageValue(nsCSSValue::Image* aImage);
+  void  SetAutoValue();
+  void  SetInheritValue();
+  void  SetInitialValue();
+  void  SetNoneValue();
+  void  SetNormalValue();
+  void  StartImageLoad(nsIDocument* aDocument) const;  // Not really const, but pretending
 
-  // debugging methods only
+#ifdef DEBUG
   void  AppendToString(nsAString& aBuffer, nsCSSProperty aPropID = eCSSProperty_UNKNOWN) const;
   void  ToString(nsAString& aBuffer, nsCSSProperty aPropID = eCSSProperty_UNKNOWN) const;
+#endif
+
+  MOZ_DECL_CTOR_COUNTER(nsCSSValue::URL)
+
+  struct URL {
+    // Caller must delete this object immediately if the allocation of
+    // |mString| fails.
+    URL(nsIURI* aURI, const PRUnichar* aString)
+      : mURI(aURI),
+        mString(nsCRT::strdup(aString)),
+        mRefCnt(0)
+    {
+      MOZ_COUNT_CTOR(nsCSSValue::URL);
+    }
+
+    ~URL()
+    {
+      // null |mString| isn't valid normally, but is checked by callers
+      // of the constructor
+      if (mString)
+        nsCRT::free(mString);
+      MOZ_COUNT_DTOR(nsCSSValue::URL);
+    }
+
+    PRBool operator==(const URL& aOther)
+    {
+      PRBool eq;
+      return nsCRT::strcmp(mString, aOther.mString) == 0 &&
+             (mURI == aOther.mURI || // handles null == null
+              (mURI && aOther.mURI &&
+               NS_SUCCEEDED(mURI->Equals(aOther.mURI, &eq)) &&
+               eq));
+    }
+
+    nsCOMPtr<nsIURI> mURI; // null == invalid URL
+    PRUnichar* mString;
+
+    void AddRef() { ++mRefCnt; }
+    void Release() { if (--mRefCnt == 0) delete this; }
+  protected:
+    nsrefcnt mRefCnt;
+  };
+
+  MOZ_DECL_CTOR_COUNTER(nsCSSValue::Image)
+
+  struct Image : public URL {
+    // Not making the constructor and destructor inline because that would
+    // force us to include imgIRequest.h, which leads to REQUIRES hell, since
+    // this header is included all over.
+    Image(nsIURI* aURI, const PRUnichar* aString, nsIDocument* aDocument);
+    ~Image();
+
+    // Inherit operator== from nsCSSValue::URL
+
+    nsCOMPtr<imgIRequest> mRequest; // null == image load blocked or somehow failed
+
+    // Override AddRef/Release so we delete ourselves via the right pointer.
+    void AddRef() { ++mRefCnt; }
+    void Release() { if (--mRefCnt == 0) delete this; }
+  };
 
 protected:
   nsCSSUnit mUnit;
@@ -244,64 +333,10 @@ protected:
     float      mFloat;
     PRUnichar* mString;
     nscolor    mColor;
+    URL*       mURL;
+    Image*     mImage;
   }         mValue;
 };
-
-inline PRInt32 nsCSSValue::GetIntValue(void) const
-{
-  NS_ASSERTION((mUnit == eCSSUnit_Integer) ||
-               (mUnit == eCSSUnit_Enumerated), "not an int value");
-  if ((mUnit == eCSSUnit_Integer) ||
-      (mUnit == eCSSUnit_Enumerated)) {
-    return mValue.mInt;
-  }
-  return 0;
-}
-
-inline float nsCSSValue::GetPercentValue(void) const
-{
-  NS_ASSERTION((mUnit == eCSSUnit_Percent), "not a percent value");
-  if ((mUnit == eCSSUnit_Percent)) {
-    return mValue.mFloat;
-  }
-  return 0.0f;
-}
-
-inline float nsCSSValue::GetFloatValue(void) const
-{
-  NS_ASSERTION((eCSSUnit_Number <= mUnit), "not a float value");
-  if ((mUnit >= eCSSUnit_Number)) {
-    return mValue.mFloat;
-  }
-  return 0.0f;
-}
-
-inline nsAString& nsCSSValue::GetStringValue(nsAString& aBuffer) const
-{
-  NS_ASSERTION((eCSSUnit_String <= mUnit) && (mUnit <= eCSSUnit_Counters), "not a string value");
-  aBuffer.Truncate();
-  if ((eCSSUnit_String <= mUnit) && (mUnit <= eCSSUnit_Counters) && 
-      (nsnull != mValue.mString)) {
-    aBuffer.Append(mValue.mString);
-  }
-  return aBuffer;
-}
-
-inline nscolor nsCSSValue::GetColorValue(void) const
-{
-  NS_ASSERTION((mUnit == eCSSUnit_Color), "not a color value");
-  if (mUnit == eCSSUnit_Color) {
-    return mValue.mColor;
-  }
-  return NS_RGB(0,0,0);
-}
-
-inline PRBool nsCSSValue::operator!=(const nsCSSValue& aOther) const
-{
-  return PRBool(! ((*this) == aOther));
-}
-
-
 
 #endif /* nsCSSValue_h___ */
 

@@ -75,9 +75,6 @@
 extern char ** __argv;
 extern int    __argc;
 
-// Adding to support DDE
-#define ID_MESSAGEWINDOW        0xDEAF
-
 /* trying to keep this like Window's COPYDATASTRUCT, but a compiler error is
  * forcing me to add chBuff so that we can append the data to the end of the
  * structure
@@ -201,7 +198,7 @@ public:
 }; // class nsSplashScreenOS2
 
 MRESULT EXPENTRY DialogProc( HWND dlg, ULONG msg, MPARAM mp1, MPARAM mp2 );
-void _Optlink ThreadProc (void *splashScreen);
+void ThreadProc (void *splashScreen);
 
 // Simple Win32 mutex wrapper.
 struct Mutex {
@@ -361,7 +358,7 @@ public:
     // console.
     // On OS/2, we use the return from CheckConsole to determine
     // whether or not to use the OS/2 specific turbo mode
-    nsresult CheckConsole();
+    PRBool CheckConsole();
 
 private:
     static HDDEDATA APIENTRY HandleDDENotification( ULONG    idInst,
@@ -631,7 +628,7 @@ nsSplashScreenOS2 *nsSplashScreenOS2::GetPointer( HWND dlg ) {
     return (nsSplashScreenOS2*)data;
 }
 
-void _Optlink ThreadProc(void *splashScreen) {
+void ThreadProc(void *splashScreen) {
     HAB hab = WinInitialize( 0 );
     HMQ hmq = WinCreateMsgQueue( hab, 0 );
     WinDlgBox( HWND_DESKTOP, HWND_DESKTOP, (PFNWP)DialogProc, NULLHANDLE, IDD_SPLASH, (MPARAM)splashScreen );
@@ -644,9 +641,14 @@ void _Optlink ThreadProc(void *splashScreen) {
 
 PRBool gAbortServer = PR_FALSE;
 
-nsresult
+PRBool
 nsNativeAppSupportOS2::CheckConsole() {
-    nsresult rv = NS_OK;
+    CHAR pszAppPath[CCHMAXPATH];
+    PPIB ppib;
+    PTIB ptib;
+    DosGetInfoBlocks(&ptib, &ppib);
+    DosQueryModuleName(ppib->pib_hmte, CCHMAXPATH, pszAppPath);
+    *strrchr(pszAppPath, '\\') = '\0'; // XXX DBCS misery
 
     for ( int i = 1; i < __argc; i++ ) {
         if ( strcmp( "-console", __argv[i] ) == 0
@@ -660,27 +662,30 @@ nsNativeAppSupportOS2::CheckConsole() {
                     strcmp( "-server", __argv[i] ) == 0                                              
                     ||
                     strcmp( "/server", __argv[i] ) == 0 ) {         
+
             struct stat st;
-            int statrv = stat(TURBOD, &st);
+            CHAR pszTurboPath[CCHMAXPATH];
+
+            strcpy(pszTurboPath, pszAppPath);
+            strcat(pszTurboPath, "\\");
+            strcat(pszTurboPath, TURBOD);
+            int statrv = stat(pszTurboPath, &st);
 
             /* If we can't find the turbo EXE, use the Mozilla turbo */
             if (statrv == 0) {
               RESULTCODES rcodes;
-              APIRET rc;
               CHAR pszArgString[CCHMAXPATH];
-              strcpy(pszArgString, TURBOD);
+
+              strcpy(pszArgString, pszTurboPath);
               strcat(pszArgString, " -l -p ");
-              strcat(pszArgString, __argv[0]);
-              char *pchar = strrchr(pszArgString, '\\');
-              pchar++;
-              *pchar = '\0';
-              pszArgString[strlen(TURBOD)] = '\0';
+              strcat(pszArgString, pszAppPath);
+              pszArgString[strlen(pszTurboPath)] = '\0';
        
-              rc = DosExecPgm(NULL,0,EXEC_BACKGROUND,
-                              pszArgString,
-                              0, &rcodes,
-                              TURBOD);
-              rv = NS_ERROR_FAILURE;
+              DosExecPgm(NULL,0,EXEC_BACKGROUND,
+                         pszArgString,
+                         0, &rcodes,
+                         pszTurboPath);
+              return PR_FALSE; /* Don't start the app */
             } else {
               // Start in server mode (and suppress splash screen).   
               mServerMode = PR_TRUE;
@@ -694,23 +699,29 @@ nsNativeAppSupportOS2::CheckConsole() {
     for ( int j = 1; j < __argc; j++ ) {
         if (strcmp("-killAll", __argv[j]) == 0 || strcmp("/killAll", __argv[j]) == 0 ||
             strcmp("-kill", __argv[j]) == 0 || strcmp("/kill", __argv[j]) == 0) {
+
             struct stat st;
-            int statrv = stat(TURBOD, &st);
+            CHAR pszTurboPath[CCHMAXPATH];
+
+            strcpy(pszTurboPath, pszAppPath);
+            strcat(pszTurboPath, "\\");
+            strcat(pszTurboPath, TURBOD);
+            int statrv = stat(pszTurboPath, &st);
 
             /* If we can't find the turbo EXE, use the Mozilla turbo */
             if (statrv == 0) {
               RESULTCODES rcodes;
-              APIRET rc;
               CHAR pszArgString[CCHMAXPATH];
-              strcpy(pszArgString, TURBOD);
+
+              strcpy(pszArgString, pszTurboPath);
               strcat(pszArgString, " -u");
-              pszArgString[strlen(TURBOD)] = '\0';
+              pszArgString[strlen(pszTurboPath)] = '\0';
              
-              rc = DosExecPgm(NULL,0,EXEC_BACKGROUND,
-                              pszArgString,
-                              0, &rcodes,
-                              TURBOD);
-              rv = NS_ERROR_FAILURE;
+              DosExecPgm(NULL,0,EXEC_BACKGROUND,
+                         pszArgString,
+                         0, &rcodes,
+                         pszTurboPath);
+              return PR_FALSE; /* Don't start the app */
             } else {
               gAbortServer = PR_TRUE;
             }
@@ -718,7 +729,7 @@ nsNativeAppSupportOS2::CheckConsole() {
         }
     }
 
-    return rv;
+    return PR_TRUE; /* Start the app */
 }
 
 
@@ -729,7 +740,9 @@ NS_CreateNativeAppSupport( nsINativeAppSupport **aResult ) {
         nsNativeAppSupportOS2 *pNative = new nsNativeAppSupportOS2;
         if ( pNative ) {                                           
             // Check for dynamic console creation request.         
-            if NS_FAILED(pNative->CheckConsole()) {
+            // If CheckConsole returns PR_FALSE, we should
+            // start the turbo daemon and close the app.
+            if (pNative->CheckConsole() == PR_FALSE) {
                delete pNative;
                return NS_ERROR_FAILURE;
             }
@@ -957,12 +970,41 @@ struct MessageWindow {
     // ctor/dtor are simplistic
     MessageWindow() {
         // Try to find window.
-        // XXX need to improve this to use check the class
-        mHandle = WinWindowFromID( HWND_OBJECT, ID_MESSAGEWINDOW ); 
+        HATOMTBL  hatomtbl;
+        HENUM     henum;
+        HWND      hwndNext;
+        char      classname[CCHMAXPATH];
+
+        mHandle = NULLHANDLE;
+
+        hatomtbl = WinQuerySystemAtomTable();
+        mMsgWindowAtom = WinFindAtom(hatomtbl, className());
+        if (mMsgWindowAtom == 0)
+        {
+          // If there is not atom in the system table for this class name, then
+          // we can assume that the app is not currently running.
+          mMsgWindowAtom = WinAddAtom(hatomtbl, className());
+        } else {
+          // Found an existing atom for this class name.  Cycle through existing
+          // windows and see if one with our window id and class name already 
+          // exists
+          henum = WinBeginEnumWindows(HWND_OBJECT);
+          while ((hwndNext = WinGetNextWindow(henum)) != NULLHANDLE)
+          {
+            if (WinQueryWindowUShort(hwndNext, QWS_ID) == (USHORT)mMsgWindowAtom)
+            {
+              WinQueryClassName(hwndNext, CCHMAXPATH, classname);
+              if (strcmp(classname, className()) == 0)
+              {
+                mHandle = hwndNext;
+                break;
+              }
+            }
+          }
+        }
     }
 
-    // Act like an HWND.
-    operator HWND() {
+    HWND getHWND() {
         return mHandle;
     }
 
@@ -1002,7 +1044,7 @@ struct MessageWindow {
                                    0,0,       // cx,cy
                                    HWND_DESKTOP,// owner
                                    HWND_BOTTOM,  // hwndbehind
-                                   ID_MESSAGEWINDOW, // id
+                                   (USHORT)mMsgWindowAtom, // id
                                    NULL,        // pCtlData
                                    NULL );      // pres params
 
@@ -1018,6 +1060,9 @@ struct MessageWindow {
         nsresult retval = NS_OK;
 
         if ( mHandle ) {
+           HATOMTBL hatomtbl = WinQuerySystemAtomTable();
+           WinDeleteAtom(hatomtbl, mMsgWindowAtom);
+           
             // DestroyWindow can only destroy windows created from
             //  the same thread.
             BOOL desRes = WinDestroyWindow( mHandle );
@@ -1101,7 +1146,8 @@ struct MessageWindow {
 }
 
 private:
-    HWND mHandle;
+    HWND     mHandle;
+    USHORT   mMsgWindowAtom;
 }; // struct MessageWindow
 
 static char nameBuffer[128] = { 0 };
@@ -1174,7 +1220,7 @@ nsNativeAppSupportOS2::Start( PRBool *aResult ) {
 
     // Search for existing message window.
     MessageWindow msgWindow;
-    if ( (HWND)msgWindow ) {
+    if ( msgWindow.getHWND() ) {
         // We are a client process.  Pass request to message window.
         char *cmd = GetCommandLine();
         rv = msgWindow.SendRequest( cmd );
@@ -1535,19 +1581,14 @@ nsNativeAppSupportOS2::HandleDDENotification( ULONG idInst,     // DDEML instanc
                         // Escape any double-quotes.
                         escapeQuotes( url );
 
-                        // Now for the title; first, get the "window" JS object.
+                        // Now for the title; first, get the "window" script global object.
                         nsCOMPtr<nsIScriptGlobalObject> scrGlobalObj( do_QueryInterface( internalContent ) );
                         if ( !scrGlobalObj ) {
                             break;
                         }
-                        // Then the doc shell...
-                        nsCOMPtr<nsIDocShell> docShell;
-                        scrGlobalObj->GetDocShell( getter_AddRefs( docShell ) );
-                        if ( !docShell ) {
-                            break;
-                        }
-                        // And from that the base window...
-                        nsCOMPtr<nsIBaseWindow> baseWindow( do_QueryInterface( docShell ) );
+                        // Then from its doc shell get the base window...
+                        nsCOMPtr<nsIBaseWindow> baseWindow =
+                          do_QueryInterface( scrGlobalObj->GetDocShell() );
                         if ( !baseWindow ) {
                             break;
                         }
@@ -1708,7 +1749,7 @@ nsCString nsNativeAppSupportOS2::ParseDDEArg( HSZ args, int index ) {
         // Ensure result's buffer is sufficiently big.
         temp.SetLength( argLen + 1 );
         // Now get the string contents.
-        WinDdeQueryString( args, (char*)temp.get(), temp.Length(), CP_WINANSI );
+        WinDdeQueryString( args, temp.BeginWriting(), temp.Length(), CP_WINANSI );
         // Parse out the given arg.
         const char *p = temp.get();
         // offset points to the comma preceding the desired arg.
@@ -2117,8 +2158,10 @@ nsNativeAppSupportOS2::EnsureProfile(nsICmdLineService* args)
   // See if profile manager is being suppressed via -silent flag.
   PRBool canInteract = PR_TRUE;
   nsXPIDLCString arg;
-  if (NS_SUCCEEDED(args->GetCmdLineValue("-silent", getter_Copies(arg))) && (const char*)arg) {
-    canInteract = PR_FALSE;
+  if (NS_SUCCEEDED(args->GetCmdLineValue("-silent", getter_Copies(arg)))) {
+    if ((const char*)arg) {
+      canInteract = PR_FALSE;
+    }
   }
   rv = appShell->DoProfileStartup(args, canInteract);
 
@@ -2154,12 +2197,9 @@ HWND hwndForDOMWindow( nsISupports *window ) {
     if ( !ppScriptGlobalObj ) {
         return 0;
     }
-    nsCOMPtr<nsIDocShell> ppDocShell;
-    ppScriptGlobalObj->GetDocShell( getter_AddRefs( ppDocShell ) );
-    if ( !ppDocShell ) {
-        return 0;
-    }
-    nsCOMPtr<nsIBaseWindow> ppBaseWindow( do_QueryInterface( ppDocShell ) );
+
+    nsCOMPtr<nsIBaseWindow> ppBaseWindow =
+      do_QueryInterface( ppScriptGlobalObj->GetDocShell() );
     if ( !ppBaseWindow ) {
         return 0;
     }
@@ -2283,8 +2323,15 @@ nsNativeAppSupportOS2::OpenBrowserWindow( const char *args, PRBool newWindow ) {
         return NS_OK;
     } while ( PR_FALSE );
 
+    nsCOMPtr<nsICmdLineHandler> handler(do_GetService("@mozilla.org/commandlinehandler/general-startup;1?type=browser", &rv));
+    if (NS_FAILED(rv)) return rv;
+
+    nsXPIDLCString chromeUrlForTask;
+    rv = handler->GetChromeUrlForTask(getter_Copies(chromeUrlForTask));
+    if (NS_FAILED(rv)) return rv;
+
     // Last resort is to open a brand new window.
-    return OpenWindow( "chrome://navigator/content", args );
+    return OpenWindow( chromeUrlForTask, args );
 }
 
 //   This opens a special browser window for purposes of priming the pump for
@@ -2355,7 +2402,7 @@ nsNativeAppSupportOS2::StartServerMode() {
     mInitialWindowActive = PR_TRUE;
 
     // Hide this window by re-parenting it (to ensure it doesn't appear).
-    ReParent( newWindow, (HWND)MessageWindow() );
+    ReParent( newWindow, MessageWindow().getHWND() );
 
     return NS_OK;
 }

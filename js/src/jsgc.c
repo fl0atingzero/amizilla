@@ -1,36 +1,41 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * JS Mark-and-Sweep Garbage Collector.
@@ -53,6 +58,7 @@
 #include "jsatom.h"
 #include "jscntxt.h"
 #include "jsconfig.h"
+#include "jsdbgapi.h"
 #include "jsfun.h"
 #include "jsgc.h"
 #include "jsinterp.h"
@@ -1031,15 +1037,13 @@ js_GC(JSContext *cx, uintN gcflags)
 #endif
 
     /*
-     * Don't collect garbage if the runtime is down or if GC is disabled, and
-     * we're not the last context in the runtime.  The last context must force
-     * a GC, and nothing should disable that final collection or there may be
-     * shutdown leaks, or runtime bloat until the next context is created.
+     * Don't collect garbage if the runtime isn't up, and cx is not the last
+     * context in the runtime.  The last context must force a GC, and nothing
+     * should suppress that final collection or there may be shutdown leaks,
+     * or runtime bloat until the next context is created.
      */
-    if ((rt->state != JSRTS_UP || rt->gcDisabled) &&
-        !(gcflags & GC_LAST_CONTEXT)) {
+    if (rt->state != JSRTS_UP && !(gcflags & GC_LAST_CONTEXT))
         return;
-    }
 
     /*
      * Let the API user decide to defer a GC if it wants to (unless this
@@ -1159,7 +1163,11 @@ js_GC(JSContext *cx, uintN gcflags)
     rt->gcRunning = JS_TRUE;
     JS_UNLOCK_GC(rt);
 
-    /* Reset malloc counter */
+    /* If a suspended compile is running on another context, keep atoms. */
+    if (rt->gcKeepAtoms)
+        gcflags |= GC_KEEP_ATOMS;
+
+    /* Reset malloc counter. */
     rt->gcMallocBytes = 0;
 
     /* Drop atoms held by the property cache, and clear property weak links. */
@@ -1181,6 +1189,7 @@ restart:
     if (rt->gcLocksHash)
         JS_DHashTableEnumerate(rt->gcLocksHash, gc_lock_marker, cx);
     js_MarkAtomState(&rt->atomState, gcflags, gc_mark_atom_key_thing, cx);
+    js_MarkWatchPoints(rt);
     iter = NULL;
     while ((acx = js_ContextIterator(rt, JS_TRUE, &iter)) != NULL) {
         /*
@@ -1291,6 +1300,7 @@ restart:
      */
     js_SweepAtomState(&rt->atomState);
     js_SweepScopeProperties(rt);
+    js_SweepScriptFilenames(rt);
     for (a = rt->gcArenaPool.first.next; a; a = a->next) {
         flagp = (uint8 *) a->base;
         split = (uint8 *) FIRST_THING_PAGE(a);
@@ -1375,6 +1385,11 @@ restart:
 
     if (rt->gcCallback)
         (void) rt->gcCallback(cx, JSGC_FINALIZE_END);
+#ifdef DEBUG_brendan
+  { extern void DumpSrcNoteSizeHist();
+    DumpSrcNoteSizeHist();
+  }
+#endif
 
 out:
     JS_LOCK_GC(rt);

@@ -39,6 +39,7 @@
 #define nsGenericElement_h___
 
 #include "nsCOMPtr.h"
+#include "nsAutoPtr.h"
 #include "nsIHTMLContent.h"
 #include "nsIDOMAttr.h"
 #include "nsIDOMNamedNodeMap.h"
@@ -52,6 +53,7 @@
 #include "nsIStyleSheetLinkingElement.h"
 #include "nsICSSStyleSheet.h"
 #include "nsICSSLoaderObserver.h"
+#include "nsIDocument.h"
 #include "nsVoidArray.h"
 #include "nsILinkHandler.h"
 #include "nsGenericDOMNodeList.h"
@@ -60,6 +62,7 @@
 #include "nsIParser.h"
 #include "nsContentUtils.h"
 #include "pldhash.h"
+#include "nsAttrAndChildArray.h"
 
 class nsIDOMAttr;
 class nsIDOMEventListener;
@@ -69,11 +72,12 @@ class nsDOMCSSDeclaration;
 class nsIDOMCSSStyleDeclaration;
 class nsDOMAttributeMap;
 class nsIURI;
-class nsINodeInfo;
 
 typedef unsigned long PtrBits;
 
-/** This bit will be set if the nsGenericElement has nsDOMSlots */
+/**
+ * This bit will be set if the nsGenericElement doesn't have nsDOMSlots
+ */
 #define GENERIC_ELEMENT_DOESNT_HAVE_DOMSLOTS   0x00000001U
 
 /**
@@ -152,21 +156,21 @@ public:
   /**
    * An object implementing nsIDOMNodeList for this content (childNodes)
    * @see nsIDOMNodeList
-   * @see nsGenericHTMLLeafElement::GetChildNodes
+   * @see nsGenericHTMLElement::GetChildNodes
    */
-  nsChildContentList *mChildNodes;
+  nsRefPtr<nsChildContentList> mChildNodes;
 
   /**
    * The .style attribute (an interface that forwards to the actual
    * style rules)
    * @see nsGenericHTMLElement::GetStyle */
-  nsDOMCSSDeclaration *mStyle;
+  nsRefPtr<nsDOMCSSDeclaration> mStyle;
 
   /**
    * An object implementing nsIDOMNamedNodeMap for this content (attributes)
    * @see nsGenericElement::GetAttributes
    */
-  nsDOMAttributeMap* mAttributeMap;
+  nsRefPtr<nsDOMAttributeMap> mAttributeMap;
 
   /**
    * The nearest enclosing content node with a binding that created us.
@@ -230,6 +234,7 @@ public:
  */
 class nsNode3Tearoff : public nsIDOM3Node
 {
+public:
   NS_DECL_ISUPPORTS
 
   NS_DECL_NSIDOM3NODE
@@ -237,6 +242,15 @@ class nsNode3Tearoff : public nsIDOM3Node
   nsNode3Tearoff(nsIContent *aContent) : mContent(aContent)
   {
   }
+
+  static nsresult GetTextContent(nsIDocument *aDoc,
+                                 nsIDOMNode *aNode,
+                                 nsAString &aTextContent);
+
+  static nsresult SetTextContent(nsIContent *aContent,
+                                 const nsAString &aTextContent);
+
+protected:
   virtual ~nsNode3Tearoff() {};
 
 private:
@@ -349,98 +363,101 @@ public:
   static void Shutdown();
 
   // nsIContent interface methods
-  NS_IMETHOD GetDocument(nsIDocument** aResult) const;
-  NS_IMETHOD SetDocument(nsIDocument* aDocument, PRBool aDeep,
-                         PRBool aCompileEventHandlers);
-  NS_IMETHOD GetParent(nsIContent** aResult) const;
-  NS_IMETHOD SetParent(nsIContent* aParent);
-  NS_IMETHOD_(PRBool) IsNativeAnonymous() const;
-  NS_IMETHOD_(void) SetNativeAnonymous(PRBool aAnonymous);
-  NS_IMETHOD GetNameSpaceID(PRInt32* aNameSpaceID) const;
-  NS_IMETHOD GetTag(nsIAtom** aResult) const;
-  NS_IMETHOD GetNodeInfo(nsINodeInfo** aResult) const;
-  // NS_IMETHOD CanContainChildren(PRBool& aResult) const;
-  // NS_IMETHOD ChildCount(PRInt32& aResult) const;
-  // NS_IMETHOD ChildAt(PRInt32 aIndex, nsIContent** aResult) const;
-  // NS_IMETHOD IndexOf(nsIContent* aPossibleChild, PRInt32& aResult) const;
-  // NS_IMETHOD InsertChildAt(nsIContent* aKid, PRInt32 aIndex,
-  //                          PRBool aNotify);
-  // NS_IMETHOD ReplaceChildAt(nsIContent* aKid, PRInt32 aIndex,
-  //                           PRBool aNotify);
-  // NS_IMETHOD AppendChildTo(nsIContent* aKid, PRBool aNotify);
-  // NS_IMETHOD RemoveChildAt(PRInt32 aIndex, PRBool aNotify);
-  // NS_IMETHOD NormalizeAttrString(const nsAString& aStr,
-  //                                nsINodeInfo** aNodeInfo);
-  // NS_IMETHOD SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, 
-  //                    const nsAString& aValue,
-  //                    PRBool aNotify);
-  // NS_IMETHOD SetAttr(nsINodeInfo* aNodeInfo,
-  //                    const nsAString& aValue,
-  //                    PRBool aNotify);
-  // NS_IMETHOD GetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, 
-  //                    nsAString& aResult) const;
-  // NS_IMETHOD GetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, 
-  //                    nsIAtom** aPrefix,
-  //                    nsAString& aResult) const;
-  // NS_IMETHOD UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute, 
-  //                      PRBool aNotify);
-  // NS_IMETHOD GetAttrNameAt(PRInt32 aIndex,
-  //                          PRInt32& aNameSpaceID, 
-  //                          nsIAtom** aName,
-  //                          nsIAtom** aPrefix) const;
-  // NS_IMETHOD GetAttrCount(PRInt32& aResult) const;
-#ifdef DEBUG
-  // NS_IMETHOD List(FILE* out, PRInt32 aIndent) const;
-  // NS_IMETHOD DumpContent(FILE* out, PRInt32 aIndent,PRBool aDumpAll) const;
-#endif
-  NS_IMETHOD RangeAdd(nsIDOMRange* aRange);
-  NS_IMETHOD RangeRemove(nsIDOMRange* aRange);
-  NS_IMETHOD GetRangeList(nsVoidArray** aResult) const;
-  NS_IMETHOD HandleDOMEvent(nsIPresContext* aPresContext,
+  virtual void SetDocument(nsIDocument* aDocument, PRBool aDeep,
+                           PRBool aCompileEventHandlers);
+  virtual void SetParent(nsIContent* aParent);
+  virtual PRBool IsNativeAnonymous() const;
+  virtual void SetNativeAnonymous(PRBool aAnonymous);
+  virtual void GetNameSpaceID(PRInt32* aNameSpaceID) const;
+  virtual nsIAtom *Tag() const;
+  virtual nsINodeInfo *GetNodeInfo() const;
+  virtual PRUint32 GetChildCount() const;
+  virtual nsIContent *GetChildAt(PRUint32 aIndex) const;
+  virtual PRInt32 IndexOf(nsIContent* aPossibleChild) const;
+  virtual nsresult InsertChildAt(nsIContent* aKid, PRUint32 aIndex,
+                                 PRBool aNotify, PRBool aDeepSetDocument);
+  virtual nsresult ReplaceChildAt(nsIContent* aKid, PRUint32 aIndex,
+                                  PRBool aNotify, PRBool aDeepSetDocument);
+  virtual nsresult AppendChildTo(nsIContent* aKid, PRBool aNotify,
+                                 PRBool aDeepSetDocument);
+  virtual nsresult RemoveChildAt(PRUint32 aIndex, PRBool aNotify);
+  virtual nsIAtom *GetIDAttributeName() const;
+  virtual nsIAtom *GetClassAttributeName() const;
+  virtual already_AddRefed<nsINodeInfo> GetExistingAttrNameFromQName(const nsAString& aStr) const;
+  nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                   const nsAString& aValue, PRBool aNotify)
+  {
+    return SetAttr(aNameSpaceID, aName, nsnull, aValue, aNotify);
+  }
+  virtual nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, nsIAtom* aPrefix,
+                           const nsAString& aValue, PRBool aNotify);
+  virtual nsresult GetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                           nsAString& aResult) const;
+  virtual PRBool HasAttr(PRInt32 aNameSpaceID, nsIAtom* aName) const;
+  virtual nsresult UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
+                             PRBool aNotify);
+  virtual nsresult GetAttrNameAt(PRUint32 aIndex, PRInt32* aNameSpaceID,
+                                 nsIAtom** aName, nsIAtom** aPrefix) const;
+  virtual PRUint32 GetAttrCount() const;
+  virtual nsresult RangeAdd(nsIDOMRange* aRange);
+  virtual void RangeRemove(nsIDOMRange* aRange);
+  virtual const nsVoidArray *GetRangeList() const;
+  virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext,
                             nsEvent* aEvent,
                             nsIDOMEvent** aDOMEvent,
                             PRUint32 aFlags,
                             nsEventStatus* aEventStatus);
-  NS_IMETHOD GetContentID(PRUint32* aID);
-  NS_IMETHOD SetContentID(PRUint32 aID);
-  NS_IMETHOD SetFocus(nsIPresContext* aContext);
-  NS_IMETHOD RemoveFocus(nsIPresContext* aContext);
-  NS_IMETHOD GetBindingParent(nsIContent** aContent);
-  NS_IMETHOD SetBindingParent(nsIContent* aParent);
-  NS_IMETHOD_(PRBool) IsContentOfType(PRUint32 aFlags);
-  NS_IMETHOD GetListenerManager(nsIEventListenerManager** aInstancePtrResult);
-  NS_IMETHOD DoneCreatingElement();
-
+  virtual PRUint32 ContentID() const;
+  virtual void SetContentID(PRUint32 aID);
+  virtual void SetFocus(nsIPresContext* aContext);
+  virtual nsIContent *GetBindingParent() const;
+  virtual nsresult SetBindingParent(nsIContent* aParent);
+  virtual PRBool IsContentOfType(PRUint32 aFlags) const;
+  virtual nsresult GetListenerManager(nsIEventListenerManager** aResult);
+  virtual already_AddRefed<nsIURI> GetBaseURI() const;
+#ifdef DEBUG
+  virtual void List(FILE* out, PRInt32 aIndent) const;
+  virtual void DumpContent(FILE* out, PRInt32 aIndent,PRBool aDumpAll) const;
+#endif
 
   // nsIStyledContent interface methods
   NS_IMETHOD GetID(nsIAtom** aResult) const;
-  NS_IMETHOD GetClasses(nsVoidArray& aArray) const;
+  virtual const nsAttrValue* GetClasses() const;
   NS_IMETHOD_(PRBool) HasClass(nsIAtom* aClass, PRBool aCaseSensitive) const;
   NS_IMETHOD WalkContentStyleRules(nsRuleWalker* aRuleWalker);
-  NS_IMETHOD GetInlineStyleRule(nsIStyleRule** aStyleRule);
-  NS_IMETHOD GetMappedAttributeImpact(const nsIAtom* aAttribute,
-                                      PRInt32 aModType, nsChangeHint& aHint) const;
+  NS_IMETHOD GetInlineStyleRule(nsICSSStyleRule** aStyleRule);
+  NS_IMETHOD SetInlineStyleRule(nsICSSStyleRule* aStyleRule, PRBool aNotify);
+  NS_IMETHOD_(PRBool)
+    IsAttributeMapped(const nsIAtom* aAttribute) const;
+  NS_IMETHOD GetAttributeChangeHint(const nsIAtom* aAttribute,
+                                    PRInt32 aModType, 
+                                    nsChangeHint& aHint) const;
+  /*
+   * Attribute Mapping Helpers
+   */
+  struct MappedAttributeEntry {
+    nsIAtom** attribute;
+  };
+  
+  /**
+   * A common method where you can just pass in a list of maps to check
+   * for attribute dependence. Most implementations of
+   * IsAttributeMapped should use this function as a default
+   * handler.
+   */
+  static PRBool
+  FindAttributeDependence(const nsIAtom* aAttribute,
+                          const MappedAttributeEntry* const aMaps[],
+                          PRUint32 aMapCount);
 
   // nsIXMLContent interface methods
   NS_IMETHOD MaybeTriggerAutoLink(nsIDocShell *aShell);
-  NS_IMETHOD GetXMLBaseURI(nsIURI **aURI);
 
   // nsIHTMLContent interface methods
   NS_IMETHOD Compact();
-  NS_IMETHOD SetHTMLAttribute(nsIAtom* aAttribute,
-                              const nsHTMLValue& aValue,
-                              PRBool aNotify);
   NS_IMETHOD GetHTMLAttribute(nsIAtom* aAttribute,
                               nsHTMLValue& aValue) const;
   NS_IMETHOD GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const;
-  NS_IMETHOD AttributeToString(nsIAtom* aAttribute,
-                               const nsHTMLValue& aValue,
-                               nsAString& aResult) const;
-  NS_IMETHOD StringToAttribute(nsIAtom* aAttribute,
-                               const nsAString& aValue,
-                               nsHTMLValue& aResult);
-  NS_IMETHOD GetBaseURL(nsIURI** aBaseURL) const;
-  NS_IMETHOD GetBaseTarget(nsAString& aBaseTarget) const;
 
   // nsIDOMNode method implementation
   NS_IMETHOD GetNodeName(nsAString& aNodeName);
@@ -460,6 +477,28 @@ public:
   NS_IMETHOD IsSupported(const nsAString& aFeature,
                          const nsAString& aVersion, PRBool* aReturn);
   NS_IMETHOD HasAttributes(PRBool* aHasAttributes);
+  NS_IMETHOD GetChildNodes(nsIDOMNodeList** aChildNodes);
+  NS_IMETHOD HasChildNodes(PRBool* aHasChildNodes);
+  NS_IMETHOD GetFirstChild(nsIDOMNode** aFirstChild);
+  NS_IMETHOD GetLastChild(nsIDOMNode** aLastChild);
+  NS_IMETHOD InsertBefore(nsIDOMNode* aNewChild, nsIDOMNode* aRefChild,
+                          nsIDOMNode** aReturn)
+  {
+    return doInsertBefore(this, aNewChild, aRefChild, aReturn);
+  }
+  NS_IMETHOD ReplaceChild(nsIDOMNode* aNewChild, nsIDOMNode* aOldChild,
+                          nsIDOMNode** aReturn)
+  {
+    return doReplaceChild(this, aNewChild, aOldChild, aReturn);
+  }
+  NS_IMETHOD RemoveChild(nsIDOMNode* aOldChild, nsIDOMNode** aReturn)
+  {
+    return doRemoveChild(this, aOldChild, aReturn);
+  }
+  NS_IMETHOD AppendChild(nsIDOMNode* aNewChild, nsIDOMNode** aReturn)
+  {
+    return doInsertBefore(this, aNewChild, nsnull, aReturn);
+  }
 
   // nsIDOMElement method implementation
   NS_IMETHOD GetTagName(nsAString& aTagName);
@@ -499,19 +538,20 @@ public:
    * Generic implementation of InsertBefore to be called by subclasses
    * @see nsIDOMNode::InsertBefore
    */
-  nsresult  doInsertBefore(nsIDOMNode* aNewChild, nsIDOMNode* aRefChild,
-                           nsIDOMNode** aReturn);
+  static nsresult doInsertBefore(nsIContent *aElement, nsIDOMNode* aNewChild,
+                                 nsIDOMNode* aRefChild, nsIDOMNode** aReturn);
   /**
    * Generic implementation of ReplaceChild to be called by subclasses
    * @see nsIDOMNode::ReplaceChild
    */
-  nsresult  doReplaceChild(nsIDOMNode* aNewChild, nsIDOMNode* aOldChild,
-                           nsIDOMNode** aReturn);
+  static nsresult doReplaceChild(nsIContent *aElement, nsIDOMNode* aNewChild,
+                                 nsIDOMNode* aOldChild, nsIDOMNode** aReturn);
   /**
    * Generic implementation of RemoveChild to be called by subclasses
    * @see nsIDOMNode::RemoveChild
    */
-  nsresult  doRemoveChild(nsIDOMNode* aOldChild, nsIDOMNode** aReturn);
+  static nsresult doRemoveChild(nsIContent *aElement, nsIDOMNode* aOldChild,
+                                nsIDOMNode** aReturn);
 
   //----------------------------------------
 
@@ -525,21 +565,28 @@ public:
                                   const nsAString& aValue);
 
   /**
-   * Load a link, putting together the proper URL from the pieces given.
+   * Trigger a link with uri aLinkURI.  If aClick is false, this triggers a
+   * mouseover on the link, otherwise it triggers a load, after doing a
+   * security check.
    * @param aPresContext the pres context.
    * @param aVerb how the link will be loaded (replace page, new window, etc.)
-   * @param aBaseURL the base URL to start with (content.baseURL, may be null)
-   * @param aURLSpec the URL of the link (may be relative)
-   * @param aTargetSpec the target (like target=, may be null)
+   * @param aOriginURI the URI the request originates from.  Used as the origin
+   *        uri for a CheckLoadURI call. 
+   * @param aLinkURI the URI of the link
+   * @param aTargetSpec the target (like target=, may be empty)
    * @param aClick whether this was a click or not (if false, it assumes you
    *        just hovered over the link)
+   * @param aIsUserTriggered whether the user triggered the link.
+   *        This would be false for loads from auto XLinks or from the
+   *        click() method if we ever implement it.
    */
   nsresult TriggerLink(nsIPresContext* aPresContext,
                        nsLinkVerb aVerb,
-                       nsIURI* aBaseURL,
-                       const nsAString& aURLSpec,
+                       nsIURI* aOriginURI,
+                       nsIURI* aLinkURI,
                        const nsAFlatString& aTargetSpec,
-                       PRBool aClick);
+                       PRBool aClick,
+                       PRBool aIsUserTriggered);
   /**
    * Do whatever needs to be done when the mouse leaves a link
    */
@@ -593,6 +640,18 @@ public:
   static PLDHashTable sRangeListsHash;
 
 protected:
+  /**
+   * Copy attributes and children from another content object
+   * @param aSrcContent the object to copy from
+   * @param aDeep whether to copy children
+   */
+  nsresult CopyInnerTo(nsGenericElement* aDest, PRBool aDeep);
+
+  /**
+   * Internal hook for converting an attribute name-string to an atomized name
+   */
+  virtual const nsAttrName* InternalGetExistingAttrNameFromQName(const nsAString& aStr) const;
+
   PRBool HasDOMSlots() const
   {
     return !(mFlagsOrSlots & GENERIC_ELEMENT_DOESNT_HAVE_DOMSLOTS);
@@ -680,20 +739,23 @@ protected:
             sEventListenerManagersHash.ops);
   }
 
-  /**
-   * The document for this content
-   */
-  nsIDocument* mDocument;                   // WEAK
-
-  /**
-   * The parent content
-   */
-  nsIContent* mParent;                      // WEAK
+  nsIDocument* GetOwnerDocument() const
+  {
+    return mDocument ? mDocument : mNodeInfo->GetDocument();
+  }
   
+  nsIContent*  GetParent() const {
+    // Override nsIContent::GetParent to be more efficient internally,
+    // since no subclasses of nsGenericElement use the low 2 bits of
+    // mParentPtrBits for anything.
+
+    return NS_REINTERPRET_CAST(nsIContent *, mParentPtrBits);
+  }
+
   /**
    * Information about this type of node
    */
-  nsINodeInfo* mNodeInfo;                   // OWNER
+  nsCOMPtr<nsINodeInfo> mNodeInfo;          // OWNER
 
   /**
    * Used for either storing flags for this element or a pointer to
@@ -702,115 +764,12 @@ protected:
    * member.
    */
   PtrBits mFlagsOrSlots;
-};
-
-/**
- * A generic element that contains children
- */
-class nsGenericContainerElement : public nsGenericElement {
-public:
-  nsGenericContainerElement();
-  virtual ~nsGenericContainerElement();
 
   /**
-   * Copy attributes and children from another content object
-   * @param aSrcContent the object to copy from
-   * @param aDest the destination object
-   * @param aDeep whether to copy children
+   * Array containing all attributes and children for this element
    */
-  // XXX This can probably be static
-  NS_IMETHOD CopyInnerTo(nsIContent* aSrcContent,
-                         nsGenericContainerElement* aDest,
-                         PRBool aDeep);
-
-  // nsIDOMElement methods
-  NS_METHOD GetAttribute(const nsAString& aName,
-                         nsAString& aReturn) 
-  {
-    return nsGenericElement::GetAttribute(aName, aReturn);
-  }
-  NS_METHOD SetAttribute(const nsAString& aName,
-                         const nsAString& aValue)
-  {
-    return nsGenericElement::SetAttribute(aName, aValue);
-  }
-
-  // Remainder of nsIDOMHTMLElement (and nsIDOMNode)
-  NS_IMETHOD GetChildNodes(nsIDOMNodeList** aChildNodes);
-  NS_IMETHOD HasChildNodes(PRBool* aHasChildNodes);
-  NS_IMETHOD GetFirstChild(nsIDOMNode** aFirstChild);
-  NS_IMETHOD GetLastChild(nsIDOMNode** aLastChild);
-  
-  NS_IMETHOD InsertBefore(nsIDOMNode* aNewChild, nsIDOMNode* aRefChild,
-                          nsIDOMNode** aReturn)
-  {
-    return nsGenericElement::doInsertBefore(aNewChild, aRefChild, aReturn);
-  }
-  NS_IMETHOD ReplaceChild(nsIDOMNode* aNewChild, nsIDOMNode* aOldChild,
-                          nsIDOMNode** aReturn)
-  {
-    return nsGenericElement::doReplaceChild(aNewChild, aOldChild, aReturn);
-  }
-  NS_IMETHOD RemoveChild(nsIDOMNode* aOldChild, nsIDOMNode** aReturn)
-  {
-    return nsGenericElement::doRemoveChild(aOldChild, aReturn);
-  }
-  NS_IMETHOD AppendChild(nsIDOMNode* aNewChild, nsIDOMNode** aReturn)
-  {
-    return nsGenericElement::doInsertBefore(aNewChild, nsnull, aReturn);
-  }
-
-  // Remainder of nsIContent
-  NS_IMETHOD NormalizeAttrString(const nsAString& aStr,
-                                 nsINodeInfo** aNodeInfo);
-  NS_IMETHOD SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
-                     const nsAString& aValue,
-                     PRBool aNotify);
-  NS_IMETHOD SetAttr(nsINodeInfo* aNodeInfo,
-                     const nsAString& aValue,
-                     PRBool aNotify);
-  NS_IMETHOD GetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
-                     nsAString& aResult) const;
-  NS_IMETHOD GetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
-                     nsIAtom** aPrefix, nsAString& aResult) const;
-  NS_IMETHOD_(PRBool) HasAttr(PRInt32 aNameSpaceID, nsIAtom* aName) const;
-  NS_IMETHOD UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
-                       PRBool aNotify);
-  NS_IMETHOD GetAttrNameAt(PRInt32 aIndex,
-                           PRInt32* aNameSpaceID,
-                           nsIAtom** aName,
-                           nsIAtom** aPrefix) const;
-  NS_IMETHOD GetAttrCount(PRInt32& aResult) const;
-#ifdef DEBUG
-  NS_IMETHOD List(FILE* out, PRInt32 aIndent) const;
-  NS_IMETHOD DumpContent(FILE* out, PRInt32 aIndent,PRBool aDumpAll) const;
-#endif
-  NS_IMETHOD CanContainChildren(PRBool& aResult) const;
-  NS_IMETHOD ChildCount(PRInt32& aResult) const;
-  NS_IMETHOD ChildAt(PRInt32 aIndex, nsIContent** aResult) const;
-  NS_IMETHOD IndexOf(nsIContent* aPossibleChild, PRInt32& aResult) const;
-  NS_IMETHOD InsertChildAt(nsIContent* aKid, PRInt32 aIndex, PRBool aNotify,
-                           PRBool aDeepSetDocument);
-  NS_IMETHOD ReplaceChildAt(nsIContent* aKid, PRInt32 aIndex, PRBool aNotify,
-                            PRBool aDeepSetDocument);
-  NS_IMETHOD AppendChildTo(nsIContent* aKid, PRBool aNotify,
-                           PRBool aDeepSetDocument);
-  NS_IMETHOD RemoveChildAt(PRInt32 aIndex, PRBool aNotify);
-
-#ifdef DEBUG
-  void ListAttributes(FILE* out) const;
-#endif
-
-protected:
-  /**
-   * The attributes (stored as nsGenericAttribute*)
-   * @see nsGenericAttribute
-   * */
-  nsVoidArray* mAttributes;
-  /** The list of children (stored as nsIContent*) */
-  nsSmallVoidArray mChildren;
+  nsAttrAndChildArray mAttrsAndChildren;
 };
-
 
 // Internal non-public interface
 
@@ -923,11 +882,5 @@ public:
     return _to HasAttributes(aReturn);                                        \
   }                                                                           \
   NS_IMETHOD CloneNode(PRBool aDeep, nsIDOMNode** aReturn);
-
-#define NS_INTERFACE_MAP_ENTRY_TEAROFF(_iid, _tearoff)                        \
-  if (aIID.Equals(NS_GET_IID(_iid))) {                                        \
-    foundInterface = new _tearoff;                                            \
-    NS_ENSURE_TRUE(foundInterface, NS_ERROR_OUT_OF_MEMORY);                   \
-  } else
 
 #endif /* nsGenericElement_h___ */

@@ -67,6 +67,8 @@ public:
     nsWindow();
     virtual ~nsWindow();
 
+    static void ReleaseGlobals();
+
     NS_DECL_ISUPPORTS_INHERITED
 
     // nsIWidget
@@ -92,8 +94,9 @@ public:
                                          PRInt32 *aY);
     NS_IMETHOD         Move(PRInt32 aX,
                             PRInt32 aY);
-    NS_IMETHOD         PlaceBehind(nsIWidget *aWidget,
-                                   PRBool     aActivate);
+    NS_IMETHOD         PlaceBehind(nsTopLevelWidgetZPlacement  aPlacement,
+                                   nsIWidget                  *aWidget,
+                                   PRBool                      aActivate);
     NS_IMETHOD         SetSizeMode(PRInt32 aMode);
     NS_IMETHOD         Enable(PRBool aState);
     NS_IMETHOD         SetFocus(PRBool aRaise = PR_FALSE);
@@ -139,7 +142,7 @@ public:
     NS_IMETHOD         CaptureRollupEvents(nsIRollupListener *aListener,
                                            PRBool aDoCapture,
                                            PRBool aConsumeRollupEvent);
-    NS_IMETHOD         GetAttention();
+    NS_IMETHOD         GetAttention(PRInt32 aCycleCount);
     NS_IMETHOD         HideWindowChrome(PRBool aShouldHide);
 
     // utility methods
@@ -233,7 +236,13 @@ public:
     void               GrabKeyboard (void);
     void               ReleaseGrabs (void);
 
-    void               SetPluginType(PRBool aIsXembed);
+    enum PluginType {
+        PluginType_NONE = 0,   /* do not have any plugin */
+        PluginType_XEMBED,     /* the plugin support xembed */
+        PluginType_NONXEMBED   /* the plugin does not support xembed */
+    };
+
+    void               SetPluginType(PluginType aPluginType);
     void               SetNonXEmbedPluginFocus(void);
     void               LoseNonXEmbedPluginFocus(void);
 
@@ -264,7 +273,7 @@ private:
     void               GetToplevelWidget(GtkWidget **aWidget);
     void               GetContainerWindow(nsWindow  **aWindow);
     void              *SetupPluginPort(void);
-    nsresult           SetWindowIcon(nsCString &aPath);
+    nsresult           SetWindowIconList(const nsCStringArray &aIconList);
     void               SetDefaultIcon(void);
 
     GtkWidget          *mShell;
@@ -279,15 +288,18 @@ private:
                         mInKeyRepeat : 1,
                         mIsVisible : 1,
                         mRetryPointerGrab : 1,
-                        mHasNonXembedPlugin : 1,
                         mActivatePending : 1,
                         mRetryKeyboardGrab : 1;
     GtkWindow          *mTransientParent;
     PRInt32             mSizeState;
+    PluginType          mPluginType;
 
 #ifdef ACCESSIBILITY
     nsCOMPtr<nsIAccessible> mRootAccessible;
     void                CreateRootAccessible();
+    void                GetRootAccessible(nsIAccessible** aAccessible);
+    void                DispatchActivateEvent(void);
+    void                DispatchDeactivateEvent(void);
     NS_IMETHOD_(PRBool) DispatchAccessibleEvent(nsIAccessible** aAccessible);
 #endif
 
@@ -311,6 +323,10 @@ private:
     guint              mDragMotionTime;
     guint              mDragMotionTimerID;
     nsCOMPtr<nsITimer> mDragLeaveTimer;
+
+    static PRBool      sIsDraggingOutOf;
+    // drag in progress
+    static PRBool DragInProgress(void);
 
     void         ResetDragMotionTimer     (GtkWidget      *aWidget,
                                            GdkDragContext *aDragContext,

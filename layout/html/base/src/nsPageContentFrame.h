@@ -60,7 +60,7 @@ public:
                     nsFramePaintLayer    aWhichLayer,
                     PRUint32             aFlags = 0);
 
-  NS_IMETHOD IsPercentageBase(PRBool& aBase) const;
+  virtual PRBool IsContainingBlock() const;
 
   virtual void  SetClipRect(nsRect* aClipRect) { mClipRect = *aClipRect; }
 
@@ -71,7 +71,7 @@ public:
    *
    * @see nsLayoutAtoms::pageFrame
    */
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
   
 #ifdef NS_DEBUG
   // Debugging

@@ -26,6 +26,7 @@
   ======================================================================= */
 
 @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
+@namespace html url("http://www.w3.org/1999/xhtml"); /* namespace for HTML elements */
 
 /* ::::: scrollbar ::::: */
 
@@ -112,6 +113,12 @@ scrollbarbutton:hover:active {
   -moz-border-bottom-colors: #000000 #AAAAAA;
   -moz-border-left-colors: #000000 #444444;
   background-color: #666666;
+}
+
+/* ::::: square at the corner of two scrollbars ::::: */
+
+scrollcorner { 
+  background-color: -moz-Dialog;
 }
 
 /* ..... increment .... */

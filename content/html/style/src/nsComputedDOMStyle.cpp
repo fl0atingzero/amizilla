@@ -42,6 +42,7 @@
 #include "nsComputedDOMStyle.h"
 
 #include "nsDOMError.h"
+#include "nsDOMString.h"
 #include "nsIDOMCSS2Properties.h"
 #include "nsIDOMElement.h"
 #include "nsStyleContext.h"
@@ -57,6 +58,11 @@
 
 #include "nsIPresContext.h"
 #include "nsIDocument.h"
+
+#include "nsCSSPseudoElements.h"
+#include "nsStyleSet.h"
+#include "imgIRequest.h"
+#include "nsInspectorCSSUtils.h"
 
 #if defined(DEBUG_bzbarsky) || defined(DEBUG_caillon)
 #define DEBUG_ComputedDOMStyle
@@ -95,7 +101,7 @@ NS_NewComputedDOMStyle(nsIComputedDOMStyle** aComputedStyle)
 }
 
 nsComputedDOMStyle::nsComputedDOMStyle()
-  : mInner(nsnull), mPresShellWeak(nsnull), mT2P(0.0f)
+  : mInner(this), mPresShellWeak(nsnull), mT2P(0.0f)
 {
 }
 
@@ -116,55 +122,15 @@ nsComputedDOMStyle::Shutdown()
 }
 
 
-NS_IMETHODIMP
-nsComputedDOMStyle::QueryInterface(REFNSIID aIID, void** aInstancePtr)
-{
-  if (!aInstancePtr) {
-    NS_ERROR("QueryInterface requires a non-NULL destination!");
-    return NS_ERROR_NULL_POINTER;
-  }
-
-  nsISupports* inst;
-
-  if (aIID.Equals(NS_GET_IID(nsIComputedDOMStyle))) {
-    inst = NS_STATIC_CAST(nsIComputedDOMStyle*, this);
-  } else if (aIID.Equals(NS_GET_IID(nsIDOMCSSStyleDeclaration))) {
-    inst = NS_STATIC_CAST(nsIDOMCSSStyleDeclaration*, this);
-  } else if (aIID.Equals(NS_GET_IID(nsIDOMCSS2Properties))) {
-    if (!mInner) {
-      mInner = new CSS2PropertiesTearoff(this);
-      NS_ENSURE_TRUE(mInner, NS_ERROR_OUT_OF_MEMORY);
-    }
-    inst = NS_STATIC_CAST(nsIDOMCSS2Properties*,
-                          NS_STATIC_CAST(nsISupports*, mInner));
-  } else if (aIID.Equals(NS_GET_IID(nsIDOMNSCSS2Properties))) {
-    if (!mInner) {
-      mInner = new CSS2PropertiesTearoff(this);
-      NS_ENSURE_TRUE(mInner, NS_ERROR_OUT_OF_MEMORY);
-    }
-    inst = NS_STATIC_CAST(nsIDOMNSCSS2Properties*,
-                          NS_STATIC_CAST(nsISupports*, mInner));
-  } else if (aIID.Equals(NS_GET_IID(nsISupports))) {
-    inst = NS_STATIC_CAST(nsISupports*,
-                          NS_STATIC_CAST(nsIComputedDOMStyle*, this));
-  } else if (aIID.Equals(NS_GET_IID(nsIClassInfo))) {
-    inst = nsContentUtils::GetClassInfoInstance(eDOMClassInfo_ComputedCSSStyleDeclaration_id);
-    NS_ENSURE_TRUE(inst, NS_ERROR_OUT_OF_MEMORY);
-  } else {
-    inst = nsnull;
-  }
-
-  nsresult rv;
-  if (!inst) {
-    rv = NS_NOINTERFACE;
-  } else {
-    NS_ADDREF(inst);
-    rv = NS_OK;
-  }
-
-  *aInstancePtr = inst;
-  return rv;
-}
+// QueryInterface implementation for nsComputedDOMStyle
+NS_INTERFACE_MAP_BEGIN(nsComputedDOMStyle)
+  NS_INTERFACE_MAP_ENTRY(nsIComputedDOMStyle)
+  NS_INTERFACE_MAP_ENTRY(nsIDOMCSSStyleDeclaration)
+  NS_INTERFACE_MAP_ENTRY_AGGREGATED(nsIDOMCSS2Properties, &mInner)
+  NS_INTERFACE_MAP_ENTRY_AGGREGATED(nsIDOMNSCSS2Properties, &mInner)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIComputedDOMStyle)
+  NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(ComputedCSSStyleDeclaration)
+NS_INTERFACE_MAP_END
 
 
 static void doDestroyComputedDOMStyle(nsComputedDOMStyle *aComputedStyle)
@@ -181,9 +147,9 @@ static void doDestroyComputedDOMStyle(nsComputedDOMStyle *aComputedStyle)
   }
 }
 
-NS_IMPL_ADDREF(nsComputedDOMStyle);
+NS_IMPL_ADDREF(nsComputedDOMStyle)
 NS_IMPL_RELEASE_WITH_DESTROY(nsComputedDOMStyle,
-                             doDestroyComputedDOMStyle(this));
+                             doDestroyComputedDOMStyle(this))
 
 
 NS_IMETHODIMP
@@ -194,7 +160,7 @@ nsComputedDOMStyle::Init(nsIDOMElement *aElement,
   NS_ENSURE_ARG_POINTER(aElement);
   NS_ENSURE_ARG_POINTER(aPresShell);
 
-  mPresShellWeak = getter_AddRefs(NS_GetWeakReference(aPresShell));
+  mPresShellWeak = do_GetWeakReference(aPresShell);
 
   mContent = do_QueryInterface(aElement);
   if (!mContent) {
@@ -203,9 +169,29 @@ nsComputedDOMStyle::Init(nsIDOMElement *aElement,
     return NS_ERROR_FAILURE;
   }
 
-  if (!DOMStringIsNull(aPseudoElt) && !aPseudoElt.IsEmpty()) {
-    mPseudo = do_GetAtom(aPseudoElt);
+  if (!DOMStringIsNull(aPseudoElt) && !aPseudoElt.IsEmpty() &&
+      aPseudoElt.First() == PRUnichar(':')) {
+    // deal with two-colon forms of aPseudoElt
+    nsAString::const_iterator start, end;
+    aPseudoElt.BeginReading(start);
+    aPseudoElt.EndReading(end);
+    NS_ASSERTION(start != end, "aPseudoElt is not empty!");
+    ++start;
+    PRBool haveTwoColons = PR_TRUE;
+    if (start == end || *start != PRUnichar(':')) {
+      --start;
+      haveTwoColons = PR_FALSE;
+    }
+    mPseudo = do_GetAtom(Substring(start, end));
     NS_ENSURE_TRUE(mPseudo, NS_ERROR_OUT_OF_MEMORY);
+
+    // There aren't any non-CSS2 pseudo-elements with a single ':'
+    if (!haveTwoColons &&
+        !nsCSSPseudoElements::IsCSS2PseudoElement(mPseudo)) {
+      // XXXbz I'd really rather we threw an exception or something, but
+      // the DOM spec sucks.
+      mPseudo = nsnull;
+    }
   }
 
   nsCOMPtr<nsIPresContext> presCtx;
@@ -214,7 +200,7 @@ nsComputedDOMStyle::Init(nsIDOMElement *aElement,
 
   NS_ENSURE_TRUE(presCtx, NS_ERROR_FAILURE);
 
-  presCtx->GetTwipsToPixels(&mT2P);
+  mT2P = presCtx->TwipsToPixels();
 
   return NS_OK;
 }
@@ -379,10 +365,10 @@ nsComputedDOMStyle::GetBinding(nsIFrame *aFrame,
 
   GetStyleData(eStyleStruct_Display, (const nsStyleStruct*&)display, aFrame);
 
-  if (display && !display->mBinding.IsEmpty()) {
+  if (display && display->mBinding) {
     val->SetURI(display->mBinding);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
+    val->SetIdent(nsLayoutAtoms::none);
   }
 
   return CallQueryInterface(val, aValue);
@@ -404,7 +390,7 @@ nsComputedDOMStyle::GetClear(nsIFrame *aFrame,
                                      nsCSSProps::kClearKTable);
     val->SetIdent(clear);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
+    val->SetIdent(nsLayoutAtoms::none);
   }
 
   return CallQueryInterface(val, aValue);
@@ -426,7 +412,7 @@ nsComputedDOMStyle::GetCssFloat(nsIFrame *aFrame,
                                      nsCSSProps::kFloatKTable);
     val->SetIdent(cssFloat);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
+    val->SetIdent(nsLayoutAtoms::none);
   }
 
   return CallQueryInterface(val, aValue);
@@ -486,8 +472,6 @@ nsComputedDOMStyle::GetColor(nsIFrame *aFrame,
     }
 
     val->SetColor(rgb);
-  } else {
-    val->SetString(NS_LITERAL_STRING(""));
   }
 
   return CallQueryInterface(val, aValue);
@@ -500,14 +484,11 @@ nsComputedDOMStyle::GetOpacity(nsIFrame *aFrame,
   nsROCSSPrimitiveValue *val = GetROCSSPrimitiveValue();
   NS_ENSURE_TRUE(val, NS_ERROR_OUT_OF_MEMORY);
 
-  const nsStyleVisibility *visibility = nsnull;
-  GetStyleData(eStyleStruct_Visibility, (const nsStyleStruct*&)visibility,
-               aFrame);
+  const nsStyleDisplay *display = nsnull;
+  GetStyleData(eStyleStruct_Display, (const nsStyleStruct*&)display, aFrame);
 
-  if (visibility) {
-    val->SetNumber(visibility->mOpacity);
-  } else {
-    val->SetNumber(1.0f);
+  if (display) {
+    val->SetNumber(display->mOpacity);
   }
 
   return CallQueryInterface(val, aValue);
@@ -532,10 +513,10 @@ nsComputedDOMStyle::GetFontFamily(nsIFrame *aFrame,
 
     const nsString& fontName = font->mFont.name;
     PRUint8 generic = font->mFlags & NS_STYLE_FONT_FACE_MASK;
-    if (generic == kGenericFont_NONE) { 
-      const nsFont* defaultFont; 
-      presContext->GetDefaultFont(kPresContext_DefaultVariableFont_ID,
-                                  &defaultFont);
+    if (generic == kGenericFont_NONE && !font->mFont.systemFont) { 
+      const nsFont* defaultFont =
+        presContext->GetDefaultFont(kPresContext_DefaultVariableFont_ID);
+
       PRInt32 lendiff = fontName.Length() - defaultFont->name.Length();
       if (lendiff > 0) {
         val->SetString(Substring(fontName, 0, lendiff-1)); // -1 removes comma
@@ -545,8 +526,6 @@ nsComputedDOMStyle::GetFontFamily(nsIFrame *aFrame,
     } else {
       val->SetString(fontName);
     }
-  } else {
-    val->SetString(NS_LITERAL_STRING(""));
   }
 
   return CallQueryInterface(val, aValue);
@@ -582,7 +561,7 @@ nsComputedDOMStyle::GetFontSizeAdjust(nsIFrame *aFrame,
   if (font && font->mFont.sizeAdjust) {
     val->SetNumber(font->mFont.sizeAdjust);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
+    val->SetIdent(nsLayoutAtoms::none);
   }
 
   return CallQueryInterface(val, aValue);
@@ -604,7 +583,7 @@ nsComputedDOMStyle::GetFontStyle(nsIFrame *aFrame,
                                      nsCSSProps::kFontStyleKTable);
     val->SetIdent(style);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("normal"));
+    val->SetIdent(nsLayoutAtoms::normal);
   }
 
   return CallQueryInterface(val, aValue);
@@ -629,8 +608,6 @@ nsComputedDOMStyle::GetFontWeight(nsIFrame *aFrame,
     } else {
       val->SetNumber(font->mFont.weight);
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("normal"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -652,7 +629,7 @@ nsComputedDOMStyle::GetFontVariant(nsIFrame *aFrame,
                                      nsCSSProps::kFontVariantKTable);
     val->SetIdent(variant);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("normal"));
+    val->SetIdent(nsLayoutAtoms::normal);
   }
 
   return CallQueryInterface(val, aValue);
@@ -674,8 +651,6 @@ nsComputedDOMStyle::GetBackgroundAttachment(nsIFrame *aFrame,
       nsCSSProps::SearchKeywordTable(background->mBackgroundAttachment,
                                      nsCSSProps::kBackgroundAttachmentKTable);
     val->SetIdent(backgroundAttachment);
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("scroll"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -732,8 +707,6 @@ nsComputedDOMStyle::GetBackgroundColor(nsIFrame *aFrame,
 
       val->SetColor(rgb);
     }
-  } else {
-    val->SetString(NS_LITERAL_STRING(""));
   }
 
   return CallQueryInterface(val, aValue);
@@ -751,12 +724,14 @@ nsComputedDOMStyle::GetBackgroundImage(nsIFrame *aFrame,
 
   if (color) {
     if (color->mBackgroundFlags & NS_STYLE_BG_IMAGE_NONE) {
-      val->SetIdent(NS_LITERAL_STRING("none"));
+      val->SetIdent(nsLayoutAtoms::none);
     } else {
-      val->SetURI(color->mBackgroundImage);
+      nsCOMPtr<nsIURI> uri;
+      if (color->mBackgroundImage) {
+        color->mBackgroundImage->GetURI(getter_AddRefs(uri));
+      }
+      val->SetURI(uri);
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -826,8 +801,6 @@ nsComputedDOMStyle::GetBackgroundRepeat(nsIFrame *aFrame,
       nsCSSProps::SearchKeywordTable(background->mBackgroundRepeat,
                                      nsCSSProps::kBackgroundRepeatKTable);
     val->SetIdent(backgroundRepeat);
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("repeat"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -886,8 +859,6 @@ nsComputedDOMStyle::GetBorderCollapse(nsIFrame *aFrame,
       nsCSSProps::SearchKeywordTable(table->mBorderCollapse,
                                      nsCSSProps::kBorderCollapseKTable);
     val->SetIdent(ident);
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("collapse"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -915,8 +886,6 @@ nsComputedDOMStyle::GetCaptionSide(nsIFrame *aFrame,
       nsCSSProps::SearchKeywordTable(table->mCaptionSide,
                                      nsCSSProps::kCaptionSideKTable);
     val->SetIdent(side);
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("top"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -937,8 +906,6 @@ nsComputedDOMStyle::GetEmptyCells(nsIFrame *aFrame,
       nsCSSProps::SearchKeywordTable(table->mEmptyCells,
                                      nsCSSProps::kEmptyCellsKTable);
     val->SetIdent(emptyCells);
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("show"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -960,7 +927,7 @@ nsComputedDOMStyle::GetTableLayout(nsIFrame *aFrame,
                                      nsCSSProps::kTableLayoutKTable);
     val->SetIdent(tableLayout);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("auto"));
+    val->SetIdent(nsLayoutAtoms::autoAtom);
   }
 
   return CallQueryInterface(val, aValue);
@@ -1181,18 +1148,16 @@ nsComputedDOMStyle::GetMarkerOffset(nsIFrame *aFrame,
         val->SetTwips(content->mMarkerOffset.GetCoordValue());
         break;
       case eStyleUnit_Auto:
-        val->SetIdent(NS_LITERAL_STRING("auto"));
+        val->SetIdent(nsLayoutAtoms::autoAtom);
         break;
       case eStyleUnit_Null:
-        val->SetIdent(NS_LITERAL_STRING("none"));
+        val->SetIdent(nsLayoutAtoms::none);
         break;
       default:
         NS_WARNING("Double check the unit");
         val->SetTwips(0);
         break;
     }
-  } else {
-    val->SetTwips(0);
   }
 
   return CallQueryInterface(val, aValue);
@@ -1239,8 +1204,6 @@ nsComputedDOMStyle::GetOutlineWidth(nsIFrame *aFrame,
         val->SetTwips(0);
         break;
     }
-  } else {
-    val->SetTwips(0);
   }
 
   return CallQueryInterface(val, aValue);
@@ -1259,15 +1222,13 @@ nsComputedDOMStyle::GetOutlineStyle(nsIFrame *aFrame,
   if (outline) {
     PRUint8 outlineStyle = outline->GetOutlineStyle();
     if (outlineStyle == NS_STYLE_BORDER_STYLE_NONE) {
-      val->SetIdent(NS_LITERAL_STRING("none"));
+      val->SetIdent(nsLayoutAtoms::none);
     } else {
       const nsAFlatCString& style=
         nsCSSProps::SearchKeywordTable(outlineStyle,
                                        nsCSSProps::kBorderStyleKTable);
       val->SetIdent(style);
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -1296,8 +1257,6 @@ nsComputedDOMStyle::GetOutlineColor(nsIFrame *aFrame,
     }
 
     val->SetColor(rgb);
-  } else {
-    val->SetString(NS_LITERAL_STRING(""));
   }
 
   return CallQueryInterface(val, aValue);
@@ -1318,19 +1277,13 @@ nsComputedDOMStyle::GetZIndex(nsIFrame *aFrame,
       case eStyleUnit_Integer:
         val->SetNumber(position->mZIndex.GetIntValue());
         break;
-      case eStyleUnit_Auto:
-        val->SetIdent(NS_LITERAL_STRING("auto"));
-        break;
-      case eStyleUnit_Inherit:
-        val->SetIdent(NS_LITERAL_STRING("inherit"));
-        break;
       default:
         NS_WARNING("Double Check the Unit!");
-        val->SetIdent(NS_LITERAL_STRING("auto"));
+        // fall through
+      case eStyleUnit_Auto:
+        val->SetIdent(nsLayoutAtoms::autoAtom);
         break;
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("auto"));
   }
     
   return CallQueryInterface(val, aValue);
@@ -1347,13 +1300,11 @@ nsComputedDOMStyle::GetListStyleImage(nsIFrame *aFrame,
   GetStyleData(eStyleStruct_List, (const nsStyleStruct*&)list, aFrame);
 
   if (list) {
-    if (list->mListStyleImage.IsEmpty()) {
-      val->SetIdent(NS_LITERAL_STRING("none"));
+    if (!list->mListStyleImage) {
+      val->SetIdent(nsLayoutAtoms::none);
     } else {
       val->SetURI(list->mListStyleImage);
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
   }
     
   return CallQueryInterface(val, aValue);
@@ -1374,8 +1325,6 @@ nsComputedDOMStyle::GetListStylePosition(nsIFrame *aFrame,
       nsCSSProps::SearchKeywordTable(list->mListStylePosition,
                                      nsCSSProps::kListStylePositionKTable);
     val->SetIdent(style);
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("outside"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -1391,19 +1340,73 @@ nsComputedDOMStyle::GetListStyleType(nsIFrame *aFrame,
   const nsStyleList *list = nsnull;
   GetStyleData(eStyleStruct_List, (const nsStyleStruct*&)list, aFrame);
 
-  if (list && list->mListStyleType != NS_STYLE_LIST_STYLE_BASIC) {
+  if (list) {
     if (list->mListStyleType == NS_STYLE_LIST_STYLE_NONE) {
-      val->SetIdent(NS_LITERAL_STRING("none"));
+      val->SetIdent(nsLayoutAtoms::none);
     } else {
       const nsAFlatCString& style =
         nsCSSProps::SearchKeywordTable(list->mListStyleType,
                                        nsCSSProps::kListStyleKTable);
       val->SetIdent(style);
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("disc"));
   }
 
+  return CallQueryInterface(val, aValue);
+}
+
+nsresult
+nsComputedDOMStyle::GetImageRegion(nsIFrame *aFrame,
+                                   nsIDOMCSSValue** aValue)
+{
+  nsROCSSPrimitiveValue *val = GetROCSSPrimitiveValue();
+  NS_ENSURE_TRUE(val, NS_ERROR_OUT_OF_MEMORY);
+
+  const nsStyleList* list = nsnull;
+
+  GetStyleData(eStyleStruct_List, (const nsStyleStruct*&)list, aFrame);
+
+  nsresult rv = NS_OK;
+  nsROCSSPrimitiveValue *topVal = nsnull;
+  nsROCSSPrimitiveValue *rightVal = nsnull;
+  nsROCSSPrimitiveValue *bottomVal = nsnull;
+  nsROCSSPrimitiveValue *leftVal = nsnull;
+  if (list) {
+    if (list->mImageRegion.width <= 0 || list->mImageRegion.height <= 0) {
+      val->SetIdent(nsLayoutAtoms::autoAtom);
+    } else {
+      // create the cssvalues for the sides, stick them in the rect object
+      topVal = GetROCSSPrimitiveValue();
+      rightVal = GetROCSSPrimitiveValue();
+      bottomVal = GetROCSSPrimitiveValue();
+      leftVal = GetROCSSPrimitiveValue();
+      if (topVal && rightVal && bottomVal && leftVal) {
+        nsDOMCSSRect * domRect = new nsDOMCSSRect(topVal, rightVal,
+                                                  bottomVal, leftVal);
+        if (domRect) {
+          topVal->SetTwips(list->mImageRegion.y);
+          rightVal->SetTwips(list->mImageRegion.width + list->mImageRegion.x);
+          bottomVal->SetTwips(list->mImageRegion.height + list->mImageRegion.y);
+          leftVal->SetTwips(list->mImageRegion.x);
+          val->SetRect(domRect);
+        } else {
+          rv = NS_ERROR_OUT_OF_MEMORY;
+        }
+      } else {
+        rv = NS_ERROR_OUT_OF_MEMORY;
+      }
+    }
+  }
+
+  if (NS_FAILED(rv)) {
+    delete topVal;
+    delete rightVal;
+    delete bottomVal;
+    delete leftVal;
+    delete val;
+
+    return rv;
+  }
+  
   return CallQueryInterface(val, aValue);
 }
 
@@ -1434,11 +1437,9 @@ nsComputedDOMStyle::GetLineHeight(nsIFrame *aFrame,
 #ifdef DEBUG_ComputedDOMStyle
         NS_WARNING("double check the line-height");
 #endif
-        val->SetIdent(NS_LITERAL_STRING("normal"));
+        val->SetIdent(nsLayoutAtoms::normal);
         break;
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("normal"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -1485,12 +1486,9 @@ nsComputedDOMStyle::GetVerticalAlign(nsIFrame *aFrame,
           break;
         }
       default:
-        NS_WARNING("double check the vertical-align");
-        val->SetIdent(NS_LITERAL_STRING("baseline"));
+        NS_ERROR("double check the vertical-align");
         break;
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("baseline"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -1511,8 +1509,6 @@ nsComputedDOMStyle::GetTextAlign(nsIFrame *aFrame,
       nsCSSProps::SearchKeywordTable(text->mTextAlign,
                                      nsCSSProps::kTextAlignKTable);
     val->SetIdent(align);
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("start"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -1570,8 +1566,6 @@ nsComputedDOMStyle::GetTextDecoration(nsIFrame *aFrame,
       }
       val->SetString(decorationString);
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -1596,27 +1590,20 @@ nsComputedDOMStyle::GetTextIndent(nsIFrame *aFrame,
         break;
       case eStyleUnit_Percent:
         {
-          nsIFrame *container = nsnull;
-          container = GetContainingBlock(aFrame);
+          nsIFrame *container = GetContainingBlock(aFrame);
           if (container) {
-            nsSize size;
-            container->GetSize(size);
-            val->SetTwips(size.width * text->mTextIndent.GetPercentValue());
+            val->SetTwips(container->GetSize().width *
+                          text->mTextIndent.GetPercentValue());
           } else {
             // no containing block
             val->SetPercent(text->mTextIndent.GetPercentValue());
           }
           break;
         }
-      case eStyleUnit_Inherit:
-        val->SetIdent(NS_LITERAL_STRING("inherit"));
-        break;
       default:
         val->SetTwips(0);
         break;
     }
-  } else {
-    val->SetTwips(0);
   }
 
   return CallQueryInterface(val, aValue);
@@ -1638,7 +1625,7 @@ nsComputedDOMStyle::GetTextTransform(nsIFrame *aFrame,
                                      nsCSSProps::kTextTransformKTable);
     val->SetIdent(textTransform);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
+    val->SetIdent(nsLayoutAtoms::none);
   }
 
   return CallQueryInterface(val, aValue);
@@ -1657,7 +1644,7 @@ nsComputedDOMStyle::GetLetterSpacing(nsIFrame *aFrame,
   if (text && text->mLetterSpacing.GetUnit() == eStyleUnit_Coord) {
     val->SetTwips(text->mLetterSpacing.GetCoordValue());
   } else {
-    val->SetIdent(NS_LITERAL_STRING("normal"));
+    val->SetIdent(nsLayoutAtoms::normal);
   }
 
   return CallQueryInterface(val, aValue);
@@ -1676,7 +1663,7 @@ nsComputedDOMStyle::GetWordSpacing(nsIFrame *aFrame,
   if (text && text->mWordSpacing.GetUnit() == eStyleUnit_Coord) {
     val->SetTwips(text->mWordSpacing.GetCoordValue());
   } else {
-    val->SetIdent(NS_LITERAL_STRING("normal"));
+    val->SetIdent(nsLayoutAtoms::normal);
   }
 
   return CallQueryInterface(val, aValue);
@@ -1698,7 +1685,7 @@ nsComputedDOMStyle::GetWhiteSpace(nsIFrame *aFrame,
                                      nsCSSProps::kWhitespaceKTable);
     val->SetIdent(whiteSpace);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("normal"));
+    val->SetIdent(nsLayoutAtoms::normal);
   }
 
   return CallQueryInterface(val, aValue);
@@ -1720,8 +1707,6 @@ nsComputedDOMStyle::GetVisibility(nsIFrame *aFrame,
       nsCSSProps::SearchKeywordTable(visibility->mVisible,
                                      nsCSSProps::kVisibilityKTable);
     val->SetIdent(value);
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("visible"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -1743,10 +1728,8 @@ nsComputedDOMStyle::GetDirection(nsIFrame *aFrame,
       nsCSSProps::SearchKeywordTable(visibility->mDirection,
                                      nsCSSProps::kDirectionKTable);
     val->SetIdent(direction);
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("ltr"));
   }
-  
+
   return CallQueryInterface(val, aValue);
 }
 
@@ -1766,7 +1749,7 @@ nsComputedDOMStyle::GetUnicodeBidi(nsIFrame *aFrame,
                                      nsCSSProps::kUnicodeBidiKTable);
     val->SetIdent(bidi);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("normal"));
+    val->SetIdent(nsLayoutAtoms::normal);
   }
 
   return CallQueryInterface(val, aValue);
@@ -1783,20 +1766,14 @@ nsComputedDOMStyle::GetCursor(nsIFrame *aFrame,
   GetStyleData(eStyleStruct_UserInterface, (const nsStyleStruct*&)ui, aFrame);
 
   if (ui) {
-    if (!ui->mCursorImage.IsEmpty()) {
-      val->SetURI(ui->mCursorImage);
+    if (ui->mCursor == NS_STYLE_CURSOR_AUTO) {
+      val->SetIdent(nsLayoutAtoms::autoAtom);
     } else {
-      if (ui->mCursor == NS_STYLE_CURSOR_AUTO) {
-        val->SetIdent(NS_LITERAL_STRING("auto"));
-      } else {
-        const nsAFlatCString& cursor =
-          nsCSSProps::SearchKeywordTable(ui->mCursor,
-                                         nsCSSProps::kCursorKTable);
-        val->SetIdent(cursor);
-      }
+      const nsAFlatCString& cursor =
+        nsCSSProps::SearchKeywordTable(ui->mCursor,
+                                       nsCSSProps::kCursorKTable);
+      val->SetIdent(cursor);
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("auto"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -2136,15 +2113,13 @@ nsComputedDOMStyle::GetDisplay(nsIFrame *aFrame,
 
   if (displayData) {
     if (displayData->mDisplay == NS_STYLE_DISPLAY_NONE) {
-      val->SetIdent(NS_LITERAL_STRING("none"));
+      val->SetIdent(nsLayoutAtoms::none);
     } else {
       const nsAFlatCString& display =
         nsCSSProps::SearchKeywordTable(displayData->mDisplay,
                                        nsCSSProps::kDisplayKTable);
       val->SetIdent(display);
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("inline"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -2162,25 +2137,12 @@ nsComputedDOMStyle::GetPosition(nsIFrame *aFrame,
   GetStyleData(eStyleStruct_Display, (const nsStyleStruct*&)display, aFrame);
 
   if (display) {
-    switch (display->mPosition) {
-      case NS_STYLE_POSITION_STATIC:
-        val->SetIdent(NS_LITERAL_STRING("static"));
-        break;
-      case NS_STYLE_POSITION_RELATIVE:
-        val->SetIdent(NS_LITERAL_STRING("relative"));
-        break;
-      case NS_STYLE_POSITION_ABSOLUTE:
-        val->SetIdent(NS_LITERAL_STRING("absolute"));
-        break;
-      case NS_STYLE_POSITION_FIXED:
-        val->SetIdent(NS_LITERAL_STRING("fixed"));
-        break;
-      default:
-        NS_WARNING("Double check the position!");
-        break;
-    }
+    const nsAFlatCString& position =
+      nsCSSProps::SearchKeywordTable(display->mPosition,
+                                     nsCSSProps::kPositionKTable);
+    val->SetIdent(position);
   }
-  
+
   return CallQueryInterface(val, aValue);
 }
 
@@ -2206,7 +2168,7 @@ nsComputedDOMStyle::GetClip(nsIFrame *aFrame,
                                 NS_STYLE_CLIP_RIGHT_AUTO |
                                 NS_STYLE_CLIP_BOTTOM_AUTO |
                                 NS_STYLE_CLIP_LEFT_AUTO)) {
-      val->SetIdent(NS_LITERAL_STRING("auto"));
+      val->SetIdent(nsLayoutAtoms::autoAtom);
     } else {
       // create the cssvalues for the sides, stick them in the rect object
       topVal = GetROCSSPrimitiveValue();
@@ -2218,25 +2180,25 @@ nsComputedDOMStyle::GetClip(nsIFrame *aFrame,
                                                   bottomVal, leftVal);
         if (domRect) {
           if (display->mClipFlags & NS_STYLE_CLIP_TOP_AUTO) {
-            topVal->SetIdent(NS_LITERAL_STRING("auto"));
+            topVal->SetIdent(nsLayoutAtoms::autoAtom);
           } else {
             topVal->SetTwips(display->mClip.y);
           }
         
           if (display->mClipFlags & NS_STYLE_CLIP_RIGHT_AUTO) {
-            rightVal->SetIdent(NS_LITERAL_STRING("auto"));
+            rightVal->SetIdent(nsLayoutAtoms::autoAtom);
           } else {
             rightVal->SetTwips(display->mClip.width + display->mClip.x);
           }
         
           if (display->mClipFlags & NS_STYLE_CLIP_BOTTOM_AUTO) {
-            bottomVal->SetIdent(NS_LITERAL_STRING("auto"));
+            bottomVal->SetIdent(nsLayoutAtoms::autoAtom);
           } else {
             bottomVal->SetTwips(display->mClip.height + display->mClip.y);
           }
           
           if (display->mClipFlags & NS_STYLE_CLIP_LEFT_AUTO) {
-            leftVal->SetIdent(NS_LITERAL_STRING("auto"));
+            leftVal->SetIdent(nsLayoutAtoms::autoAtom);
           } else {
             leftVal->SetTwips(display->mClip.x);
           }
@@ -2280,7 +2242,7 @@ nsComputedDOMStyle::GetOverflow(nsIFrame *aFrame,
                                      nsCSSProps::kOverflowKTable);
     val->SetIdent(overflow);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("auto"));
+    val->SetIdent(nsLayoutAtoms::autoAtom);
   }
 
   return CallQueryInterface(val, aValue);
@@ -2303,20 +2265,16 @@ nsComputedDOMStyle::GetHeight(nsIFrame *aFrame,
     const nsStyleDisplay* displayData = nsnull;
     GetStyleData(eStyleStruct_Display, (const nsStyleStruct*&)displayData,
                  aFrame);
-    if (displayData && displayData->mDisplay == NS_STYLE_DISPLAY_INLINE) {
-      nsFrameState frameState;
-      aFrame->GetFrameState(&frameState);
-      if (!(frameState & NS_FRAME_REPLACED_ELEMENT)) {
-        calcHeight = PR_FALSE;
-      }
+    if (displayData && displayData->mDisplay == NS_STYLE_DISPLAY_INLINE
+        && !(aFrame->GetStateBits() & NS_FRAME_REPLACED_ELEMENT)) {
+      calcHeight = PR_FALSE;
     }
   }
 
   if (calcHeight) {
-    nsSize size;
     nsMargin padding;
     nsMargin border;
-    aFrame->GetSize(size);
+    nsSize size = aFrame->GetSize();
     const nsStylePadding* paddingData = nsnull;
     GetStyleData(eStyleStruct_Padding, (const nsStyleStruct*&)paddingData,
                  aFrame);
@@ -2346,18 +2304,13 @@ nsComputedDOMStyle::GetHeight(nsIFrame *aFrame,
           val->SetPercent(positionData->mHeight.GetPercentValue());
           break;
         case eStyleUnit_Auto:
-          val->SetIdent(NS_LITERAL_STRING("auto"));
-          break;
-        case eStyleUnit_Inherit:
-          val->SetIdent(NS_LITERAL_STRING("inherit"));
+          val->SetIdent(nsLayoutAtoms::autoAtom);
           break;
         default:
           NS_WARNING("Double check the unit");
           val->SetTwips(0);
           break;
       }
-    } else {
-      val->SetTwips(0);
     }
   }
   
@@ -2381,20 +2334,16 @@ nsComputedDOMStyle::GetWidth(nsIFrame *aFrame,
     const nsStyleDisplay *displayData = nsnull;
     GetStyleData(eStyleStruct_Display, (const nsStyleStruct*&)displayData,
                  aFrame);
-    if (displayData && displayData->mDisplay == NS_STYLE_DISPLAY_INLINE) {
-      nsFrameState frameState;
-      aFrame->GetFrameState(&frameState);
-      if (!(frameState & NS_FRAME_REPLACED_ELEMENT)) {
-        calcWidth = PR_FALSE;
-      }
+    if (displayData && displayData->mDisplay == NS_STYLE_DISPLAY_INLINE
+        && !(aFrame->GetStateBits() & NS_FRAME_REPLACED_ELEMENT)) {
+      calcWidth = PR_FALSE;
     }
   }
 
   if (calcWidth) {
-    nsSize size;
+    nsSize size = aFrame->GetSize();
     nsMargin padding;
     nsMargin border;
-    aFrame->GetSize(size);
     const nsStylePadding *paddingData = nsnull;
     GetStyleData(eStyleStruct_Padding, (const nsStyleStruct*&)paddingData,
                  aFrame);
@@ -2423,18 +2372,13 @@ nsComputedDOMStyle::GetWidth(nsIFrame *aFrame,
           val->SetPercent(positionData->mWidth.GetPercentValue());
           break;
         case eStyleUnit_Auto:
-          val->SetIdent(NS_LITERAL_STRING("auto"));
-          break;
-        case eStyleUnit_Inherit:
-          val->SetIdent(NS_LITERAL_STRING("inherit"));
+          val->SetIdent(nsLayoutAtoms::autoAtom);
           break;
         default:
           NS_WARNING("Double check the unit");
           val->SetTwips(0);
           break;
       }
-    } else {
-      val->SetTwips(0);
     }
   }
 
@@ -2462,7 +2406,7 @@ nsComputedDOMStyle::GetMaxHeight(nsIFrame *aFrame,
     if (positionData->mMinHeight.GetUnit() == eStyleUnit_Percent) {
       container = GetContainingBlock(aFrame);
       if (container) {
-        container->GetSize(size);
+        size = container->GetSize();
         minHeight = nscoord(size.height *
                             positionData->mMinHeight.GetPercentValue());
       }
@@ -2479,7 +2423,7 @@ nsComputedDOMStyle::GetMaxHeight(nsIFrame *aFrame,
         if (!container) {
           container = GetContainingBlock(aFrame);
           if (container) {
-            container->GetSize(size);
+            size = container->GetSize();
           } else {
             // no containing block
             val->SetPercent(positionData->mMaxHeight.GetPercentValue());
@@ -2491,17 +2435,11 @@ nsComputedDOMStyle::GetMaxHeight(nsIFrame *aFrame,
         }
 
         break;
-      case eStyleUnit_Inherit:
-        val->SetIdent(NS_LITERAL_STRING("inherit"));
-
-        break;
       default:
-        val->SetIdent(NS_LITERAL_STRING("none"));
+        val->SetIdent(nsLayoutAtoms::none);
 
         break;
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -2528,7 +2466,7 @@ nsComputedDOMStyle::GetMaxWidth(nsIFrame *aFrame,
     if (positionData->mMinWidth.GetUnit() == eStyleUnit_Percent) {
       container = GetContainingBlock(aFrame);
       if (container) {
-        container->GetSize(size);
+        size = container->GetSize();
         minWidth = nscoord(size.width *
                            positionData->mMinWidth.GetPercentValue());
       }
@@ -2545,7 +2483,7 @@ nsComputedDOMStyle::GetMaxWidth(nsIFrame *aFrame,
         if (!container) {
           container = GetContainingBlock(aFrame);
           if (container) {
-            container->GetSize(size);
+            size = container->GetSize();
           } else {
             // no containing block
             val->SetPercent(positionData->mMaxWidth.GetPercentValue());
@@ -2557,17 +2495,11 @@ nsComputedDOMStyle::GetMaxWidth(nsIFrame *aFrame,
         }
 
         break;
-      case eStyleUnit_Inherit:
-        val->SetIdent(NS_LITERAL_STRING("inherit"));
-
-        break;
       default:
-        val->SetIdent(NS_LITERAL_STRING("none"));
+        val->SetIdent(nsLayoutAtoms::none);
 
         break;
     }
-  } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
   }
 
   return CallQueryInterface(val, aValue);
@@ -2588,7 +2520,6 @@ nsComputedDOMStyle::GetMinHeight(nsIFrame *aFrame,
 
   if (positionData) {
     nsIFrame *container = nsnull;
-    nsSize size;
     switch (positionData->mMinHeight.GetUnit()) {
       case eStyleUnit_Coord:
         val->SetTwips(positionData->mMinHeight.GetCoordValue());
@@ -2596,8 +2527,7 @@ nsComputedDOMStyle::GetMinHeight(nsIFrame *aFrame,
       case eStyleUnit_Percent:
         container = GetContainingBlock(aFrame);
         if (container) {
-          container->GetSize(size);
-          val->SetTwips(size.height *
+          val->SetTwips(container->GetSize().height *
                         positionData->mMinHeight.GetPercentValue());
         } else {
           // no containing block
@@ -2605,17 +2535,11 @@ nsComputedDOMStyle::GetMinHeight(nsIFrame *aFrame,
         }
 
         break;
-      case eStyleUnit_Inherit:
-        val->SetIdent(NS_LITERAL_STRING("inherit"));
-
-        break;
       default:
         val->SetTwips(0);
 
         break;
     }
-  } else {
-    val->SetTwips(0);
   }
 
   return CallQueryInterface(val, aValue);
@@ -2636,7 +2560,6 @@ nsComputedDOMStyle::GetMinWidth(nsIFrame *aFrame,
 
   if (positionData) {
     nsIFrame *container = nsnull;
-    nsSize size;
     switch (positionData->mMinWidth.GetUnit()) {
       case eStyleUnit_Coord:
         val->SetTwips(positionData->mMinWidth.GetCoordValue());
@@ -2644,23 +2567,17 @@ nsComputedDOMStyle::GetMinWidth(nsIFrame *aFrame,
       case eStyleUnit_Percent:
         container = GetContainingBlock(aFrame);
         if (container) {
-          container->GetSize(size);
-          val->SetTwips(size.width *
+          val->SetTwips(container->GetSize().width *
                         positionData->mMinWidth.GetPercentValue());
         } else {
           // no containing block
           val->SetPercent(positionData->mMinWidth.GetPercentValue());
         }
         break;
-      case eStyleUnit_Inherit:
-        val->SetIdent(NS_LITERAL_STRING("inherit"));
-        break;
       default:
         val->SetTwips(0);
         break;
     }
-  } else {
-    val->SetTwips(0);
   }
 
   return CallQueryInterface(val, aValue);
@@ -2744,66 +2661,49 @@ nsComputedDOMStyle::GetAbsoluteOffset(PRUint8 aSide, nsIFrame* aFrame,
 
   nsIFrame* container = GetContainingBlock(aFrame);
   if (container) {
-    nsRect rect;
-    nsRect containerRect;
     nscoord margin = GetMarginWidthCoordFor(aSide, aFrame);
     nscoord border = GetBorderWidthCoordFor(aSide, container);
-    nscoord horScrollBarHeight = 0;
-    nscoord verScrollBarWidth = 0;
-    aFrame->GetRect(rect);
-    container->GetRect(containerRect);
+    nsMargin scrollbarSizes(0, 0, 0, 0);
+    nsRect rect = aFrame->GetRect();
+    nsRect containerRect = container->GetRect();
       
-    nsCOMPtr<nsIAtom> typeAtom;
-    container->GetFrameType(getter_AddRefs(typeAtom));
-    if (typeAtom == nsLayoutAtoms::viewportFrame) {
+    if (container->GetType() == nsLayoutAtoms::viewportFrame) {
       // For absolutely positioned frames scrollbars are taken into
       // account by virtue of getting a containing block that does
       // _not_ include the scrollbars.  For fixed positioned frames,
       // the containing block is the viewport, which _does_ include
       // scrollbars.  We have to do some extra work.
-      nsIFrame* scrollingChild;
       nsCOMPtr<nsIPresShell> presShell = do_QueryReferent(mPresShellWeak);
       NS_ASSERTION(presShell, "Must have a presshell!");
       nsCOMPtr<nsIPresContext> presContext;
       presShell->GetPresContext(getter_AddRefs(presContext));
       // the first child in the default frame list is what we want
-      container->FirstChild(presContext, nsnull, &scrollingChild);
+      nsIFrame* scrollingChild = container->GetFirstChild(nsnull);
       nsCOMPtr<nsIScrollableFrame> scrollFrame =
         do_QueryInterface(scrollingChild);
       if (scrollFrame) {
-        scrollFrame->GetScrollbarSizes(presContext, &verScrollBarWidth,
-                                       &horScrollBarHeight);
-        PRBool verScrollBarVisible;
-        PRBool horScrollBarVisible;
-        scrollFrame->GetScrollbarVisibility(presContext, &verScrollBarVisible,
-                                            &horScrollBarVisible);
-        if (!verScrollBarVisible) {
-          verScrollBarWidth = 0;
-        }
-        if (!horScrollBarVisible) {
-          horScrollBarHeight = 0;
-        }
+        scrollbarSizes = scrollFrame->GetActualScrollbarSizes();
       }
     }
 
     nscoord offset = 0;
     switch (aSide) {
       case NS_SIDE_TOP:
-        offset = rect.y - margin - border;
+        offset = rect.y - margin - border - scrollbarSizes.top;
 
         break;
       case NS_SIDE_RIGHT:
         offset = containerRect.width - rect.width -
-          rect.x - margin - border - verScrollBarWidth;
+          rect.x - margin - border - scrollbarSizes.right;
 
         break;
       case NS_SIDE_BOTTOM:
         offset = containerRect.height - rect.height -
-          rect.y - margin - border - horScrollBarHeight;
+          rect.y - margin - border - scrollbarSizes.bottom;
 
         break;
       case NS_SIDE_LEFT:
-        offset = rect.x - margin - border;
+        offset = rect.x - margin - border - scrollbarSizes.left;
 
         break;
       default:
@@ -2881,10 +2781,9 @@ nsComputedDOMStyle::GetRelativeOffset(PRUint8 aSide, nsIFrame* aFrame,
         if (container) {
           nsMargin border;
           nsMargin padding;
-          nsSize size;
           container->GetStyleBorder()->CalcBorderFor(container, border);
           container->GetStylePadding()->CalcPaddingFor(container, padding);
-          container->GetSize(size);
+          nsSize size = container->GetSize();
           if (aSide == NS_SIDE_LEFT || aSide == NS_SIDE_RIGHT) {
             val->SetTwips(sign * coord.GetPercentValue() *
                           (size.width - border.left - border.right -
@@ -2955,7 +2854,7 @@ nsComputedDOMStyle::GetStaticOffset(PRUint8 aSide, nsIFrame* aFrame,
 
         break;
       case eStyleUnit_Auto:
-        val->SetIdent(NS_LITERAL_STRING("auto"));
+        val->SetIdent(nsLayoutAtoms::autoAtom);
 
         break;
       default:
@@ -2973,8 +2872,7 @@ void
 nsComputedDOMStyle::FlushPendingReflows()
 {
   // Flush all pending notifications so that our frames are up to date
-  nsCOMPtr<nsIDocument> document;
-  mContent->GetDocument(getter_AddRefs(document));
+  nsIDocument* document = mContent->GetDocument();
   if (document) {
     document->FlushPendingNotifications();
   }
@@ -2991,16 +2889,11 @@ nsComputedDOMStyle::GetContainingBlock(nsIFrame *aFrame)
   }
 
   nsIFrame* container = aFrame;
-  PRBool done = PR_FALSE;
   do {
-    container->GetParent(&container);
-    if (container) {
-      (container)->IsPercentageBase(done);
-    }
-  } while (!done && container);
+    container = container->GetParent();
+  } while (container && !container->IsContainingBlock());
 
   NS_POSTCONDITION(container, "Frame has no containing block");
-  
   return container;
 }
 
@@ -3018,19 +2911,12 @@ nsComputedDOMStyle::GetStyleData(nsStyleStructID aID,
 
     NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
 
-    nsCOMPtr<nsIPresContext> pctx;
-    presShell->GetPresContext(getter_AddRefs(pctx));
-    if (pctx) {
-      nsStyleContext* sctx;
-      if (!mPseudo) {
-        sctx = pctx->ResolveStyleContextFor(mContent, nsnull).get();
-      } else {
-        sctx = pctx->ResolvePseudoStyleContextFor(mContent, mPseudo, nsnull).get();
-      }
-      if (sctx) {
-        aStyleStruct = sctx->GetStyleData(aID);
-      }
-      mStyleContextHolder = dont_AddRef(sctx);  // transfer ref from sctx
+    mStyleContextHolder =
+      nsInspectorCSSUtils::GetStyleContextForContent(mContent,
+                                                     mPseudo,
+                                                     presShell);
+    if (mStyleContextHolder) {
+      aStyleStruct = mStyleContextHolder->GetStyleData(aID);
     }
   }
   NS_ASSERTION(aStyleStruct, "Failed to get a style struct");
@@ -3188,7 +3074,7 @@ nsComputedDOMStyle::GetBorderColorsFor(PRUint8 aSide, nsIFrame *aFrame,
           return NS_ERROR_OUT_OF_MEMORY;
         }
         if (borderColors->mTransparent) {
-          primitive->SetIdent(NS_LITERAL_STRING("transparent"));
+          primitive->SetIdent(nsLayoutAtoms::transparent);
         } else {
           nsDOMCSSRGBColor *rgb = GetDOMCSSRGBColor(borderColors->mColor);
           if (rgb) {
@@ -3218,7 +3104,7 @@ nsComputedDOMStyle::GetBorderColorsFor(PRUint8 aSide, nsIFrame *aFrame,
   nsROCSSPrimitiveValue *val = GetROCSSPrimitiveValue();
   NS_ENSURE_TRUE(val, NS_ERROR_OUT_OF_MEMORY);
 
-  val->SetIdent(NS_LITERAL_STRING("none"));
+  val->SetIdent(nsLayoutAtoms::none);
 
   return CallQueryInterface(val, aValue);
 }
@@ -3259,19 +3145,10 @@ nsComputedDOMStyle::GetBorderRadiusFor(PRUint8 aSide, nsIFrame *aFrame,
         break;
       case eStyleUnit_Percent:
         if (aFrame) {
-          nsSize size;
-          aFrame->GetSize(size);
-          val->SetTwips(coord.GetPercentValue() * size.width);
+          val->SetTwips(coord.GetPercentValue() * aFrame->GetSize().width);
         } else {
           val->SetPercent(coord.GetPercentValue());
         }
-        break;
-      case eStyleUnit_Inherit:
-        // XXX This will only happen if we are inheriting from
-        // a node with a percentage style unit for its relevant
-        // border radius property. Layout currently drops this
-        // one inherit case, so we do the same thing here.
-        val->SetIdent(NS_LITERAL_STRING("inherit"));
         break;
       default:
 #ifdef DEBUG_ComputedDOMStyle
@@ -3356,7 +3233,7 @@ nsComputedDOMStyle::GetBorderColorFor(PRUint8 aSide, nsIFrame *aFrame,
     PRBool foreground;
     border->GetBorderColor(aSide, color, transparent, foreground);
     if (transparent) {
-      val->SetIdent(NS_LITERAL_STRING("transparent"));
+      val->SetIdent(nsLayoutAtoms::transparent);
     } else {
       if (foreground) {
         const nsStyleColor* colorStruct = nsnull;
@@ -3374,8 +3251,6 @@ nsComputedDOMStyle::GetBorderColorFor(PRUint8 aSide, nsIFrame *aFrame,
 
       val->SetColor(rgb);
     }
-  } else {
-    val->SetString(NS_LITERAL_STRING(""));
   }
 
   return CallQueryInterface(val, aValue);
@@ -3444,7 +3319,7 @@ nsComputedDOMStyle::GetBorderStyleFor(PRUint8 aSide, nsIFrame *aFrame,
                                      nsCSSProps::kBorderStyleKTable);
     val->SetIdent(style);
   } else {
-    val->SetIdent(NS_LITERAL_STRING("none"));
+    val->SetIdent(nsLayoutAtoms::none);
   }
 
   return CallQueryInterface(val, aValue);
@@ -3623,6 +3498,7 @@ nsComputedDOMStyle::GetQueryablePropertyMap(PRUint32* aLength)
     COMPUTED_STYLE_MAP_ENTRY(box_pack,                      BoxPack),
     COMPUTED_STYLE_MAP_ENTRY(box_sizing,                    BoxSizing),
     COMPUTED_STYLE_MAP_ENTRY(float_edge,                    FloatEdge),
+    COMPUTED_STYLE_MAP_ENTRY(image_region,                  ImageRegion),
     COMPUTED_STYLE_MAP_ENTRY(opacity,                       Opacity),
     //// COMPUTED_STYLE_MAP_ENTRY(_moz_outline,             MozOutline),
     COMPUTED_STYLE_MAP_ENTRY(_moz_outline_color,            OutlineColor),
@@ -3634,7 +3510,7 @@ nsComputedDOMStyle::GetQueryablePropertyMap(PRUint32* aLength)
     COMPUTED_STYLE_MAP_ENTRY(user_select,                   UserSelect)
   };
 
-  *aLength = sizeof(map) / sizeof(map[0]);
+  *aLength = NS_ARRAY_LENGTH(map);
 
   return map;
 }

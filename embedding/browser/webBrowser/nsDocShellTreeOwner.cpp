@@ -97,7 +97,7 @@ GetEventReceiver ( nsWebBrowser* inBrowser, nsIDOMEventReceiver** outEventRcvr )
   NS_ENSURE_TRUE(chromeHandler, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsIDOMEventReceiver> rcvr = do_QueryInterface(chromeHandler);
-  *outEventRcvr = rcvr.get();
+  *outEventRcvr = rcvr;
   NS_IF_ADDREF(*outEventRcvr);
   
   return NS_OK;
@@ -146,7 +146,8 @@ NS_INTERFACE_MAP_END
 // nsDocShellTreeOwner::nsIInterfaceRequestor
 //*****************************************************************************   
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetInterface(const nsIID& aIID, void** aSink)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetInterface(const nsIID& aIID, void** aSink)
 {
   NS_ENSURE_ARG_POINTER(aSink);
 
@@ -190,8 +191,10 @@ NS_IMETHODIMP nsDocShellTreeOwner::GetInterface(const nsIID& aIID, void** aSink)
 // nsDocShellTreeOwner::nsIDocShellTreeOwner
 //*****************************************************************************   
 
-NS_IMETHODIMP nsDocShellTreeOwner::FindItemWithName(const PRUnichar* aName,
-   nsIDocShellTreeItem* aRequestor, nsIDocShellTreeItem** aFoundItem)
+NS_IMETHODIMP
+nsDocShellTreeOwner::FindItemWithName(const PRUnichar* aName,
+                                      nsIDocShellTreeItem* aRequestor,
+                                      nsIDocShellTreeItem** aFoundItem)
 {
   NS_ENSURE_ARG(aName);
   NS_ENSURE_ARG_POINTER(aFoundItem);
@@ -208,7 +211,9 @@ NS_IMETHODIMP nsDocShellTreeOwner::FindItemWithName(const PRUnichar* aName,
     return NS_OK;
   if(name.EqualsIgnoreCase("_blank"))
     return NS_OK;
-  if(name.EqualsIgnoreCase("_content")) {
+  // _main is an IE target which should be case-insensitive but isn't
+  // see bug 217886 for details
+  if(name.EqualsIgnoreCase("_content") || name.Equals(NS_LITERAL_STRING("_main"))) {
     *aFoundItem = mWebBrowser->mDocShellAsItem;
     NS_IF_ADDREF(*aFoundItem);
     return NS_OK;
@@ -238,22 +243,23 @@ NS_IMETHODIMP nsDocShellTreeOwner::FindItemWithName(const PRUnichar* aName,
   nsCOMPtr<nsIDocShellTreeOwner> reqAsTreeOwner(do_QueryInterface(aRequestor));
 
   if(mTreeOwner) {
-    if (mTreeOwner != reqAsTreeOwner.get())
-      return mTreeOwner->FindItemWithName(aName, mWebBrowser->mDocShellAsItem.get(),
+    if (mTreeOwner != reqAsTreeOwner)
+      return mTreeOwner->FindItemWithName(aName, mWebBrowser->mDocShellAsItem,
                                           aFoundItem);
     return NS_OK;
   }
 
   // finally, failing everything else, search all windows, if we're not already
-  if (mWebBrowser->mDocShellAsItem.get() != aRequestor)
+  if (mWebBrowser->mDocShellAsItem != aRequestor)
     return FindItemWithNameAcrossWindows(aName, aFoundItem);
 
   return NS_OK; // failed
 }
 
-nsresult nsDocShellTreeOwner::FindChildWithName(const PRUnichar *aName, 
-   PRBool aRecurse, nsIDocShellTreeItem* aRequestor, 
-   nsIDocShellTreeItem **aFoundItem)
+nsresult
+nsDocShellTreeOwner::FindChildWithName(const PRUnichar *aName, PRBool aRecurse,
+                                       nsIDocShellTreeItem* aRequestor, 
+                                       nsIDocShellTreeItem **aFoundItem)
 {
   if (!mWebBrowser)
     return NS_OK;
@@ -278,15 +284,12 @@ nsresult nsDocShellTreeOwner::FindChildWithName(const PRUnichar *aName,
     if (frame) {
       nsCOMPtr<nsIScriptGlobalObject> sgo(do_QueryInterface(frame));
       if (sgo) {
-        nsCOMPtr<nsIDocShell> docshell;
-        sgo->GetDocShell(getter_AddRefs(docshell));
-        if (docshell) {
-          nsCOMPtr<nsIDocShellTreeItem> item(do_QueryInterface(docshell));
-          if (item && item.get() != aRequestor) {
-            rv = item->FindItemWithName(aName, mWebBrowser->mDocShellAsItem, aFoundItem);
-            if (NS_FAILED(rv) || *aFoundItem)
-              break;
-          }
+        nsCOMPtr<nsIDocShellTreeItem> item =
+          do_QueryInterface(sgo->GetDocShell());
+        if (item && item != aRequestor) {
+          rv = item->FindItemWithName(aName, mWebBrowser->mDocShellAsItem, aFoundItem);
+          if (NS_FAILED(rv) || *aFoundItem)
+            break;
         }
       }
     }
@@ -294,9 +297,9 @@ nsresult nsDocShellTreeOwner::FindChildWithName(const PRUnichar *aName,
   return rv;
 }
 
-nsresult nsDocShellTreeOwner::FindItemWithNameAcrossWindows(
-                const PRUnichar* aName,
-                nsIDocShellTreeItem** aFoundItem)
+nsresult
+nsDocShellTreeOwner::FindItemWithNameAcrossWindows(const PRUnichar* aName,
+                                                   nsIDocShellTreeItem** aFoundItem)
 {
   // search for the item across the list of top-level windows
   nsCOMPtr<nsIWindowWatcher> wwatch(do_GetService(NS_WINDOWWATCHER_CONTRACTID));
@@ -320,15 +323,12 @@ nsresult nsDocShellTreeOwner::FindItemWithNameAcrossWindows(
       // it's a DOM Window. cut straight to the ScriptGlobalObject.
       nsCOMPtr<nsIScriptGlobalObject> sgo(do_QueryInterface(nextSupWindow));
       if (sgo) {
-        nsCOMPtr<nsIDocShell> docshell;
-        sgo->GetDocShell(getter_AddRefs(docshell));
-        if (docshell) {
-          nsCOMPtr<nsIDocShellTreeItem> item(do_QueryInterface(docshell));
-          if (item) {
-            rv = item->FindItemWithName(aName, item, aFoundItem);
-            if (NS_FAILED(rv) || *aFoundItem)
-              break;
-          }
+        nsCOMPtr<nsIDocShellTreeItem> item =
+          do_QueryInterface(sgo->GetDocShell());
+        if (item) {
+          rv = item->FindItemWithName(aName, item, aFoundItem);
+          if (NS_FAILED(rv) || *aFoundItem)
+            break;
         }
       }
     }
@@ -337,7 +337,8 @@ nsresult nsDocShellTreeOwner::FindItemWithNameAcrossWindows(
   return rv;
 }
 
-void nsDocShellTreeOwner::EnsurePrompter()
+void
+nsDocShellTreeOwner::EnsurePrompter()
 {
   if (mPrompter)
     return;
@@ -351,7 +352,8 @@ void nsDocShellTreeOwner::EnsurePrompter()
   }
 }
 
-void nsDocShellTreeOwner::EnsureAuthPrompter()
+void
+nsDocShellTreeOwner::EnsureAuthPrompter()
 {
   if (mAuthPrompter)
     return;
@@ -365,8 +367,9 @@ void nsDocShellTreeOwner::EnsureAuthPrompter()
   }
 }
 
-void nsDocShellTreeOwner::AddToWatcher() {
-
+void
+nsDocShellTreeOwner::AddToWatcher()
+{
   if (mWebBrowser) {
     nsCOMPtr<nsIDOMWindow> domWindow;
     mWebBrowser->GetContentDOMWindow(getter_AddRefs(domWindow));
@@ -378,8 +381,9 @@ void nsDocShellTreeOwner::AddToWatcher() {
   }
 }
 
-void nsDocShellTreeOwner::RemoveFromWatcher() {
-
+void
+nsDocShellTreeOwner::RemoveFromWatcher()
+{
   if (mWebBrowser) {
     nsCOMPtr<nsIDOMWindow> domWindow;
     mWebBrowser->GetContentDOMWindow(getter_AddRefs(domWindow));
@@ -392,8 +396,9 @@ void nsDocShellTreeOwner::RemoveFromWatcher() {
 }
 
 
-NS_IMETHODIMP nsDocShellTreeOwner::ContentShellAdded(nsIDocShellTreeItem* aContentShell,
-   PRBool aPrimary, const PRUnichar* aID)
+NS_IMETHODIMP
+nsDocShellTreeOwner::ContentShellAdded(nsIDocShellTreeItem* aContentShell,
+                                       PRBool aPrimary, const PRUnichar* aID)
 {
    if(mTreeOwner)
       return mTreeOwner->ContentShellAdded(aContentShell, aPrimary, aID);
@@ -403,7 +408,8 @@ NS_IMETHODIMP nsDocShellTreeOwner::ContentShellAdded(nsIDocShellTreeItem* aConte
    return NS_OK;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetPrimaryContentShell(nsIDocShellTreeItem** aShell)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetPrimaryContentShell(nsIDocShellTreeItem** aShell)
 {
    NS_ENSURE_ARG_POINTER(aShell);
 
@@ -416,15 +422,16 @@ NS_IMETHODIMP nsDocShellTreeOwner::GetPrimaryContentShell(nsIDocShellTreeItem** 
    return NS_OK;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SizeShellTo(nsIDocShellTreeItem* aShellItem,
-   PRInt32 aCX, PRInt32 aCY)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SizeShellTo(nsIDocShellTreeItem* aShellItem,
+                                 PRInt32 aCX, PRInt32 aCY)
 {
    NS_ENSURE_STATE(mTreeOwner || mWebBrowserChrome);
 
    if(mTreeOwner)
       return mTreeOwner->SizeShellTo(aShellItem, aCX, aCY);
 
-   if(aShellItem == mWebBrowser->mDocShellAsItem.get())
+   if(aShellItem == mWebBrowser->mDocShellAsItem)
       return mWebBrowserChrome->SizeBrowserTo(aCX, aCY);
 
    nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(aShellItem));
@@ -449,18 +456,16 @@ NS_IMETHODIMP nsDocShellTreeOwner::SizeShellTo(nsIDocShellTreeItem* aShellItem,
    mWebBrowser->mDocShell->GetPresContext(getter_AddRefs(presContext));
    NS_ENSURE_TRUE(presContext, NS_ERROR_FAILURE);
 
-   nsCOMPtr<nsIPresShell> presShell;
-   presContext->GetShell(getter_AddRefs(presShell));
+   nsIPresShell *presShell = presContext->GetPresShell();
    NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
 
    NS_ENSURE_SUCCESS(presShell->ResizeReflow(NS_UNCONSTRAINEDSIZE,
       NS_UNCONSTRAINEDSIZE), NS_ERROR_FAILURE);
    
-   nsRect shellArea;
+   nsRect shellArea = presContext->GetVisibleArea();
 
-   presContext->GetVisibleArea(shellArea);
    float pixelScale;
-   presContext->GetTwipsToPixels(&pixelScale);
+   pixelScale = presContext->TwipsToPixels();
    PRInt32 browserCX = PRInt32((float)shellArea.width*pixelScale);
    PRInt32 browserCY = PRInt32((float)shellArea.height*pixelScale);
 
@@ -488,145 +493,165 @@ nsDocShellTreeOwner::GetPersistence(PRBool* aPersistPosition,
 //*****************************************************************************   
 
 
-NS_IMETHODIMP nsDocShellTreeOwner::InitWindow(nativeWindow aParentNativeWindow,
-   nsIWidget* aParentWidget, PRInt32 aX, PRInt32 aY, PRInt32 aCX, PRInt32 aCY)   
+NS_IMETHODIMP
+nsDocShellTreeOwner::InitWindow(nativeWindow aParentNativeWindow,
+                                nsIWidget* aParentWidget, PRInt32 aX,
+                                PRInt32 aY, PRInt32 aCX, PRInt32 aCY)   
 {
-    return NS_ERROR_NULL_POINTER;
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::Create()
+NS_IMETHODIMP
+nsDocShellTreeOwner::Create()
 {
-    return NS_ERROR_NULL_POINTER;
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::Destroy()
+NS_IMETHODIMP
+nsDocShellTreeOwner::Destroy()
 {
-    if (mOwnerWin)
-    {
-        return mWebBrowserChrome->DestroyBrowserWindow();
-    }
-    return NS_ERROR_NULL_POINTER;
+  if (mOwnerWin)
+  {
+    return mWebBrowserChrome->DestroyBrowserWindow();
+  }
+
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetPosition(PRInt32 aX, PRInt32 aY)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetPosition(PRInt32 aX, PRInt32 aY)
 {
-    if (mOwnerWin)
-    {
-       return mOwnerWin->SetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_POSITION,
-                                       aX, aY, 0, 0);
-    }
-    return NS_ERROR_NULL_POINTER;
+  if (mOwnerWin)
+  {
+    return mOwnerWin->SetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_POSITION,
+                                    aX, aY, 0, 0);
+  }
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetPosition(PRInt32* aX, PRInt32* aY)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetPosition(PRInt32* aX, PRInt32* aY)
 {
-    if (mOwnerWin)
-    {
-        return mOwnerWin->GetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_POSITION,
-                                        aX, aY, nsnull, nsnull);
-    }
-    return NS_ERROR_NULL_POINTER;
+  if (mOwnerWin)
+  {
+    return mOwnerWin->GetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_POSITION,
+                                    aX, aY, nsnull, nsnull);
+  }
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetSize(PRInt32 aCX, PRInt32 aCY, PRBool aRepaint)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetSize(PRInt32 aCX, PRInt32 aCY, PRBool aRepaint)
 {
-    if (mOwnerWin)
-    {
-        return mOwnerWin->SetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_SIZE_OUTER,
-                                        0, 0, aCX, aCY);
-    }
-    return NS_ERROR_NULL_POINTER;
+  if (mOwnerWin)
+  {
+    return mOwnerWin->SetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_SIZE_OUTER,
+                                    0, 0, aCX, aCY);
+  }
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetSize(PRInt32* aCX, PRInt32* aCY)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetSize(PRInt32* aCX, PRInt32* aCY)
 {
-    if (mOwnerWin)
-    {
-        return mOwnerWin->GetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_SIZE_OUTER,
-                                        nsnull, nsnull, aCX, aCY);
-    }
-    return NS_ERROR_NULL_POINTER;
+  if (mOwnerWin)
+  {
+    return mOwnerWin->GetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_SIZE_OUTER,
+                                    nsnull, nsnull, aCX, aCY);
+  }
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetPositionAndSize(PRInt32 aX, PRInt32 aY,
-   PRInt32 aCX, PRInt32 aCY, PRBool aRepaint)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetPositionAndSize(PRInt32 aX, PRInt32 aY, PRInt32 aCX,
+                                        PRInt32 aCY, PRBool aRepaint)
 {
-    if (mOwnerWin)
-    {
-        return mOwnerWin->SetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_SIZE_OUTER |
-                                        nsIEmbeddingSiteWindow::DIM_FLAGS_POSITION,
-                                        aX, aY, aCX, aCY);
-    }
-    return NS_ERROR_NULL_POINTER;
+  if (mOwnerWin)
+  {
+    return mOwnerWin->SetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_SIZE_OUTER |
+                                    nsIEmbeddingSiteWindow::DIM_FLAGS_POSITION,
+                                    aX, aY, aCX, aCY);
+  }
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetPositionAndSize(PRInt32* aX, PRInt32* aY,
-   PRInt32* aCX, PRInt32* aCY)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetPositionAndSize(PRInt32* aX, PRInt32* aY, PRInt32* aCX,
+                                        PRInt32* aCY)
 {
-    if (mOwnerWin)
-    {
-        return mOwnerWin->GetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_SIZE_OUTER |
-                                        nsIEmbeddingSiteWindow::DIM_FLAGS_POSITION,
-                                        aX, aY, aCX, aCY);
-    }
-    return NS_ERROR_NULL_POINTER;
+  if (mOwnerWin)
+  {
+    return mOwnerWin->GetDimensions(nsIEmbeddingSiteWindow::DIM_FLAGS_SIZE_OUTER |
+                                    nsIEmbeddingSiteWindow::DIM_FLAGS_POSITION,
+                                    aX, aY, aCX, aCY);
+  }
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::Repaint(PRBool aForce)
+NS_IMETHODIMP
+nsDocShellTreeOwner::Repaint(PRBool aForce)
 {
-    return NS_ERROR_NULL_POINTER;
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetParentWidget(nsIWidget** aParentWidget)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetParentWidget(nsIWidget** aParentWidget)
 {
-    return NS_ERROR_NULL_POINTER;
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetParentWidget(nsIWidget* aParentWidget)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetParentWidget(nsIWidget* aParentWidget)
 {
-    return NS_ERROR_NULL_POINTER;
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetParentNativeWindow(nativeWindow* aParentNativeWindow)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetParentNativeWindow(nativeWindow* aParentNativeWindow)
 {
-    if (mOwnerWin)
-    {
-        return mOwnerWin->GetSiteWindow(aParentNativeWindow);
-    }
-    return NS_ERROR_NULL_POINTER;
+  if (mOwnerWin)
+  {
+    return mOwnerWin->GetSiteWindow(aParentNativeWindow);
+  }
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetParentNativeWindow(nativeWindow aParentNativeWindow)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetParentNativeWindow(nativeWindow aParentNativeWindow)
 {
-    return NS_ERROR_NULL_POINTER;
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetVisibility(PRBool* aVisibility)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetVisibility(PRBool* aVisibility)
 {
-    if (mOwnerWin)
-    {
-        return mOwnerWin->GetVisibility(aVisibility);
-    }
-    return NS_ERROR_NULL_POINTER;
+  if (mOwnerWin)
+  {
+    return mOwnerWin->GetVisibility(aVisibility);
+  }
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetVisibility(PRBool aVisibility)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetVisibility(PRBool aVisibility)
 {
-    if (mOwnerWin)
-    {
-        return mOwnerWin->SetVisibility(aVisibility);
-    }
-    return NS_ERROR_NULL_POINTER;
+  if (mOwnerWin)
+  {
+    return mOwnerWin->SetVisibility(aVisibility);
+  }
+  return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetEnabled(PRBool *aEnabled)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetEnabled(PRBool *aEnabled)
 {
   NS_ENSURE_ARG_POINTER(aEnabled);
   *aEnabled = PR_TRUE;
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetEnabled(PRBool aEnabled)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetEnabled(PRBool aEnabled)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -645,12 +670,14 @@ nsDocShellTreeOwner::SetBlurSuppression(PRBool aBlurSuppression)
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetMainWidget(nsIWidget** aMainWidget)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetMainWidget(nsIWidget** aMainWidget)
 {
     return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetFocus()
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetFocus()
 {
     if (mOwnerWin)
     {
@@ -659,7 +686,8 @@ NS_IMETHODIMP nsDocShellTreeOwner::SetFocus()
     return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::GetTitle(PRUnichar** aTitle)
+NS_IMETHODIMP
+nsDocShellTreeOwner::GetTitle(PRUnichar** aTitle)
 {
     if (mOwnerWin)
     {
@@ -668,7 +696,8 @@ NS_IMETHODIMP nsDocShellTreeOwner::GetTitle(PRUnichar** aTitle)
     return NS_ERROR_NULL_POINTER;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetTitle(const PRUnichar* aTitle)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetTitle(const PRUnichar* aTitle)
 {
     if (mOwnerWin)
     {
@@ -706,9 +735,10 @@ nsDocShellTreeOwner::OnStateChange(nsIWebProgress* aProgress,
     return NS_OK;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::OnLocationChange(nsIWebProgress* aWebProgress,
-                                                    nsIRequest* aRequest,
-                                                    nsIURI* aURI)
+NS_IMETHODIMP
+nsDocShellTreeOwner::OnLocationChange(nsIWebProgress* aWebProgress,
+                                      nsIRequest* aRequest,
+                                      nsIURI* aURI)
 {
     return NS_OK;
 }
@@ -739,7 +769,8 @@ nsDocShellTreeOwner::OnSecurityChange(nsIWebProgress *aWebProgress,
 // nsDocShellTreeOwner: Accessors
 //*****************************************************************************   
 
-void nsDocShellTreeOwner::WebBrowser(nsWebBrowser* aWebBrowser)
+void
+nsDocShellTreeOwner::WebBrowser(nsWebBrowser* aWebBrowser)
 {
   if ( !aWebBrowser )
     RemoveChromeListeners();
@@ -751,47 +782,48 @@ void nsDocShellTreeOwner::WebBrowser(nsWebBrowser* aWebBrowser)
   mWebBrowser = aWebBrowser;
 }
 
-nsWebBrowser* nsDocShellTreeOwner::WebBrowser()
+nsWebBrowser *
+nsDocShellTreeOwner::WebBrowser()
 {
    return mWebBrowser;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetTreeOwner(nsIDocShellTreeOwner* aTreeOwner)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetTreeOwner(nsIDocShellTreeOwner* aTreeOwner)
 { 
-   if(aTreeOwner) {
-      nsCOMPtr<nsIWebBrowserChrome> webBrowserChrome(do_GetInterface(aTreeOwner));
-      NS_ENSURE_TRUE(webBrowserChrome, NS_ERROR_INVALID_ARG);
-      NS_ENSURE_SUCCESS(SetWebBrowserChrome(webBrowserChrome), NS_ERROR_INVALID_ARG);
-      mTreeOwner = aTreeOwner;
-   }
-   else if(mWebBrowserChrome)
-      mTreeOwner = nsnull;
-   else {
-      mTreeOwner = nsnull;
-      NS_ENSURE_SUCCESS(SetWebBrowserChrome(nsnull), NS_ERROR_FAILURE);
-   }
+  if(aTreeOwner) {
+    nsCOMPtr<nsIWebBrowserChrome> webBrowserChrome(do_GetInterface(aTreeOwner));
+    NS_ENSURE_TRUE(webBrowserChrome, NS_ERROR_INVALID_ARG);
+    NS_ENSURE_SUCCESS(SetWebBrowserChrome(webBrowserChrome), NS_ERROR_INVALID_ARG);
+    mTreeOwner = aTreeOwner;
+  }
+  else if(mWebBrowserChrome)
+    mTreeOwner = nsnull;
+  else {
+    mTreeOwner = nsnull;
+    NS_ENSURE_SUCCESS(SetWebBrowserChrome(nsnull), NS_ERROR_FAILURE);
+  }
 
-   return NS_OK;
+  return NS_OK;
 }
 
-NS_IMETHODIMP nsDocShellTreeOwner::SetWebBrowserChrome(nsIWebBrowserChrome* aWebBrowserChrome)
+NS_IMETHODIMP
+nsDocShellTreeOwner::SetWebBrowserChrome(nsIWebBrowserChrome* aWebBrowserChrome)
 {
-   if(!aWebBrowserChrome) {
-      mWebBrowserChrome = nsnull;
-      mOwnerWin = nsnull;
-      mOwnerRequestor = nsnull;
-      }
-   else
-      {
-      nsCOMPtr<nsIEmbeddingSiteWindow> ownerWin(do_QueryInterface(aWebBrowserChrome));
-      nsCOMPtr<nsIInterfaceRequestor> requestor(do_QueryInterface(aWebBrowserChrome));
+  if(!aWebBrowserChrome) {
+    mWebBrowserChrome = nsnull;
+    mOwnerWin = nsnull;
+    mOwnerRequestor = nsnull;
+  } else {
+    nsCOMPtr<nsIEmbeddingSiteWindow> ownerWin(do_QueryInterface(aWebBrowserChrome));
+    nsCOMPtr<nsIInterfaceRequestor> requestor(do_QueryInterface(aWebBrowserChrome));
 
-      // it's ok for ownerWin or requestor to be null.
-      mWebBrowserChrome = aWebBrowserChrome;
-      mOwnerWin = ownerWin;
-      mOwnerRequestor = requestor;
-   }
-   return NS_OK;
+    // it's ok for ownerWin or requestor to be null.
+    mWebBrowserChrome = aWebBrowserChrome;
+    mOwnerWin = ownerWin;
+    mOwnerRequestor = requestor;
+  }
+  return NS_OK;
 }
 
 
@@ -802,7 +834,7 @@ NS_IMETHODIMP nsDocShellTreeOwner::SetWebBrowserChrome(nsIWebBrowserChrome* aWeb
 // has implemented the right interfaces.
 //
 NS_IMETHODIMP
-nsDocShellTreeOwner :: AddChromeListeners ( )
+nsDocShellTreeOwner::AddChromeListeners()
 {
   nsresult rv = NS_OK;
   
@@ -853,7 +885,7 @@ nsDocShellTreeOwner :: AddChromeListeners ( )
 
 
 NS_IMETHODIMP
-nsDocShellTreeOwner :: RemoveChromeListeners ( )
+nsDocShellTreeOwner::RemoveChromeListeners()
 {
   if ( mChromeTooltipListener ) {
     mChromeTooltipListener->RemoveChromeListeners();
@@ -897,13 +929,15 @@ DefaultTooltipTextProvider::DefaultTooltipTextProvider()
 {
     // There are certain element types which we don't want to use
     // as tool tip text. 
-    mTag_dialog       = getter_AddRefs(NS_NewAtom("dialog"));
-    mTag_dialogheader = getter_AddRefs(NS_NewAtom("dialogheader"));
-    mTag_window       = getter_AddRefs(NS_NewAtom("window"));   
+    mTag_dialog       = do_GetAtom("dialog");
+    mTag_dialogheader = do_GetAtom("dialogheader");
+    mTag_window       = do_GetAtom("window");   
 }
 
 /* void getNodeText (in nsIDOMNode aNode, out wstring aText); */
-NS_IMETHODIMP DefaultTooltipTextProvider::GetNodeText(nsIDOMNode *aNode, PRUnichar **aText, PRBool *_retval)
+NS_IMETHODIMP
+DefaultTooltipTextProvider::GetNodeText(nsIDOMNode *aNode, PRUnichar **aText,
+                                        PRBool *_retval)
 {
   NS_ENSURE_ARG_POINTER(aNode);
   NS_ENSURE_ARG_POINTER(aText);
@@ -917,8 +951,7 @@ NS_IMETHODIMP DefaultTooltipTextProvider::GetNodeText(nsIDOMNode *aNode, PRUnich
     if ( currElement ) {
       nsCOMPtr<nsIContent> content(do_QueryInterface(currElement));
       if (content) {
-        nsCOMPtr<nsIAtom> tagAtom;
-        content->GetTag(getter_AddRefs(tagAtom));
+        nsIAtom *tagAtom = content->Tag();
         if (tagAtom != mTag_dialog &&
             tagAtom != mTag_dialogheader &&
             tagAtom != mTag_window) {
@@ -967,7 +1000,8 @@ NS_INTERFACE_MAP_END
 // ChromeTooltipListener ctor
 //
 
-ChromeTooltipListener :: ChromeTooltipListener ( nsWebBrowser* inBrowser, nsIWebBrowserChrome* inChrome ) 
+ChromeTooltipListener::ChromeTooltipListener(nsWebBrowser* inBrowser,
+                                             nsIWebBrowserChrome* inChrome) 
   : mWebBrowser(inBrowser), mWebBrowserChrome(inChrome),
      mTooltipListenerInstalled(PR_FALSE),
      mMouseClientX(0), mMouseClientY(0),
@@ -984,7 +1018,7 @@ ChromeTooltipListener :: ChromeTooltipListener ( nsWebBrowser* inBrowser, nsIWeb
 //
 // ChromeTooltipListener dtor
 //
-ChromeTooltipListener :: ~ChromeTooltipListener ( )
+ChromeTooltipListener::~ChromeTooltipListener()
 {
 
 } // dtor
@@ -997,7 +1031,7 @@ ChromeTooltipListener :: ~ChromeTooltipListener ( )
 // has implemented the right interfaces.
 //
 NS_IMETHODIMP
-ChromeTooltipListener :: AddChromeListeners ( )
+ChromeTooltipListener::AddChromeListeners()
 {  
   if ( !mEventReceiver )
     GetEventReceiver(mWebBrowser, getter_AddRefs(mEventReceiver));
@@ -1025,7 +1059,7 @@ ChromeTooltipListener :: AddChromeListeners ( )
 // of how many succeed so we can clean up correctly in Release().
 //
 NS_IMETHODIMP
-ChromeTooltipListener :: AddTooltipListener()
+ChromeTooltipListener::AddTooltipListener()
 {
   if (mEventReceiver) {
     nsIDOMMouseListener *pListener = NS_STATIC_CAST(nsIDOMMouseListener *, this);
@@ -1048,7 +1082,7 @@ ChromeTooltipListener :: AddTooltipListener()
 // Unsubscribe from the various things we've hooked up to the window root.
 //
 NS_IMETHODIMP
-ChromeTooltipListener :: RemoveChromeListeners ( )
+ChromeTooltipListener::RemoveChromeListeners ( )
 {
   HideTooltip();
 
@@ -1070,7 +1104,7 @@ ChromeTooltipListener :: RemoveChromeListeners ( )
 // Unsubscribe from all the various tooltip events that we were listening to
 //
 NS_IMETHODIMP 
-ChromeTooltipListener :: RemoveTooltipListener()
+ChromeTooltipListener::RemoveTooltipListener()
 {
   if (mEventReceiver) {
     nsIDOMMouseListener *pListener = NS_STATIC_CAST(nsIDOMMouseListener *, this);
@@ -1095,7 +1129,6 @@ nsresult
 ChromeTooltipListener::KeyDown(nsIDOMEvent* aMouseEvent)
 {
   return HideTooltip();
-    
 } // KeyDown
 
 
@@ -1230,7 +1263,8 @@ ChromeTooltipListener::MouseMove(nsIDOMEvent* aMouseEvent)
 // Tell the registered chrome that they should show the tooltip
 //
 NS_IMETHODIMP
-ChromeTooltipListener :: ShowTooltip ( PRInt32 inXCoords, PRInt32 inYCoords, const nsAString & inTipText )
+ChromeTooltipListener::ShowTooltip(PRInt32 inXCoords, PRInt32 inYCoords,
+                                   const nsAString & inTipText)
 {
   nsresult rv = NS_OK;
   
@@ -1254,7 +1288,7 @@ ChromeTooltipListener :: ShowTooltip ( PRInt32 inXCoords, PRInt32 inYCoords, con
 // NOTE: This routine is safe to call even if the popup is already closed.
 //
 NS_IMETHODIMP
-ChromeTooltipListener :: HideTooltip ( )
+ChromeTooltipListener::HideTooltip()
 {
   nsresult rv = NS_OK;
   
@@ -1298,7 +1332,8 @@ ChromeTooltipListener :: HideTooltip ( )
 //   -- the dom node the user hovered over    (mPossibleTooltipNode)
 //
 void
-ChromeTooltipListener :: sTooltipCallback (nsITimer *aTimer, void *aChromeTooltipListener)
+ChromeTooltipListener::sTooltipCallback(nsITimer *aTimer,
+                                        void *aChromeTooltipListener)
 {
   ChromeTooltipListener* self = NS_STATIC_CAST(ChromeTooltipListener*, aChromeTooltipListener);
   if ( self && self->mPossibleTooltipNode ) {
@@ -1333,7 +1368,7 @@ ChromeTooltipListener :: sTooltipCallback (nsITimer *aTimer, void *aChromeToolti
 // Create a new timer to see if we should auto-hide. It's ok if this fails.
 //
 void
-ChromeTooltipListener :: CreateAutoHideTimer ( )
+ChromeTooltipListener::CreateAutoHideTimer()
 {
   // just to be anal (er, safe)
   if ( mAutoHideTimer ) {
@@ -1357,7 +1392,7 @@ ChromeTooltipListener :: CreateAutoHideTimer ( )
 // be called multiple times, even if the tip has already been closed.
 //
 void
-ChromeTooltipListener :: sAutoHideCallback ( nsITimer *aTimer, void* aListener )
+ChromeTooltipListener::sAutoHideCallback(nsITimer *aTimer, void* aListener)
 {
   ChromeTooltipListener* self = NS_STATIC_CAST(ChromeTooltipListener*, aListener);
   if ( self )
@@ -1387,7 +1422,7 @@ NS_INTERFACE_MAP_END
 //
 // ChromeTooltipListener ctor
 //
-ChromeContextMenuListener :: ChromeContextMenuListener ( nsWebBrowser* inBrowser, nsIWebBrowserChrome* inChrome ) 
+ChromeContextMenuListener::ChromeContextMenuListener(nsWebBrowser* inBrowser, nsIWebBrowserChrome* inChrome ) 
   : mContextMenuListenerInstalled(PR_FALSE),
     mWebBrowser(inBrowser),
     mWebBrowserChrome(inChrome)
@@ -1398,9 +1433,8 @@ ChromeContextMenuListener :: ChromeContextMenuListener ( nsWebBrowser* inBrowser
 //
 // ChromeTooltipListener dtor
 //
-ChromeContextMenuListener :: ~ChromeContextMenuListener ( )
+ChromeContextMenuListener::~ChromeContextMenuListener()
 {
-  
 } // dtor
 
 
@@ -1411,7 +1445,7 @@ ChromeContextMenuListener :: ~ChromeContextMenuListener ( )
 // is just the context-menu DOM event.
 //
 NS_IMETHODIMP
-ChromeContextMenuListener :: AddContextMenuListener()
+ChromeContextMenuListener::AddContextMenuListener()
 {
   if (mEventReceiver) {
     nsIDOMContextMenuListener *pListener = NS_STATIC_CAST(nsIDOMContextMenuListener *, this);
@@ -1430,7 +1464,7 @@ ChromeContextMenuListener :: AddContextMenuListener()
 // Unsubscribe from all the various context menu events that we were listening to. 
 //
 NS_IMETHODIMP 
-ChromeContextMenuListener :: RemoveContextMenuListener()
+ChromeContextMenuListener::RemoveContextMenuListener()
 {
   if (mEventReceiver) {
     nsIDOMContextMenuListener *pListener = NS_STATIC_CAST(nsIDOMContextMenuListener *, this);
@@ -1450,7 +1484,7 @@ ChromeContextMenuListener :: RemoveContextMenuListener()
 // has implemented the right interfaces.
 //
 NS_IMETHODIMP
-ChromeContextMenuListener :: AddChromeListeners ( )
+ChromeContextMenuListener::AddChromeListeners()
 {  
   if ( !mEventReceiver )
     GetEventReceiver(mWebBrowser, getter_AddRefs(mEventReceiver));
@@ -1475,7 +1509,7 @@ ChromeContextMenuListener :: AddChromeListeners ( )
 // Unsubscribe from the various things we've hooked up to the window root.
 //
 NS_IMETHODIMP
-ChromeContextMenuListener :: RemoveChromeListeners ( )
+ChromeContextMenuListener::RemoveChromeListeners()
 {
   if ( mContextMenuListenerInstalled )
     RemoveContextMenuListener();
@@ -1497,7 +1531,7 @@ ChromeContextMenuListener :: RemoveChromeListeners ( )
 // end chrome.
 //
 NS_IMETHODIMP
-ChromeContextMenuListener :: ContextMenu ( nsIDOMEvent* aMouseEvent )
+ChromeContextMenuListener::ContextMenu(nsIDOMEvent* aMouseEvent)
 {     
   nsCOMPtr<nsIDOMEventTarget> targetNode;
   nsresult res = aMouseEvent->GetTarget(getter_AddRefs(targetNode));
@@ -1530,24 +1564,23 @@ ChromeContextMenuListener :: ContextMenu ( nsIDOMEvent* aMouseEvent )
 
   PRUint32 flags = nsIContextMenuListener::CONTEXT_NONE;
   PRUint32 flags2 = nsIContextMenuListener2::CONTEXT_NONE;
-  nsCOMPtr<nsIDOMHTMLElement> element;
+  nsCOMPtr<nsIContent> content;
   do {
     // XXX test for selected text
-    element = do_QueryInterface(node);
-    if (element)
-    {
-      nsAutoString tag;
-      element->GetTagName(tag);
+    content = do_QueryInterface(node);
+    if (content && content->IsContentOfType(nsIContent::eHTML)) {
+      const char *tagStr;
+      content->Tag()->GetUTF8String(&tagStr);
 
       // Test what kind of element we're dealing with here
-      if (tag.Equals(NS_LITERAL_STRING("img"), nsCaseInsensitiveStringComparator()))
+      if (strcmp(tagStr, "img") == 0)
       {
         flags |= nsIContextMenuListener::CONTEXT_IMAGE;
         flags2 |= nsIContextMenuListener2::CONTEXT_IMAGE;
         targetDOMnode = node;
         // if we see an image, keep searching for a possible anchor
       }
-      else if (tag.Equals(NS_LITERAL_STRING("input"), nsCaseInsensitiveStringComparator()))
+      else if (strcmp(tagStr, "input") == 0)
       {
         // INPUT element - button, combo, checkbox, text etc.
         flags |= nsIContextMenuListener::CONTEXT_INPUT;
@@ -1566,7 +1599,7 @@ ChromeContextMenuListener :: ContextMenu ( nsIDOMEvent* aMouseEvent )
         }
         break; // exit do-while
       }
-      else if (tag.Equals(NS_LITERAL_STRING("textarea"), nsCaseInsensitiveStringComparator()))
+      else if (strcmp(tagStr, "textarea") == 0)
       {
         // text area
         flags |= nsIContextMenuListener::CONTEXT_TEXT;
@@ -1574,7 +1607,7 @@ ChromeContextMenuListener :: ContextMenu ( nsIDOMEvent* aMouseEvent )
         targetDOMnode = node;
         break; // exit do-while
       }
-      else if (tag.Equals(NS_LITERAL_STRING("html"), nsCaseInsensitiveStringComparator()))
+      else if (strcmp(tagStr, "html") == 0)
       {
         if (!flags && !flags2) { 
         // only care about this if no other context was found.
@@ -1591,30 +1624,28 @@ ChromeContextMenuListener :: ContextMenu ( nsIDOMEvent* aMouseEvent )
         }
         break; // exit do-while
       }
-      else if ( tag.EqualsWithConversion("object", PR_TRUE) ||  /* XXX what about images and documents? */
-                tag.EqualsWithConversion("embed",  PR_TRUE) ||
-                tag.EqualsWithConversion("applet", PR_TRUE) )
+      else if (strcmp(tagStr, "object") == 0 ||  /* XXX what about images and documents? */
+               strcmp(tagStr, "embed") == 0 ||
+               strcmp(tagStr, "applet") == 0)
       {                // always consume events for plugins and Java 
         return NS_OK;  // who may throw their own context menus
       }
 
       // Test if the element has an associated link
-      nsCOMPtr<nsIDOMNamedNodeMap> attributes;
-      node->GetAttributes(getter_AddRefs(attributes));
-      if (attributes)
+      nsCOMPtr<nsIDOMElement> element(do_QueryInterface(node));
+
+      PRBool hasAttr = PR_FALSE;
+      res = element->HasAttribute(NS_LITERAL_STRING("href"), &hasAttr);
+
+      if (NS_SUCCEEDED(res) && hasAttr)
       {
-        nsCOMPtr<nsIDOMNode> hrefNode;
-        attributes->GetNamedItem(NS_LITERAL_STRING("href"), getter_AddRefs(hrefNode));
-        if (hrefNode)
-        {
-          flags |= nsIContextMenuListener::CONTEXT_LINK;
-          flags2 |= nsIContextMenuListener2::CONTEXT_LINK;
-          if (!targetDOMnode)
-            targetDOMnode = node;
-          if (menuInfoImpl)
-            menuInfoImpl->SetAssociatedLink(node);
-          break; // exit do-while
-        }
+        flags |= nsIContextMenuListener::CONTEXT_LINK;
+        flags2 |= nsIContextMenuListener2::CONTEXT_LINK;
+        if (!targetDOMnode)
+          targetDOMnode = node;
+        if (menuInfoImpl)
+          menuInfoImpl->SetAssociatedLink(node);
+        break; // exit do-while
       }
     }
 
@@ -1660,5 +1691,3 @@ ChromeContextMenuListener :: ContextMenu ( nsIDOMEvent* aMouseEvent )
   return NS_OK;
 
 } // MouseDown
-
-

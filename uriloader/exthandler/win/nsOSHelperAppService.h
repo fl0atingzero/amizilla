@@ -30,6 +30,9 @@
 #include "nsExternalHelperAppService.h"
 #include "nsCExternalHandlerService.h"
 #include "nsCOMPtr.h"
+#include <windows.h>
+
+class nsMIMEInfoWin;
 
 class nsOSHelperAppService : public nsExternalHelperAppService
 {
@@ -37,25 +40,25 @@ public:
   nsOSHelperAppService();
   virtual ~nsOSHelperAppService();
 
-  // override nsIExternalHelperAppService methods....
-  NS_IMETHOD LaunchAppWithTempFile(nsIMIMEInfo *aMIMEInfo, nsIFile * aTempFile);
-
   // override nsIExternalProtocolService methods
   NS_IMETHOD ExternalProtocolHandlerExists(const char * aProtocolScheme, PRBool * aHandlerExists);
   NS_IMETHOD LoadUrl(nsIURI * aURL);
 
   // method overrides for windows registry look up steps....
-  nsresult GetMIMEInfoForExtensionFromOS(const char *aFileExt, nsIMIMEInfo **_retval);
-  nsresult GetMIMEInfoForMimeTypeFromOS(const char *aMIMEType, nsIMIMEInfo ** _retval);
+  already_AddRefed<nsIMIMEInfo> GetMIMEInfoFromOS(const char *aMIMEType, const char *aFileExt, PRBool *aFound);
 
-  // GetFileTokenForPath must be implemented by each platform. 
-  // platformAppPath --> a platform specific path to an application that we got out of the 
-  //                     rdf data source. This can be a mac file spec, a unix path or a windows path depending on the platform
-  // aFile --> an nsIFile representation of that platform application path.
-  virtual nsresult GetFileTokenForPath(const PRUnichar * platformAppPath, nsIFile ** aFile);
-  
 protected:
+  // Lookup a mime info by extension, using an optional type hint
+  already_AddRefed<nsMIMEInfoWin> GetByExtension(const char *aFileExt, const char *aTypeHint = nsnull);
   nsresult FindOSMimeInfoForType(const char * aMimeContentType, nsIURI * aURI, char ** aFileExtension, nsIMIMEInfo ** aMIMEInfo);
+
+  /** Whether we're running on an OS that supports the *W registry functions */
+  static PRBool mIsNT;
+  /** Get the string value of a registry value and store it in result.
+   * @return PR_TRUE on success, PR_FALSE on failure
+   */
+  static PRBool GetValueString(HKEY hKey, PRUnichar* pValueName, nsAString& result);
+  static nsresult GetMIMEInfoFromRegistry(const nsAFlatString& fileType, nsIMIMEInfo *pInfo);
 };
 
 #endif // nsOSHelperAppService_h__

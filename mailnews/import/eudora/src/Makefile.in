@@ -27,6 +27,7 @@ VPATH		= @srcdir@
 include $(DEPTH)/config/autoconf.mk
 
 MODULE		= impEudra
+PACKAGE_FILE = importeudora.pkg
 
 ifndef MOZ_STATIC_MAIL_BUILD
 
@@ -44,7 +45,7 @@ endif
 META_COMPONENT	= mail
 
 REQUIRES	= xpcom \
-          xpcom_obsolete \
+		  xpcom_obsolete \
 		  string \
 		  import \
 		  intl \
@@ -53,7 +54,6 @@ REQUIRES	= xpcom \
 		  mork \
 		  msgcompose \
 		  msgbase \
-		  editor \
 		  dom \
 		  uriloader \
 		  mailnews \

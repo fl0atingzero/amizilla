@@ -64,7 +64,7 @@ static NS_DEFINE_IID(kAppShellServiceCID,    NS_APPSHELL_SERVICE_CID);
 NS_GENERIC_FACTORY_CONSTRUCTOR(mozXMLTermShell)
 
 NS_IMPL_THREADSAFE_ISUPPORTS1(mozXMLTermShell, 
-                              mozIXMLTermShell);
+                              mozIXMLTermShell)
 
 PRBool mozXMLTermShell::mLoggingInitialized = PR_FALSE;
 
@@ -259,8 +259,7 @@ mozXMLTermShell::Init(nsIDOMWindowInternal* aContentWin,
   if (NS_FAILED(result) || !globalObj)
     return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIDocShell> docShell;
-  globalObj->GetDocShell(getter_AddRefs(docShell));
+  nsIDocShell *docShell = globalObj->GetDocShell();
   if (!docShell)
     return NS_ERROR_FAILURE;
     

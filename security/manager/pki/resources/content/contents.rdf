@@ -34,7 +34,7 @@
         chrome:displayName="pippki"
         chrome:author="PSM Team"
         chrome:name="pippki"
- 	chrome:localeVersion="1.5a">
+#expand  	chrome:localeVersion="__MOZILLA_LOCALE_VERSION__">
   </RDF:Description>
 
   <!-- Declare overlay points used in this package -->

@@ -58,7 +58,15 @@ var gSearchAbViewListener = {
   onSelectionChanged: function() {
   },
   onCountChanged: function(total) {
-    var statusText = gAddressBookBundle.getFormattedString("matchesFound", [total]);   
+    if (total == 0)
+      var statusText = gAddressBookBundle.getString("noMatchFound");  
+    else
+    {
+      if (total == 1)
+        var statusText = gAddressBookBundle.getString("matchFound");
+      else  
+        var statusText = gAddressBookBundle.getFormattedString("matchesFound", [total]);
+    }
     gStatusText.setAttribute("label", statusText);
   }
 };
@@ -309,7 +317,7 @@ function onSearch()
 
       for (var j=0;j<max_attrs;j++) {
        // append the term(s) to the searchUri
-       searchUri += "(" + attrs[j] + "," + opStr + "," + escape(searchTerm.value.str) + ")";
+       searchUri += "(" + attrs[j] + "," + opStr + "," + encodeURIComponent(searchTerm.value.str) + ")";
       }
     }
 

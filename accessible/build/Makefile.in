@@ -36,11 +36,10 @@ IS_COMPONENT	= 1
 MODULE_NAME	= nsAccessibilityModule
 GRE_MODULE	= 1
 
-REQUIRES = \
-	xpcom \
-	string \
-	dom \
-	$(NULL)
+PACKAGE_FILE = accessibility.pkg
+
+REQUIRES	= xpcom \
+		  $(NULL)
 
 CPPSRCS		= nsAccessibilityFactory.cpp
 

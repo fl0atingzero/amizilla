@@ -41,7 +41,6 @@
 #define nsglobalhistory__h____
 
 #include "mdb.h"
-#include "nsIGlobalHistory.h"
 #include "nsIBrowserHistory.h"
 #include "nsIObserver.h"
 #include "nsIPrefBranch.h"
@@ -55,7 +54,7 @@
 #include "nsHashtable.h"
 #include "nsCOMPtr.h"
 #include "nsAString.h"
-#include "nsSharableString.h"
+#include "nsString.h"
 #include "nsITimer.h"
 #include "nsIAutoCompleteSession.h"
 
@@ -125,7 +124,6 @@ struct AutocompleteExclude {
 };
 
 class nsGlobalHistory : nsSupportsWeakReference,
-                        public nsIGlobalHistory,
                         public nsIBrowserHistory,
                         public nsIObserver,
                         public nsIRDFDataSource,
@@ -136,7 +134,7 @@ public:
   // nsISupports methods 
   NS_DECL_ISUPPORTS
 
-  NS_DECL_NSIGLOBALHISTORY
+  NS_DECL_NSIGLOBALHISTORY2
   NS_DECL_NSIBROWSERHISTORY
   NS_DECL_NSIOBSERVER
   NS_DECL_NSIRDFDATASOURCE
@@ -152,6 +150,10 @@ public:
   PRBool MatchExpiration(nsIMdbRow *row, PRInt64* expirationDate);
   PRBool MatchHost(nsIMdbRow *row, matchHost_t *hostInfo);
   PRBool RowMatches(nsIMdbRow* aRow, searchQuery *aQuery);
+
+  PRInt64 GetNow();
+  PRTime  NormalizeTime(PRInt64 aTime);
+  PRInt32 GetAgeInDays(PRInt64 aDate);
 
 protected:
 
@@ -217,7 +219,7 @@ protected:
                               nsIAutoCompleteResults* aResults);
   void AutoCompleteCutPrefix(nsAString& aURL, AutocompleteExclude* aExclude);
   void AutoCompleteGetExcludeInfo(const nsAString& aURL, AutocompleteExclude* aExclude);
-  nsSharableString AutoCompletePrefilter(const nsAString& aSearchString);
+  nsString AutoCompletePrefilter(const nsAString& aSearchString);
   PRBool AutoCompleteCompare(nsAString& aHistoryURL, 
                              const nsAString& aUserURL,
                              AutocompleteExclude* aExclude);
@@ -236,11 +238,12 @@ protected:
   // caching of PR_Now() so we don't call it every time we do
   // a history query
   PRInt64   mLastNow;           // cache the last PR_Now()
+  PRInt64   mCachedGMTOffset;   // cached offset from GMT
+
   PRInt32   mBatchesInProgress;
   PRBool    mNowValid;          // is mLastNow valid?
   nsCOMPtr<nsITimer> mExpireNowTimer;
   
-  PRInt64 GetNow();
   void ExpireNow();
   
   static void expireNowTimer(nsITimer *aTimer, void *aClosure)
@@ -295,12 +298,11 @@ protected:
 
   // meta-data tokens
   mdb_column kToken_LastPageVisited;
+  mdb_column kToken_ByteOrder;
 
   //
   // AddPage-oriented stuff
   //
-  nsresult AddPageToDatabase(const char *aURL,
-                             PRInt64 aDate);
   nsresult AddExistingPageToDatabase(nsIMdbRow *row,
                                      PRInt64 aDate,
                                      PRInt64 *aOldDate,
@@ -324,10 +326,18 @@ protected:
   nsresult FindRow(mdb_column aCol, const char *aURL, nsIMdbRow **aResult);
 
   //
+  // byte order
+  //
+  nsresult SaveByteOrder(const char *aByteOrder);
+  nsresult GetByteOrder(char **_retval);
+  nsresult InitByteOrder(PRBool aForce);
+  void SwapBytes(const PRUnichar *source, PRUnichar *dest, PRInt32 aLen);
+  PRBool mReverseByteOrder;
+
+  //
   // misc unrelated stuff
   //
   nsCOMPtr<nsIStringBundle> mBundle;
-  nsresult SaveLastPageVisited(const char *);
 
   // pseudo-constants. although the global history really is a
   // singleton, we'll use this metaphor to be consistent.

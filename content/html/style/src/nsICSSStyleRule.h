@@ -48,7 +48,6 @@
 #include "nsIAtom.h"
 
 class nsIAtom;
-class nsIArena;
 class nsCSSDeclaration;
 class nsICSSStyleSheet;
 
@@ -101,11 +100,6 @@ public:
   nsString        mValue;
   nsAttrSelector* mNext;
 };
-
-// Right now, there are three operators:
-//   PRUnichar(0), the descendent combinator, is greedy
-//   '+' and '>', the adjacent sibling and child combinators, are not
-#define NS_IS_GREEDY_OPERATOR(ch) ( ch == PRUnichar(0) )
 
 struct nsCSSSelector {
 public:
@@ -186,9 +180,9 @@ struct nsCSSSelectorList {
   nsCSSSelectorList* mNext;
 };
 
-// IID for the nsICSSStyleRule interface {7c277af0-af19-11d1-8031-006008159b5a}
+// IID for the nsICSSStyleRule interface {00803ccc-66e8-4ec8-a037-45e901bb5304}
 #define NS_ICSS_STYLE_RULE_IID     \
-{0x7c277af0, 0xaf19, 0x11d1, {0x80, 0x31, 0x00, 0x60, 0x08, 0x15, 0x9b, 0x5a}}
+{0x00803ccc, 0x66e8, 0x4ec8, {0xa0, 0x37, 0x45, 0xe9, 0x01, 0xbb, 0x53, 0x04}}
 
 class nsICSSStyleRule : public nsICSSRule {
 public:
@@ -216,8 +210,13 @@ public:
 
   virtual already_AddRefed<nsIStyleRule> GetImportantRule(void) = 0;
 
-  // Hook for inspector.
-  virtual nsresult GetValue(nsCSSProperty aProperty, nsCSSValue& aValue) = 0;
+  // hooks for DOM rule
+  virtual nsresult GetCssText(nsAString& aCssText) = 0;
+  virtual nsresult SetCssText(const nsAString& aCssText) = 0;
+  virtual nsresult GetParentStyleSheet(nsICSSStyleSheet** aSheet) = 0;
+  virtual nsresult GetParentRule(nsICSSGroupRule** aParentRule) = 0;
+  virtual nsresult GetSelectorText(nsAString& aSelectorText) = 0;
+  virtual nsresult SetSelectorText(const nsAString& aSelectorText) = 0;
 };
 
 nsresult

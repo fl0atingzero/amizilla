@@ -42,6 +42,7 @@
 #include "nsVoidArray.h"
 #include "nsIThread.h"
 #include "nsITimerInternal.h"
+#include "nsIObserver.h"
 
 #include "nsCOMPtr.h"
 
@@ -84,7 +85,6 @@ class nsTimerImpl : public nsITimer, public nsITimerInternal
 public:
 
   nsTimerImpl();
-  virtual ~nsTimerImpl();
 
   static void Shutdown();
 
@@ -101,7 +101,17 @@ public:
   PRInt32 GetGeneration() { return mGeneration; }
 
 private:
+  ~nsTimerImpl();
+
   nsresult InitCommon(PRUint32 aType, PRUint32 aDelay);
+
+  void ReleaseCallback()
+  {
+    if (mCallbackType == CALLBACK_TYPE_INTERFACE)
+      NS_RELEASE(mCallback.i);
+    else if (mCallbackType == CALLBACK_TYPE_OBSERVER)
+      NS_RELEASE(mCallback.o);
+  }
 
   nsCOMPtr<nsIThread>   mCallingThread;
 
@@ -163,13 +173,14 @@ class nsTimerManager : nsITimerManager
 {
 public:
   nsTimerManager();
-  virtual ~nsTimerManager();
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSITIMERMANAGER
 
   nsresult AddIdleTimer(nsITimer* timer);
 private:
+  ~nsTimerManager();
+
   PRLock *mLock;
   nsVoidArray mIdleTimers;
 };

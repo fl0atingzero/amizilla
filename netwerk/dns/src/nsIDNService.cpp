@@ -65,7 +65,7 @@ static const PRUint32 kMaxDNSNodeLen = 63;
 NS_IMPL_THREADSAFE_ISUPPORTS3(nsIDNService,
                               nsIIDNService,
                               nsIObserver,
-                              nsISupportsWeakReference);
+                              nsISupportsWeakReference)
 
 nsresult nsIDNService::Init()
 {
@@ -94,8 +94,8 @@ NS_IMETHODIMP nsIDNService::Observe(nsISupports *aSubject,
       }
       else if (NS_LITERAL_STRING(NS_NET_PREF_IDNPREFIX).Equals(aData)) {
         nsXPIDLCString prefix;
-        if (NS_SUCCEEDED(prefBranch->GetCharPref(NS_NET_PREF_IDNPREFIX, getter_Copies(prefix))) &&
-            prefix.Length() <= kACEPrefixLen)
+        nsresult rv = prefBranch->GetCharPref(NS_NET_PREF_IDNPREFIX, getter_Copies(prefix));
+        if (NS_SUCCEEDED(rv) && prefix.Length() <= kACEPrefixLen)
           PL_strncpyz(nsIDNService::mACEPrefix, prefix.get(), kACEPrefixLen + 1);
       }
     }
@@ -106,8 +106,6 @@ NS_IMETHODIMP nsIDNService::Observe(nsISupports *aSubject,
 
 nsIDNService::nsIDNService()
 {
-  NS_INIT_ISUPPORTS();
-
   nsresult rv;
 
   // initialize to the official prefix (RFC 3490 "5. ACE prefix")
@@ -226,8 +224,8 @@ NS_IMETHODIMP nsIDNService::ConvertACEtoUTF8(const nsACString & input, nsACStrin
 NS_IMETHODIMP nsIDNService::IsACE(const nsACString & input, PRBool *_retval)
 {
   nsDependentCString prefix(mACEPrefix, kACEPrefixLen);
-  *_retval = Substring(input, 0, kACEPrefixLen).Equals(prefix,
-                                           nsCaseInsensitiveCStringComparator());
+  *_retval = StringBeginsWith(input, prefix,
+                              nsCaseInsensitiveCStringComparator());
   // also check for the case like "www.xn--ENCODED.com"
   // in case for this is called for an entire domain name
   if (!*_retval) {
@@ -240,6 +238,15 @@ NS_IMETHODIMP nsIDNService::IsACE(const nsACString & input, PRBool *_retval)
   }
 
   return NS_OK;
+}
+
+NS_IMETHODIMP nsIDNService::Normalize(const nsACString & input, nsACString & output)
+{
+  nsAutoString outUTF16;
+  nsresult rv = stringPrep(NS_ConvertUTF8toUTF16(input), outUTF16);
+  if (NS_SUCCEEDED(rv))
+    CopyUTF16toUTF8(outUTF16, output);
+  return rv;
 }
 
 //-----------------------------------------------------------------------------
@@ -441,8 +448,12 @@ nsresult nsIDNService::stringPrepAndACE(const nsAString& in, nsACString& out)
   else {
     nsAutoString strPrep;
     rv = stringPrep(in, strPrep);
-    if (NS_SUCCEEDED(rv))
-      rv = encodeToACE(strPrep, out);
+    if (NS_SUCCEEDED(rv)) {
+      if (IsASCII(strPrep))
+        CopyUCS2toASCII(strPrep, out);
+      else
+        rv = encodeToACE(strPrep, out);
+    }
   }
 
   if (out.Length() > kMaxDNSNodeLen) {
@@ -511,7 +522,7 @@ nsresult nsIDNService::decodeACE(const nsACString& in, nsACString& out)
   nsAutoString utf16;
   ucs4toUtf16(output, utf16);
   delete [] output;
-  out.Assign(NS_ConvertUCS2toUTF8(utf16));
+  CopyUTF16toUTF8(utf16, out);
 
   // Validation: encode back to ACE and compare the strings
   nsCAutoString ace;

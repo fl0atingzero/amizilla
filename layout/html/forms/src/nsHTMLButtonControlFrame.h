@@ -87,7 +87,7 @@ public:
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
 
-  NS_IMETHOD IsPercentageBase(PRBool& aBase) const;
+  virtual PRBool IsContainingBlock() const;
   
   NS_IMETHOD HandleEvent(nsIPresContext* aPresContext, 
                          nsGUIEvent* aEvent,
@@ -109,10 +109,27 @@ public:
   virtual void SetAdditionalStyleContext(PRInt32 aIndex, 
                                          nsStyleContext* aStyleContext);
  
-  NS_IMETHOD  AppendFrames(nsIPresContext* aPresContext,
-                           nsIPresShell&   aPresShell,
-                           nsIAtom*        aListName,
-                           nsIFrame*       aFrameList);
+  NS_IMETHOD AppendFrames(nsIPresContext* aPresContext,
+                          nsIPresShell&   aPresShell,
+                          nsIAtom*        aListName,
+                          nsIFrame*       aFrameList);
+
+  NS_IMETHOD InsertFrames(nsIPresContext* aPresContext,
+                          nsIPresShell&   aPresShell,
+                          nsIAtom*        aListName,
+                          nsIFrame*       aPrevFrame,
+                          nsIFrame*       aFrameList);
+
+  NS_IMETHOD RemoveFrame(nsIPresContext* aPresContext,
+                         nsIPresShell&   aPresShell,
+                         nsIAtom*        aListName,
+                         nsIFrame*       aOldFrame);
+
+  NS_IMETHOD ReplaceFrame(nsIPresContext* aPresContext,
+                          nsIPresShell&   aPresShell,
+                          nsIAtom*        aListName,
+                          nsIFrame*       aOldFrame,
+                          nsIFrame*       aNewFrame);
 
 #ifdef ACCESSIBILITY
   NS_IMETHOD GetAccessible(nsIAccessible** aAccessible);
@@ -127,7 +144,7 @@ public:
   virtual nsresult RequiresWidget(PRBool &aRequiresWidget);
 
 
-  NS_IMETHOD_(PRInt32) GetType() const;
+  NS_IMETHOD_(PRInt32) GetFormControlType() const;
   NS_IMETHOD GetName(nsAString* aName);
   NS_IMETHOD GetValue(nsAString* aName);
   virtual void MouseClicked(nsIPresContext* aPresContext);
@@ -154,6 +171,7 @@ public:
   NS_IMETHOD SetSuggestedSize(nscoord aWidth, nscoord aHeight);
 
 protected:
+  void ReParentFrameList(nsFrameManager* aFrameManager, nsIFrame* aFrameList);
   virtual PRBool IsReset(PRInt32 type);
   virtual PRBool IsSubmit(PRInt32 type);
   void ReflowButtonContents(nsIPresContext* aPresContext,
@@ -168,13 +186,9 @@ protected:
                                                    const nsHTMLReflowState& aSuggestedReflowState);
   NS_IMETHOD_(nsrefcnt) AddRef(void);
   NS_IMETHOD_(nsrefcnt) Release(void);
-  void GetTranslatedRect(nsIPresContext* aPresContext, nsRect& aRect);
 
   PRIntn GetSkipSides() const;
   PRBool mInline;
-  nsCursor mPreviousCursor;
-  nsRect mTranslatedRect;
-  PRBool mDidInit;
   nsButtonFrameRenderer mRenderer;
 
   //Resize Reflow OpitmizationSize;

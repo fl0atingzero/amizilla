@@ -32,11 +32,9 @@ REQUIRES	= xpcom \
 		  string \
 		  necko \
 		  uconv \
-		  pref \
 		  $(NULL)
 
 CPPSRCS		= \
-		nsMIMEInfoImpl.cpp \
 		nsMIMEHeaderParamImpl.cpp \
 		$(NULL)
 
