@@ -44,7 +44,7 @@
 PRBool IsValidNetAddr(const PRNetAddr *addr)
 {
     if ((addr != NULL)
-#ifdef XP_UNIX
+#if defined(XP_UNIX) || defined(XP_AMIGAOS)
 	    && (addr->raw.family != PR_AF_LOCAL)
 #endif
 	    && (addr->raw.family != PR_AF_INET6)
@@ -61,7 +61,7 @@ static PRBool IsValidNetAddrLen(const PRNetAddr *addr, PRInt32 addr_len)
      * is not uniform, so we don't check it.
      */
     if ((addr != NULL)
-#ifdef XP_UNIX
+#if defined(XP_UNIX) || defined(XP_AMIGAOS)
             && (addr->raw.family != AF_UNIX)
 #endif
             && (PR_NETADDR_SIZE(addr) != addr_len)) {
@@ -84,7 +84,7 @@ static PRBool IsValidNetAddrLen(const PRNetAddr *addr, PRInt32 addr_len)
          * In this case, we verifiy addr_len is still the value we
          * passed in (i.e., sizeof(PRNetAddr)).
          */
-#if defined(QNX)
+#if defined(QNX) 
         if (sizeof(PRNetAddr) == addr_len) {
             return PR_TRUE;
         }
