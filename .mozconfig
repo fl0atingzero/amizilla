@@ -1,0 +1,22 @@
+# sh
+# Build configuration script
+#
+# See http://www.mozilla.org/build/unix.html for build instructions.
+#
+
+# Options for 'configure' (same as command-line options).
+ac_add_options --enable-default-toolkit=amiga
+ac_add_options --disable-mailnews
+ac_add_options --disable-ldap
+ac_add_options --disable-freetype2
+ac_add_options --disable-postscript
+ac_add_options --disable-xprint
+ac_add_options --disable-jsd
+ac_add_options --disable-oji
+ac_add_options --disable-accessibility
+ac_add_options --disable-xpfe-components
+ac_add_options --disable-xpinstall
+ac_add_options --disable-jsloader
+ac_add_options --disable-composer
+ac_add_options --disable-mathml
+ac_add_options --disable-installer
