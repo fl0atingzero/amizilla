@@ -1405,6 +1405,11 @@ extern PRUintn _PR_NetAddrSize(const PRNetAddr* addr);
         : ((_addr)->raw.family == PR_AF_INET6	\
         ? sizeof(struct _md_sockaddr_in6)		\
         : sizeof((_addr)->local)))
+#elif defined(XP_AMIGAOS)
+#define PR_NETADDR_SIZE(_addr) 					\
+        ((_addr)->raw.family == PR_AF_INET		\
+        ? sizeof((_addr)->inet)					\
+        : sizeof((_addr)->local))
 #else
 #define PR_NETADDR_SIZE(_addr) 					\
         ((_addr)->raw.family == PR_AF_INET		\
@@ -1421,6 +1426,11 @@ extern PRUintn _PR_NetAddrSize(const PRNetAddr* addr);
         : ((_addr)->raw.family == PR_AF_INET6	\
         ? sizeof((_addr)->ipv6)					\
         : sizeof((_addr)->local)))
+#elif defined(XP_AMIGAOS)
+#define PR_NETADDR_SIZE(_addr) 					\
+        ((_addr)->raw.family == PR_AF_INET		\
+        ? sizeof((_addr)->inet)					\
+        : sizeof((_addr)->local))
 #else
 #define PR_NETADDR_SIZE(_addr) 					\
         ((_addr)->raw.family == PR_AF_INET		\
@@ -1636,6 +1646,7 @@ struct PRThread {
         struct PRLock *lock;
         struct PRCondVar *cvar;
     } wait;
+    void *AmiTCP_Base;              /* AmiTCP library per thread */
 #else /* not pthreads or Be threads or Amiga threads */
     _MDLock threadLock;             /* Lock to protect thread state variables.
                                      * Protects the following fields:

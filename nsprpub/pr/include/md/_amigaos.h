@@ -62,6 +62,7 @@ struct _MDMemPtr {
 
 #define HAVE_BSD_FLOCK 1
 #define PR_HAVE_AMIGA_NAMED_SHARED_MEMORY
+#define _PR_HAVE_SOCKADDR_LEN
 
 #define HAVE_STACK_GROWING_UP
 #undef USE_SETJMP

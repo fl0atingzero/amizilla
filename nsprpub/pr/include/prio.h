@@ -198,7 +198,7 @@ union PRNetAddr {
 #endif
 #if defined(XP_AMIGAOS)
     struct {                            /* Unix domain socket address */
-        PRUint16 family;                /* address family (AF_UNIX) */
+        PRUint16 family;                 /* address family (AF_UNIX) */
         char path[104];                 /* null-terminated pathname */
     } local;
 #endif

@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* 
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -63,9 +63,19 @@
 #define _MD_GETFILEINFO64_UTF16  _GetOpenFileInfo64Utf16
 #endif /* MOZ_UNICODE */
 
+/* Since amitcp.library socket's are private per thread, I need to
+ * keep track of who created it so I can duped it to the thread who wants it
+ */
+typedef struct {
+    int type;
+    int domain;
+    int protocol;
+    int private_idx;
+    int released;
+} _MDSocket;
 
 struct _MDFileDesc {
-  BPTR osfd;
+    BPTR osfd;
 };
 
 NSPR_API(PRInt32)  _Open(const char *name, PRIntn osflags, PRIntn mode);
