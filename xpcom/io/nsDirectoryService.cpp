@@ -59,6 +59,8 @@
 #include <stdlib.h>
 #include <sys/param.h>
 #include "prenv.h"
+#elif defined(XP_AMIGAOS)
+#include <proto/dos.h>
 #ifdef XP_MACOSX
 #include <CoreServices/CoreServices.h>
 #include <Folders.h>
@@ -317,9 +319,13 @@ nsDirectoryService::GetCurrentProcessDirectory(nsILocalFile** aFile)
       }
     }
 #elif defined(XP_AMIGAOS)
-    localFile->InitWithNativePath(nsDependentCString("progdir:"));
-    *aFile = localFile;
-    return NS_OK;
+    {
+        char progdir[10];
+        strcpy(progdir, "PROGDIR:");
+        localFile->InitWithNativePath(nsDependentCString(progdir));
+        *aFile = localFile;
+        return NS_OK;
+    }
 #endif
     
     NS_RELEASE(localFile);
@@ -529,19 +535,16 @@ nsresult
 nsDirectoryService::Init()
 {
     nsresult rv;
-      
     rv = NS_NewISupportsArray(getter_AddRefs(mProviders));
     if (NS_FAILED(rv)) return rv;
 
     NS_RegisterStaticAtoms(directory_atoms, NS_ARRAY_LENGTH(directory_atoms));
-    
     // Let the list hold the only reference to the provider.
     nsAppFileLocationProvider *defaultProvider = new nsAppFileLocationProvider;
     if (!defaultProvider)
         return NS_ERROR_OUT_OF_MEMORY;
     // AppendElement returns PR_TRUE for success.
     rv = mProviders->AppendElement(defaultProvider) ? NS_OK : NS_ERROR_FAILURE;
-
     return rv;
 }
 
