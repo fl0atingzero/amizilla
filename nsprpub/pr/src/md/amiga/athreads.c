@@ -267,9 +267,18 @@ PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
 }  /* PR_Cleanup */
 
 void _PR_MD_Wait(PRThread *thread) {
+    ULONG mySig =  1 << thread->port->mp_SigBit;
     Forbid();
-    SetSignal(0, 1 << thread->port->mp_SigBit);
-    Wait(1 << thread->port->mp_SigBit);
+    if (SetSignal(0L, 0L) & mySig) {
+        /* Already got signal. I guess I was too slow to get to the wait */
+        thread->state = _PR_RUNNING;
+    } else {
+        if (thread->state == _PR_RUNNING) {
+            thread->state = _PR_SUSPENDED;
+        }
+        Wait(mySig);
+    }
+    SetSignal(0, mySig);
     Permit();
 }
 
