@@ -49,7 +49,8 @@
 #include <prlog.h>
 #include "plgetopt.h"
 
-#define DIRNAME "xxxBug80884/"
+#define DIRNAME "xxxBug80884"
+#define SEP "/"
 #define FILENAME "file80883"
 
 PRBool  failed_already = PR_FALSE;
@@ -91,7 +92,7 @@ PRIntn main(PRIntn argc, char *argv[])
     lm = PR_NewLogModule( "testcase" );
 
     (void) PR_MkDir( DIRNAME, 0777);
-    fd = PR_Open( DIRNAME FILENAME, PR_CREATE_FILE|PR_RDWR, 0666);
+    fd = PR_Open( DIRNAME SEP FILENAME, PR_CREATE_FILE|PR_RDWR, 0666);
     if (fd == 0) {
         PRErrorCode err = PR_GetError();
         fprintf(stderr, "create file fails: %d: %s\n", err,
@@ -112,7 +113,7 @@ PRIntn main(PRIntn argc, char *argv[])
     fprintf(stderr, "remove directory fails with: %d: %s\n", err,
         PR_ErrorToString(err, PR_LANGUAGE_I_DEFAULT));
 
-    (void) PR_Delete( DIRNAME FILENAME);
+    (void) PR_Delete( DIRNAME SEP FILENAME);
     (void) PR_RmDir( DIRNAME );
 
     return 0;
