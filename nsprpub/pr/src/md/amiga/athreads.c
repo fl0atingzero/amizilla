@@ -41,8 +41,8 @@ static void killThread (PRThread *thread, PRBool kill) {
     printf("Killing thread %lx with kill %d\n", thread, kill);
     if (kill) {
 	Forbid();
-        thread->state = _PR_DEAD_STATE;
-	Signal((struct Task *)thread->p, 1 << thread->port->mp_SigBit);
+    thread->state = _PR_DEAD_STATE;
+    _PR_MD_Signal(thread);
 	Permit();
     } 
     PR_JoinThread(thread);
@@ -380,10 +380,13 @@ PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
 {
     PRThread *me = PR_CurrentThread();
     PR_ASSERT(me == primordialThread);
-    killThreads(PR_FALSE);
     printf("In PR_Cleanup\n");
     if (_pr_initialized) {
         _PR_CleanupSocket();
+        /* I need to kill the socket thread before killing off
+         * all of the other threads
+         */
+        killThreads(PR_FALSE);
         _PR_CleanupMW();
         _PR_CleanupDtoa();
         _PR_CleanupCallOnce();
@@ -437,7 +440,6 @@ void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
 
 void _PR_MD_Signal(PRThread *thread) {
     PR_ASSERT(thread->state != _PR_RUNNING);
-    thread->state = _PR_RUNNING;
     Signal((struct Task *)thread->p, 1 << thread->port->mp_SigBit);
 }
 
