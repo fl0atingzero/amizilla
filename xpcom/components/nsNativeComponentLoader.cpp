@@ -245,7 +245,13 @@ nsFreeLibrary(nsDll *dll, nsIServiceManager *serviceMgr, PRInt32 when)
     }
 
     // Get if the dll was marked for unload in an earlier round
+#ifdef XP_AMIGAOS
+    // MarkForUnload(PR_TRUE) never called (??)
+    PRBool dllMarkedForUnload = PR_TRUE;
+#else
+    // 
     PRBool dllMarkedForUnload = dll->IsMarkedForUnload();
+#endif
 
     // Reset dll marking for unload just in case we return with
     // an error.
@@ -260,7 +266,13 @@ nsFreeLibrary(nsDll *dll, nsIServiceManager *serviceMgr, PRInt32 when)
                         getter_AddRefs(mobj));
     if (NS_SUCCEEDED(rv))
     {
+#ifdef XP_AMIGAOS
+        // is canUnload ever implemented correctly??
+        rv = NS_OK;
+        canUnload = PR_TRUE;
+#else
         rv = mobj->CanUnload(nsComponentManagerImpl::gComponentManager, &canUnload);
+#endif
     }
 
     mobj = nsnull; // Release our reference to the module object
@@ -297,7 +309,7 @@ nsFreeLibrary(nsDll *dll, nsIServiceManager *serviceMgr, PRInt32 when)
                    ("nsNativeComponentLoader: + Unloading \"%s\".", displayPath.get()));
 #endif
 
-#ifdef DEBUG_dougt
+#if defined(XP_AMIGAOS) || defined(DEBUG_dougt)
             // XXX dlls aren't counting their outstanding instances correctly
             // XXX hence, dont unload until this gets enforced.
             rv = dll->Unload();
@@ -658,6 +670,9 @@ nsNativeComponentLoader::AutoRegisterComponent(PRInt32 when,
         ".dylib",   /* Unix: Mach */
         ".so.1.0",  /* Unix: BSD */
         ".sl",      /* Unix: HP-UX */
+#ifdef XP_AMIGAOS
+        ".ixlibrary", /* AmigaOS */
+#endif
 #if defined(VMS)
         ".exe",     /* Open VMS */
 #endif
@@ -952,7 +967,7 @@ nsNativeComponentLoader::OnRegister(const nsIID &aCID, const char *aType,
 nsresult
 nsNativeComponentLoader::UnloadAll(PRInt32 aWhen)
 {
-    PR_LOG(nsComponentManagerLog, PR_LOG_DEBUG, ("nsNativeComponentLoader: Unloading...."));
+    PR_LOG(nsComponentManagerLog, PR_LOG_DEBUG, ("nsNativeComponentLoader: Unloading.... %d", aWhen));
 
     struct freeLibrariesClosure callData;
     callData.serviceMgr = NULL; // XXX need to get this as a parameter
