@@ -49,9 +49,9 @@
 
 /* Interrupts related */
 #define _MD_START_INTERRUPTS              _StartInterrupts
-#define _MD_STOP_INTERRUPTS               _StopInterrrupts
+#define _MD_STOP_INTERRUPTS               _StopInterrupts
 #define _MD_ENABLE_CLOCK_INTERRUPTS       _EnableClockInterrupts
-#define _MD_DISABLE_CLOCK_INTERRUPTS      _DisableClockInterrrupts
+#define _MD_DISABLE_CLOCK_INTERRUPTS      _DisableClockInterrupts
 #define _MD_BLOCK_CLOCK_INTERRUPTS        _BlockClockInterrupts
 #define _MD_UNBLOCK_CLOCK_INTERRUPTS      _UnblockClockInterrupts
 #define _MD_CLOCK_INTERRUPT               _ClockInterrupt
@@ -114,7 +114,7 @@
 #define _MD_SET_LAST_THREAD               _SetLastThread
 #define _MD_INIT_THREAD                   _InitThread
 #define _MD_EXIT_THREAD                   _ExitThread
-#define _MD_INIT_ATTACHED_THREAD          _InitAttachThread
+#define _MD_INIT_ATTACHED_THREAD          _InitAttachedThread
 #define _MD_SUSPEND_THREAD                _SuspendThread
 #define _MD_RESUME_THREAD                 _ResumeThread
 #define _MD_SUSPEND_CPU                   _SuspendCpu
