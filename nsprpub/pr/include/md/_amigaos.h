@@ -57,8 +57,7 @@ struct _MDFileMap {
  * Used for malloc
  */
 struct _MDMemPtr {
-  struct _MDMemPtr *next;
-  struct _MDMemPtr *prev;
+  PRCList list;
   PRUint32 size;
 };
 
