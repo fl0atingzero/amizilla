@@ -94,6 +94,12 @@ ifeq ($(OS_ARCH), HP-UX)
     endif
 endif
 
+ifeq ($(OS_ARCH), AmigaOS)
+	DSO_CFLAGS=
+	# I need ixemul for nsinstall
+	OS_LDFLAGS=
+endif
+
 ifeq ($(MOZ_OS2_TOOLS),EMX)
 XCFLAGS = $(OS_CFLAGS)
 ifeq ($(MOZ_OS2_EMX_OBJECTFORMAT),OMF)
