@@ -371,6 +371,11 @@ PRInt32 _Seek (PRFileDesc *fd, PRInt32 offset, PRSeekWhence whence) {
 PRInt64 _Seek64 (PRFileDesc *fd, PRInt64 offset, PRSeekWhence whence) {
     PRInt32 off;
     PRInt64 retval;
+    static PRInt64 bigone = LL_INIT(1,0);
+    if (LL_CMP(offset, >, bigone)) {
+        return PR_FILE_TOO_BIG_ERROR;
+    }
+
     LL_L2I(off, offset);
     off = _Seek(fd, off, whence);
     LL_I2L(off, retval);
@@ -437,8 +442,6 @@ void _MD_QUERY_FD_INHERITABLE(PRFileDesc *fd) {
     assert(0);
 }
 
-
 int _MD_ERRNO(void) {
-#warning _MD_ERRNO not implemented
-    assert(0);
+    return errno;
 }
