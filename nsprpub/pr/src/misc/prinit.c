@@ -52,7 +52,7 @@ PRFileDesc *_pr_stdin;
 PRFileDesc *_pr_stdout;
 PRFileDesc *_pr_stderr;
 
-#if !defined(_PR_PTHREADS) && !defined(_PR_BTHREADS)
+#if !defined(_PR_PTHREADS) && !defined(_PR_BTHREADS) && !defined(_PR_ATHREADS)
 
 PRCList _pr_active_local_threadQ =
 			PR_INIT_STATIC_CLIST(&_pr_active_local_threadQ);
@@ -219,7 +219,7 @@ static void _PR_InitStuff(void)
 	}
 #endif    
 
-#ifndef _PR_GLOBAL_THREADS_ONLY
+#if !defined(_PR_GLOBAL_THREADS_ONLY) && !defined(_PR_ATHREADS)
 	_PR_InitCPUs();
 #endif
 
@@ -255,7 +255,7 @@ void _PR_ImplicitInitialization(void)
 	_PR_InitStuff();
 
     /* Enable interrupts */
-#if !defined(_PR_PTHREADS) && !defined(_PR_GLOBAL_THREADS_ONLY)
+#if !defined(_PR_PTHREADS) && !defined(_PR_GLOBAL_THREADS_ONLY) && !defined(_PR_ATHREADS)
     _PR_MD_START_INTERRUPTS();
 #endif
 
@@ -263,7 +263,7 @@ void _PR_ImplicitInitialization(void)
 
 PR_IMPLEMENT(void) PR_DisableClockInterrupts(void)
 {
-#if !defined(_PR_PTHREADS) && !defined(_PR_BTHREADS)
+#if !defined(_PR_PTHREADS) && !defined(_PR_BTHREADS) && !defined(_PR_ATHREADS)
 	if (!_pr_initialized) {
 		_PR_InitStuff();
 	} else {
@@ -274,7 +274,7 @@ PR_IMPLEMENT(void) PR_DisableClockInterrupts(void)
 
 PR_IMPLEMENT(void) PR_EnableClockInterrupts(void)
 {
-#if !defined(_PR_PTHREADS) && !defined(_PR_BTHREADS)
+#if !defined(_PR_PTHREADS) && !defined(_PR_BTHREADS) && !defined(_PR_ATHREADS)
 	if (!_pr_initialized) {
 		_PR_InitStuff();
 	}
@@ -284,14 +284,14 @@ PR_IMPLEMENT(void) PR_EnableClockInterrupts(void)
 
 PR_IMPLEMENT(void) PR_BlockClockInterrupts(void)
 {
-#if !defined(_PR_PTHREADS) && !defined(_PR_BTHREADS)
+#if !defined(_PR_PTHREADS) && !defined(_PR_BTHREADS) && !defined(_PR_ATHREADS)
     	_PR_MD_BLOCK_CLOCK_INTERRUPTS();
 #endif
 }
 
 PR_IMPLEMENT(void) PR_UnblockClockInterrupts(void)
 {
-#if !defined(_PR_PTHREADS) && !defined(_PR_BTHREADS)
+#if !defined(_PR_PTHREADS) && !defined(_PR_BTHREADS) && !defined(_PR_ATHREADS)
     	_PR_MD_UNBLOCK_CLOCK_INTERRUPTS();
 #endif
 }
@@ -334,7 +334,7 @@ PR_IMPLEMENT(PRIntn) PR_Initialize(
  *
  *-----------------------------------------------------------------------
  */
-#if defined(_PR_PTHREADS) || defined(_PR_BTHREADS)
+#if defined(_PR_PTHREADS) || defined(_PR_BTHREADS) || defined(_PR_ATHREADS)
     /* see ptthread.c */
 #else
 static void
@@ -381,7 +381,7 @@ thread is destroyed, can not access current thread any more.
  *
  *----------------------------------------------------------------------
  */
-#if defined(_PR_PTHREADS) || defined(_PR_BTHREADS)
+#if defined(_PR_PTHREADS) || defined(_PR_BTHREADS) || defined(_PR_ATHREADS)
     /* see ptthread.c */
 #else
 
