@@ -255,6 +255,7 @@ typedef struct _PRCPUQueue _PRCPUQueue;
 typedef struct _PRCPU _PRCPU;
 typedef struct _MDCPU _MDCPU;
 
+#ifndef _PR_ATHREADS
 struct _PRCPUQueue {
     _MDLock  runQLock;          /* lock for the run + wait queues */
     _MDLock  sleepQLock;        /* lock for the run + wait queues */
@@ -295,11 +296,14 @@ struct _PRCPU {
     _MDCPU md;
 };
 
+#endif
+
 typedef struct _PRInterruptTable {
     const char *name;
     PRUintn missed_bit;
     void (*handler)(void);
 } _PRInterruptTable;
+
 
 #define _PR_CPU_PTR(_qp) \
     ((_PRCPU*) ((char*) (_qp) - offsetof(_PRCPU,links)))
@@ -1441,6 +1445,10 @@ struct PRLock {
     sem_id	semaphoreID;	    /* the underlying lock */
     int32	benaphoreCount;	    /* number of people in lock */
     thread_id	owner;		    /* current lock owner */
+#elif defined(_PR_ATHREADS)
+    PRCList links;                  /* linkage for PRThread.lockList */
+    struct PRThread *owner;         /* current lock owner */
+    PRCList waitQ;                  /* list of threads waiting for lock */
 #else /* not pthreads or Be threads */
     PRCList links;                  /* linkage for PRThread.lockList */
     struct PRThread *owner;         /* current lock owner */
@@ -1461,6 +1469,9 @@ struct PRCondVar {
 #elif defined(_PR_BTHREADS)
     sem_id	isem;		/* Semaphore used to lock threadQ */
     int32	benaphoreCount; /* Number of people in lock */
+#elif defined(_PR_ATHREADS)
+  /* TODO */
+  PRCList condQ;
 #else /* not pthreads or Be threads */
     PRCList condQ;              /* Condition variable wait Q */
     _MDLock ilock;              /* Internal Lock to protect condQ */
@@ -1493,6 +1504,7 @@ struct PRSemaphore {
     PRUintn count;            /* the value of the counting semaphore */
     PRUint32 waiters;            /* threads waiting on the semaphore */
 #if defined(_PR_PTHREADS)
+#elif defined(_PR_ATHREADS)
 #else  /* defined(_PR_PTHREADS) */
     _MDSemaphore md;
 #endif /* defined(_PR_PTHREADS) */
@@ -1510,6 +1522,8 @@ struct PRSem {
     int semid;
 #elif defined(WIN32)
     HANDLE sem;
+#elif defined(_PR_ATHREADS)
+    struct PRSemaphore *sem;
 #else
     PRInt8 notused;
 #endif
@@ -1546,6 +1560,7 @@ struct PRThreadStack {
         PRThread* thr;          /* back pointer to thread owning this stack */
 
 #if defined(_PR_PTHREADS)
+#elif defined(_PR_ATHREADS)
 #else /* defined(_PR_PTHREADS) */
     _MDThreadStack md;
 #endif /* defined(_PR_PTHREADS) */
@@ -1603,7 +1618,25 @@ struct PRThread {
     PRBool io_pending;
     PRInt32 io_fd;
     PRBool io_suspended;
-#else /* not pthreads or Be threads */
+#elif defined(_PR_ATHREADS)
+    PRUint32 flags;
+    PRBool io_pending;
+    PRInt32 io_fd;
+    PRBool io_suspended;
+    struct MsgPort *port;
+    struct TimerRequest *sleepRequest;
+    struct Process *p;
+    PRThread *join;                 /* thread to signal when I'm done for joining */
+    PRThread *parent;
+    PRCList links;
+    PRCList waitQLinks;             /* when thread is PR_Wait'ing */
+    PRCList lockList;               /* list of locks currently holding */
+    PRIntervalTime sleep;           /* sleep time when thread is sleeping */
+    struct _wait {
+        struct PRLock *lock;
+        struct PRCondVar *cvar;
+    } wait;
+#else /* not pthreads or Be threads or Amiga threads */
     _MDLock threadLock;             /* Lock to protect thread state variables.
                                      * Protects the following fields:
                                      *     state
@@ -1805,6 +1838,7 @@ struct PRSegment {
     PRUint32 size;
     PRUintn flags;
 #if defined(_PR_PTHREADS)
+#elif defined(_PR_ATHREADS)
 #else  /* defined(_PR_PTHREADS) */
     _MDSegment md;
 #endif /* defined(_PR_PTHREADS) */
@@ -1999,6 +2033,8 @@ struct PRSharedMemory
     int         id;
 #elif defined(PR_HAVE_WIN32_NAMED_SHARED_MEMORY)
     HANDLE      handle;
+#elif defined(PR_HAVE_AMIGA_NAMED_SHARED_MEMORY)
+    PRUint32    handle;
 #else
     PRUint32    nothing; /* placeholder, nothing behind here */
 #endif
