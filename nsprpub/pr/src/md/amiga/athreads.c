@@ -34,6 +34,7 @@
  */
 
 #include <primpl.h>
+extern char **environ;
 
 static PRStatus _InitThread(PRThread *pr);
 
@@ -477,21 +478,65 @@ PR_IMPLEMENT(PRThreadState) PR_GetThreadState(const PRThread *thred)
     return PR_JOINABLE_THREAD;
 }  /* PR_GetThreadState */
 
-/* The GC uses this; it is quite arguably a bad interface.  I'm just
- * duplicating it for now - XXXMB
+
+/*
+ * Structure used by the polling thread to monitor pipes
  */
-PR_IMPLEMENT(PRInt32) PR_GetMonitorEntryCount(PRMonitor *mon)
-{
-    return mon->entryCount;
+struct _MDPipePoll {
+    PRPollDesc pollfds[3];  /* the fds to read with PR_Poll */
+    PRIntn numfds;          /* number of fds to poll (max 3) */
+    PRFileDesc *pipefds[3]; /* the corresponding write fds to write to */
+};
+
+/*
+ * Thread which watches the file descriptors and pipes them to the
+ * running process
+ */
+static void _MDPollThread(void *arg) {
+    struct _MDPipePoll *mpp = (struct _MDPipePoll *)arg;
+    int i;
+    PRIntn numfds;
+    PRBool done = PR_FALSE;
+    printf("FD polling thread started, numfds is %d\n", numfds);
+    while (!done) {
+        char chr[1024];
+        numfds = PR_Poll(mpp->pollfds, mpp->numfds, PR_INTERVAL_NO_TIMEOUT);
+        printf("Poll returns %d\n", numfds);
+        if (numfds < 0) {
+            done = PR_TRUE;
+            break;
+        }
+
+        for (i = 0; i < mpp->numfds; i++) {
+            if (mpp->pollfds[i].out_flags & PR_POLL_READ) {
+                PRIntn num;
+                num = PR_Read(mpp->pollfds[i].fd, chr, sizeof(chr));
+                if (num <= 0) {
+                    done = PR_TRUE;
+                } else {
+                    num = PR_Write(mpp->pipefds[i], chr, num);
+                }
+            } else if (mpp->pollfds[i].out_flags & PR_POLL_EXCEPT) {
+                done = TRUE;
+            }
+        }
+    }
 }
 
 static void _MDCreateProcessThread(void *arg) {
     PRProcess *pr = (PRProcess *)arg;
     LONG returnCode;
+    struct Process *me = (struct Process *)FindTask(NULL);
     char *cmdLine;
     size_t cmdLen = 0;
     struct TagItem items[10];
+    struct _MDPipePoll *mpp;
+    PRFileDesc *pipes[6] = {NULL,};
+    PRIntn pipefd = 0;
+    PRThread *pollThread;
     int i;
+
+    PR_Lock(pr->md.lock);
 
     for (i = 0; pr->md.argv[i]; i++) {
         cmdLen += strlen(pr->md.argv[i]) + 4;
@@ -512,11 +557,8 @@ static void _MDCreateProcessThread(void *arg) {
         strcat(cmdLine, "\"");
     }
 
-    printf("Command line is '%s', len is %d(%d)\n", cmdLine, strlen(cmdLine), cmdLen);
-
     /* Set up the environment */
     if (pr->md.envp != NULL) {
-        printf("Doing environment...\n");
         for (i = 0; pr->md.envp[i]; i++) {
             char *equal;
             char *tmpenv = PR_Malloc(strlen(pr->md.envp[i]) + 1);
@@ -525,65 +567,170 @@ static void _MDCreateProcessThread(void *arg) {
             equal = strchr(tmpenv, '=');
             if (equal) {
                 *equal++ = '\0';
+                printf("Setting env: %s to %s\n", tmpenv, equal);
+                SetVar(tmpenv, equal, strlen(equal), GVF_LOCAL_ONLY);
             }
-            printf("Setting env: %s to %s\n", tmpenv, equal);
-            SetVar(tmpenv, equal, strlen(equal), GVF_LOCAL_ONLY);
             PR_Free(tmpenv);
         }
     }
 
-    printf("Spawning command[0] '%s'\n", cmdLine);
+
+    /* Error */
+    mpp = PR_NEWZAP(struct _MDPipePoll);
+    mpp->numfds = 0;
     i = 0;
-    items[i].ti_Tag = NP_CloseInput;
-    items[i++].ti_Data = FALSE;
-    items[i].ti_Tag = NP_CloseOutput;
-    items[i++].ti_Data = FALSE;
-
-    printf("Spawning command[1] '%s'\n", cmdLine);
-
     if (pr->md.attr) {
-        items[i].ti_Tag = SYS_Input;
-        printf("Stdin fd is %lx\n", pr->md.attr->stdinFd);
-        items[i++].ti_Data = (pr->md.attr->stdinFd != NULL) ? pr->md.attr->stdinFd->secret->md.osfd : Input();
-        printf("Stdin is %lx\n", items[i-1].ti_Data);
-        items[i].ti_Tag = SYS_Output;
-        items[i++].ti_Data = (pr->md.attr->stdoutFd != NULL) ? pr->md.attr->stdoutFd->secret->md.osfd : Output();
-        printf("Stdout is %lx\n", items[i-1].ti_Data);
-        printf("Stderr fd is %lx\n", pr->md.attr->stderrFd);
-        if (pr->md.attr->stderrFd) {
-            items[i].ti_Tag = NP_Error;
-            items[i++].ti_Data = pr->md.attr->stderrFd->secret->md.osfd;
+        if (pr->md.attr->fdInheritBufferUsed > 0) {
+            char *equal;
+            char *tmpenv = PR_Malloc(pr->md.attr->fdInheritBufferUsed + 1);
+            /* Error check */
+            printf("inheritbuffer is %s\n", pr->md.attr->fdInheritBuffer);
+            strcpy(tmpenv, pr->md.attr->fdInheritBuffer);
+            equal = strchr(tmpenv, '=');
+            if (equal) {
+                *equal++ = '\0';
+                printf("Setting env: %s to %s\n", tmpenv, equal);
+                SetVar(tmpenv, equal, strlen(equal), GVF_LOCAL_ONLY);
+            }
+            PR_Free(tmpenv);
         }
+
+        if (pr->md.attr->stdinFd) {
+            PRFileDesc *pipein, *pipeout;
+            PR_CreatePipe(&pipein, &pipeout);
+            pipes[pipefd++] = pipein;
+            pipes[pipefd++] = pipeout;
+            mpp->pollfds[mpp->numfds].fd = pr->md.attr->stdinFd;
+            mpp->pollfds[mpp->numfds].in_flags = PR_POLL_READ;
+            mpp->pipefds[mpp->numfds++] = pipeout;
+            items[i].ti_Tag = NP_CloseInput;
+            items[i++].ti_Data = TRUE;
+            items[i].ti_Tag = SYS_Input;
+            items[i++].ti_Data = pipein->secret->md.osfd;
+        } else {
+            items[i].ti_Tag = NP_CloseInput;
+            items[i++].ti_Data = FALSE;
+            items[i].ti_Tag = SYS_Input;
+            items[i++].ti_Data = Input();
+        }
+
+        if (pr->md.attr->stdoutFd) {
+            PRFileDesc *pipein, *pipeout;
+            PR_CreatePipe(&pipein, &pipeout);
+            pipes[pipefd++] = pipein;
+            pipes[pipefd++] = pipeout;
+            mpp->pollfds[mpp->numfds].fd = pipein;
+            mpp->pollfds[mpp->numfds].in_flags = PR_POLL_READ;
+            mpp->pipefds[mpp->numfds++] = pr->md.attr->stdoutFd;
+            items[i].ti_Tag = NP_CloseOutput;
+            items[i++].ti_Data = TRUE;
+            items[i].ti_Tag = SYS_Output;
+            items[i++].ti_Data = pipeout->secret->md.osfd;
+        } else {
+            items[i].ti_Tag = NP_CloseInput;
+            items[i++].ti_Data = FALSE;
+            items[i].ti_Tag = SYS_Input;
+            items[i++].ti_Data = Input();
+        }
+
+        if (pr->md.attr->stderrFd) {
+            PRFileDesc *pipein, *pipeout;
+            PR_CreatePipe(&pipein, &pipeout);
+            pipes[pipefd++] = pipein;
+            pipes[pipefd++] = pipeout;
+
+            mpp->pollfds[mpp->numfds].fd = pipein;
+            mpp->pollfds[mpp->numfds].in_flags = PR_POLL_READ;
+            mpp->pipefds[mpp->numfds++] = pr->md.attr->stderrFd;
+            items[i].ti_Tag = NP_CloseError;
+            items[i++].ti_Data = TRUE;
+            items[i].ti_Tag = NP_Error;
+            items[i++].ti_Data = pipeout->secret->md.osfd;
+        } else {
+            if (me->pr_CES) {
+                items[i].ti_Tag = NP_CloseError;
+                items[i++].ti_Data = FALSE;
+                items[i].ti_Tag = NP_Error;
+                items[i++].ti_Data = me->pr_CES;
+            } else {
+                items[i].ti_Tag = NP_CloseError;
+                items[i++].ti_Data = TRUE;
+                items[i].ti_Tag = NP_Error;
+                items[i++].ti_Data = Open("*", MODE_OLDFILE);
+            }
+        }
+
         if (pr->md.attr->currentDirectory) {
-            printf("Current dir %s\n", pr->md.attr->currentDirectory);
             items[i].ti_Tag = NP_CurrentDir;
-            items[i++].ti_Data = pr->md.attr->currentDirectory;
+            items[i++].ti_Data = (ULONG)pr->md.attr->currentDirectory;
         }
     } else {
-        items[i].ti_Tag = NP_Input;
+        items[i].ti_Tag = NP_CloseInput;
+        items[i++].ti_Data = FALSE;
+        items[i].ti_Tag = NP_CloseOutput;
+        items[i++].ti_Data = FALSE;
+        items[i].ti_Tag = SYS_Input;
         items[i++].ti_Data = Input();
-        items[i].ti_Tag = NP_Output;
+        items[i].ti_Tag = SYS_Output;
         items[i++].ti_Data = Output();
+        items[i].ti_Tag = NP_CloseError;
+        items[i++].ti_Data = (me->pr_CES) ? FALSE : TRUE;
+        items[i].ti_Tag = NP_Error;
+        items[i++].ti_Data = me->pr_CES ? me->pr_CES : Open("*", MODE_OLDFILE);
     }
         
     items[i].ti_Tag = TAG_DONE;
     items[i].ti_Data = TAG_DONE;
 
-    printf("Spawning command '%s'\n", cmdLine);
+    PR_NotifyAllCondVar(pr->md.condVar);
+    PR_Unlock(pr->md.lock);
 
-    pr->md.returnCode = SystemTagList(cmdLine, items);
+    if (mpp->numfds > 0) {
+        pollThread = PR_CreateThread(PR_SYSTEM_THREAD, 
+            _MDPollThread, mpp, PR_PRIORITY_NORMAL, PR_LOCAL_THREAD, 
+            PR_JOINABLE_THREAD, 0);
+    } else {
+        PR_Free(mpp);
+    }
+
+    printf("Spawning '%s'\n", cmdLine);
+    returnCode = SystemTagList(cmdLine, items);
+    if (!_PR_PENDING_INTERRUPT(PR_CurrentThread())) {
+        pr->md.returnCode = returnCode;
+    }
     PR_Free(cmdLine);
+    PR_JoinThread(pollThread);
+    for (i = 0; i < pipefd; i++) {
+        PR_Close(pipes[i]);
+    }
 }
 
 PRProcess *_CreateProcess(const char *path, char *const *argv,
     char *const *envp, const PRProcessAttr *attr) {
     PRProcess *retval = PR_NEWZAP(PRProcess);
+    PRLock *lock;
+    PRCondVar *cv;
     if (retval == NULL) {
         PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
-        return NULL;
+        goto error;
     }
+
+    lock = retval->md.lock = PR_NewLock();
+    if (lock == NULL) {
+        PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+        goto error;
+    }
+
+    cv = retval->md.condVar = PR_NewCondVar(lock);
+    if (cv == NULL) {
+        PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+        goto error;
+    }
+
+    PR_Lock(lock);
+
     retval->md.argv = argv;
-    retval->md.envp = envp;
+    retval->md.envp = envp != NULL ? envp : environ;
     retval->md.attr = attr;
 
     /* Since SystemTags() waits until it is done,
@@ -593,9 +740,26 @@ PRProcess *_CreateProcess(const char *path, char *const *argv,
         _MDCreateProcessThread, retval, PR_PRIORITY_NORMAL, PR_LOCAL_THREAD, 
         PR_JOINABLE_THREAD, 0);
 
-    printf("Spawned thread %x\n", retval->md.executeThread);
-    printf("REturning %lx\n", retval);
+    /*
+     * Wait until the process thread is done with the PRProcessAttr
+     */
+    PR_WaitCondVar(cv, PR_INTERVAL_NO_TIMEOUT);
+    PR_Unlock(lock);
+    PR_DestroyCondVar(cv);
+    PR_DestroyLock(lock);
+
     return retval;
+error:
+    if (cv != NULL) {
+        PR_DestroyCondVar(cv);
+    }
+
+    if (lock != NULL) {
+        PR_DestroyLock(lock);
+    }
+
+    PR_FREEIF(retval);
+    return NULL;
 }
 
 
@@ -610,6 +774,8 @@ PRStatus _WaitProcess(PRProcess *process, PRInt32 *exitCode) {
 
 PRStatus _DetachProcess(PRProcess *process) {
     /* Maybe wait to free up process?? */
+    PR_Interrupt(process->md.executeThread);
+    PR_Free(process);
     return PR_SUCCESS;
 }
 
