@@ -159,10 +159,13 @@ static PRThread *sockThread;
 /* Destructor for the ThreadPrivate socket descriptor */
 static void closeOpenSocketDTOR(void *prm) {
     PRThread *me = PR_GetCurrentThread();
-    struct SharedSocket *ss = (struct SharedSocket *)prm;
-    printf("%lx closing socket(DTOR) %d\n", me, ss->fd);
-    TCP_CloseSocket(ss->fd);
-    PR_Free(ss);
+    if (me->state != _PR_DEAD_STATE) {
+        /* just a precaution */
+        struct SharedSocket *ss = (struct SharedSocket *)prm;
+        printf("%lx closing socket(DTOR) %d\n", me, ss->fd);
+        TCP_CloseSocket(ss->fd);
+        PR_Free(ss);
+    }
 }
 
 /*
@@ -403,7 +406,9 @@ static void SocketThread(void *notused) {
                     reply.msg.obtain.id = TCP_ReleaseSocket(fd, -1);
                     reply.msg.obtain.sequenceNumber = ss->sequenceNumber;
                 } else {
+                    reply.msg.obtain.id = -1;
                     reply.errno = TCP_Errno();
+                    printf("Dup2socket failed: %d\n", reply.errno);
                 }
             } else {
                 reply.errno = EBADF;
@@ -451,6 +456,7 @@ static void SocketThread(void *notused) {
                     PR_SetThreadPrivate(idx, (void *)ss);
                 }
             } else {
+                reply.msg.receive.private_idx = -1;
                 reply.errno = ENFILE;
                 PR_Free(ss);
             }
@@ -524,6 +530,7 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
             ss->sequenceNumber = reply.msg.obtain.sequenceNumber;
             fd = ss->fd;
         } else {
+            printf("Obtained failed %d\n", reply.errno);
             PR_SetError(PR_UNKNOWN_ERROR, reply.errno);
             PR_Free(ss);
             ss = NULL;
@@ -1187,9 +1194,10 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
     fd_set out;
     fd_set err;
     PRThread *me = PR_GetCurrentThread();
-    PRInt32 flags = 1 << me->selectPort->mp_SigBit | 1 << me->port->mp_SigBit;
+    PRInt32 flags;
     PRInt32 ready;
-    struct timeval tm;
+    PRBool done = PR_FALSE;
+    PRBool firstTime = PR_TRUE;
     int maxfd = -1 ;
     struct StandardPacket sps[npds];
 
@@ -1204,210 +1212,246 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
 
     memset(sps, 0, sizeof(sps[0]) * npds);
 
-    tm.tv_secs = timeout / _PR_MD_INTERVAL_PER_SEC();
-    tm.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * 1000000 / _PR_MD_INTERVAL_PER_SEC();
-        
     printf("Poll(%lx) with #fds %d, timeout %d\n", me, npds, timeout);
     ready = 0;
-    for (i = 0; i < npds; i++) {
-        struct StandardPacket *sp = &sps[i];
-        struct FileHandle *fh;
-        struct PRPollDesc *pd = &pds[i];
 
-        PRInt16 in_flags_read = 0, in_flags_write = 0;
-        PRInt16 out_flags_read = 0, out_flags_write = 0;
+    /* Send off a timer request waiting for x seconds */
+    if (timeout != PR_INTERVAL_NO_TIMEOUT) {
+        me->sleepRequest->tr_node.io_Command = TR_ADDREQUEST;
 
-        if ((NULL != pd->fd) && (0 != pd->in_flags)) {
-            if (pd->in_flags & PR_POLL_READ) {
-                in_flags_read = (pd->fd->methods->poll)(
-                    pd->fd,
-                    pd->in_flags & ~PR_POLL_WRITE,
-                    &out_flags_read);
-            }
-            if (pd->in_flags & PR_POLL_WRITE) {
-                in_flags_write = (pd->fd->methods->poll)(
-                    pd->fd,
-                    pd->in_flags & ~PR_POLL_READ,
-                    &out_flags_write);
-            }
-            if ((0 != (in_flags_read & out_flags_read))
-                || (0 != (in_flags_write & out_flags_write))) {
-                /* this one is ready right now */
-                if (0 == ready) {
-                    /*
-                     * We will return without calling the system
-                     * poll function.  So zero the out_flags
-                     * fields of all the poll descriptors before
-                     * this one.
-                     */
-                    int j;
-                    for (j = 0; j < i; j++) {
-                        pd->out_flags = 0;
-                    }
+
+        me->sleepRequest->tr_time.tv_secs = timeout / _PR_MD_INTERVAL_PER_SEC();
+        me->sleepRequest->tr_time.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC()
+            * (1000000 / _PR_MD_INTERVAL_PER_SEC());
+        me->sleepRequestUsed = PR_TRUE;
+    }
+
+    while (!done) {
+
+        for (i = 0; i < npds; i++) {
+            struct StandardPacket *sp = &sps[i];
+            struct FileHandle *fh;
+            struct PRPollDesc *pd = &pds[i];
+
+            PRInt16 in_flags_read = 0, in_flags_write = 0;
+            PRInt16 out_flags_read = 0, out_flags_write = 0;
+
+            if ((NULL != pd->fd) && (0 != pd->in_flags)) {
+                if (pd->in_flags & PR_POLL_READ) {
+                    in_flags_read = (pd->fd->methods->poll)(
+                        pd->fd,
+                        pd->in_flags & ~PR_POLL_WRITE,
+                                                            &out_flags_read);
                 }
-                ready += 1;
-                pd->out_flags = out_flags_read | out_flags_write;
-            } else {
-                PRFileDesc *bottom;
-                pd->out_flags = 0; 
+                if (pd->in_flags & PR_POLL_WRITE) {
+                    in_flags_write = (pd->fd->methods->poll)(
+                        pd->fd,
+                        pd->in_flags & ~PR_POLL_READ,
+                        &out_flags_write);
+                }
+                if ((0 != (in_flags_read & out_flags_read))
+                    || (0 != (in_flags_write & out_flags_write))) {
+                    /* this one is ready right now */
+                    if (0 == ready) {
+                        /*
+                         * We will return without calling the system
+                         * poll function.  So zero the out_flags
+                         * fields of all the poll descriptors before
+                         * this one.
+                         */
+                        int j;
+                        for (j = 0; j < i; j++) {
+                            pd->out_flags = 0;
+                        }
+                    }
+                    ready += 1;
+                    pd->out_flags = out_flags_read | out_flags_write;
+                } else {
+                    PRFileDesc *bottom;
+                    pd->out_flags = 0; 
 
-                /* make sure this is an NSPR supported stack */
-                bottom = PR_GetIdentitiesLayer(pd->fd, PR_NSPR_IO_LAYER);
-                PR_ASSERT(NULL != bottom);  /* what to do about that? */
-                if ((NULL != bottom)
-                    && (_PR_FILEDESC_OPEN == bottom->secret->state)) {
-                    printf("Poll(%lx) Bottom fd %lx, osfd is %lx, type is %lx\n", me, bottom, bottom->secret->md.osfd, bottom->methods->file_type);
-                    switch (bottom->methods->file_type) {
-                    case PR_DESC_PIPE:
-                    case PR_DESC_FILE:
-                        sp = &sps[i];
-                        printf("Poll(%lx) fd %d(%lx) is a file,pipe\n", me, i, pd->fd);
-                        sp->sp_Msg.mn_Node.ln_Name = (char *)&sp->sp_Pkt;
-                        sp->sp_Pkt.dp_Link = &sp->sp_Msg;
-                        sp->sp_Pkt.dp_Res1 = NULL;
-                        sp->sp_Pkt.dp_Res2 = NULL;
-                        sp->sp_Pkt.dp_Port = NULL;
-                        sp->sp_Msg.mn_Node.ln_Type = 0;
-                        fh = (struct FileHandle *)BTOCPTR(bottom->secret->md.osfd);
-                        printf("Poll(%lx) sel port is %lx, BPTR is %lx, fh is %lx, packet is %lx\n", me, me->selectPort, bottom->secret->md.osfd, fh, sp);
-                        sp->sp_Pkt.dp_Port = me->selectPort;
-                        sp->sp_Pkt.dp_Type = ACTION_WAIT_CHAR;
-                        sp->sp_Pkt.dp_Arg1 =
-                            (timeout != PR_INTERVAL_NO_TIMEOUT) ? timeout * _PR_MD_INTERVAL_PER_SEC() * 1000 : 100000;
-                        PutMsg(fh->fh_Type, (struct Message *)sp);
-                        break;       
-                    case PR_DESC_SOCKET_TCP:
-                    case PR_DESC_SOCKET_UDP:
-                        fd = _MD_Ensure_Socket(bottom->secret->md.osfd);
-                        printf("Poll(%lx) fd %d(%lx) is a socket, fd is %d\n", me, i, pd->fd, fd);
-                        if (fd < 0) {
-                            pd->out_flags = PR_POLL_NVAL;
-                            continue;
-                        }
-                        if (fd > maxfd)
-                            maxfd = fd;
+                    /* make sure this is an NSPR supported stack */
+                    bottom = PR_GetIdentitiesLayer(pd->fd, PR_NSPR_IO_LAYER);
+                    PR_ASSERT(NULL != bottom);  /* what to do about that? */
+                    if ((NULL != bottom)
+                        && (_PR_FILEDESC_OPEN == bottom->secret->state)) {
+                        printf("Poll(%lx) Bottom fd %lx, osfd is %lx, type is %lx\n", me, bottom, bottom->secret->md.osfd, bottom->methods->file_type);
+                        switch (bottom->methods->file_type) {
+                        case PR_DESC_PIPE:
+                        case PR_DESC_FILE:
+                            sp = &sps[i];
+                            printf("Poll(%lx) fd %d(%lx) is a file,pipe\n", me, i, pd->fd);
+                            sp->sp_Msg.mn_Node.ln_Name = (char *)&sp->sp_Pkt;
+                            sp->sp_Pkt.dp_Link = &sp->sp_Msg;
+                            sp->sp_Pkt.dp_Res1 = NULL;
+                            sp->sp_Pkt.dp_Res2 = NULL;
+                            sp->sp_Pkt.dp_Port = NULL;
+                            sp->sp_Msg.mn_Node.ln_Type = 0;
+                            fh = (struct FileHandle *)BTOCPTR(bottom->secret->md.osfd);
+                            printf("Poll(%lx) sel port is %lx, BPTR is %lx, fh is %lx, packet is %lx\n", me, me->selectPort, bottom->secret->md.osfd, fh, sp);
+                            sp->sp_Pkt.dp_Port = me->selectPort;
+                            sp->sp_Pkt.dp_Type = ACTION_WAIT_CHAR;
+                            sp->sp_Pkt.dp_Arg1 =
+                                (timeout != PR_INTERVAL_NO_TIMEOUT) ? timeout * _PR_MD_INTERVAL_PER_SEC() * 1000 : 100000;
+                            PutMsg(fh->fh_Type, (struct Message *)sp);
+                            break;       
+                        case PR_DESC_SOCKET_TCP:
+                        case PR_DESC_SOCKET_UDP:
+                            fd = _MD_Ensure_Socket(bottom->secret->md.osfd);
+                            printf("Poll(%lx) fd %d(%lx) is a socket, fd is %d\n", me, i, pd->fd, fd);
+                            if (fd < 0) {
+                                pd->out_flags = PR_POLL_NVAL;
+                                continue;
+                            }
+                            if (fd > maxfd)
+                                maxfd = fd;
 
-                        if (pd->in_flags & PR_POLL_READ) {
-                            FD_SET(fd, &in);
+                            if (pd->in_flags & PR_POLL_READ) {
+                                FD_SET(fd, &in);
+                            }
+                            if (pd->in_flags & PR_POLL_WRITE) {
+                                FD_SET(fd, &out);
+                            } 
+                            if (pd->in_flags & PR_POLL_EXCEPT) {
+                                FD_SET(fd, &err);
+                            }
+                            break;
                         }
-                        if (pd->in_flags & PR_POLL_WRITE) {
-                            FD_SET(fd, &out);
-                        } 
-                        if (pd->in_flags & PR_POLL_EXCEPT) {
-                            FD_SET(fd, &err);
-                        }
-                        break;
                     }
                 }
             }
         }
-    }
 
-    me->state = _PR_IO_WAIT;
-    printf("Poll(%lx) Going to waitselect, maxfd is %d, signals are %lx\n", me, maxfd, flags);
-    retval = TCP_WaitSelect(maxfd + 1, &in, &out, &err, (timeout == PR_INTERVAL_NO_TIMEOUT) ? NULL : &tm, &flags);
-    rc = retval;
-
-    /* See if someone is trying to kill me by setting my state to dead */
-    if (me->state == _PR_DEAD_STATE) {
-        printf("Thread %x was forceably killed from WaitSelect in poll\n", me);
-        longjmp(me->jmpbuf, 1);
-    }
-    me->state = _PR_RUNNING;
-
-    printf("Poll(%lx) select returns %d, errno is %d\n", me, retval, TCP_Errno());
-
-    if (flags & (1 << me->selectPort->mp_SigBit)) {
-        struct StandardPacket *sp;
-        printf("File descriptor waiting...\n");
-
-        while ((sp = (struct StandardPacket *)GetMsg(me->selectPort)) != NULL) {
-            printf("Got packet %lx\n", sp);
-            for (i = 0; i < npds && sp != &sps[i]; i++)
-                ;
-
-            printf("File descriptor packet %d is waiting, res1 is %d, res2 is %d\n", i, sp->sp_Pkt.dp_Res1, sp->sp_Pkt.dp_Res2);
-            pds[i].out_flags = 0;
-
-            retval++;
-
-            if (pds[i].in_flags & PR_POLL_READ) {
-                /* there are two possible answers: error (packet not supported) 
-                 * and the `real' answer.
-                 * An error is treated as to allow input, so select() won't block
-                 * indefinitely...
-                 * & 1 converts dos-true (-1) into normal true (1) ;-)
-                 */
-
-                if (sp->sp_Pkt.dp_Res2 || sp->sp_Pkt.dp_Res1 & 1)
-                    pds[i].out_flags |= PR_POLL_READ;
-
-            }        
-            /* Always available for write? */
-            if (pds[i].in_flags & PR_POLL_WRITE) {
-                pds[i].out_flags |= PR_POLL_WRITE;
-            }
-
-            sp->sp_Pkt.dp_Port = NULL;
+        /* Do this here just in case the timeout happens before the select */
+        if (firstTime && timeout != PR_INTERVAL_NO_TIMEOUT) {
+            SendIO((struct IORequest *)me->sleepRequest);
         }
 
-    }
+        firstTime = PR_FALSE;
 
-    if (flags & (1 << me->port->mp_SigBit)) {
-        // Interrupted??
-    }
+        me->state = _PR_IO_WAIT;
+        flags = 1 << me->selectPort->mp_SigBit | 1 << me->port->mp_SigBit;
+        printf("Poll(%lx) Going to waitselect, maxfd is %d, signals are %lx\n", me, maxfd, flags);
+        retval = TCP_WaitSelect(maxfd + 1, &in, &out, &err, NULL, &flags);
+        rc = retval;
 
-    for (i = 0; i < npds; i++) {
-        struct StandardPacket *sp = &sps[i];
-        struct StandardPacket *tmp;
-        struct FileHandle *fh;
-        struct PRPollDesc *pd = &pds[i];
-        if ((NULL != pd->fd) && (0 != pd->in_flags)) {
-            PRFileDesc *bottom = PR_GetIdentitiesLayer(pd->fd, PR_NSPR_IO_LAYER);
-            PR_ASSERT(NULL != bottom);
+        /* See if someone is trying to kill me by setting my state to dead */
+        if (me->state == _PR_DEAD_STATE) {
+            printf("Thread %x was forceably killed from WaitSelect in poll\n", me);
+            longjmp(me->jmpbuf, 1);
+        }
+        me->state = _PR_RUNNING;
 
-            switch (bottom->methods->file_type) {
-            case PR_DESC_PIPE:
-            case PR_DESC_FILE:
-                /* Wait for any packets to return */
-                if (sp->sp_Pkt.dp_Port != NULL) {
-                    for (;;) {
-                        if ((tmp = (struct StandardPacket *)GetMsg(me->selectPort)) != NULL) {
-                            tmp->sp_Pkt.dp_Port = NULL;
-                            if (tmp == sp)
-                                break;
-                        } else {
-                            WaitPort(me->selectPort);
-                        }
-                    }
-                }
-                break;
-            case PR_DESC_SOCKET_TCP:
-            case PR_DESC_SOCKET_UDP:
-                if (rc < 0)
-                    continue;
-                fd = _MD_Ensure_Socket(bottom->secret->md.osfd);
+        printf("Poll(%lx) select returns %d, errno is %d\n", me, retval, TCP_Errno());
+
+        if (flags & (1 << me->selectPort->mp_SigBit)) {
+            struct StandardPacket *sp;
+            printf("File descriptor waiting...\n");
+
+            while ((sp = (struct StandardPacket *)GetMsg(me->selectPort)) != NULL) {
+                printf("Got packet %lx\n", sp);
+                for (i = 0; i < npds && sp != &sps[i]; i++)
+                    ;
+
+                printf("File descriptor packet %d is waiting, res1 is %d, res2 is %d\n", i, sp->sp_Pkt.dp_Res1, sp->sp_Pkt.dp_Res2);
                 pds[i].out_flags = 0;
-                if (FD_ISSET(fd, &in)) {
-                    printf("Fd %d is waiting for read\n", fd);
-                    pds[i].out_flags |= PR_POLL_READ;
-                }
-                if (FD_ISSET(fd, &out)) {
-                    printf("Fd %d is waiting for write\n", fd);
+
+
+                if (pds[i].in_flags & PR_POLL_READ) {
+                    /* there are two possible answers: error (packet not supported) 
+                     * and the `real' answer.
+                     * An error is treated as to allow input, so select() won't block
+                     * indefinitely...
+                     * & 1 converts dos-true (-1) into normal true (1) ;-)
+                     */
+
+                    if (sp->sp_Pkt.dp_Res2 || sp->sp_Pkt.dp_Res1 & 1) {
+                        pds[i].out_flags |= PR_POLL_READ;
+                        retval++;
+                    }
+                }        
+                /* Always available for write? How can I detect pipe blocks ?? */
+                if (pds[i].in_flags & PR_POLL_WRITE) {
                     pds[i].out_flags |= PR_POLL_WRITE;
+                    retval++;
                 }
 
-                if (FD_ISSET(fd, &err)) {
-                    printf("Fd %d is waiting for except\n", fd);
-                    pds[i].out_flags |= PR_POLL_EXCEPT;
+                sp->sp_Pkt.dp_Port = NULL;
+            }
+
+            if (retval != rc) {
+                done = TRUE;
+            }
+        }
+
+        if (flags & (1 << me->port->mp_SigBit)) {
+            /* timeout or interrupt */
+            printf("Poll got timeout/interrupt\n");
+            done = TRUE;
+        }
+
+        for (i = 0; i < npds; i++) {
+            struct StandardPacket *sp = &sps[i];
+            struct StandardPacket *tmp;
+            struct FileHandle *fh;
+            struct PRPollDesc *pd = &pds[i];
+            if ((NULL != pd->fd) && (0 != pd->in_flags)) {
+                PRFileDesc *bottom = PR_GetIdentitiesLayer(pd->fd, PR_NSPR_IO_LAYER);
+                PR_ASSERT(NULL != bottom);
+
+                switch (bottom->methods->file_type) {
+                case PR_DESC_PIPE:
+                case PR_DESC_FILE:
+                    /* Wait for any packets to return */
+                    if (sp->sp_Pkt.dp_Port != NULL) {
+                        for (;;) {
+                            if ((tmp = (struct StandardPacket *)GetMsg(me->selectPort)) != NULL) {
+                                tmp->sp_Pkt.dp_Port = NULL;
+                                if (tmp == sp)
+                                    break;
+                            } else {
+                                WaitPort(me->selectPort);
+                            }
+                        }
+                    }
+                    break;
+                case PR_DESC_SOCKET_TCP:
+                case PR_DESC_SOCKET_UDP:
+                    if (rc < 0)
+                        continue;
+                    done = TRUE;
+                    fd = _MD_Ensure_Socket(bottom->secret->md.osfd);
+                    pds[i].out_flags = 0;
+                    if (FD_ISSET(fd, &in)) {
+                        printf("Fd %d is waiting for read\n", fd);
+                        pds[i].out_flags |= PR_POLL_READ;
+                    }
+                    if (FD_ISSET(fd, &out)) {
+                        printf("Fd %d is waiting for write\n", fd);
+                        pds[i].out_flags |= PR_POLL_WRITE;
+                    }
+
+                    if (FD_ISSET(fd, &err)) {
+                        printf("Fd %d is waiting for except\n", fd);
+                        pds[i].out_flags |= PR_POLL_EXCEPT;
+                    }
+                    break;
+                default:
+                    break;
                 }
-                break;
-            default:
-                break;
             }
         }
     }
-error:
+
+    while (GetMsg(me->port))
+        ;
+    if (me->sleepRequestUsed) {
+        if (!(CheckIO((struct IORequest *)me->sleepRequest))) {
+            AbortIO((struct IORequest *)me->sleepRequest);
+            WaitIO((struct IORequest *)me->sleepRequest);
+        }
+    }
+            
     printf("Poll(%lx) returns %d\n", me, retval);
     return retval;
 }
