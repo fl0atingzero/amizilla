@@ -188,16 +188,16 @@ void _ResumeCpu(_PRCPU  *cpu) {
 }
 */
 
-void _BeginSuspend_All(void) {
+void _BeginSuspendAll(void) {
 }
 
-void _EndSuspend_All(void) {
+void _EndSuspendAll(void) {
 }
 
-void _BeginResume_All(void) {
+void _BeginResumeAll(void) {
 }
 
-void _EndResume_All(void) {
+void _EndResumeAll(void) {
 }
 
 void _CleanThread(PRThread *thread) {
