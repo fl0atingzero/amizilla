@@ -40,5 +40,9 @@ LIBS		= \
 		$(NSPR_LIBS) \
 		$(NULL)
 
+ifeq ($(OS_ARCH), AmigaOS)
+FORCE_NO_PIC=1
+endif
+
 include $(topsrcdir)/config/rules.mk
 

@@ -32,6 +32,10 @@ ifeq ($(OS_ARCH),WINNT)
 DIRS		+= windows
 endif
 
+ifeq ($(OS_ARCH),AmigaOS)
+FORCE_NO_PIC = 1
+endif
+
 REQUIRES	= \
 		  string \
 		  $(NULL)
@@ -90,6 +94,10 @@ CXXFLAGS	+= -fexceptions
 else
 CXXFLAGS	+= -GX
 endif
+endif
+
+ifeq ($(OS_ARCH),AmigaOS)
+CXXFLAGS += -fexceptions
 endif
 
 libs::
