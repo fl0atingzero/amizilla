@@ -102,12 +102,34 @@ PR_IMPLEMENT(PRSemaphore*) PR_NewSem(PRUintn value) {
 }
 
 
+static PRSem *readSemCookie(PRFileDesc *osfd) {
+    PRInt32 cookie;
+    PRInt32 size;
+
+    PR_Read(osfd, &cookie, sizeof(cookie));
+    cookie = ntohl(cookie);
+    if (cookie != SEMAPHORE_MAGIC_COOKIE) {
+        /* Any better error code for this */
+        PR_SetError(PR_OPERATION_NOT_SUPPORTED_ERROR, 0);
+        return NULL;
+    } else {
+        char buf[20];
+
+        PR_Read(osfd, &size, sizeof(size));
+        size = ntohl(size);
+        memset(buf, 0, sizeof(buf));
+        PR_Read(osfd, buf, size);
+        return (struct PRSem *)atol(buf);
+    }
+}
+
 PR_IMPLEMENT(PRSem *) PR_OpenSemaphore(
     const char *name,PRIntn flags, PRIntn mode, PRUintn value)
 {
-    PRSem *sem;
+    PRSem *sem = NULL;
     PRIntn i;
     char osname[PR_IPC_NAME_SIZE];
+    PRFileDesc *osfd = NULL;
     int cookie;
 
     if (_PR_MakeNativeIPCName(name, osname, sizeof(osname), _PRIPCSem)
@@ -117,54 +139,60 @@ PR_IMPLEMENT(PRSem *) PR_OpenSemaphore(
 
     /* Make sure the file exists before calling ftok. */
     if (flags & PR_SEM_CREATE) {
-        int osfd = open(osname, O_RDWR|O_CREAT, mode);
-        char buf[20];
-        if (-1 == osfd) {
-            _PR_MD_MAP_OPEN_ERROR(errno);
-            return NULL;
-        }
-        sem = PR_NEW(PRSem);
-        if (NULL == sem) {
-            PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
-            return NULL;
-        }
-        sem->sem = PR_NewSem(value);
-        sem->owner = FindTask(NULL);
-        if (sem->sem == NULL) {
-            PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
-            PR_Free(sem);
-            return NULL;
-        }
-        cookie = htonl(SEMAPHORE_MAGIC_COOKIE);
-        write(osfd, &cookie, sizeof(cookie));
-        sprintf(buf, "%ld", sem);
-        cookie = htonl(strlen(buf));
-        write(osfd, &cookie, sizeof(cookie));
-        write(osfd, buf, strlen(buf));
-        close(osfd);
-    } else {
-        int osfd = open(osname, O_RDONLY, mode);
-        char buf[10];
-        if (-1 == osfd) {
-            _PR_MD_MAP_OPEN_ERROR(errno);
-            return NULL;
+        PRFileInfo fi;
+        int openflags = PR_CREATE_FILE;
+        
+        if (flags & PR_SEM_EXCL)
+            openflags |= PR_EXCL;
+
+        osfd = PR_Open(osname, openflags, mode);
+        if (osfd == NULL) {
+            goto error;
         }
 
-        read(osfd, &cookie, sizeof(cookie));
-        cookie = ntohl(cookie);
-        if (cookie != SEMAPHORE_MAGIC_COOKIE) {
-            /* Any better error code for this */
-            PR_SetError(PR_OPERATION_NOT_SUPPORTED_ERROR, 0);
-        } else {
-            read(osfd, &cookie, sizeof(cookie));
-            cookie = ntohl(cookie);
-            memset(buf, 0, sizeof(buf));
-            read(osfd, buf, cookie);
-            sem = (struct PRSem *)atol(buf);
+        if (PR_GetOpenFileInfo(osfd, &fi) == PR_SUCCESS && fi.size > 0) {
+            if ((sem = readSemCookie(osfd)) == NULL)
+                goto error;
+        } else {    
+            char buf[20];
+            sem = PR_NEWZAP(PRSem);
+            if (sem == NULL) {
+                PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+                goto error;
+            }
+            sem->sem = PR_NewSem(value);
+            sem->owner = FindTask(NULL);
+            if (sem->sem == NULL) {
+                PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+                goto error;
+            }
+
+            cookie = htonl(SEMAPHORE_MAGIC_COOKIE);
+            PR_Write(osfd, &cookie, sizeof(cookie));
+            sprintf(buf, "%ld", sem);
+            cookie = htonl(strlen(buf));
+            PR_Write(osfd, &cookie, sizeof(cookie));
+            PR_Write(osfd, buf, strlen(buf));
         }
+    } else {
+        osfd = PR_Open(osname, PR_RDONLY, mode);
+        if (osfd == NULL) {
+            goto error;
+        }
+
+        sem = readSemCookie(osfd);
+        if (sem == NULL)
+            goto error;
     }
 
+    PR_Close(osfd);
     return sem;
+error:
+    if (osfd != NULL)
+        PR_Close(osfd);
+
+    PR_FREEIF(sem);
+    return NULL;
 }
 
 PR_IMPLEMENT(PRStatus) PR_WaitSemaphore(PRSem *sem) {
