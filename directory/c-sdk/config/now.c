@@ -37,7 +37,7 @@
 
 #if defined(VMS)
 #include <sys/timeb.h>
-#elif defined(XP_UNIX) || defined(XP_OS2_EMX) || defined(XP_BEOS)
+#elif defined(XP_UNIX) || defined(XP_OS2_EMX) || defined(XP_BEOS) ||defined(XP_AMIGAOS)
 #include <sys/time.h>
 #elif defined(WIN32) || defined(XP_OS2_VACPP)
 #include <sys/timeb.h>

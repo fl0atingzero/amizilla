@@ -47,7 +47,7 @@
 # include <arpa/inet.h>
 #endif
 # include <netdb.h>
-#if !defined(hpux) && !defined(SUNOS4) && !defined(XP_BEOS)
+#if !defined(hpux) && !defined(SUNOS4) && !defined(XP_BEOS) && !defined(amiga)
 # include <sys/select.h>
 #endif /* !defined(hpux) and others */
 #endif /* _WINDOWS */
@@ -88,7 +88,7 @@
 
 #if !defined(_WINDOWS) && !defined(macintosh) && !defined(BSDI) && \
     !defined(XP_OS2) && !defined(XP_BEOS) && !defined(NTO) && \
-    !defined(DARWIN)
+    !defined(DARWIN) && !defined(amiga)
 #define NSLDAPI_HAVE_POLL	1
 #endif
 
