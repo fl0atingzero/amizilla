@@ -85,6 +85,10 @@ extern void SetupMacPrintfLog(char *logFile);
 char *TEST_DIR = "prdir";
 char *SMALL_FILE_NAME = "prsmallf";
 char *LARGE_FILE_NAME = "prlargef";
+#elif defined(XP_AMIGAOS)
+char *TEST_DIR = "t:prsocket_test_dir";
+char *SMALL_FILE_NAME = "t:prsocket_test_dir/small_file";
+char *LARGE_FILE_NAME = "t:prsocket_test_dir/large_file";
 #else
 char *TEST_DIR = "/tmp/prsocket_test_dir";
 char *SMALL_FILE_NAME = "/tmp/prsocket_test_dir/small_file";
