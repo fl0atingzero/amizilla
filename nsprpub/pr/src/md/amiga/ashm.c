@@ -120,7 +120,7 @@ PRSharedMemory * _MD_OpenSharedMemory(
             goto error;
         } 
 
-        if (PR_GetFileInfo(ipcname, &fi) == PR_SUCCESS && fi.size > 0) {
+        if (PR_GetOpenFileInfo(osfd, &fi) == PR_SUCCESS && fi.size > 0) {
             if (readShmCookie(osfd, shm) == PR_FAILURE) {
                 goto error;
             }
