@@ -220,7 +220,7 @@ static int local_io_wait(int fd, int type, PRIntervalTime timeout) {
 
     if (timeout != PR_INTERVAL_NO_TIMEOUT) {
         tv.tv_sec = timeout / _PR_MD_INTERVAL_PER_SEC();
-        tv.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC();
+        tv.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * (1000000 / _PR_MD_INTERVAL_PER_SEC());
     }
 
     printf("Local_io_wait(%lx) fd %d, type %d, timeout %d, flags %lx\n", me, fd, type, timeout, me->flags);
@@ -1118,7 +1118,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
     memset(sps, 0, sizeof(sps[0]) * npds);
 
     tm.tv_secs = timeout / _PR_MD_INTERVAL_PER_SEC();
-    tm.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * 1000;
+    tm.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * 1000000 / _PR_MD_INTERVAL_PER_SEC();
         
     if (npds == 0) {
         PR_Sleep(timeout);

@@ -59,7 +59,7 @@ _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
     timerIO->tr_node.io_Command = TR_ADDREQUEST;
 
     timerIO->tr_time.tv_secs = timeout / _PR_MD_INTERVAL_PER_SEC();
-    timerIO->tr_time.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * 1000;
+    timerIO->tr_time.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * (1000000 / _PR_MD_INTERVAL_PER_SEC());
 
     //printf("%lx, Beginning IO for sleep\n", thread);
     thread->io_pending = PR_TRUE;
@@ -113,7 +113,7 @@ PRIntervalTime _MD_Get_Interval(void) {
     if (!(OpenDevice(TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0))) {
         tr->tr_node.io_Command = TR_GETSYSTIME;
         DoIO((struct IORequest *)tr);
-        retval = tr->tr_time.tv_micro * 10000 + tr->tr_time.tv_secs;
+        retval = (tr->tr_time.tv_micro * _MD_INTERVAL_PER_SEC() / 1000000) + tr->tr_time.tv_secs * _MD_INTERVAL_PER_SEC();
         CloseDevice((struct IORequest *)tr);
     }
     FreeMem(tr, sizeof(struct timerequest));
