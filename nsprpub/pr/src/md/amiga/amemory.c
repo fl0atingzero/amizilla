@@ -60,12 +60,14 @@ void _PR_Init_Memory(void) {
 }
 
 void _PR_Release_Memory(void) {
+    //printf("Releasing all memory\n");
     if (!PR_CLIST_IS_EMPTY(&memoryList)) {
         PRCList *next;
         for (next = PR_LIST_HEAD(&memoryList); next != &memoryList;) {
             struct _MDMemPtr *mp = (struct _MDMemPtr *)next;
             PRCList *tmp = next;
             next = PR_NEXT_LINK(next);
+            //printf("%lx Freeing  memory %lx, size %d\n", FindTask(NULL), mp, mp->size);
             FreeMem(mp, mp->size);
         }
     }
@@ -82,7 +84,7 @@ void *PR_MD_malloc( size_t size ) {
     }
 
     pr->size = size + sizeof(struct _MDMemPtr);
-    //printf("Allocating memory %lx, size %d\n", pr, pr->size);
+    //printf("%lx Allocating memory %lx, size %d\n", FindTask(NULL), pr, pr->size);
     _PR_ObtainMemoryLock();
     PR_APPEND_LINK((PRCList *)pr, &memoryList);
     _PR_ReleaseMemoryLock();
@@ -104,7 +106,7 @@ void *PR_MD_realloc( void* old_blk, size_t size ) {
             struct _MDMemPtr *ob = (struct _MDMemPtr *)
                 ((char *)old_blk - sizeof(struct _MDMemPtr));
             int sz = MIN(ob->size, size);
-            memcpy(newblock, old_blk, sz);
+            memcpy(newblock, old_blk, sz - sizeof(struct _MDMemPtr));
             PR_MD_free(old_blk);
             return newblock;
         }
@@ -118,6 +120,7 @@ void PR_MD_free( void *ptr ) {
         _PR_ObtainMemoryLock();
         PR_REMOVE_LINK((PRCList *)mp);
         _PR_ReleaseMemoryLock();
+        //printf("%lx Freeing   memory %lx, size %d\n", FindTask(NULL), mp, mp->size);
         FreeMem(mp, mp->size);
     }
 }
