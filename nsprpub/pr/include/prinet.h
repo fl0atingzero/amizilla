@@ -114,6 +114,12 @@ struct sockaddr_dl;
 
 #include "macsocket.h"
 
+#elif defined(XP_AMIGAOS)
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
 #else
 
 #error Unknown platform
