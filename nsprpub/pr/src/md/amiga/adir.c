@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; c-basic-offset: 8 -*- */
+/* -*- Mode: C++; tab-width: 4; c-basic-offset: 4 -*- */
 /* 
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -49,17 +49,20 @@ PRStatus _OpenDir(struct _MDDir *md,const char *name) {
 	md->info = NULL;
 	md->lock = NULL;	
 	// Lock and check for directory
-	if( NULL != ( md->lock = Lock( name,SHARED_LOCK ) ) && NULL != ( md->info = (struct FileInfoBlock*)AllocMem( sizeof( struct FileInfoBlock),MEMF_ANY ) ) ) {
-		if( DOSFALSE != Examine( md->lock,md->info ) && md->info->fib_DirEntryType >=0 ) {
+	if(NULL != (md->lock = Lock(name, SHARED_LOCK)) && 
+		NULL != (md->info = (struct FileInfoBlock *)
+		PR_NEWZAP(struct FileInfoBlock))) {
+		if( DOSFALSE != Examine(md->lock, md->info) && 
+			md->info->fib_DirEntryType >=0 ) {
 			return PR_SUCCESS;
 		}
 	}
 
-	if( md->info != NULL )
-		FreeMem( md->info,sizeof( struct FileInfoBlock) );
+	if(md->info != NULL)
+		PR_Free(md->info);
 
-	if( md->lock != NULL )
-		UnLock( md->lock );
+	if(md->lock != NULL)
+		UnLock(md->lock);
 
 	return PR_FAILURE;
 }
@@ -69,16 +72,22 @@ PRStatus _OpenDir(struct _MDDir *md,const char *name) {
  */
 char* _ReadDir(struct _MDDir *md, PRIntn flags) {
 	if( DOSFALSE != ExNext( md->lock,md->info ) ) {
+		if (md->info->fib_FileName[0] == '.') {
+			if (flags == PR_SKIP_HIDDEN) {
+				return _ReadDir(md, flags);
+			} 
+		}
 		return md->info->fib_FileName;
 	}
-}
 
+	return NULL;
+}
 /*
  * Closes the specified directory.
  */
 PRStatus _CloseDir(struct _MDDir *md) {
 	if( md->info != NULL )
-		FreeMem( md->info,sizeof( struct FileInfoBlock) );
+		PR_Free(md->info);
 
 	if( md->lock != NULL )
 		UnLock( md->lock );
@@ -109,14 +118,3 @@ PRStatus _RemoveDir(const char *name) {
 
 	return PR_FAILURE;
 }
-
-
-
-
-
-
-
-
-
-
-
