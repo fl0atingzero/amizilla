@@ -46,6 +46,8 @@
  * Opens the directory with the specified pathname.
  */
 PRStatus _OpenDir(struct _MDDir *md,const char *name) {
+	md->info = NULL;
+	md->lock = NULL;	
 	// Lock and check for directory
 	if( NULL != ( md->lock = Lock( name,SHARED_LOCK ) ) && NULL != ( md->info = (struct FileInfoBlock*)AllocMem( sizeof( struct FileInfoBlock),MEMF_ANY ) ) ) {
 		if( DOSFALSE != Examine( md->lock,md->info ) && md->info->fib_DirEntryType >=0 ) {
