@@ -45,6 +45,10 @@
 int _MD_MAP_FD(PRFileDesc *fd);
 int _MD_UNMAP_FD(PRDescType type, int osfd);
 
+/**
+ * Map Dos's IoErr() to an NSPR error */
+void _MD_MapIOErr(LONG err);
+
 /*
  * Here we define all machine dependent (MD) translation for
  * the file nspr api (src/io/prfile.c). The implemented

@@ -56,7 +56,7 @@ PRInt32 _PR_MD_PIPEAVAILABLE(PRFileDesc *fd) {
 /**
  * Map DOS's IoErr() into an NSPR error
  */
-static void mapIOErr(LONG err) {
+void _MD_MapIOErr(LONG err) {
     PRInt32 nsprErr;
 
     switch (err) {
@@ -117,6 +117,10 @@ static void mapIOErr(LONG err) {
         nsprErr = PR_NOT_IMPLEMENTED_ERROR;
         break;
 
+    case ERROR_DIRECTORY_NOT_EMPTY:
+        nsprErr = PR_DIRECTORY_NOT_EMPTY_ERROR;
+        break;
+
     case ERROR_NO_MORE_ENTRIES:
     case ERROR_IS_SOFT_LINK:
     case ERROR_OBJECT_LINKED:
@@ -127,7 +131,6 @@ static void mapIOErr(LONG err) {
     case ERROR_DISK_NOT_VALIDATED:
     case ERROR_DISK_WRITE_PROTECTED:
     case ERROR_RENAME_ACROSS_DEVICES:
-    case ERROR_DIRECTORY_NOT_EMPTY:
     case ERROR_TOO_MANY_LEVELS:
     case ERROR_DEVICE_NOT_MOUNTED:
     case ERROR_SEEK_ERROR:
@@ -208,7 +211,7 @@ PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
 
 			if(osflags & PR_TRUNCATE) {
 				if(SetFileSize(file, 0, OFFSET_BEGINNING) == -1) {
-                    mapIOErr(IoErr());
+                    _MD_MapIOErr(IoErr());
                     goto error;
 				}
             }
@@ -216,19 +219,19 @@ PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
             if(osflags & PR_APPEND)
                 Seek(file, OFFSET_END, 0);
 		} else {
-            mapIOErr(IoErr());
+            _MD_MapIOErr(IoErr());
             goto error;
 		}
 	} else {
 		/* file does not exists, check if it should be created */
         if(!(osflags & PR_CREATE_FILE)) {
-            mapIOErr(IoErr());
+            _MD_MapIOErr(IoErr());
             goto error;
         }
 
         file = Open(name, openflags);
         if(file == (BPTR)NULL) {
-            mapIOErr(IoErr());
+            _MD_MapIOErr(IoErr());
             goto error;
         }
     }
@@ -258,7 +261,7 @@ PRStatus _Delete(const char *name) {
     }
 
 	if( DOSFALSE == DeleteFile( name ) ) {
-        mapIOErr(IoErr());
+        _MD_MapIOErr(IoErr());
 		return PR_FAILURE;
     } else
 		return PR_SUCCESS;
@@ -301,7 +304,7 @@ PRStatus _GetFileInfo(const char *fn,PRFileInfo *finfo) {
             status = PR_SUCCESS;
 		}
 	} else {
-        mapIOErr(IoErr());
+        _MD_MapIOErr(IoErr());
 	}
 
 error:
@@ -346,7 +349,7 @@ PRStatus _Rename(const char *from, const char *to) {
 	if( DOSFALSE != Rename( from,to ) )
 		return PR_SUCCESS;
 
-    mapIOErr(IoErr());
+    _MD_MapIOErr(IoErr());
 	return PR_FAILURE;
 }
 
@@ -394,7 +397,7 @@ PRStatus _Access(const char *name, PRAccessHow how) {
             break;
         }       
     } else {
-        mapIOErr(IoErr());
+        _MD_MapIOErr(IoErr());
     }
 end:
     if (lock != (BPTR)NULL) {
@@ -433,7 +436,7 @@ PRInt32 _Read(PRFileDesc *fd, void *buf, PRInt32 amount) {
 	}
 
     if( -1 == ( rv = Read( osfd, buf, amount ) ) ) {
-        mapIOErr(IoErr());
+        _MD_MapIOErr(IoErr());
     }
 
     return rv;
@@ -447,7 +450,7 @@ PRInt32 _Write(PRFileDesc *fd, const void *buf, PRInt32 amount) {
     BPTR osfd = fd->secret->md.osfd;
 
     if( amount != ( rv = Write( osfd, buf, amount ) ) ) {
-        mapIOErr(IoErr());
+        _MD_MapIOErr(IoErr());
     }
 
     return rv;
@@ -470,7 +473,7 @@ PRStatus _GetOpenFileInfo(const PRFileDesc *fd, PRFileInfo *finfo) {
             finfo->modifyTime = finfo->creationTime;
             retval = PR_SUCCESS;
         } else {
-            mapIOErr(IoErr());
+            _MD_MapIOErr(IoErr());
         }
     } 
     
