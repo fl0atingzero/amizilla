@@ -107,6 +107,7 @@ static PRBool AcquireDaemonLock(const char *baseDir)
     // when the process dies.  it will also be released when the file
     // descriptor is closed.
     //
+#ifndef amigaos
     struct flock lock;
     lock.l_type = F_WRLCK;
     lock.l_start = 0;
@@ -114,6 +115,12 @@ static PRBool AcquireDaemonLock(const char *baseDir)
     lock.l_whence = SEEK_SET;
     if (fcntl(ipcLockFD, F_SETLK, &lock) == -1)
         return PR_FALSE;
+#else
+	// o1i: argl, we don't have that (RECORD_LOCKING_NOT_IMPLEMENTED in sys/fcntl.h)
+	// but as the process ID is of not much use on the Amiga anyway
+	// (no killing of process ids.. 
+	printf("ipcdUnix.cpp: RECORD_LOCKING_NOT_IMPLEMENTED in sys/fcntl.h\n");
+#endif
 
     //
     // truncate lock file once we have exclusive access to it.
