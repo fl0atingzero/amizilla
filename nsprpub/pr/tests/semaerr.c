@@ -36,9 +36,14 @@
 #include "plgetopt.h"
 
 #include <stdio.h>
-
+#ifdef XP_AMIGAOS
+#define NO_SUCH_SEM_NAME "t:nosuchsem.sem"
+#define SEM_NAME1 "t:foo.sem"
+#else
 #define NO_SUCH_SEM_NAME "/tmp/nosuchsem.sem"
 #define SEM_NAME1 "/tmp/foo.sem"
+#endif
+
 #define SEM_MODE  0666
 
 static PRBool debug_mode = PR_FALSE;
