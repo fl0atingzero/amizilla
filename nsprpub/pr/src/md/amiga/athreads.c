@@ -64,6 +64,8 @@ static PRStatus _InitThread(PRThread *pr) {
                    (struct IORequest *)pr->sleepRequest, 0)) {
         PR_ASSERT(PR_FALSE);
     }
+
+    pr->AmiTCP_Base = OpenLibrary("bsdsocket.library", 0);
     return PR_SUCCESS;
 }
 
@@ -78,6 +80,9 @@ static void procExit(void) {
     DeletePort(me->port);
     CloseDevice((struct IORequest *)me->sleepRequest);
     DeleteExtIO((struct IORequest *)me->sleepRequest);
+    if (me->AmiTCP_Base != NULL)
+        CloseLibrary(me->AmiTCP_Base);
+
     if (me->join != NULL) {
         _PR_MD_Signal(me->join);
     }
@@ -227,6 +232,7 @@ void _PR_InitStacks(void) {
 
 PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
 {
+    _PR_CleanupSocket();
     _PR_CleanupMW();
     _PR_CleanupDtoa();
     _PR_CleanupCallOnce();
