@@ -50,7 +50,11 @@ class nsISupports;
 // function, then define this to symbol. When the symbol is defined
 // then the NS_LOG_ADDREF_CALL and NS_LOG_RELEASE_CALL will expand
 // differently.
+#ifdef XP_AMIGAOS
+#define NS_LOSING_ARCHTECTURE
+#else
 #undef NS_LOSING_ARCHITECTURE
+#endif
 
 // By default refcnt logging is not part of the build.
 #undef NS_BUILD_REFCNT_LOGGING

@@ -396,7 +396,7 @@ extern char* vr_findVerRegName()
     return verRegName;
 }
 #else
-extern char* vr_findVerRegName()
+char* vr_findVerRegName()
 {
     FSSpec  regSpec;
     OSErr   err;
@@ -593,7 +593,7 @@ int strncasecmp(const char *str1, const char *str2, int length)
  */
 
 /*allow OS/2 and Macintosh to use this main to test...*/
-#if (defined(STANDALONE_REGISTRY) && defined(XP_MAC)) || defined(XP_UNIX) || defined(XP_OS2) || defined(XP_BEOS)
+#if (defined(STANDALONE_REGISTRY) && defined(XP_MAC)) || defined(XP_UNIX) || defined(XP_OS2) || defined(XP_BEOS) || defined(XP_AMIGAOS)
 
 #include <stdlib.h>
 
@@ -619,7 +619,7 @@ long BUILDNUM = NS_BUILD_ID;
 
 REGERR vr_ParseVersion(char *verstr, VERSION *result);
 
-#if defined(XP_UNIX) && !defined(XP_MACOSX)
+#if (defined(XP_UNIX) || defined(XP_AMIGAOS)) && !defined(XP_MACOSX)
 
 #ifdef STANDALONE_REGISTRY
 extern XP_File vr_fileOpen (const char *name, const char * mode)

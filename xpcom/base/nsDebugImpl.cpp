@@ -381,6 +381,8 @@ nsDebugImpl::Abort(const char *aFile, PRInt32 aLine)
 #elif defined(XP_OS2)
   DebugBreak();
   return NS_OK;
+#elif defined(XP_AMIGAOS)
+  PR_Abort();
 #elif defined(XP_BEOS)
   {
 #ifndef DEBUG_cls

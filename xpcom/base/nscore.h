@@ -308,7 +308,7 @@ typedef PRUint32 nsresult;
 #endif
 
 /* unix and beos now determine this automatically */
-#if ! defined XP_UNIX && ! defined XP_BEOS && !defined(XP_OS2)
+#if ! defined XP_UNIX && ! defined XP_BEOS && !defined(XP_OS2) && !defined(XP_AMIGAOS)
 #ifndef HAVE_CPP_NEW_CASTS
 #define HAVE_CPP_NEW_CASTS 1 /* we'll be optimistic. */
 #endif

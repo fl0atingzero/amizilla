@@ -778,6 +778,8 @@ static nsresult pref_InitInitialObjects()
       "os2pref.js"
 #elif defined(XP_BEOS)
       "beos.js"
+#elif defined(XP_AMIGAOS)
+      "amigaos.js"
 #endif
   };
 
