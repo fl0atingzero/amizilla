@@ -43,7 +43,7 @@
 
 #include "primpl.h"
 
-#ifdef _PR_PTHREADS
+#if defined(_PR_PTHREADS) || defined(_PR_ATHREADS)
 
 #error "This file should not be compiled for the pthreads version"
 
