@@ -43,7 +43,7 @@ PL_strdup(const char *s)
 
     l = PL_strlen(s);
 
-    rv = (char *)malloc(l+1);
+    rv = (char *)PR_Malloc(l+1);
     if( (char *)0 == rv ) return rv;
 
     if( (const char *)0 == s )
@@ -57,7 +57,7 @@ PL_strdup(const char *s)
 PR_IMPLEMENT(void)
 PL_strfree(char *s)
 {
-	free(s);
+	PR_Free(s);
 }
 
 PR_IMPLEMENT(char *)
@@ -68,7 +68,7 @@ PL_strndup(const char *s, PRUint32 max)
 
     l = PL_strnlen(s, max);
 
-    rv = (char *)malloc(l+1);
+    rv = (char *)PR_Malloc(l+1);
     if( (char *)0 == rv ) return rv;
 
     if( (const char *)0 == s )
