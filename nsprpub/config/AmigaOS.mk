@@ -92,7 +92,6 @@ define MAKE_OBJDIR
 if test ! -d $(@D); then rm -rf $(@D); $(NSINSTALL) -D $(@D); else true; fi
 endef
 
-MKSHLIB		= $(LD) $(DSO_LDOPTS) -o $@
-DSO_LDOPTS 	= -r -amiga-debug-hunk
-OS_LIBS		= -g -ldld
+MKSHLIB		= a2ixlibrary -32 -o $@
+DSO_CFLAGS	= -m68020 -fbaserel -malways-restore-a4 -Uerrno
 
