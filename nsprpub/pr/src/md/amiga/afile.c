@@ -32,6 +32,8 @@
  * GPL.
  */
 
+#include <assert.h>
+
 /* 
  * both devices/timer.h and sys/time.h (included from primpl.h) define 
  * struct timeval. sys/time.h detects the other definiton while 
@@ -299,6 +301,51 @@ PRInt64 _Seek64 (PRFileDesc *fd, PRInt64 offset, PRSeekWhence whence) {
 PRStatus _Sync(PRFileDesc *fd) {
 }
 
+PRInt32 _MD_WRITEV(
+    PRFileDesc *fd, const struct PRIOVec *iov,
+    PRInt32 iov_size, PRIntervalTime timeout) {
+#warning _MD_LOCKFILE not implemented
+    assert(0);
+}
 
+PRStatus _MD_LOCKFILE(PRInt32 osfd) {
+#warning _MD_LOCKFILE not implemented
+    assert(0);
+}
 
+extern PRStatus _MD_TLOCKFILE(PRInt32 osfd) {
+#warning _MD_TLOCKFILE not implemented
+    assert(0);
+}
 
+extern PRStatus _MD_UNLOCKFILE(PRInt32 osfd) {
+#warning _MD_UNLOCKFILE not implemented
+    assert(0);
+}
+
+PRInt32 _MD_STAT(const char *name, struct stat *buf) {
+#warning _MD_STAT not implemented
+    assert(0);
+}
+
+/*
+ * Initialize fd->secret->inheritable for a newly created fd.
+ * If 'imported' is false, the osfd (i.e., fd->secret->md.osfd)
+ * was created by NSPR and hence has the OS-dependent default
+ * inheritable attribute.  If 'imported' is true, the osfd was
+ * not created by NSPR and hence a system call is required to
+ * query its inheritable attribute.  Since we may never need to
+ * know the inheritable attribute of a fd, a platform may choose
+ * to initialize fd->secret->inheritable of an imported fd to
+ * _PR_TRI_UNKNOWN and only pay the cost of the system call
+ * (in _PR_MD_QUERY_FD_INHERITABLE) when necessary.
+ */
+void _MD_INIT_FD_INHERITABLE(PRFileDesc *fd, PRBool imported) {
+#warning _MD_INIT_FD_INHERITABLE not implemented
+    assert(0);
+}
+
+void _PR_MD_MAKE_NONBLOCK(PRFileDesc *fd) {
+#warning _MD_MAKE_NONBLOCK not implemented
+   assert(0);
+}
