@@ -55,11 +55,6 @@ endif
 # and then the static data cells used for locking no longer work.
 FORCE_SHARED_LIB = 1
 
-ifeq ($(OS_ARCH),AmigaOS)
-# Sorry, but so far we don't have shared linker libs on the Amiga
-FORCE_SHARED_LIB = 
-endif
-
 
 CSRCS		= \
 		jsapi.c \
@@ -160,7 +155,7 @@ include $(topsrcdir)/config/config.mk
 
 EXTRA_DSO_LDOPTS += $(NSPR_LIBS)
 
-ifeq (,$(filter-out OS2 WINNT,$(OS_ARCH)))
+ifeq (,$(filter-out OS2 WINNT AmigaOS,$(OS_ARCH)))
 SHARED_LIBRARY_LIBS += $(FDLIBM_LIBRARY)
 endif
 
@@ -241,7 +236,7 @@ endif
 LDFLAGS		+= $(pathsubst -l%,$(NSPR_STATIC_PATH)/%.a,$(NSPR_LIBS))
 
 # BeOS and HP-UX do not require the extra linking of "-lm"
-ifeq (,$(filter BeOS HP-UX WINNT OpenVMS,$(OS_ARCH)))
+ifeq (,$(filter BeOS HP-UX WINNT OpenVMS AmigaOS,$(OS_ARCH)))
 LDFLAGS		+= -lm
 endif
 
@@ -291,6 +286,9 @@ ifneq ($(OS_TARGET),NTO)
 OBJS		+= fdlibm/*.o
 endif
 endif
+ifeq ($(OS_ARCH),amigaos)
+OBJS		+= fdlibm/*.o
+endif
 
 ifeq ($(OS_ARCH),IRIX)
 ifndef GNU_CC
@@ -319,7 +317,12 @@ else
 	$(LD) $(DASH_R) -o $@ $(JSMATH_PRELINK) $(FDLIBM_LIBRARY)
 endif
 else
+else
+ifeq ($(OS_TARGET), amigaos)
+	@cp $(JSMATH_PRELINK) $@
+else
 	$(LD) $(DASH_R) -o $@ $(JSMATH_PRELINK) $(FDLIBM_LIBRARY)
+endif
 endif
 	@$(RM) -f $(JSMATH_PRELINK)
 else
