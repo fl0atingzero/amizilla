@@ -36,6 +36,7 @@
 #include <primpl.h>
 #include <devices/inputevent.h>
 #include <devices/input.h>
+#include <exec/interrupts.h>
 
 /* Code dealing with random numbers */
 
