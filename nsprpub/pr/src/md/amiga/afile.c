@@ -18,6 +18,7 @@
  * Rights Reserved.
  * 
  * Contributor(s):
+ * Jeff Shepherd (jshepher@jshepher.dyndns.org)
  * 
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU General Public License Version 2 or later (the
@@ -43,23 +44,18 @@
 
 #include "primpl.h"
 
-/*
- * Amiga specificy includes
- */
-#include <dos/dos.h>
-#include <exec/memory.h>
-#include <proto/dos.h>
-#include <proto/exec.h>
 
 /* I/O related */
+#if 0
 extern void _MD_INIT_FILEDESC(PRFileDesc *fd) {
 #warning _MD_INIT_FIELDESC not implemented
    assert(0);
 }
+#endif
 
 void _PR_MD_MAKE_NONBLOCK(PRFileDesc *fd) {
 #warning _MD_MAKE_NONBLOCK not implemented
-   assert(0);
+  /*   assert(0); */
 }
 
 /* File I/O related */
@@ -353,8 +349,7 @@ PRInt32 _MD_STAT(const char *name, struct stat *buf) {
  */
 void _MD_INIT_FD_INHERITABLE(PRFileDesc *fd, PRBool imported) {
 #warning _MD_INIT_FD_INHERITABLE not implemented
-    assert(0);
-}
+ }
 
 /*
  * If fd->secret->inheritable is _PR_TRI_UNKNOWN and we need to

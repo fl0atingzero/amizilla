@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* 
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -18,6 +18,7 @@
  * Rights Reserved.
  * 
  * Contributor(s):
+ * Jeff Shepherd (jshepher@jshepher.dyndns.org)
  * 
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU General Public License Version 2 or later (the
@@ -33,21 +34,43 @@
  */
 
 #include <assert.h>
+#include <sys/param.h>
 
 #include "primpl.h"
 
-/* (Memory ??) Segment related */
-extern void _MD_INIT_SEGS(void) {
-#warning _MD_INIT_SEGS not implemented
-   assert(0);
+
+PR_IMPLEMENT(void*) PR_MD_malloc( size_t size ) {
+    struct _MDMemPtr *pr = AllocMem(size + sizeof(struct _MDMemPtr), 
+                                    MEMF_PUBLIC | MEMF_CLEAR);
+    pr->size = size + sizeof(struct _MDMemPtr);
+    return ((char *)pr + sizeof(struct _MDMemPtr));
 }
 
-extern PRStatus _MD_ALLOC_SEGMENT(PRSegment *seg, PRUint32 size, void *vaddr) {
-#warning _MD_ALLOC_SEGMENT not implemented
-   assert(0);
+PR_IMPLEMENT(void*)   PR_MD_calloc( size_t n, size_t size ) {
+    return PR_MD_malloc(n * size);
 }
 
-extern void _MD_FREE_SEGMENT(PRSegment *seg) {
-#warning _MD_FREE_SEGMENT not implemented
-   assert(0);
+PR_IMPLEMENT(void*) PR_MD_realloc( void* old_blk, size_t size ) {
+    if (old_blk == NULL) {
+        return PR_MD_malloc(size);
+    } else {
+        void *newblock = PR_MD_malloc(size);
+        if (newblock == NULL) {
+            return old_blk;
+        } else {
+            struct _MDMemPtr *ob = (char *)old_blk - sizeof(struct _MDMemPtr);
+            int sz = MIN(ob->size, size);
+            memcpy(newblock, old_blk, sz);
+            PR_MD_free(old_blk);
+            return newblock;
+        }
+    }
 }
+
+PR_IMPLEMENT(void) PR_MD_free( void *ptr ) {
+    if (ptr != NULL) {
+        struct _MDMemPtr *mp = (char *)ptr - sizeof(struct _MDMemPtr);
+        FreeMem(mp, mp->size);
+    }
+}
+

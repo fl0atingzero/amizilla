@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; c-basic-offset: 8 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* 
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -18,6 +18,7 @@
  * Rights Reserved.
  * 
  * Contributor(s):
+ * Jeff Shepherd (jshepher@jshepher.dyndns.org)
  * 
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU General Public License Version 2 or later (the
@@ -32,374 +33,238 @@
  * GPL.
  */
 
-#include <assert.h>
+#include <primpl.h>
 
-#include "primpl.h"
+static PRStatus _InitThread(PRThread *pr);
 
-/*
- * Amiga specificy includes
+
+void _Exit(PRIntn status) {
+}
+
+
+void _MD_Early_Init(void) {
+    PRThread *thread = PR_NEWZAP(PRThread);
+    thread->p = (struct Process *)FindTask(NULL);
+    thread->p->pr_Task.tc_UserData = thread;
+    _InitThread(thread);
+}
+
+/**
+ * Initialize the NSPR-specific part for a thread
  */
-#include <exec/memory.h>
-#include <proto/exec.h>
-
-#warning _pr_interruptTable NULL
-_PRInterruptTable _pr_interruptTable[] = {};
-
-void _InitCpus() {
-#warning unimplemented function
-   assert(0);
+static PRStatus _InitThread(PRThread *pr) {
+    char *buf = PR_Malloc(50);
+    sprintf(buf, "NSPRPORT-%lx\n", pr);
+    pr->port = CreatePort(buf, 0);
+    PR_ASSERT(pr->port);
+    pr->sleepRequest =
+        (struct timerequest *)CreateExtIO(pr->port, sizeof(struct timerequest));
+    PR_ASSERT(pr->sleepRequest);
+    if (OpenDevice(TIMERNAME, UNIT_VBLANK, 
+                   (struct IORequest *)pr->sleepRequest, 0)) {
+        PR_ASSERT(PR_FALSE);
+    }
+    return PR_SUCCESS;
 }
 
-void _WakeupCpus() { 
-#warning unimplemented function
-   assert(0);
+/**
+ * Clean up the NSPR-specific thread objects
+ */
+static void procExit(void) {  
+    PRThread *me = PR_GetCurrentThread();
+    _PR_DestroyThreadPrivate(me);
+    RemPort(me->port);
+    PR_Free(me->port->mp_Node.ln_Name);
+    DeletePort(me->port);
+    CloseDevice((struct IORequest *)me->sleepRequest);
+    DeleteExtIO((struct IORequest *)me->sleepRequest);
+    if (me->join != NULL) {
+        _PR_MD_Signal(me->join);
+    }
+    PR_Free(me);
 }
 
-void _StartInterrupts(void) { 
-#warning unimplemented function
-   assert(0);
-}
+/**
+ * First code called when the thread starts
+ */
+static void procEntry(void) {	
+    PRThread *pr;
+    struct Library *ixemulbase;
 
-void _StopInterrupts(void) { 
-#warning unimplemented function
-   assert(0);
-}
-
-void _EnableClockInterrupts(void) { 
-#warning unimplemented function
-   assert(0);
-}
-
-void _DisableClockInterrupts(void) { 
-#warning unimplemented function
-   assert(0);
-}
-
-void _BlockClockInterrupts(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _UnblockClockInterrupts(void) { 
-#warning unimplemented function
-   assert(0);
-}
-
-void _ClockInterrupt(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-PRStatus _Wait(PRThread *thread, PRIntervalTime timeout) { 
-#warning unimplemented function
-   assert(0);
-}
-
-PRStatus _WakeupWaiter(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _InitStack(PRThreadStack *ts, PRIntn redzone) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _ClearStack(PRThreadStack* ts) {
-#warning unimplemented function
-   assert(0);
-}
-
-
-_PRCPU *_CurrentCpu(void) {
-#warning _CurrentCpu not implemented
-	assert(0);
-}
-
-void _SetCurrentCpu(_PRCPU *cpu) {
-#warning _SetCurrentCpu not implemented
-	assert(0);
-}
-
-void _InitRunningCpu(_PRCPU *cpu) {
-#warning _InitRunningCpu not implemented
-	assert(0);
-}
-
-PRInt32 _PauseCpu(PRIntervalTime timeout) {
-#warning unimplemented function
-   assert(0);
+    /* Hack. I need to wait for the parent to initialize some things for me */
+    Wait(SIGBREAKF_CTRL_F);
+    pr = PR_GetCurrentThread();
+    //  ixemulbase = OpenLibrary("ixemul.library", 0);
+    _InitThread(pr);
+    /* We are done initialization, signal the parent */
+    _PR_MD_Signal(pr->parent);
+    pr->startFunc(pr->arg);
+    //  CloseLibrary(ixemulbase);
+    procExit();
 }
 
 void _CleanupBeforeExit(void) {
-#warning unimplemented function
-   assert(0);
+    (void)procExit();
 }
 
-void _Exit(PRIntn status) {
-#warning unimplemented function
-   assert(0);
+static int _PR_Map_Priority(PRThreadPriority priority) {
+    int retval;
+    switch (priority) {
+    case PR_PRIORITY_NORMAL:
+        retval = 0;
+        break;
+    case PR_PRIORITY_LOW:
+        retval = -128;
+        break;
+    case PR_PRIORITY_HIGH:
+        retval = 64;
+        break;
+    case PR_PRIORITY_URGENT:
+        retval = 127;
+        break;
+    }
+    return retval;
 }
 
-void _InitLocks(void) {
-#warning unimplemented function
-   assert(0);
+PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
+                                        void (PR_CALLBACK *start)(void *arg),
+                                        void *arg,
+                                        PRThreadPriority priority,
+                                        PRThreadScope scope,
+                                        PRThreadState state,
+                                        PRUint32 stackSize) {
+    PRThread *thread; 
+    PRThread *me = PR_GetCurrentThread();
+    if (!_pr_initialized) _PR_ImplicitInitialization();
+    thread = PR_NEWZAP(PRThread);
+    thread->startFunc = start;
+    thread->arg = arg;
+    thread->priority = priority;
+    thread->state = state;
+
+    if (stackSize < 32768) stackSize = 32768;
+
+    Forbid();
+    thread->p = CreateNewProcTags(NP_StackSize, stackSize,
+                                  NP_Name, "NSPR Thread",
+                                  NP_Input, Input(),
+                                  NP_Output, Output(),
+                                  NP_CloseInput, FALSE,
+                                  NP_CloseOutput, FALSE,
+                                  NP_Error, Output(),
+                                  NP_Priority, _PR_Map_Priority(priority),
+                                  NP_CloseError, FALSE,
+                                  NP_Entry, (ULONG)procEntry);
+
+    if(thread->p != NULL) {
+        thread->p->pr_Task.tc_UserData = thread;
+        /* Hack for ixemul.library to work */
+        thread->p->pr_Task.tc_TrapCode = me->p->pr_Task.tc_TrapCode;
+        thread->p->pr_Task.tc_TrapData = me->p->pr_Task.tc_TrapData;
+        thread->parent = me;
+        /* Hack because the new thread is waiting for us to do this */
+        Signal(thread->p, SIGBREAKF_CTRL_F); 
+        /* Need to wait for the other thread to do some init so there
+         * isn't a race condition when we do a PR_CreateThread and do 
+         * a PR_JoinThread before the thread comes up fully */
+        _PR_MD_Wait(me);
+    } else {
+        PR_Free(thread);
+        thread = NULL;
+    }
+    Permit();
+    return thread;
 }
 
-PRStatus _NewLock(struct _MDLock *md) {
-#warning unimplemented function
-   assert(0);
+PR_IMPLEMENT(PRThread*) PR_GetCurrentThread(void) {
+    struct Process *p = (struct Process *)FindTask(NULL);
+    return (PRThread *)p->pr_Task.tc_UserData;
 }
 
-void _FreeLock(struct _MDLock *md) {
-#warning unimplemented function
-   assert(0);
+PR_IMPLEMENT(PRStatus) PR_JoinThread(PRThread *thread) {
+    PRThread *me = PR_GetCurrentThread();
+    char buf[50];
+    struct MsgPort *port;
+  
+    sprintf(buf, "NSPRPORT-%lx\n", thread);
+    /* See if the thread is still around by trying to 
+     * look for its public message port 
+     */
+    Forbid();
+    port = FindPort(buf);
+    if (port == NULL) {
+        Permit();
+        return PR_SUCCESS;
+    }
+    thread->join = me;
+    Permit();
+
+    thread->state = _PR_JOIN_WAIT;
+    _PR_MD_Wait(me);
+    return PR_SUCCESS;
 }
 
-void _Lock(struct _MDLock *md) {
-#warning unimplemented function
-   assert(0);
+PR_IMPLEMENT(void) PR_SetConcurrency(PRUintn numCPUs) {
+    /* Nothing to do */
 }
 
-PRIntn _TestAndLock(struct _MDLock *md) {
-#warning unimplemented function
-   assert(0);
+PR_IMPLEMENT(void) PR_SetThreadPriority(PRThread *thread, PRThreadPriority priority) {
+    thread->priority = priority;
+    SetTaskPri(thread->p, _PR_Map_Priority(priority));
 }
 
-void _UnLock(struct _MDLock *md) {
-#warning unimplemented function
-   assert(0);
+
+void _PR_InitThreads(
+                     PRThreadType type, PRThreadPriority priority, PRUintn maxPTDs)
+{
+    /* Nothing to do */
 }
 
-void _IOQLock(void) {
-#warning unimplemented function
-   assert(0);
+
+
+void _PR_InitStacks(void) {
 }
 
-void _IOQUnLock(void) {
-#warning unimplemented function
-   assert(0);
+PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
+{
+    _PR_CleanupMW();
+    _PR_CleanupDtoa();
+    _PR_CleanupCallOnce();
+    _PR_ShutdownLinker();
+    _PR_LogCleanup();
+    _PR_CleanupNet();
+    /* Close all the fd's before calling _PR_CleanupIO */
+    _PR_CleanupIO();
+    _PR_CleanupLayerCache();
+    _PR_CleanupEnv();
+    /* Clean up primorial thread */
+    procExit();
+    _pr_initialized = PR_FALSE;
+    return PR_SUCCESS;
+}  /* PR_Cleanup */
+
+void _PR_MD_Wait(PRThread *thread) {
+    Forbid();
+    SetSignal(0, 1 << thread->port->mp_SigBit);
+    Wait(1 << thread->port->mp_SigBit);
+    Permit();
 }
 
-void _NewSem(struct _MDSemaphore *md, PRUintn value) {
-#warning unimplemented function
-   assert(0);
+void _PR_MD_Signal(PRThread *thread) {
+    thread->state = _PR_RUNNING;
+    Signal((struct Task *)thread->p, 1 << thread->port->mp_SigBit);
 }
 
-void _DestroySem(struct _MDSemaphore *md) {
-#warning unimplemented function
-   assert(0);
+#if 0
+/* FOR NOW */
+int putenv(const char *str) {
 }
 
-PRStatus _TimedWaitSem(struct _MDSemaphore *md, PRIntervalTime timeout) {
-#warning unimplemented function
-   assert(0);
+#include <sys/socket.h>
+#include <netinet/in.h>
+unsigned long inet_addr(const char *cp) {
+    return NULL;
 }
 
-PRStatus _WaitSem(struct _MDSemaphore *md) {
-#warning unimplemented function
-   assert(0);
-}
+#endif
 
-void _PostSem(struct _MDSemaphore *md) {
-#warning unimplemented function
-   assert(0);
-}
-
-PRInt32 _NewCV(struct _MDCVar *md) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _FreeCV(struct _MDCVar *md) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _WaitCV(struct _MDCVar *mdCVar, struct _MDLock *mdLock, PRIntervalTime timeout) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _NotifyCV(struct _MDCVar *md, struct _MDLock *lock) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _NotifyAllCV(struct _MDCVar *md, struct _MDLock *lock) {
-#warning unimplemented function
-   assert(0);
-}
-
-PRThread *_GetAttachedThread(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-PRThread *_LastThread(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _SetCurrentThread(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _SetLastThread(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-PRStatus _InitThread(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _ExitThread(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-PRStatus _InitAttachedThread(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _SuspendThread(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _ResumeThread(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-/*
-void _SuspendCpu(_PRCPU  *cpu) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _ResumeCpu(_PRCPU  *cpu) {
-#warning unimplemented function
-   assert(0);
-}
-*/
-
-void _BeginSuspendAll(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _EndSuspendAll(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _BeginResumeAll(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _EndResumeAll(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _CleanThread(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _CreatePrimordialUserThread(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-PRThread *_CreateUserThread(PRUint32 stacksize, void (*start)(void *), void *arg) {
-#warning unimplemented function
-   assert(0);
-}
-
-PRStatus _CreateThread(PRThread *thread, void (*start)(void *), PRThreadPriority priority, PRThreadScope scope, PRThreadState state, PRUint32 stackSize) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _Yield(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _SetPriority(struct _MDThread *md, PRThreadPriority newPri) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _SuspendAll(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _ResumeAll(void) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _InitContext(PRThread *thread, char *top, void (*start) (void), PRBool *status) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _SwitchContext(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-void _RestoreContext(PRThread *thread) {
-#warning unimplemented function
-   assert(0);
-}
-
-/* Process control */
-
-extern PRProcess * _MD_CREATE_PROCESS(
-    const char *path,
-    char *const *argv,
-    char *const *envp,
-    const PRProcessAttr *attr) {
-#warning _MD_CREATE_PROCESS not implemented
-    assert(0);
-}
-
-PRStatus _MD_DETACH_PROCESS(PRProcess *process) {
-#warning _MD_DETACH_PROCESS not implemented
-    assert(0);
-}
-
-PRStatus _MD_WAIT_PROCESS(PRProcess *process, PRInt32 *exitCode) {
-#warning _MD_WAIT_PROCESS not implemented
-    assert(0);
-}
-
-PRStatus _MD_KILL_PROCESS(PRProcess *process) {
-#warning _MD_KILL_PROCESS not implemented
-    assert(0);
-}
-
-PRIntervalTime _MD_GET_INTERVAL(void) {
-#warning _MD_GET_INTERVAL not implemented
-    assert(0);
-}
-
-PRIntervalTime _MD_INTERVAL_PER_SEC(void) {
-#warning _MD_INTERVAL_PER_SEC not implemented
-    assert(0);
-}
-
-/*extern void _PR_IntsOn(_PRCPU *cpu) {
-#warning _PR_IntsOn not implemented
-    assert(0);
-}*/

@@ -17,7 +17,7 @@
  * Copyright (C) 1998-2000 Netscape Communications Corporation.  All
  * Rights Reserved.
  * 
- * Contributor(s): Tom Parker <tom@carrott.org>
+ * Contributor(s):
  * 
  * Alternatively, the contents of this file may be used under the
  * terms of the GNU General Public License Version 2 or later (the
@@ -32,13 +32,16 @@
  * GPL.
  */
 
-#include <assert.h>
-
 #include "primpl.h"
 
-/* Initialization related */
-void _MD_EARLY_INIT(void) { }
+#include <exec/ports.h>
 
-void _MD_INTERVAL_INIT(void) { }
+NSPR_API(void) _MD_EARLY_INIT(void) {
+	
+}
 
-NSPR_API(void) _MD_FINAL_INIT(void) { }
+NSPR_API(void)_MD_FINAL_INIT(void) {
+}
+
+
+

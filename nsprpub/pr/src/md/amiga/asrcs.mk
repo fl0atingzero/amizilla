@@ -37,10 +37,15 @@
 # shared library
 
 MDCSRCS =             \
-	amiga.c		\
 	adir.c        \
 	afile.c       \
-	amemory.c     \
 	asocket.c       \
 	athreads.c    \
+	atime.c       \
+	avar.c		\
+	alock.c		\
+	amonitor.c	\
+	asem.c		\
+	ashm.c		\
+	amemory.c	\
 	$(NULL)
