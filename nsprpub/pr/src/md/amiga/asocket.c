@@ -307,7 +307,7 @@ static void increaseSocketTable(void) {
     int num = TCP_GetDTableSize();
     struct TagItem tags[] = {
         { SBTM_SETVAL(SBTC_DTABLESIZE), num + 64 },
-        { TAG_DONE, NULL }
+        { TAG_DONE, TAG_DONE }
     };
 
     TCP_SocketBaseTagList(tags);
@@ -1026,7 +1026,7 @@ PRInt32 _MD_SEND(
             break;
         }
 
-        retval = local_io_wait,(fd, TYPE_WRITE, timeout);
+        retval = local_io_wait(fd, TYPE_WRITE, timeout);
         if (_PR_PENDING_INTERRUPT(me)) {
 #ifdef DEBUG_ASOCKET
             printf("send(%lx) got interrupted\n", me);
