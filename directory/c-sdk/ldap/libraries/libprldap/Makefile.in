@@ -154,6 +154,11 @@ EXTRA_LIBS = -L$(dist_libdir) -l$(LDAP_LIBNAME)
 EXTRA_LIBS += -L$(dist_libdir) $(DYNAMICNSPR)
 endif
 
+ifeq ($(OS_ARCH), AmigaOS)
+EXTRA_LIBS = -L$(dist_libdir) -l$(LDAP_LIBNAME)
+EXTRA_LIBS += -L$(dist_libdir) $(DYNAMICNSPR)
+endif
+
 OBJDEST = $(OBJDIR_NAME)
 
 ###########################################################################
@@ -241,3 +246,8 @@ ifdef MKSHLIB
 	$(INSTALL) -m 555 $(DLLPRLDAP) $(dist_libdir)
 	$(INSTALL) -m 444 $(DLLPRLDAP) $(dist_bindir)
 endif
+ifeq ($(OS_ARCH), AmigaOS)
+	$(INSTALL) -m 444 lib$(PRLDAP_LIBNAME)_ixlibrary.a $(dist_libdir)
+	$(INSTALL) -m 444 $(PRLDAP_LIBNAME).x $(dist_libdir)
+endif
+
