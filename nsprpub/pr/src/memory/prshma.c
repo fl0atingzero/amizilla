@@ -44,6 +44,8 @@ extern PRLogModuleInfo *_pr_shma_lm;
 
 #if defined(XP_UNIX)
 /* defined in pr/src/md/unix/uxshm.c */
+#elif defined(XP_AMIGAOS)
+/* defined in pr/src/md/unix/uxshm.c */
 #elif defined(WIN32)
 /* defined in pr/src/md/windows/w32shm.c */
 #else

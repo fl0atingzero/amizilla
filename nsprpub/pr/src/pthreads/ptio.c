@@ -75,9 +75,12 @@
 
 /* 
  * for some (?) reason, ifdef AMIGAOS does not work here !?
-#if defined (AMIGAOS)
+#ifdef AMIGAOS
  */
 #include <pth.h>
+#include "primpl.h"
+#include "prio.h"
+#include "md/_amiga_errors.h"
 /* 
 #endif
  */

@@ -249,17 +249,31 @@ static PRIntn pt_TimedWait(
     struct timespec tmo;
     PRUint32 ticks = PR_TicksPerSecond();
 
+#if defined (AMIGAOS)
+    tmo.ts_sec = (PRInt32)(timeout / ticks);
+    tmo.ts_nsec = (PRInt32)(timeout - (tmo.ts_sec * ticks));
+    tmo.ts_nsec = (PRInt32)PR_IntervalToMicroseconds(PT_NANOPERMICRO * tmo.ts_nsec);
+#else
     tmo.tv_sec = (PRInt32)(timeout / ticks);
     tmo.tv_nsec = (PRInt32)(timeout - (tmo.tv_sec * ticks));
     tmo.tv_nsec = (PRInt32)PR_IntervalToMicroseconds(PT_NANOPERMICRO * tmo.tv_nsec);
+#endif
 
     /* pthreads wants this in absolute time, off we go ... */
     (void)GETTIMEOFDAY(&now);
     /* that one's usecs, this one's nsecs - grrrr! */
+#if defined (AMIGAOS)
+    tmo.ts_sec += now.tv_sec;
+    tmo.ts_nsec += (PT_NANOPERMICRO * now.tv_usec);
+    tmo.ts_sec += tmo.ts_nsec / PT_BILLION;
+    tmo.ts_nsec %= PT_BILLION;
+#else
     tmo.tv_sec += now.tv_sec;
     tmo.tv_nsec += (PT_NANOPERMICRO * now.tv_usec);
     tmo.tv_sec += tmo.tv_nsec / PT_BILLION;
     tmo.tv_nsec %= PT_BILLION;
+#endif
+
 
     rv = pthread_cond_timedwait(cv, ml, &tmo);
 
