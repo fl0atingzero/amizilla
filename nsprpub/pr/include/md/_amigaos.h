@@ -65,8 +65,8 @@ struct _MDFileDesc {
 #define HAVE_BSD_FLOCK 1
 #define PR_DIRECTORY_SEPARATOR          '/'
 #define PR_DIRECTORY_SEPARATOR_STR      "/"
-#define PR_PATH_SEPARATOR               ':'
-#define PR_PATH_SEPARATOR_STR           ":"
+#define PR_PATH_SEPARATOR               ';'
+#define PR_PATH_SEPARATOR_STR           ";"
 
 #define _PR_STAT_HAS_ONLY_ST_ATIME
 #define _PR_NO_LARGE_FILES
@@ -210,15 +210,15 @@ NSPR_API(PRStatus) _Delete(const char *name);
 NSPR_API(PRStatus) _GetFileInfo(const char *fn, PRFileInfo *info);
 NSPR_API(PRStatus) _GetFileInfo64(const char *fn, PRFileInfo64 *info);
 NSPR_API(PRStatus) _Rename(const char *from, const char *to);
-NSPR_API(PRStatus) _Access(const char *name, PRIntn how);
+NSPR_API(PRStatus) _Access(const char *name, PRAccessHow how);
 NSPR_API(PRStatus) _Close(PRFileDesc *osfd);
 NSPR_API(PRInt32) _Read(PRFileDesc *fd, void *buf, PRInt32 amount);
 NSPR_API(PRInt32) _Write(PRFileDesc *fd, const void *buf, PRInt32 amount);
 NSPR_API(PRInt32) _Writev(PRFileDesc *fd, const PRIOVec *iov, PRInt32 iov_size, PRIntervalTime timeout);
 NSPR_API(PRStatus) _GetOpenFileInfo(const PRFileDesc *fd, PRFileInfo *info);
 NSPR_API(PRStatus) _GetOpenFileInfo64(const PRFileDesc *fd, PRFileInfo64 *info);
-NSPR_API(PRInt32) _Seek(PRFileDesc *fd, PRInt32 offset, int whence);
-NSPR_API(PRInt64) _Seek64(PRFileDesc *fd, PRInt64 offset, int whence);
+NSPR_API(PRInt32) _Seek(PRFileDesc *fd, PRInt32 offset, PRSeekWhence whence);
+NSPR_API(PRInt64) _Seek64(PRFileDesc *fd, PRInt64 offset, PRSeekWhence whence);
 NSPR_API(PRStatus) _Sync(PRFileDesc *fd);
 NSPR_API(PRDir*) _OpenDir(PRDir *md,const char *name);
 NSPR_API(PRDirEntry*) _ReadDir(PRDir *md, PRIntn flags);

@@ -110,13 +110,13 @@ PRStatus _GetOpenFileInfo64(const PRFileDesc *fd, PRFileInfo64 *info) {
 /*
  * Moves the current read-write file pointer by an offset expressed as a 32-bit integer.
  */
-PRInt32 _Seek64 (PRFileDesc *fd, PRInt32 offset, int whence) {
+PRInt32 _Seek (PRFileDesc *fd, PRInt32 offset, PRSeekWhence whence) {
 }
 
 /*
  * Moves the current read-write file pointer by an offset expressed as a 64-bit integer.
  */
-PRInt64 _Seek64 (PRFileDesc *fd, PRInt64 offset, int whence) {
+PRInt64 _Seek64 (PRFileDesc *fd, PRInt64 offset, PRSeekWhence whence) {
 }
 
 /*
