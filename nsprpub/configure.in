@@ -756,6 +756,10 @@ case "$target" in
     RESOLVE_LINK_SYMBOLS=1
     ;;
         
+*-amigaos*)
+    MDCPUCFG_H=_amigaos.cfg
+    ;;
+
 *-beos*)
     AC_DEFINE(XP_BEOS)
     AC_DEFINE(BeOS)
@@ -2220,6 +2224,13 @@ case "$target" in
         ;;
     esac
     ;;
+
+*-amigaos*)
+    PR_MD_ARCH_DIR=amiga
+    USE_ATHREADS=1
+    CFLAGS="$CFLAGS -m68020-60"
+    CXXFLAGS="$CXXFLAGS -m68020-60"
+    ;;
 *-bsdi*)
     if test -n "$USE_PTHREADS"; then
         AC_DEFINE(_PR_NEED_PTHREAD_INIT)
@@ -2383,6 +2394,7 @@ AC_SUBST(ENABLE_STRIP)
 
 AC_SUBST(USE_PTHREADS)
 AC_SUBST(USE_BTHREADS)
+AC_SUBST(USE_ATHREADS)
 AC_SUBST(USE_USER_PTHREADS)
 AC_SUBST(USE_NATIVE_THREADS)
 AC_SUBST(USE_NSPR_THREADS)
@@ -2489,7 +2501,7 @@ dnl lib/tests/Makefile
 dnl pr/tests/w16gui/Makefile
 dnl tools/Makefile
 
-if test -z "$USE_PTHREADS" && test -z "$USE_BTHREADS"; then
+if test -z "$USE_PTHREADS" && test -z "$USE_BTHREADS" && test -z "$USE_ATHREADS"; then
     MAKEFILES="$MAKEFILES pr/src/threads/combined/Makefile"
 elif test -n "$USE_PTHREADS"; then
     MAKEFILES="$MAKEFILES pr/src/pthreads/Makefile"
