@@ -269,6 +269,14 @@ OBJS += \
     pthreads/$(OBJDIR)/ptthread.$(OBJ_SUFFIX) \
     pthreads/$(OBJDIR)/ptmisc.$(OBJ_SUFFIX)
 else
+ifdef USE_ATHREADS
+OBJS += \
+    io/$(OBJDIR)/prdir.$(OBJ_SUFFIX) \
+    io/$(OBJDIR)/prfile.$(OBJ_SUFFIX) \
+    io/$(OBJDIR)/prio.$(OBJ_SUFFIX) \
+    io/$(OBJDIR)/prsocket.$(OBJ_SUFFIX) \
+    md/unix/$(OBJDIR)/unix_errors.$(OBJ_SUFFIX)
+else
 OBJS += \
     io/$(OBJDIR)/prdir.$(OBJ_SUFFIX) \
     io/$(OBJDIR)/prfile.$(OBJ_SUFFIX) \
@@ -288,7 +296,7 @@ OBJS += \
 	threads/combined/$(OBJDIR)/prustack.$(OBJ_SUFFIX) \
 	threads/combined/$(OBJDIR)/pruthr.$(OBJ_SUFFIX)
 endif
-
+endif
 endif
 
 ifeq ($(USE_CPLUS), 1)
