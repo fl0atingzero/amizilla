@@ -1,0 +1,25 @@
+Index: configure
+===================================================================
+RCS file: /cvsroot/mozilla/configure,v
+retrieving revision 1.1190
+diff -c -r1.1190 configure
+*** configure	6 Jun 2003 11:53:20 -0000	1.1190
+--- configure	14 Jun 2003 00:16:40 -0000
+***************
+*** 10416,10422 ****
+          -o "$_DEFAULT_TOOLKIT" = "photon" \
+          -o "$_DEFAULT_TOOLKIT" = "mac" \
+          -o "$_DEFAULT_TOOLKIT" = "windows" \
+!         -o "$_DEFAULT_TOOLKIT" = "cocoa"
+      then
+                          MOZ_WIDGET_TOOLKIT=`echo "$_DEFAULT_TOOLKIT" | sed -e "s/,.*$//"`
+      else
+--- 10416,10423 ----
+          -o "$_DEFAULT_TOOLKIT" = "photon" \
+          -o "$_DEFAULT_TOOLKIT" = "mac" \
+          -o "$_DEFAULT_TOOLKIT" = "windows" \
+!         -o "$_DEFAULT_TOOLKIT" = "cocoa" \
+!         -o "$_DEFAULT_TOOLKIT" = "amiga"
+      then
+                          MOZ_WIDGET_TOOLKIT=`echo "$_DEFAULT_TOOLKIT" | sed -e "s/,.*$//"`
+      else
