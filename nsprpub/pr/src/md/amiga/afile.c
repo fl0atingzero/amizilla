@@ -634,3 +634,145 @@ void _MD_QUERY_FD_INHERITABLE(PRFileDesc *fd) {
 int _MD_ERRNO(void) {
     return errno;
 }
+
+PRStatus _PR_MD_CREATE_FILE_MAP(PRFileMap *fmap, PRInt64 size) {
+    fmap->md.isAnonFM = PR_FALSE;
+    if (PR_Seek(fmap->fd, size + sizeof(long), PR_SEEK_SET) == -1)
+        return PR_FAILURE;
+    if (PR_Seek(fmap->fd, 0, PR_SEEK_SET) == -1)
+        return PR_FAILURE;
+    return PR_SUCCESS;
+}
+
+PRInt32 _PR_MD_GET_MEM_MAP_ALIGNMENT(void) {
+    return 4;
+}
+
+void *_PR_MD_MEM_MAP(PRFileMap *fmap, PROffset64 offset, PRUint32 len) {
+    struct _MDMemMap *memory = NULL;
+    char *addr;
+    long mem = 0;
+
+    if (PR_Seek(fmap->fd, 0, PR_SEEK_SET) == -1)
+        goto error;
+
+    if (PR_Read(fmap->fd, &mem, sizeof(mem)) != sizeof(mem))
+        goto error;
+
+    mem = ntohl(mem);
+    if (mem == 0) {
+        long t;
+        memory = (struct _MDMemMap *)PR_Malloc(len + sizeof(struct _MDMemMap));
+        if (memory == NULL) {
+            goto error;
+        }
+        PR_Seek(fmap->fd, 0, PR_SEEK_SET);
+        t = htonl((unsigned long)memory);
+        PR_Write(fmap->fd, &t, sizeof(t));
+        memory->offset = offset;
+        memory->len = len;
+        memory->map = fmap;        
+    } else {
+        memory = (struct _MDMemMap *)mem;
+    }
+    addr = (char *)memory + sizeof(struct _MDMemMap);
+    PR_AtomicIncrement(&memory->count);
+
+    if (PR_Seek64(fmap->fd, offset + sizeof(long), PR_SEEK_SET) == -1)
+        goto error;
+
+    if (PR_Read(fmap->fd, addr, len) == -1)
+        goto error;
+
+    return addr;
+
+error:
+    if (memory != NULL && mem == 0)
+        PR_Free(memory);
+    return NULL;
+}
+
+PRStatus _PR_MD_MEM_UNMAP(void *addr, PRUint32 len) {
+    struct _MDMemMap *memory = (struct _MDMemMap *)((char *)addr - sizeof(struct _MDMemMap));
+    if (PR_AtomicDecrement(&memory->count) == 0) {
+        if (memory->map->prot == PR_PROT_READWRITE) {
+            PR_Seek64(memory->map->fd, memory->offset + sizeof(long), PR_SEEK_SET);
+            PR_Write(memory->map->fd, addr, memory->len);
+        }
+        PR_Free(memory);
+    }
+    return PR_SUCCESS;
+}
+
+PRStatus  _PR_MD_CLOSE_FILE_MAP(PRFileMap *fmap) {
+    if (fmap->md.isAnonFM == PR_TRUE) {
+        return PR_Close(fmap->fd);
+    }
+    PR_Free(fmap);
+    return PR_SUCCESS;
+}
+
+
+PRStatus _md_ExportFileMapAsString(PRFileMap *fm, PRSize bufSize, char *buf) {
+    PRIntn  written;
+    written = PR_snprintf( buf, bufSize, "%ld:%d", fm->fd->secret->md.osfd, fm->prot);
+
+    return((written == -1)? PR_FAILURE : PR_SUCCESS);
+}
+
+PRFileMap * _md_ImportFileMapFromString(const char *fmstring) {
+    PRStatus    rc;
+    PRInt32     osfd;
+    PRIntn      prot; /* really: a PRFileMapProtect */
+    PRFileDesc  *fd;
+    PRFileMap   *fm = NULL; /* default return value */
+    PRFileInfo64 info;
+
+    PR_sscanf( fmstring, "%ld:%d", &osfd, &prot );
+
+    fflush(stdout);
+    /* import the os file descriptor */
+    fd = PR_ImportFile( osfd );
+    if ( NULL == fd ) {
+        goto Finished;
+    }
+
+    rc = PR_GetOpenFileInfo64( fd, &info );
+    if ( PR_FAILURE == rc )  {
+        goto Finished;
+    }
+
+    fm = PR_CreateFileMap( fd, info.size, (PRFileMapProtect)prot );
+
+Finished:
+    return(fm);
+}
+
+PRFileMap * _md_OpenAnonFileMap(const char *dirName, PRSize size, PRFileMapProtect prot) {
+    char tempname[PATH_MAX]={0,};
+    PRFileMap *retval = NULL;
+    PRFileDesc *desc = NULL;
+    snprintf(tempname, sizeof(tempname) - 1, "%s/tempfile.XXXXXX", dirName);
+    mktemp(tempname);
+   
+    desc = PR_Open(tempname, PR_RDWR |  PR_CREATE_FILE | PR_EXCL, 0);
+    if (desc == NULL) {
+        goto error;
+    }
+
+    retval = PR_CreateFileMap(desc, size, prot);
+    if (retval == NULL)
+        goto error;
+
+    retval->md.isAnonFM = PR_TRUE;
+
+    return retval;
+error:
+    if (desc != NULL)
+        PR_Close(desc);
+
+    if (retval != NULL)
+        PR_CloseFileMap(retval);
+
+    return NULL;
+}
