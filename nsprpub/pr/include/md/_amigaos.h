@@ -66,7 +66,6 @@ struct _MDMemPtr {
 
 #define HAVE_STACK_GROWING_UP
 #undef USE_SETJMP
-#define USE_DLD
 
 #define PR_DIRECTORY_SEPARATOR          '/'
 #define PR_DIRECTORY_SEPARATOR_STR      "/"
