@@ -1457,7 +1457,7 @@ struct PRLock {
     thread_id	owner;		    /* current lock owner */
 #elif defined(_PR_ATHREADS)
     PRCList links;                  /* linkage for PRThread.lockList */
-    struct PRThread *owner;         /* current lock owner */
+    volatile struct PRThread *owner;         /* current lock owner */
     PRCList waitQ;                  /* list of threads waiting for lock */
 #else /* not pthreads or Be threads */
     PRCList links;                  /* linkage for PRThread.lockList */
@@ -1581,7 +1581,7 @@ extern void _PR_DestroyThreadPrivate(PRThread*);
 typedef void (PR_CALLBACK *_PRStartFn)(void *);
 
 struct PRThread {
-    PRUint32 state;                 /* thread's creation state */
+    volatile PRUint32 state;                 /* thread's creation state */
     PRThreadPriority priority;      /* apparent priority, loosly defined */
 
     void *arg;                      /* argument to the client's entry point */
@@ -1629,21 +1629,21 @@ struct PRThread {
     PRInt32 io_fd;
     PRBool io_suspended;
 #elif defined(_PR_ATHREADS)
-    PRUint32 flags;
-    PRBool io_pending;
-    PRInt32 io_fd;
-    PRBool io_suspended;
+    volatile PRUint32 flags;
+    volatile PRBool io_pending;
     struct MsgPort *port;
     struct MsgPort *selectPort;
+    ULONG interruptSignal;
     struct timerequest *sleepRequest;
     struct Process *p;
     PRThread *join;                 /* thread to signal when I'm done for joining */
     PRThread *parent;
-    PRCList links;
+    PRThread *next, *prev;          /* linked list of all the threads */
+    PRLock *stateLock;              /* lock held if you want to read or write anything here */
     PRCList waitQLinks;             /* when thread is PR_Wait'ing */
     PRCList lockList;               /* list of locks currently holding */
-    PRIntervalTime sleep;           /* sleep time when thread is sleeping */
-    struct _wait {
+    
+    union _wait {
         struct PRLock *lock;
         struct PRCondVar *cvar;
     } wait;
