@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* 
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -38,48 +38,65 @@
 
 _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
 
-  PRThread *thread = PR_GetCurrentThread();
-  struct timerequest *timerIO = thread->sleepRequest;
-  _PR_MD_Timeout retval = FAILURE;
-  struct Message *msg;
+    PRThread *thread = PR_GetCurrentThread();
+    struct timerequest *timerIO = thread->sleepRequest;
+    _PR_MD_Timeout retval = FAILURE;
+    struct Message *msg;
 
-  if (timeout == PR_INTERVAL_NO_TIMEOUT)
-    goto done;
+    if (timeout == PR_INTERVAL_NO_TIMEOUT)
+        goto done;
 
-  thread->sleep = timeout;
+    if (_PR_PENDING_INTERRUPT(thread)) {
+        printf("%lx sleep got a pending interrupt\n", thread);
+        PR_ClearInterrupt();
+        PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
+        return INTERRUPTED;
+    }
 
-  timerIO->tr_node.io_Command = TR_ADDREQUEST;
+    if (thread->state == _PR_RUNNING)
+        thread->state = _PR_SUSPENDED;
 
-  timerIO->tr_time.tv_secs = timeout / _PR_MD_INTERVAL_PER_SEC();
-  timerIO->tr_time.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * 1000;
+    timerIO->tr_node.io_Command = TR_ADDREQUEST;
 
-  //PR_fprintf(PR_STDERR,"%lx, Beginning IO for sleep\n", thread);
-  SendIO((struct IORequest *)timerIO);
-  //PR_fprintf(PR_STDERR,"%lx, done begin io %lx\n", thread, thread->port);
-  thread->state = _PR_SUSPENDED;
-  _PR_MD_Wait(thread);
-  retval = (thread->state == _PR_RUNNING) ? SUCCESS : TIMEDOUT;
-  //PR_fprintf(PR_STDERR,"%lx, done waiting\n", thread);
-  thread->state = _PR_RUNNING;
+    timerIO->tr_time.tv_secs = timeout / _PR_MD_INTERVAL_PER_SEC();
+    timerIO->tr_time.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * 1000;
 
-  msg = GetMsg(thread->port);
+    //printf("%lx, Beginning IO for sleep\n", thread);
+    thread->io_pending = PR_TRUE;
 
-  // PR_fprintf(PR_STDERR,"%lx, got msg %lx\n", thread, msg);
-  if (!(CheckIO((struct IORequest *)timerIO))) {
-    //PR_fprintf(PR_STDERR,"%lx abort io\n", thread);
-    AbortIO((struct IORequest *)timerIO);
-    //PR_fprintf(PR_STDERR,"%lx wait IO\n", thread);
-    WaitIO((struct IORequest *)timerIO);
-  }
+    SendIO((struct IORequest *)timerIO);
+    _PR_MD_Wait(thread, PR_TRUE);
 
-done:
-  //PR_fprintf(PR_STDERR,"%lx done sleep returning\n", thread);
-  return retval;
+    if (_PR_PENDING_INTERRUPT(thread)) {
+        PR_ClearInterrupt();
+        printf("%lx, Sleep got interrupted\n", thread);
+        PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
+        retval = INTERRUPTED;
+    } else {   
+        retval = (thread->state == _PR_RUNNING) ? SUCCESS : TIMEDOUT;
+    }
+
+    thread->state = _PR_RUNNING;
+
+    while(GetMsg(thread->port))
+        ;
+
+    // printf("%lx, got msg %lx\n", thread, msg);
+    if (!(CheckIO((struct IORequest *)timerIO))) {
+        //printf("%lx abort io\n", thread);
+        AbortIO((struct IORequest *)timerIO);
+        //printf("%lx wait IO\n", thread);
+        WaitIO((struct IORequest *)timerIO);
+    }
+    thread->io_pending = PR_FALSE;
+ done:
+    //printf("%lx done sleep returning\n", thread);
+    return retval;
 }
 
 PR_IMPLEMENT(PRStatus) PR_Sleep(PRIntervalTime timeout) { 
-  _PR_MD_Timeout retval = _PR_Sleep(timeout);
-  return (retval == SUCCESS || retval == TIMEDOUT) ? PR_SUCCESS : PR_FAILURE;
+    _PR_MD_Timeout retval = _PR_Sleep(timeout);
+    return (retval == SUCCESS || retval == TIMEDOUT) ? PR_SUCCESS : PR_FAILURE;
 }
 
 void _MD_Interval_Init(void) {
@@ -88,37 +105,37 @@ void _MD_Interval_Init(void) {
 
 
 PRIntervalTime _MD_Get_Interval(void) {
-  PRIntervalTime retval = 0;
-  struct timerequest *tr = 
-    AllocMem(sizeof(struct timerequest), MEMF_CLEAR| MEMF_PUBLIC);
+    PRIntervalTime retval = 0;
+    struct timerequest *tr = 
+        AllocMem(sizeof(struct timerequest), MEMF_CLEAR| MEMF_PUBLIC);
 
-  if (!(OpenDevice(TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0))) {
-    tr->tr_node.io_Command = TR_GETSYSTIME;
-    DoIO((struct IORequest *)tr);
-    retval = tr->tr_time.tv_micro * 10000 + tr->tr_time.tv_secs;
-    CloseDevice((struct IORequest *)tr);
-  }
-  FreeMem(tr, sizeof(struct timerequest));
-  return retval;
+    if (!(OpenDevice(TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0))) {
+        tr->tr_node.io_Command = TR_GETSYSTIME;
+        DoIO((struct IORequest *)tr);
+        retval = tr->tr_time.tv_micro * 10000 + tr->tr_time.tv_secs;
+        CloseDevice((struct IORequest *)tr);
+    }
+    FreeMem(tr, sizeof(struct timerequest));
+    return retval;
 }
 
 
 PR_IMPLEMENT(PRTime)
-PR_Now(void)
+    PR_Now(void)
 {
-  PRTime retval = 0;
-  struct timerequest *tr = 
-    AllocMem(sizeof(struct timerequest), MEMF_CLEAR| MEMF_PUBLIC);
+    PRTime retval = 0;
+    struct timerequest *tr = 
+        AllocMem(sizeof(struct timerequest), MEMF_CLEAR| MEMF_PUBLIC);
 
-  if (!(OpenDevice(TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0))) {
-    struct timeval tv;
-    struct Library *TimerBase = (struct Library *)tr->tr_node.io_Device;
-    GetSysTime(&tv);
-    retval = tv.tv_sec << 32 | tv.tv_usec;
-    CloseDevice((struct IORequest *)tr);
-  }
-  FreeMem(tr, sizeof(struct timerequest));
-  return retval;
+    if (!(OpenDevice(TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0))) {
+        struct timeval tv;
+        struct Library *TimerBase = (struct Library *)tr->tr_node.io_Device;
+        GetSysTime(&tv);
+        retval = tv.tv_sec << 32 | tv.tv_usec;
+        CloseDevice((struct IORequest *)tr);
+    }
+    FreeMem(tr, sizeof(struct timerequest));
+    return retval;
 
 }
 
