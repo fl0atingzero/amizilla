@@ -524,9 +524,22 @@ AR_FLAGS='cr $@'
 AS='$(CC)'
 ASFLAGS='$(CFLAGS)'
 
-OS_ARCH=`uname -s | sed -e 's|/|_|g'`
-OS_RELEASE=`uname -r`
-OS_TEST=`uname -m`
+if test -n "$CROSS_COMPILE"; then
+    OS_TARGET="${target_os}"
+    OS_ARCH=`echo $target_os | sed -e 's|/|_|g'`
+    OS_RELEASE=
+    OS_TEST="${target_cpu}"
+    case "${target_os}" in
+        linux*)       OS_ARCH=Linux ;;
+        solaris*)     OS_ARCH=SunOS OS_RELEASE=5 ;;
+        mingw*)       OS_ARCH=WINNT ;;
+        amigaos*)     OS_ARCH=AmigaOS OS_RELEASE=3.1 ;;
+    esac
+else
+    OS_ARCH=`uname -s | sed -e 's|/|_|g'`
+    OS_RELEASE=`uname -r`
+    OS_TEST=`uname -m`
+fi
 
 if test "$OS_ARCH" = "IRIX64"; then
     OS_ARCH=IRIX
@@ -2228,6 +2241,11 @@ case "$target" in
 *-amigaos*)
     PR_MD_ARCH_DIR=amiga
     USE_ATHREADS=1
+    MKSHLIB='a2ixlibrary -cpp -32 -dso -o $@'
+    DSO_CFLAGS="-m68020 -fbaserel32 -malways-restore-a4 -Uerrno"
+    CXX=a2ixg++
+    DLL_SUFFIX="ixlibrary"
+    LDFLAGS="-noixemul"
     CFLAGS="$CFLAGS -m68020-60"
     CXXFLAGS="$CXXFLAGS -m68020-60"
     ;;
