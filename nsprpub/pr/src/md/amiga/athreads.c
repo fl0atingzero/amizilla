@@ -37,6 +37,7 @@
 extern char **environ;
 
 static PRStatus _InitThread(PRThread *pr);
+static void _MD_Exit();
 
 static void killThread (PRThread *thread, PRBool kill) {
     printf("Killing thread %lx with kill %d\n", thread, kill);
@@ -45,8 +46,11 @@ static void killThread (PRThread *thread, PRBool kill) {
         thread->state = _PR_DEAD_STATE;
         _PR_MD_Signal(thread);
         Permit();
-    } 
-    PR_JoinThread(thread);
+        PR_JoinThread(thread);
+    } else if (!thread->daemon) {
+        PR_Interrupt(thread);
+        PR_JoinThread(thread);
+    }
     printf("All done killing %x\n", thread);
         
 }
@@ -83,7 +87,7 @@ void _MD_Early_Init(void) {
     /* For debugging */
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("Primorial Thread %lx\n", thread);
-    atexit(PR_Cleanup);
+    atexit(_MD_Exit);
 }
 
 PR_IMPLEMENT(PRStatus) PR_Interrupt(PRThread *thread) {
@@ -393,16 +397,13 @@ void _PR_InitThreads(PRThreadType type, PRThreadPriority priority,
 void _PR_InitStacks(void) {
 }
 
-PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
-{
-    PRThread *me = PR_CurrentThread();
-    printf("In PR_Cleanup\n");
+static void _MD_Exit(void) {
     if (_pr_initialized) {
-        _PR_CleanupSocket();
         /* I need to kill the socket thread before killing off
          * all of the other threads
          */
-        killThreads(PR_FALSE);
+        _PR_CleanupSocket();
+        killThreads(PR_TRUE);
         _PR_CleanupMW();
         _PR_CleanupDtoa();
         _PR_CleanupCallOnce();
@@ -419,6 +420,15 @@ PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
         _PR_Release_Memory();
         _pr_initialized = PR_FALSE;
     }
+}
+
+PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
+{
+    PRThread *me = PR_CurrentThread();
+    if (me != primordialThread) {
+        return PR_FAILURE;
+    }
+    killThreads(PR_FALSE);
     return PR_SUCCESS;
 }  /* PR_Cleanup */
 
@@ -782,4 +792,8 @@ PRStatus _DetachProcess(PRProcess *process) {
 PRStatus _KillProcess(PRProcess *process) {
     /* I don't think this can be done */
     return PR_SUCCESS;
+}
+
+PR_IMPLEMENT(void) PR_SetThreadRecycleMode(PRUint32 count) {
+    /* Does nothing */
 }
