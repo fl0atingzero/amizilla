@@ -1639,7 +1639,6 @@ struct PRThread {
     PRThread *join;                 /* thread to signal when I'm done for joining */
     PRThread *parent;
     PRThread *next, *prev;          /* linked list of all the threads */
-    PRLock *stateLock;              /* lock held if you want to read or write anything here */
     PRCList waitQLinks;             /* when thread is PR_Wait'ing */
     PRCList lockList;               /* list of locks currently holding */
     

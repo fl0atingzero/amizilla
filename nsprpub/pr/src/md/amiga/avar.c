@@ -124,7 +124,7 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
     }
 
 
-    printf("(%lx) For cvar %lx, lock owner is %lx, timeout is %d", me, cvar, cvar->lock->owner, timeout);
+    printf("(%lx) For cvar %lx, lock owner is %lx, timeout is %d\n", me, cvar, cvar->lock->owner, timeout);
 
     /* I need to forbid when unlocking so I can make sure I am waiting 
      * if someone quickly grabs the lock and tries to notify me
@@ -154,17 +154,14 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
         return slp;
     }
 
-    //    PR_Lock(me->stateLock);
     printf("%lx got cvar lock %lx, owner is now %lx, cvar is %lx, flags are %lx\n", me, cvar->lock, cvar->lock->owner, cvar, me->flags);
 
     if (_PR_PENDING_INTERRUPT(me)) {
         printf("WaitCondVar(%lx) end caught interrupt\n", me);
         PR_ClearInterrupt();
         PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
-        // PR_Unlock(me->stateLock);
         return PR_FAILURE;
     }
-    //  PR_Unlock(me->stateLock);
     return PR_SUCCESS;
 }
 
@@ -192,7 +189,6 @@ PR_IMPLEMENT(PRStatus) PR_NotifyCondVar(PRCondVar *cvar) {
         PRThread *thread = _PR_THREAD_CONDQ_PTR(next);
 
         PR_REMOVE_LINK(next);
-        PR_Lock(thread->stateLock);
         printf(PR_STDERR,"%lx notifying thread %lx of condvar %lx, state is %x\n", me, thread, cvar, thread->state);
 
 
@@ -201,7 +197,6 @@ PR_IMPLEMENT(PRStatus) PR_NotifyCondVar(PRCondVar *cvar) {
         PR_ASSERT(thread->state != _PR_SUSPENDED);        
         PR_ASSERT(thread->state == _PR_COND_WAIT);
         PR_ASSERT(thread->wait.cvar == cvar);
-        PR_Unlock(thread->stateLock);
 
         _PR_MD_Signal(thread);
     } 
@@ -232,7 +227,6 @@ PR_IMPLEMENT(PRStatus) PR_NotifyAllCondVar(PRCondVar *cvar) {
             next = PR_NEXT_LINK(next);
             PR_REMOVE_LINK(tmp);
 
-            PR_Lock(thread->stateLock);
             printf("%lx notifying thread %lx of condvar %lx, state is %x\n", me, thread, cvar, thread->state);      
 
             PR_ASSERT(thread->state != _PR_RUNNING);
@@ -240,7 +234,6 @@ PR_IMPLEMENT(PRStatus) PR_NotifyAllCondVar(PRCondVar *cvar) {
             PR_ASSERT(thread->state != _PR_SUSPENDED);        
             PR_ASSERT(thread->state == _PR_COND_WAIT);
             PR_ASSERT(thread->wait.cvar == cvar);
-            PR_Unlock(thread->stateLock);
             _PR_MD_Signal(thread);
         }
     }
