@@ -59,7 +59,7 @@
 #include "ipcdPrivate.h"
 #include "ipcd.h"
 
-#ifdef XP_UNIX
+#if defined(XP_UNIX)
 void
 IPC_Sleep(int seconds)
 {
@@ -107,7 +107,7 @@ static PRBool AcquireDaemonLock(const char *baseDir)
     // when the process dies.  it will also be released when the file
     // descriptor is closed.
     //
-#ifndef amigaos
+#ifndef XP_AMIGAOS
     struct flock lock;
     lock.l_type = F_WRLCK;
     lock.l_start = 0;
@@ -194,7 +194,7 @@ static void ShutdownDaemonDir()
 ipcClient *ipcClients = NULL;
 int        ipcClientCount = 0;
 
-#ifdef XP_UNIX
+#if defined(XP_UNIX)
 //
 // the first element of this array is always zero; this is done so that the
 // k'th element of ipcClientArray corresponds to the k'th element of
@@ -357,7 +357,7 @@ static void PollLoop(PRFileDesc *listenFD)
 PRStatus
 IPC_PlatformSendMsg(ipcClient  *client, ipcMessage *msg)
 {
-#ifdef XP_UNIX
+#if defined(XP_UNIX)
     LOG(("IPC_PlatformSendMsg\n"));
 
     //
