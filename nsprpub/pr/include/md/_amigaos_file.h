@@ -59,6 +59,7 @@
 #define _MD_LSEEK                _Seek
 #define _MD_LSEEK64              _Seek64
 #define _MD_FSYNC                _Sync
+#define _MD_SET_FD_INHERITABLE(fd, inh) (PR_SUCCESS)
 #ifdef MOZ_UNICODE
 #define _MD_OPEN_FILE_UTF16      _OpenUtf16
 #define _MD_GETFILEINFO64_UTF16  _GetOpenFileInfo64Utf16
@@ -76,6 +77,10 @@ typedef struct {
 
 struct _MDFileDesc {
     BPTR osfd;
+};
+
+struct _MDSharedMemory {
+    PRInt32 count;
 };
 
 NSPR_API(PRInt32)  _Open(const char *name, PRIntn osflags, PRIntn mode);
