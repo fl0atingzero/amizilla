@@ -46,23 +46,25 @@
  * Opens the directory with the specified pathname.
  */
 PRStatus _OpenDir(struct _MDDir *md,const char *name) {
-	md->info = NULL;
-	md->lock = NULL;	
+	md->info = (BPTR) NULL;
+	md->lock = (BPTR) NULL;	
 	// Lock and check for directory
-	if(NULL != (md->lock = Lock(name, SHARED_LOCK)) && 
-		NULL != (md->info = (struct FileInfoBlock *)
-		PR_NEWZAP(struct FileInfoBlock))) {
-		if( DOSFALSE != Examine(md->lock, md->info) && 
-			md->info->fib_DirEntryType >=0 ) {
-			return PR_SUCCESS;
+	md->lock = Lock(name, SHARED_LOCK);
+	if((BPTR) NULL != md->lock) {
+		md->info = (struct FileInfoBlock *) PR_NEWZAP(struct FileInfoBlock);
+		if(md->info != NULL) {
+			if( DOSFALSE != Examine(md->lock, md->info) && 
+				md->info->fib_DirEntryType >=0 ) {
+				return PR_SUCCESS;
+			}
 		}
 	}
 
 	if(md->info != NULL)
 		PR_Free(md->info);
 
-	if(md->lock != NULL)
-		UnLock(md->lock);
+	if(md->lock != ((BPTR) NULL))
+		UnLock((BPTR) md->lock);
 
 	return PR_FAILURE;
 }
@@ -89,7 +91,7 @@ PRStatus _CloseDir(struct _MDDir *md) {
 	if( md->info != NULL )
 		PR_Free(md->info);
 
-	if( md->lock != NULL )
+	if( md->lock != (BPTR) NULL )
 		UnLock( md->lock );
 
 	return PR_SUCCESS;
@@ -101,7 +103,7 @@ PRStatus _CloseDir(struct _MDDir *md) {
 PRStatus _MakeDir(const char *name,PRIntn mode) {
 	BPTR lock;
 
-	if( NULL != ( lock = CreateDir( name ) ) )
+	if( (BPTR) NULL != ( lock = CreateDir( name ) ) )
 		UnLock( lock );
 	else
 		return PR_FAILURE;
