@@ -192,7 +192,7 @@ IMPORT_LIBRARY		:= $(NULL)
 ifeq ($(OS_ARCH), AmigaOS)
 ifdef BUILD_SHARED_LIBS
 
-ifneq ($(MODULE), xpcom)
+ifeq (,$(filter xpcom string, $(MODULE)))
 # HACK. I don't need these when building xpcom!
 EXTRA_DSO_LDOPTS += $(MOZ_COMPONENT_LIBS)
 endif
