@@ -1771,6 +1771,9 @@ struct PRFilePrivate {
     PRInt32 state;
     PRBool nonblocking;
     _PRTriStateBool inheritable;
+#ifdef _PR_ATHREADS
+    PRBool needToClose;
+#endif
     PRFileDesc *next;
     PRIntn lockCount;   /*   0: not locked
                          *  -1: a native lockfile call is in progress

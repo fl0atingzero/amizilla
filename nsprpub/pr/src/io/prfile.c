@@ -247,6 +247,9 @@ static PRStatus PR_CALLBACK FileClose(PRFileDesc *fd)
     }
 
     if (fd->secret->state == _PR_FILEDESC_OPEN) {
+#ifdef _PR_ATHREADS
+      if (fd->secret->needToClose) 
+#endif
         if (_PR_MD_CLOSE_FILE(fd->secret->md.osfd) < 0) {
             return PR_FAILURE;
         }
@@ -557,6 +560,10 @@ PR_IMPLEMENT(PRFileDesc*) PR_ImportFile(PRInt32 osfd)
         _PR_MD_INIT_FD_INHERITABLE(fd, PR_TRUE);
     }
 
+#ifdef _PR_ATHREADS
+    /* Don't need to close this FD */
+    fd->secret->needToClose = PR_FALSE;
+#endif
     return fd;
 }
 
@@ -578,6 +585,11 @@ PR_IMPLEMENT(PRFileDesc*) PR_ImportPipe(PRInt32 osfd)
         fd->secret->md.sync_file_io = PR_TRUE;
 #endif
     }
+
+#ifdef _PR_ATHREADS
+    /* Don't need to close this FD */
+    fd->secret->needToClose = PR_FALSE;
+#endif
 
     return fd;
 }
@@ -804,12 +816,16 @@ PR_IMPLEMENT(PRStatus) PR_CreatePipe(
         Close(file[1]);
         return PR_FAILURE;
     }
+
     *writePipe = PR_AllocFileDesc(file[1], &_pr_pipeMethods);
     if (NULL == *writePipe) {
         PR_Close(*readPipe);
         Close(file[1]);
         return PR_FAILURE;
     }
+
+    (*writePipe)->secret->needToClose = PR_TRUE;
+    (*readPipe)->secret->needToClose = PR_TRUE;
     return PR_SUCCESS;
 #else
     PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);

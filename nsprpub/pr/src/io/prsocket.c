@@ -198,6 +198,12 @@ PRFileDesc *fd;
 		_PR_MD_INIT_FD_INHERITABLE(fd, PR_TRUE);
 	} else
 		_PR_MD_CLOSE_SOCKET(osfd);
+
+#ifdef _PR_ATHREADS
+    /* Do need to close this FD, it is a duplicate socket */
+    fd->secret->needToClose = PR_TRUE;
+#endif
+
 	return(fd);
 }
 
@@ -212,6 +218,12 @@ PRFileDesc *fd;
 		_PR_MD_INIT_FD_INHERITABLE(fd, PR_TRUE);
 	} else
 		_PR_MD_CLOSE_SOCKET(osfd);
+
+#ifdef _PR_ATHREADS
+    /* Do need to close this FD, it is a duplicate socket */
+    fd->secret->needToClose = PR_TRUE;
+#endif
+
 	return(fd);
 }
 
@@ -717,6 +729,9 @@ static PRStatus PR_CALLBACK SocketClose(PRFileDesc *fd)
 	}
 
 	if (fd->secret->state == _PR_FILEDESC_OPEN) {
+#ifdef _PR_ATHREADS
+      if (fd->secret->needToClose) 
+#endif
 		if (_PR_MD_CLOSE_SOCKET(fd->secret->md.osfd) < 0) {
 			return PR_FAILURE;
 		}
@@ -1317,6 +1332,9 @@ PR_IMPLEMENT(PRFileDesc*) PR_Socket(PRInt32 domain, PRInt32 type, PRInt32 proto)
 	if (fd != NULL) {
 		_PR_MD_MAKE_NONBLOCK(fd);
 		_PR_MD_INIT_FD_INHERITABLE(fd, PR_FALSE);
+#ifdef _PR_ATHREADS
+        fd->secret->needToClose = PR_TRUE;
+#endif
 #if defined(_PR_INET6_PROBE) || !defined(_PR_INET6)
 		/*
 		 * For platforms with no support for IPv6 
