@@ -405,7 +405,7 @@ PRIntervalTime timeout)
 	PRFileDesc *fd2;
 	PRUint32 al;
 	PRThread *me = _PR_MD_CURRENT_THREAD();
-#ifdef WINNT
+#if defined(WINNT) || defined(XP_AMIGAOS)
 	PRNetAddr addrCopy;
 #endif
 
@@ -419,7 +419,7 @@ PRIntervalTime timeout)
 		return 0;
 	}
 
-#ifdef WINNT
+#if defined(WINNT) || defined(XP_AMIGAOS)
 	if (addr == NULL) {
 		addr = &addrCopy;
 	}
