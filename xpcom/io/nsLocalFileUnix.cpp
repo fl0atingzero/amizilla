@@ -47,6 +47,10 @@
     #include <Entry.h>
     #include <Roster.h>
 #endif
+#ifdef XP_AMIGAOS
+    #include <sys/syslimits.h>
+#endif
+
 #if defined(VMS)
     #include <fabdef.h>
 #endif
@@ -268,9 +272,11 @@ nsLocalFile::InitWithNativePath(const nsACString &filePath)
         }
         
         mPath = homePath + Substring(filePath, 1, filePath.Length() - 1);
+#ifndef XP_AMIGAOS
     } else if (filePath.IsEmpty() || filePath.First() != '/') {
       NS_ERROR("Relative paths not allowed");
       return NS_ERROR_FILE_UNRECOGNIZED_PATH;
+#endif
     } else {
         mPath = filePath;
     }
@@ -474,6 +480,10 @@ nsLocalFile::AppendRelativeNativePath(const nsACString &fragment)
 
     if (mPath.Equals(NS_LITERAL_CSTRING("/")))
         mPath.Append(fragment);
+#ifdef XP_AMIGAOS
+    else if (mPath.Last() == ':')
+        mPath.Append(fragment);
+#endif
     else
         mPath.Append(NS_LITERAL_CSTRING("/") + fragment);
 

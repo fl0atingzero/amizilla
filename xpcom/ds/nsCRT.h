@@ -53,7 +53,7 @@
 #    define NS_LINEBREAK           "\015\012"
 #    define NS_LINEBREAK_LEN       2
 #  else
-#    if defined(XP_UNIX) || defined(XP_BEOS)
+#    if defined(XP_UNIX) || defined(XP_BEOS) || defined(XP_AMIGAOS)
 #      define NS_LINEBREAK         "\012"
 #      define NS_LINEBREAK_LEN     1
 #    endif /* XP_UNIX */
@@ -282,6 +282,9 @@ public:
 #elif defined(XP_UNIX) || defined(XP_BEOS)
   #define FILE_PATH_SEPARATOR       "/"
   #define FILE_ILLEGAL_CHARACTERS   ""
+#elif defined(XP_AMIGAOS)
+  #define FILE_PATH_SEPARATOR "/"
+  #define FILE_ILLEGAL_CHARACTERS ":"
 #else
   #error need_to_define_your_file_path_separator_and_illegal_characters
 #endif

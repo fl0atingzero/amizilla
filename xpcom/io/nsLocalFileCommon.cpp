@@ -126,7 +126,7 @@ nsLocalFile::CreateUnique(PRUint32 type, PRUint32 attributes)
 static const PRUnichar kPathSeparatorChar       = ':';
 #elif defined(XP_WIN) || defined(XP_OS2)
 static const PRUnichar kPathSeparatorChar       = '\\';
-#elif defined(XP_UNIX) || defined(XP_BEOS)
+#elif defined(XP_UNIX) || defined(XP_BEOS) || defined(XP_AMIGAOS)
 static const PRUnichar kPathSeparatorChar       = '/';
 #else
 #error Need to define file path separator for your platform

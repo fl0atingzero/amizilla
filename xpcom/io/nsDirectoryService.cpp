@@ -316,7 +316,10 @@ nsDirectoryService::GetCurrentProcessDirectory(nsILocalFile** aFile)
         }
       }
     }
-
+#elif defined(XP_AMIGAOS)
+    localFile->InitWithNativePath(nsDependentCString("progdir:"));
+    *aFile = localFile;
+    return NS_OK;
 #endif
     
     NS_RELEASE(localFile);

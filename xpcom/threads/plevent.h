@@ -529,7 +529,7 @@ PR_EXTERN(HWND)
     );
 #endif /* XP_WIN || XP_OS2 */
 
-#ifdef XP_UNIX
+#if defined(XP_UNIX) || defined(XP_AMIGAOS)
 /* -----------------------------------------------------------------------
 ** FUNCTION: PL_ProcessEventsBeforeID()
 **

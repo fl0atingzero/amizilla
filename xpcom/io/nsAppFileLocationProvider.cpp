@@ -377,6 +377,9 @@ NS_METHOD nsAppFileLocationProvider::GetProductDirectory(nsILocalFile **aLocalFi
     path[len+1] = '\0';
     rv = NS_NewNativeLocalFile(nsDependentCString(path), PR_TRUE, getter_AddRefs(localDir));
     if (NS_FAILED(rv)) return rv;
+#elif defined(XP_AMIGAOS)
+    rv = NS_NewNativeLocalFile(nsDependentCString("mozilla:"), PR_TRUE, getter_AddRefs(localDir));
+    if (NS_FAILED(rv)) return rv;
 #else
 #error dont_know_how_to_get_product_dir_on_your_platform
 #endif

@@ -136,7 +136,7 @@ struct PLEventQueue {
     PRPackedBool        timerSet;
 #endif
 
-#if defined(XP_UNIX) && !defined(XP_MACOSX)
+#if defined(XP_UNIX) && !defined(XP_MACOSX) || defined (XP_AMIGAOS)
 #if defined(VMS)
     int                 efn;
 #else
@@ -1199,7 +1199,7 @@ _pl_NativeNotify(PLEventQueue* self)
     status = SYS$SETEF(self->efn);
     return ($VMS_STATUS_SUCCESS(status)) ? PR_SUCCESS : PR_FAILURE;
 }/* --- end _pl_NativeNotify() --- */
-#elif defined(XP_UNIX) && !defined(XP_MACOSX)
+#elif defined(XP_UNIX) && !defined(XP_MACOSX) || defined(XP_AMIGAOS)
 
 static PRStatus
 _pl_NativeNotify(PLEventQueue* self)
@@ -1533,7 +1533,7 @@ static void _md_CreateEventQueue( PLEventQueue *eventQueue )
 } /* end _md_CreateEventQueue() */
 #endif /* XP_OS2 */
 
-#if (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined(XP_BEOS)
+#if (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined(XP_BEOS) || defined(XP_AMIGAOS)
 /*
 ** _md_CreateEventQueue() -- ModelDependent initializer
 */

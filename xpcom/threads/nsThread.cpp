@@ -140,7 +140,9 @@ nsThread::Exit(void* arg)
     nsThread* self = (nsThread*)arg;
 
     if (self->mDead) {
+#ifndef XP_AMIGAOS /* This can happen because when the thread exits, it destroyys the thread private data */
         NS_ERROR("attempt to Exit() thread twice");
+#endif
         return;
     }
 

@@ -200,7 +200,7 @@ NS_GetFrozenFunctions(XPCOMFunctions *entryPoints, const char* libraryPath);
 #if defined(XP_WIN) || defined(XP_OS2)
   #define XPCOM_FILE_PATH_SEPARATOR       "\\"
   #define XPCOM_ENV_PATH_SEPARATOR        ";"
-#elif defined(XP_UNIX) || defined(XP_BEOS)
+#elif defined(XP_UNIX) || defined(XP_BEOS) || defined(XP_AMIGAOS)
   #define XPCOM_FILE_PATH_SEPARATOR       "/"
   #define XPCOM_ENV_PATH_SEPARATOR        ":"
 #else
