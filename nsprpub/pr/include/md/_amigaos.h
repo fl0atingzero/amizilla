@@ -58,10 +58,9 @@ struct _MDFileMap {
 
 // #define HAVE_BSD_FLOCK 1
 
-#define HAVE_LONG_LONG
 #define HAVE_CUSTOM_USER_THREADS
 #define HAVE_CVAR_BUILT_ON_SEM
-
+#define HAVE_STACK_GROWING_UP
 #undef USE_SETJMP
 
 #define PR_DIRECTORY_SEPARATOR          '/'
@@ -74,6 +73,7 @@ struct _MDFileMap {
 // #define _PR_STAT_HAS_ONLY_ST_ATIME
 // #define _PR_NO_LARGE_FILES
 #define _PR_GLOBAL_THREADS_ONLY
+#undef _PR_LOCAL_THREADS_ONLY
 
 /*
 typedef struct stat _MDStat64;
