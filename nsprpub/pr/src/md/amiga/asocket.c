@@ -445,7 +445,18 @@ static void SocketThread(void *notused) {
                 ss->fd = TCP_ObtainSocket(msg.msg.receive.id, 
                     msg.msg.receive.type, 
                     msg.msg.receive.domain, msg.msg.receive.protocol);
-                if (fd < 0) {
+
+                /* If we can't obtain, we may be out of sockets,
+                 * expand and try again
+                 */
+                if (ss->fd < 0) {
+                    increaseSocketTable();
+                    ss->fd = TCP_ObtainSocket(msg.msg.receive.id, 
+                        msg.msg.receive.type, 
+                        msg.msg.receive.domain, msg.msg.receive.protocol);
+                }
+
+                if (ss->fd < 0) {
                     reply.errno = TCP_Errno();
                     PR_Free(ss);
                 } else {
@@ -527,8 +538,25 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
         PR_WaitCondVar(replyCondVar, PR_INTERVAL_NO_TIMEOUT);
         if (reply.msg.obtain.id != -1) {
             ss->fd = TCP_ObtainSocket(reply.msg.obtain.id, sock->type, sock->domain, sock->protocol);
-            ss->sequenceNumber = reply.msg.obtain.sequenceNumber;
-            fd = ss->fd;
+
+            if (ss->fd == -1) {
+                /* We may be out of sockets */
+                increaseSocketTable();
+                ss->fd = TCP_ObtainSocket(reply.msg.obtain.id, 
+                    sock->type, sock->domain, sock->protocol);
+            }
+
+            if (ss->fd == -1) {
+                printf("Obtained failed[2] %d\n", TCP_Errno());
+                PR_SetError(PR_UNKNOWN_ERROR, TCP_Errno());
+
+                PR_Free(ss);
+                ss = NULL;
+                fd = -1;
+            } else {
+                ss->sequenceNumber = reply.msg.obtain.sequenceNumber;
+                fd = ss->fd;
+            }
         } else {
             printf("Obtained failed %d\n", reply.errno);
             PR_SetError(PR_UNKNOWN_ERROR, reply.errno);
