@@ -360,7 +360,11 @@ error:
     return PR_FAILURE;
 }
 
-
+/* The keeper of the sockets
+ * It gets sockets handed to it from threads and also
+ * gives sockets to other threads which share
+ * the same socket
+ */
 static void SocketThread(void *notused) {
     PRBool done = PR_FALSE;
     PRStatus rc;
@@ -553,6 +557,10 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
 }
 
 
+/*
+ * Closes the socket and also tells
+ * the socket thread to close its socket
+ */
 PRInt32 _MD_CLOSE_SOCKET(PRInt32 osfd) {
     _MDSocket *sock = (_MDSocket *)osfd;
     PRThread *me = PR_GetCurrentThread();
@@ -589,6 +597,9 @@ PRInt32 _MD_CLOSE_SOCKET(PRInt32 osfd) {
     return 1;
 }
 
+/*
+ * Connects to a server
+ */
 PRInt32 _MD_CONNECT(
     PRFileDesc *osfd, const PRNetAddr *addr,
     PRUint32 addrlen, PRIntervalTime timeout) {
@@ -646,6 +657,10 @@ PRInt32 _MD_CONNECT(
     
 }
 
+/**
+ * Accepts a connection
+ * Sends the new socket to the socket thread
+ */
 PRInt32 _MD_ACCEPT(
     PRFileDesc *osfd, PRNetAddr *addr,
     PRUint32 *addrlen, PRIntervalTime timeout) {
@@ -726,6 +741,9 @@ error:
     return -1;
 }
 
+/*
+ * Binds a socket to a port
+ */ 
 PRInt32 _MD_BIND(PRFileDesc *osfd, const PRNetAddr *addr, PRUint32 addrlen) {
     PRThread *me = PR_GetCurrentThread();
     PRNetAddr addrCopy;
@@ -750,6 +768,9 @@ PRInt32 _MD_BIND(PRFileDesc *osfd, const PRNetAddr *addr, PRUint32 addrlen) {
     return retval;
 }
 
+/*
+ * Sets the listen queue for accepting
+ */
 PRInt32 _MD_LISTEN(PRFileDesc *osfd, PRIntn backlog) {
     PRThread *me = PR_GetCurrentThread();
     int fd = _MD_Ensure_Socket(osfd->secret->md.osfd);
@@ -768,6 +789,9 @@ PRInt32 _MD_LISTEN(PRFileDesc *osfd, PRIntn backlog) {
     return retval;
 }
 
+/*
+ * Shut down the read/write end of a socket
+ */
 PRInt32 _MD_SHUTDOWN(PRFileDesc *osfd, PRIntn how) {
     PRThread *me = PR_GetCurrentThread();
     int fd =_MD_Ensure_Socket(osfd->secret->md.osfd);
@@ -783,6 +807,9 @@ PRInt32 _MD_SHUTDOWN(PRFileDesc *osfd, PRIntn how) {
     return retval;
 }
 
+/*
+ * Recv data from a socket
+ */
 PRInt32 _MD_RECV(PRFileDesc *osfd, void *buf, PRInt32 amount, 
                                PRIntn flags, PRIntervalTime timeout) {
     PRThread *me = PR_GetCurrentThread();
@@ -821,6 +848,9 @@ PRInt32 _MD_RECV(PRFileDesc *osfd, void *buf, PRInt32 amount,
     return retval;
 }
 
+/*
+ * Send data over the socket
+ */
 PRInt32 _MD_SEND(
     PRFileDesc *osfd, const void *buf, PRInt32 amount, PRIntn flags, 
     PRIntervalTime timeout) {
@@ -860,6 +890,9 @@ PRInt32 _MD_SEND(
     return retval;
 }
 
+/*
+ * Get the port of the socket
+ */
 PRStatus _MD_GETSOCKNAME(
     PRFileDesc *osfd, PRNetAddr *addr, PRUint32 *addrlen) {
     PRThread *me = PR_GetCurrentThread();
@@ -884,6 +917,9 @@ PRStatus _MD_GETSOCKNAME(
     return retval == 0 ? PR_SUCCESS : PR_FAILURE;
 }
 
+/*
+ * Get the hostname/port of the socket on the other side of this one
+ */
 PRStatus _MD_GETPEERNAME(
     PRFileDesc *osfd, PRNetAddr *addr, PRUint32 *addrlen) {
     PRThread *me = PR_GetCurrentThread();
@@ -902,6 +938,9 @@ PRStatus _MD_GETPEERNAME(
     return retval == 0 ? PR_SUCCESS: PR_FAILURE;
 }
 
+/*
+ * Get information about a socket
+ */
 PRStatus _MD_GETSOCKOPT(
     PRFileDesc *osfd, PRInt32 level, PRInt32 optname, char* optval, PRInt32* optlen) {
     PRThread *me = PR_GetCurrentThread();
@@ -922,6 +961,9 @@ PRStatus _MD_GETSOCKOPT(
 
 }
 
+/*
+ * Set information about a socket
+ */
 PRStatus _MD_SETSOCKOPT(
     PRFileDesc *osfd, PRInt32 level, PRInt32 optname,
     const char* optval, PRInt32 optlen) {
@@ -945,6 +987,9 @@ PRStatus _MD_SETSOCKOPT(
 
 }
 
+/*
+ * Receive data from a particular host
+ */
 PRInt32 _MD_RECVFROM(
     PRFileDesc *osfd, void *buf, PRInt32 amount, PRIntn flags,
     PRNetAddr *addr, PRUint32 *addrlen, PRIntervalTime timeout) {
@@ -989,6 +1034,9 @@ PRInt32 _MD_RECVFROM(
     return retval;
 }
 
+/*
+ * Send data to a particular host
+ */
 PRInt32 _MD_SENDTO(
     PRFileDesc *osfd, const void *buf, PRInt32 amount, PRIntn flags,
     const PRNetAddr *addr, PRUint32 addrlen, PRIntervalTime timeout) {
@@ -1030,6 +1078,10 @@ PRInt32 _MD_SENDTO(
     return retval;
 }
 
+/*
+ * Create a new socket.
+ * Also sends the socket to the socket thread
+ */
 PRInt32 _MD_SOCKET(int type, int domain, int protocol) {
   int retval;
   int fd;
@@ -1077,6 +1129,9 @@ error:
   return (PRInt32)sock;
 }
 
+/*
+ * See if there is data available on the socket
+ */
 PRInt32 _MD_SOCKETAVAILABLE(PRFileDesc *osfd) {
     PRThread *me = PR_GetCurrentThread();
     int fd =_MD_Ensure_Socket(osfd->secret->md.osfd);
@@ -1098,6 +1153,9 @@ PRInt32 _MD_SOCKETAVAILABLE(PRFileDesc *osfd) {
     return result;
 }
 
+/*
+ * Get the appropriate errno for a connect error
+ */
 PRInt32 _MD_amiga_get_nonblocking_connect_error(int osfd) 
 {
     PRThread *me = PR_GetCurrentThread();
@@ -1117,6 +1175,9 @@ PRInt32 _MD_amiga_get_nonblocking_connect_error(int osfd)
     }
 }
 
+/*
+ * Poll a set of file descriptors for reading/writing with a optional timeout
+ */
 PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout) 
 {
     int i;
@@ -1350,6 +1411,9 @@ error:
     return retval;
 }
 
+/*
+ * Returns the native handle for a socket
+ */
 int _MD_NATIVE_HANDLE(PRFileDesc *fd) {
     PR_ASSERT(FALSE);
     switch (fd->methods->file_type) {
@@ -1362,6 +1426,9 @@ int _MD_NATIVE_HANDLE(PRFileDesc *fd) {
     }
 }
 
+/*
+ * Make the socket non-blocking
+ */
 void _PR_MD_MAKE_NONBLOCK(PRFileDesc *osfd) {
     int fd;
     PRThread *me = PR_GetCurrentThread();
@@ -1379,7 +1446,9 @@ void _PR_MD_MAKE_NONBLOCK(PRFileDesc *osfd) {
     }        
 }
 
-
+/*
+ * Get the hostname for the machine
+ */
 PRStatus _MD_gethostname(char *name, PRUint32 namelen) {
     PRThread *me = PR_GetCurrentThread();
     if (me->AmiTCP_Base == NULL) {
