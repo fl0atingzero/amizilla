@@ -180,6 +180,7 @@ void _MD_INIT_IO(void) {
                                  SocketThread, NULL, PR_PRIORITY_NORMAL, 
                                  PR_LOCAL_THREAD, 
                                  PR_JOINABLE_THREAD, 0);
+    sockThread->daemon = PR_TRUE;
     printf("msgLock is %lx, replyLock is %lx, communicationslock is %lx, msgCondVar is %lx, replyCOndVar is %lx\n", msgLock, replyLock, communicationLock, msgCondVar, replyCondVar);
     printf("Socket thread is %lx\n", sockThread);
     /* Wait until the socket thread wakes up */
@@ -192,7 +193,7 @@ void _MD_INIT_IO(void) {
  * Clean up all the locks and the socket thread 
  */
 void _PR_CleanupSocket(void) {
-    PRIntervalTime waitTime = PR_SecondsToInterval(5);
+    PRIntervalTime waitTime = PR_MillisecondsToInterval(100);
     PR_Lock(communicationLock);
     PR_Lock(msgLock);
     PR_Lock(replyLock);
