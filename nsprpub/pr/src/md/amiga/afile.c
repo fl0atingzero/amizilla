@@ -32,6 +32,13 @@
  * GPL.
  */
 
+/* 
+ * both devices/timer.h and sys/time.h (included from primpl.h) define 
+ * struct timeval. sys/time.h detects the other definiton while 
+ * devices/timer.h does not, hence we must include device/timer.h first.
+ */
+#include <devices/timer.h>
+
 #include "primpl.h"
 
 /*
