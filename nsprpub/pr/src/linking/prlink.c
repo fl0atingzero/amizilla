@@ -1190,7 +1190,7 @@ pr_LoadLibraryByPathname(const char *name, PRIntn flags)
     lm->dlh = (struct IXLibrary *)OpenLibrary(name, 0);
     if (lm->dlh == NULL || lm->dlh->ix_Cookie != 0x4a535300) {
         if (lm->dlh) {
-            CloseLibrary(lm->dlh);
+            CloseLibrary((struct Library *)lm->dlh);
         }
         PR_DELETE(lm);
         goto unlock;
@@ -1581,6 +1581,7 @@ pr_FindSymbolInLib(PRLibrary *lm, const char *name)
 #endif /* XP_UNIX */
 
 #ifdef XP_AMIGAOS
+
     f = DLD_GetSymbol((struct Library *)lm->dlh,name);
     if (f == NULL) {
       extern int errno;
