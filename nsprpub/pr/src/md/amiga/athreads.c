@@ -99,6 +99,7 @@ void _MD_Early_Init(void) {
     printf("Primorial Thread %lx\n", thread);
 #endif
 
+    setvbuf(stdout, NULL, _IONBF, 0);
     atexit(_MD_Exit);
 
     _PR_InitSocket();
@@ -499,7 +500,6 @@ void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
 }
 
 void _PR_MD_Signal(PRThread *thread) {
-    PR_ASSERT(thread->state != _PR_RUNNING);
     Signal((struct Task *)thread->p, 1 << thread->port->mp_SigBit);
 }
 
