@@ -55,6 +55,12 @@ endif
 # and then the static data cells used for locking no longer work.
 FORCE_SHARED_LIB = 1
 
+ifeq ($(OS_ARCH),AmigaOS)
+# Sorry, but so far we don't have shared linker libs on the Amiga
+FORCE_SHARED_LIB = 
+endif
+
+
 CSRCS		= \
 		jsapi.c \
 		jsarena.c \
@@ -298,7 +304,7 @@ endif
 
 # On OS/2 & win32 we are already linking against fdlibm, so don't bother
 # creating jsmathtemp
-ifeq (,$(filter OS2 WINNT OpenVMS,$(OS_ARCH)))
+ifeq (,$(filter OS2 WINNT OpenVMS AmigaOS,$(OS_ARCH)))
 # special rule for jsmath.o since we want to incrementally link
 # against fdlibm to pull in only what is needed
 # Do this in a single step to avoid dependency problems
