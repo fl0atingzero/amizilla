@@ -1639,6 +1639,7 @@ struct PRThread {
     struct MsgPort *selectPort;
     ULONG interruptSignal;
     struct timerequest *sleepRequest;
+    PRBool sleepRequestUsed;
     struct Process *p;
     PRThread *join;                 /* thread to signal when I'm done for joining */
     PRThread *parent;

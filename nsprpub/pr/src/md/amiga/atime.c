@@ -64,6 +64,7 @@ _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
     //printf("%lx, Beginning IO for sleep\n", thread);
     thread->io_pending = PR_TRUE;
 
+    thread->sleepRequestUsed = PR_TRUE;
     SendIO((struct IORequest *)timerIO);
     _PR_MD_Wait(thread, PR_TRUE);
 
@@ -123,7 +124,7 @@ PRIntervalTime _MD_Get_Interval(void) {
 PR_IMPLEMENT(PRTime)
     PR_Now(void)
 {
-    PRTime retval = 0;
+    PRTime retval = LL_INIT(0,0);
     struct timerequest *tr = 
         AllocMem(sizeof(struct timerequest), MEMF_CLEAR| MEMF_PUBLIC);
 
@@ -131,7 +132,13 @@ PR_IMPLEMENT(PRTime)
         struct timeval tv;
         struct Library *TimerBase = (struct Library *)tr->tr_node.io_Device;
         GetSysTime(&tv);
+#ifdef HAVE_LONG_LONG
         retval = tv.tv_sec << 32 | tv.tv_usec;
+#else
+        retval.lo = tv.tv_usec;
+        retval.hi = tv.tv_sec;
+#endif
+        
         CloseDevice((struct IORequest *)tr);
     }
     FreeMem(tr, sizeof(struct timerequest));

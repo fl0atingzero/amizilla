@@ -159,6 +159,16 @@ static void procExit(void) {
     DeleteMsgPort(me->port);
     DeleteMsgPort(me->selectPort);
     FreeSignal(me->interruptSignal);
+
+    /* NOTE:
+     * I can only AbortIO an IORequest only if the structure has
+     * been used at keast once.
+     */
+    if (me->sleepRequestUsed && 
+        !(CheckIO((struct IORequest *)me->sleepRequest))) {
+        AbortIO((struct IORequest *)me->sleepRequest);
+        WaitIO((struct IORequest *)me->sleepRequest);
+    }
     CloseDevice((struct IORequest *)me->sleepRequest);
     DeleteExtIO((struct IORequest *)me->sleepRequest);
     if (me->AmiTCP_Base != NULL)
