@@ -170,29 +170,34 @@ PRStatus _Delete(const char *name) {
  *                  PR_GetFileInfo writes information about the given file to the file information object. 
  */
 PRStatus _GetFileInfo(const char *fn,PRFileInfo *finfo) {
-	struct FileInfoBlock *info;
+	struct FileInfoBlock *info = PR_NEWZAP(struct FileInfoBlock);
 	BPTR lock;
-
+   
 	PRStatus status = PR_SUCCESS;
 
-	if( NULL != ( lock = Lock( fn,SHARED_LOCK ) ) && NULL != ( info = (struct FileInfoBlock*)AllocMem( sizeof( struct FileInfoBlock),MEMF_ANY ) ) ) {
-		if( DOSFALSE != Examine( lock,info ) ) {
-			finfo->type         = (info->fib_DirEntryType < 0) ? PR_FILE_FILE : PR_FILE_DIRECTORY;
-			finfo->size         = info->fib_Size;
-			//TODO: finfo->creationTime = (PRInt64)0; // TODO: Convert amiga time to nspr time 
-			finfo->modifyTime   = finfo->creationTime;
-		}
-	}
-	else {
-		// seterror
+    if (info == NULL) {
+        PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+        return PR_FAILURE;
+    }
 
+	if((lock = Lock(fn, SHARED_LOCK)) != NULL) {
+		if(Examine(lock, info) != DOSFALSE) {
+			finfo->type = (info->fib_DirEntryType < 0) 
+                ? PR_FILE_FILE : PR_FILE_DIRECTORY;
+			finfo->size = info->fib_Size;
+            finfo->creationTime = ((info->fib_Date.ds_Days + 2922)* 1440 + 
+                info->fib_Date.ds_Minute) * 60 + 
+                info->fib_Date.ds_Tick / TICKS_PER_SECOND;
+            finfo->modifyTime = finfo->creationTime;                
+		}
+	} else {
 		status = PR_FAILURE;
 	}
 
 	if( lock != NULL )
 		UnLock( lock );
 	if( info != NULL )
-		FreeMem( info,sizeof( struct FileInfoBlock) );
+       PR_Free(info);
 
 	return status;
 }
@@ -205,6 +210,16 @@ PRStatus _GetFileInfo(const char *fn,PRFileInfo *finfo) {
  *                  PR_GetFileInfo writes information about the given file to the file information object. 
  */
 PRStatus _GetFileInfo64(const char *fn,PRFileInfo64 *info) {
+    PRFileInfo tmp;
+    if (_GetFileInfo(fn, &tmp) == PR_SUCCESS) {
+        info->type = tmp.type;
+        info->creationTime = tmp.creationTime;
+        info->modifyTime = tmp.modifyTime;
+        LL_I2L(tmp.size, info->size);
+        return PR_SUCCESS;
+    } else {
+        return PR_FAILURE;
+    }
 }
 
 /*
@@ -221,6 +236,49 @@ PRStatus _Rename(const char *from, const char *to) {
  * Determines the accessibility of a file.
  */
 PRStatus _Access(const char *name, PRAccessHow how) {
+	struct FileInfoBlock *info = PR_NEWZAP(struct FileInfoBlock);
+	BPTR lock;   
+	PRStatus status = PR_FAILURE;
+
+    if (info == NULL) {
+        PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+        goto end;
+    }
+
+	lock = Lock(name, SHARED_LOCK);
+    if (lock == NULL) {
+        PR_SetError(PR_FILE_NOT_FOUND_ERROR, 0);
+        goto end;
+    }
+
+    if(Examine(lock, info) != DOSFALSE) {
+        LONG protection = info->fib_Protection;
+        /* TODO: MuFS access checking */
+        switch (how) {
+        case PR_ACCESS_EXISTS:
+            status = PR_SUCCESS;
+            break;
+        case PR_ACCESS_READ_OK:
+            if (((protection & FIBF_READ) == 0) || (protection & (FIBF_OTR_READ | FIBF_GRP_READ))) {
+                status = PR_SUCCESS;
+            }
+            break;
+        case PR_ACCESS_WRITE_OK:
+            if (((protection & FIBF_WRITE) == 0) || (protection & (FIBF_OTR_WRITE | FIBF_GRP_WRITE))) {
+                status = PR_SUCCESS;
+            }
+            break;
+        }       
+    }
+end:
+    if (lock != NULL) {
+        UnLock(lock);
+    }
+
+    if (info != NULL) {
+        PR_Free(info);
+    }
+    return status;
 }
 
 /*
@@ -311,12 +369,19 @@ PRInt32 _Seek (PRFileDesc *fd, PRInt32 offset, PRSeekWhence whence) {
  * Moves the current read-write file pointer by an offset expressed as a 64-bit integer.
  */
 PRInt64 _Seek64 (PRFileDesc *fd, PRInt64 offset, PRSeekWhence whence) {
+    PRInt32 off;
+    PRInt64 retval;
+    LL_L2I(off, offset);
+    off = _Seek(fd, off, whence);
+    LL_I2L(off, retval);
+    return retval;
 }
 
 /*
  * Synchronizes any buffered data for a file descriptor to its backing device (disk).
  */
 PRStatus _Sync(PRFileDesc *fd) {
+    /* No op */
 }
 
 PRInt32 _MD_WRITEV(
