@@ -65,7 +65,7 @@
 #include <errno.h>
 #if defined(XP_WIN) || defined(XP_OS2)
 #include <io.h>     /* for isatty() */
-#elif defined(XP_UNIX) || defined(XP_BEOS)
+#elif defined(XP_UNIX) || defined(XP_BEOS) || defined(XP_AMIGAOS)
 #include <unistd.h>     /* for isatty() */
 #elif defined(XP_MAC)
 #include <unistd.h>
