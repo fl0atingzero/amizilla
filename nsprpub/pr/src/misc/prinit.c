@@ -644,12 +644,26 @@ PR_ProcessAttrSetInheritableFD(
     cur = attr->fdInheritBuffer + attr->fdInheritBufferUsed;
     freeSize = attr->fdInheritBufferSize - attr->fdInheritBufferUsed;
     if (0 == attr->fdInheritBufferUsed) {
+        int osfd;
+#ifdef _PR_ATHREADS
+        osfd = _MD_MAP_FD(fd);
+        if (osfd == -1)
+          return PR_FAILURE;
+#else
+        osfd = fd->secret->md.osfd;
+#endif
         nwritten = PR_snprintf(cur, freeSize,
                 "NSPR_INHERIT_FDS=%s:%d:0x%lx",
-                name, (PRIntn)fd->methods->file_type, fd->secret->md.osfd);
+                name, (PRIntn)fd->methods->file_type, osfd);
     } else {
+        int osfd;
+#ifdef _PR_ATHREADS
+        osfd = _MD_MAP_FD(fd);
+#else
+        osfd = fd->secret->md.osfd;
+#endif
         nwritten = PR_snprintf(cur, freeSize, ":%s:%d:0x%lx",
-                name, (PRIntn)fd->methods->file_type, fd->secret->md.osfd);
+                name, (PRIntn)fd->methods->file_type, osfd);
     }
     attr->fdInheritBufferUsed += nwritten; 
     return PR_SUCCESS;
@@ -677,6 +691,13 @@ PR_IMPLEMENT(PRFileDesc *) PR_GetInheritedFD(
         if ((ptr[len] == ':') && (strncmp(ptr, name, len) == 0)) {
             ptr += len + 1;
             PR_sscanf(ptr, "%d:0x%lx", &fileType, &osfd);
+
+#ifdef _PR_ATHREADS
+            osfd = _MD_UNMAP_FD((PRDescType)fileType, osfd);
+            if (osfd == -1) {
+              return NULL;
+            }
+#endif
             switch ((PRDescType)fileType) {
                 case PR_DESC_FILE:
                     fd = PR_ImportFile(osfd);

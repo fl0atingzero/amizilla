@@ -274,7 +274,7 @@ static void increaseSocketTable(void) {
     int num = TCP_GetDTableSize();
     struct TagItem tags[] = {
         { SBTM_SETVAL(SBTC_DTABLESIZE), num + 64 },
-        { 0, NULL }
+        { TAG_DONE, NULL }
     };
 
     TCP_SocketBaseTagList(tags);
@@ -1372,7 +1372,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                 /* Wait for any packets to return */
                 if (sp->sp_Pkt.dp_Port != NULL) {
                     for (;;) {
-                        if ((tmp = GetMsg(me->selectPort)) != NULL) {
+                        if ((tmp = (struct StandardPacket *)GetMsg(me->selectPort)) != NULL) {
                             tmp->sp_Pkt.dp_Port = NULL;
                             if (tmp == sp)
                                 break;
@@ -1460,5 +1460,91 @@ PRStatus _MD_gethostname(char *name, PRUint32 namelen) {
     } else {
         LONG error = TCP_GetHostName(name, (LONG)namelen);
         return (error < 0) ? PR_FAILURE : PR_SUCCESS;
+    }
+}
+
+/**
+ * Returns the appropriate FD depending on the type
+ * For sockets, I have got to release the socket so
+ * I can obtain it in the other process. I let the socket thread do that
+ */
+int _MD_MAP_FD(PRFileDesc *fd) {
+    _MDSocket *sock;
+    _MDSocket *s2;
+    PRBool isInterruptsBlocked;
+    int id;
+    switch (fd->methods->file_type) {
+    case PR_DESC_SOCKET_TCP:
+    case PR_DESC_SOCKET_UDP:
+        sock = (_MDSocket *)fd->secret->md.osfd;
+        /* I use AllocVec here so the other side can free it */
+        s2 = AllocVec(sizeof(_MDSocket), MEMF_PUBLIC);
+        if (s2 == NULL)
+            return -1;
+        s2->type = sock->type;
+        s2->domain = sock->domain;
+        s2->protocol = sock->protocol;
+        isInterruptsBlocked = PR_IsInterruptsBlocked();
+        PR_BlockInterrupt();
+        PR_Lock(communicationLock);
+        PR_Lock(msgLock);
+        PR_Lock(replyLock);
+        msg.type = MSG_OBTAIN;
+        msg.msg.obtain.private_idx = sock->private_idx;
+        PR_NotifyCondVar(msgCondVar);
+        PR_Unlock(msgLock);
+        PR_WaitCondVar(replyCondVar, PR_INTERVAL_NO_TIMEOUT);
+        id = reply.msg.obtain.id;
+        PR_Unlock(replyLock);
+        PR_Unlock(communicationLock);
+        if (!isInterruptsBlocked)
+            PR_UnblockInterrupt();      
+
+        if (id != -1) {
+            s2->private_idx = reply.msg.obtain.id;
+            return (int)s2;
+        } else {
+            FreeVec(s2);
+            return -1;
+        }
+        break;
+
+    default:
+        return fd->secret->md.osfd;
+    }
+}
+
+/**
+ * Unmap the socket descriptor done with _MD_MAP_FD
+ * Obtain the socket and pass it off to the socket thread 
+ */
+int _MD_UNMAP_FD(PRDescType type, int osfd) {
+    _MDSocket *sock;
+    _MDSocket *s2;
+    PRThread *me = PR_CurrentThread();
+
+    switch (type) {
+    case PR_DESC_SOCKET_TCP:
+    case PR_DESC_SOCKET_UDP:
+        sock = (_MDSocket *)osfd;
+        s2 = (_MDSocket *)PR_NEWZAP(_MDSocket);
+        if (s2 != NULL) {
+            int s;
+            s2->type = sock->type;
+            s2->domain = sock->domain;
+            s2->protocol = sock->protocol;
+            s = TCP_ObtainSocket(sock->private_idx, s2->type, s2->domain, s2->protocol);
+            FreeVec(sock);
+            if (sendSocketToThread(s, s2) == PR_FAILURE) {
+                return -1;
+            }
+            return (int)s2;
+        } else {
+            return -1;
+        }
+        break;
+
+    default:
+        return osfd;
     }
 }

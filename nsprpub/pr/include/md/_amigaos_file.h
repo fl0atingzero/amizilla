@@ -38,6 +38,13 @@
 #include <dos/dos.h>
 #include <dos/dosextens.h>
 
+
+/*
+ * Used in PR_ProcessAttrSetInheritableFD, PR_GetInheritedFD
+ */
+int _MD_MAP_FD(PRFileDesc *fd);
+int _MD_UNMAP_FD(PRDescType type, int osfd);
+
 /*
  * Here we define all machine dependent (MD) translation for
  * the file nspr api (src/io/prfile.c). The implemented
