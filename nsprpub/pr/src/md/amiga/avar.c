@@ -33,9 +33,10 @@
  */
 
 #include "primpl.h"
+#include "prpdce.h"
 
 /* Debug condition variables */
-/* #define DEBUG_AVAR */
+/*#define DEBUG_AVAR*/
 
 /*
 ** Create a new condition variable.
@@ -100,10 +101,19 @@ PR_IMPLEMENT(void) PR_DestroyCondVar(PRCondVar *cvar) {
 ** The particular reason can be extracted with PR_GetError().
 */
 PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
+    return PRP_NakedWait(cvar, cvar->lock, timeout);
+}
+
+PR_IMPLEMENT(PRStatus) PRP_NakedWait(PRCondVar *cvar, PRLock *lock, PRIntervalTime timeout) {
     PRThread *me = PR_GetCurrentThread();
     PRStatus slp = PR_SUCCESS;
     PRInt32 priority = PR_GetThreadPriority(me);
-    PR_ASSERT(cvar->lock->owner == me);
+
+    if (lock == _PR_NAKED_CV_LOCK) {
+        return PR_FAILURE;
+    }
+
+    PR_ASSERT(lock->owner == me);
     if (_PR_PENDING_INTERRUPT(me)) {
 #ifdef DEBUG_AVAR
         printf("WaitCondVar(%lx) got interrupted\n", me);
@@ -114,7 +124,7 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
     }
 
 #ifdef DEBUG_AVAR
-    printf("(%lx) For cvar %lx, lock owner is %lx, timeout is %d\n", me, cvar, cvar->lock->owner, timeout);
+    printf("(%lx) For cvar %lx, lock owner is %lx, timeout is %d\n", me, cvar, lock->owner, timeout);
 #endif
 
     /* I need to forbid when unlocking so I can make sure I am waiting 
@@ -128,12 +138,12 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
     me->wait.cvar = cvar;
     PR_APPEND_LINK(&me->waitQLinks, &(cvar->condQ));
 
-    PR_Unlock(cvar->lock);
+    PR_Unlock(lock);
     
     if (timeout == PR_INTERVAL_NO_WAIT) {
         slp = PR_Sleep(0);
     } else if (timeout == PR_INTERVAL_NO_TIMEOUT) {
-        _PR_MD_Wait(me, PR_TRUE);
+        _PR_MD_Wait(me, PR_TRUE, PR_TRUE);
     } else {
         slp = PR_Sleep(timeout);
     }
@@ -147,7 +157,7 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
     printf("%lx woke up from condvar sleep on %lx, flags are %lx\n", me, cvar, me->flags);
 #endif
 
-    PR_Lock(cvar->lock);
+    PR_Lock(lock);
 
     if (slp != PR_SUCCESS) {
 #ifdef DEBUG_AVAR
@@ -157,7 +167,7 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
     }
 
 #ifdef DEBUG_AVAR
-    printf("%lx got cvar lock %lx, owner is now %lx, cvar is %lx, flags are %lx\n", me, cvar->lock, cvar->lock->owner, cvar, me->flags);
+    printf("%lx got cvar lock %lx, owner is now %lx, cvar is %lx, flags are %lx\n", me, lock, lock->owner, cvar, me->flags);
 #endif
 
     if (_PR_PENDING_INTERRUPT(me)) {
@@ -190,7 +200,7 @@ PR_IMPLEMENT(PRStatus) PR_NotifyCondVar(PRCondVar *cvar) {
 #ifdef DEBUG_AVAR
     printf("%lx going to notify thread of cond var %lx, lock %lx, owner is %lx\n", me, cvar, cvar->lock, cvar->lock->owner);
 #endif
-    PR_ASSERT(cvar->lock->owner == me);
+    PR_ASSERT(cvar->lock == _PR_NAKED_CV_LOCK || cvar->lock->owner == me);
 
     if (!PR_CLIST_IS_EMPTY(&(cvar->condQ))) {
         PRCList *next = cvar->condQ.next;
@@ -226,7 +236,7 @@ PR_IMPLEMENT(PRStatus) PR_NotifyAllCondVar(PRCondVar *cvar) {
     printf("%lx going to notify all threads for cv %lx\n", me, cvar);
 #endif
 
-    PR_ASSERT(cvar->lock->owner == me);
+    PR_ASSERT(cvar->lock == _PR_NAKED_CV_LOCK || cvar->lock->owner == me);
 
     if (!PR_CLIST_IS_EMPTY(&(cvar->condQ))) {
         PRCList *foo = &(cvar->condQ);
@@ -248,4 +258,37 @@ PR_IMPLEMENT(PRStatus) PR_NotifyAllCondVar(PRCondVar *cvar) {
         }
     }
     return PR_SUCCESS;
+}
+
+PR_IMPLEMENT(PRCondVar *) PR_NewNakedCondVar(void) {
+    PRCondVar *retval;
+
+    if (!_pr_initialized) _PR_ImplicitInitialization();
+
+    retval = PR_NEWZAP(PRCondVar);
+    if (retval) {
+        retval->lock = _PR_NAKED_CV_LOCK;
+        PR_INIT_CLIST(&retval->condQ);
+    }
+    return retval;
+}
+
+PR_IMPLEMENT(void) PR_DestroyNakedCondVar(PRCondVar *cvar) {
+    return PR_Free(cvar);
+}
+
+PR_IMPLEMENT(PRStatus) PRP_NakedNotify(PRCondVar *cvar) {
+    if (cvar->lock != _PR_NAKED_CV_LOCK) {
+        return PR_FAILURE;
+    } else {
+        return PR_NotifyCondVar(cvar);
+    }
+}
+
+PR_IMPLEMENT(PRStatus) PRP_NakedBroadcast(PRCondVar *cvar) {
+    if (cvar->lock != _PR_NAKED_CV_LOCK) {
+        return PR_FAILURE;
+    } else {
+        return PR_NotifyAllCondVar(cvar);
+    }
 }
