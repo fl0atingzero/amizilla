@@ -678,6 +678,8 @@ PRInt32 _MD_ACCEPT(
             if (retval < 0) {
                 _PR_MD_MAP_ACCEPT_ERROR(TCP_Errno());
                 goto error;
+            } else if (retval == 0) {
+                goto error;
             }
         } else {
             goto error;
