@@ -54,12 +54,17 @@
 void _PR_MD_Wait(PRThread *thread, PRBool interruptable);
 void _PR_MD_Signal(PRThread *thread);
 
+/*
+ * Structure passed to the process spawning thread 
+ */
 struct _MDProcess {
     struct PRThread *executeThread;
-    char *const *argv;
-    char *const *envp;
-    const PRProcessAttr *attr;
-    PRInt32 returnCode;
+    PRLock *lock;       /* I need to wait until the process */
+    PRCondVar *condVar; /* thread is done with the PRProcessAttr structure */
+    char *const *argv;  /* program arguments */
+    char *const *envp;  /* environment */
+    const PRProcessAttr *attr; /* process attributes */
+    PRInt32 returnCode; /* return code from the process */
 };
 
 
