@@ -43,6 +43,30 @@ extern PRLogModuleInfo *_pr_shm_lm;
 
 #define SHARED_MEMORY_MAGIC_COOKIE 0xadeadc03
 
+static PRStatus readShmCookie(PRFileDesc *osfd, PRSharedMemory *shm) {
+    PRInt32 cookie;
+
+    PR_Read(osfd, &cookie, sizeof(cookie));
+    cookie = ntohl(cookie);
+    if (cookie != SHARED_MEMORY_MAGIC_COOKIE) {
+        /* Any better error code for this */
+        PR_SetError(PR_OPERATION_NOT_SUPPORTED_ERROR, 0);
+        return PR_FAILURE;
+    } else {
+        char buf[20];
+        PRInt32 length;
+        PR_Read(osfd, &length, sizeof(length));
+        length = ntohl(length);
+        memset(buf, 0, sizeof(buf));
+        PR_Read(osfd, buf, length);
+        shm->handle = (struct _MDSharedMemory *)atol(buf);
+        Forbid();
+        shm->handle->count++;
+        Permit();
+    }
+    return PR_SUCCESS;
+}
+
 PRSharedMemory * _MD_OpenSharedMemory( 
     const char *name,
     PRSize      size,
@@ -51,83 +75,94 @@ PRSharedMemory * _MD_OpenSharedMemory(
 ) {
     PRStatus rc = PR_SUCCESS;
     int cookie;
-    char buf[10];
-    PRSharedMemory *shm;
-    char        ipcname[PR_IPC_NAME_SIZE];
+    PRSharedMemory *shm = NULL;
+    PRFileDesc *osfd;
+    char ipcname[PR_IPC_NAME_SIZE];
 
     rc = _PR_MakeNativeIPCName( name, ipcname, PR_IPC_NAME_SIZE, _PRIPCShm );
-    if ( PR_FAILURE == rc ) {
-        _PR_MD_MAP_DEFAULT_ERROR( errno );
-        PR_LOG( _pr_shm_lm, PR_LOG_DEBUG, 
+    if (PR_FAILURE == rc) {
+        _PR_MD_MAP_DEFAULT_ERROR(errno);
+        PR_LOG(_pr_shm_lm, PR_LOG_DEBUG, 
             ("_MD_OpenSharedMemory(): _PR_MakeNativeIPCName() failed: %s", name ));
-        return( NULL );
+        goto error;
     }
 
-    shm = PR_NEWZAP( PRSharedMemory );
-    if ( NULL == shm ) {
-        PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0 );
+    shm = PR_NEWZAP(PRSharedMemory);
+    if (NULL == shm) {
+        PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
         PR_LOG(_pr_shm_lm, PR_LOG_DEBUG, ( "PR_OpenSharedMemory: New PRSharedMemory out of memory")); 
-        return( NULL );
+        goto error;
     }
 
-    shm->ipcname = (char*)PR_MALLOC( strlen( ipcname ) + 1 );
-    if ( NULL == shm->ipcname ) {
-        PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0 );
-        PR_LOG(_pr_shm_lm, PR_LOG_DEBUG, ( "PR_OpenSharedMemory: New shm->ipcname out of memory")); 
-        return( NULL );
+    shm->ipcname = (char *)PR_MALLOC(strlen(ipcname) + 1);
+    if (NULL == shm->ipcname) {
+        PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+        PR_LOG(_pr_shm_lm, PR_LOG_DEBUG, ("PR_OpenSharedMemory: New shm->ipcname out of memory")); 
+        goto error;
     }
 
     /* copy args to struct */
-    strcpy( shm->ipcname, ipcname );
+    strcpy(shm->ipcname, ipcname);
     shm->size = size; 
     shm->mode = mode; 
     shm->flags = flags;
     shm->ident = _PR_SHM_IDENT;
 
     /* create the file first */
-    if ( flags & PR_SHM_CREATE )  {
-        int osfd = open( shm->ipcname, (O_RDWR | O_CREAT), shm->mode );
-        if ( -1 == osfd ) {
-            _PR_MD_MAP_OPEN_ERROR( errno );
-            PR_FREEIF( shm->ipcname );
-            PR_DELETE( shm );
-            return( NULL );
-        } 
-        cookie = htonl(SHARED_MEMORY_MAGIC_COOKIE);
-        write(osfd, &cookie, sizeof(cookie));
-        sprintf(buf, "%lx", shm);
-        write(osfd, buf, strlen(buf));
-        if ( close(osfd) == -1 ) {
-            _PR_MD_MAP_CLOSE_ERROR( errno );
-            PR_FREEIF( shm->ipcname );
-            PR_DELETE( shm );
-            return( NULL );
-        }
-    } else {
-        int osfd = open(ipcname, O_RDONLY, mode);
-        char buf[10];
-        if (-1 == osfd) {
-            _PR_MD_MAP_OPEN_ERROR(errno);
-            return NULL;
-        }
+    if (flags & PR_SHM_CREATE)  {
+        int openflags = PR_CREATE_FILE;
+        PRFileInfo fi;
+        if (flags & PR_SHM_EXCL)
+            openflags |= PR_EXCL;
 
-        read(osfd, &cookie, sizeof(cookie));
-        cookie = ntohl(cookie);
-        if (cookie != SHARED_MEMORY_MAGIC_COOKIE) {
-            /* Any better error code for this */
-            PR_SetError(PR_OPERATION_NOT_SUPPORTED_ERROR, 0);
+        osfd = PR_Open(shm->ipcname, openflags, mode);
+        if (osfd == NULL) {
+            goto error;
+        } 
+
+        if (PR_GetFileInfo(ipcname, &fi) == PR_SUCCESS && fi.size > 0) {
+            if (readShmCookie(osfd, shm) == PR_FAILURE) {
+                goto error;
+            }
         } else {
-            read(osfd, buf, sizeof(buf));
-            shm = (struct PRSharedMemory *)atol(buf);
+            char buf[20];
+            /* I use AllocVec so someone else can delete it */
+            shm->handle = (struct _MDSharedMemory *)AllocVec(size + sizeof(struct _MDSharedMemory), MEMF_PUBLIC | MEMF_CLEAR);
+            if (shm->handle == NULL) {
+                goto error;
+            }
+            cookie = htonl(SHARED_MEMORY_MAGIC_COOKIE);
+            PR_Write(osfd, &cookie, sizeof(cookie));
+            sprintf(buf, "%ld", shm->handle);
+            cookie = htonl(strlen(buf));
+            PR_Write(osfd, &cookie, sizeof(cookie));
+            PR_Write(osfd, buf, strlen(buf));
         }
+        PR_Close(osfd);
+    } else {
+        PRFileDesc *osfd = PR_Open(ipcname, PR_RDONLY, mode);
+        if (NULL == osfd) {
+            goto error;
+        }
+        if (readShmCookie(osfd, shm) == PR_FAILURE) 
+            goto error;
+
+        PR_Close(osfd);
     }
 
-    shm->handle = PR_Realloc(shm->handle, size);
-    return( shm );
+    return shm;
+
+error:
+    if (osfd != NULL)
+        PR_Close(osfd);
+    PR_FREEIF(shm->handle);
+    PR_FREEIF(shm->ipcname);
+    PR_FREEIF(shm);
+    return NULL;
 }
 
 void * _MD_AttachSharedMemory( PRSharedMemory *shm, PRIntn flags ) {
-    return shm->handle;
+    return (void *)((char *)shm->handle + sizeof(struct _MDSharedMemory));
 }
 
 PRStatus _MD_DetachSharedMemory( PRSharedMemory *shm, void *addr ) {
@@ -138,35 +173,30 @@ PRStatus _MD_DetachSharedMemory( PRSharedMemory *shm, void *addr ) {
 extern PRStatus _MD_CloseSharedMemory( PRSharedMemory *shm ) {
     PR_ASSERT( shm->ident == _PR_SHM_IDENT );
 
+    Forbid();
+    shm->handle->count--;
+    if (shm->handle->count == 0) {
+        FreeVec(shm->handle);
+    }
+    Permit();
+
     PR_FREEIF(shm->ipcname);
-    PR_DELETE(shm->handle);
     PR_DELETE(shm);
 
     return PR_SUCCESS;
 }
 
-PRStatus _MD_DeleteSharedMemory( const char *name ) {
-    PRStatus rc = PR_SUCCESS;
-    key_t   key;
-    int     id;
-    PRIntn  urc;
-    char        ipcname[PR_IPC_NAME_SIZE];
+PRStatus _MD_DeleteSharedMemory(const char *name) {
+    PRStatus rc;
+    char ipcname[PR_IPC_NAME_SIZE];
 
-    rc = _PR_MakeNativeIPCName( name, ipcname, PR_IPC_NAME_SIZE, _PRIPCShm );
-    if ( PR_FAILURE == rc )
-    {
+    rc = _PR_MakeNativeIPCName(name, ipcname, PR_IPC_NAME_SIZE, _PRIPCShm);
+    if (rc == PR_FAILURE) {
         PR_SetError( PR_UNKNOWN_ERROR , errno );
         PR_LOG( _pr_shm_lm, PR_LOG_DEBUG, 
             ("_MD_DeleteSharedMemory(): _PR_MakeNativeIPCName() failed: %s", name ));
-        return(PR_FAILURE);
+        return PR_FAILURE;
     }
 
-    urc = unlink( ipcname );
-    if ( -1 == urc ) {
-        _PR_MD_MAP_UNLINK_ERROR( errno );
-        PR_LOG( _pr_shm_lm, PR_LOG_DEBUG, 
-            ("_MD_DeleteSharedMemory(): unlink() failed: %s", ipcname ));
-        return(PR_FAILURE);
-    }
-    return PR_SUCCESS;
+    return PR_Delete(ipcname);
 }
