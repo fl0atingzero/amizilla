@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* 
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -38,6 +38,7 @@
 #include <primpl.h>
 
 #include <exec/ports.h>
+#include <dos/var.h>
 
 /*
  * Returns the number of threads awoken or 0 if a timeout occurred;
@@ -54,19 +55,25 @@ void _PR_MD_Wait(PRThread *thread, PRBool interruptable);
 void _PR_MD_Signal(PRThread *thread);
 
 struct _MDProcess {
+    struct PRThread *executeThread;
+    char *const *argv;
+    char *const *envp;
+    const PRProcessAttr *attr;
+    PRInt32 returnCode;
 };
 
 
 // Stubs
 
-#define _MD_CREATE_PROCESS(a,b,c,d) (NULL)
-#define _MD_DETACH_PROCESS(a) (PR_FAILURE)
-#define _MD_KILL_PROCESS(a) (PR_SUCCESS)
+#define _MD_CREATE_PROCESS _CreateProcess
+#define _MD_DETACH_PROCESS _DetachProcess
+#define _MD_WAIT_PROCESS _WaitProcess
+#define _MD_KILL_PROCESS _KillProcess
 #define _MD_INIT_SEGS()
 #define _MD_EARLY_INIT _MD_Early_Init
 #define _MD_FINAL_INIT()
 #define _MD_INIT_FILEDESC
-#define _MD_WAIT_PROCESS(a,b)
+
 #define _MD_ALLOC_SEGMENT
 #define _MD_FREE_SEGMENT
 
