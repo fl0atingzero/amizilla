@@ -190,15 +190,9 @@ union PRNetAddr {
         PRIPv6Addr ip;                  /* the actual 128 bits of address */
         PRUint32 scope_id;              /* set of interfaces for a scope */
     } ipv6;
-#if defined(XP_UNIX)
+#if defined(XP_UNIX) || defined(XP_AMIGAOS)
     struct {                            /* Unix domain socket address */
         PRUint16 family;                /* address family (AF_UNIX) */
-        char path[104];                 /* null-terminated pathname */
-    } local;
-#endif
-#if defined(XP_AMIGAOS)
-    struct {                            /* Unix domain socket address */
-        PRUint16 family;                 /* address family (AF_UNIX) */
         char path[104];                 /* null-terminated pathname */
     } local;
 #endif
