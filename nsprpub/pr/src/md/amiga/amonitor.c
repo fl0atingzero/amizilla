@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* 
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -43,20 +43,24 @@
 ** is low.
 */
 PR_IMPLEMENT(PRMonitor*) PR_NewMonitor(void) {
-    PRMonitor *retval = PR_NEWZAP(PRMonitor);
+    PRMonitor *retval;
+
+    if (!_pr_initialized) _PR_ImplicitInitialization();
+
+    retval = PR_NEWZAP(PRMonitor);
     if (retval != NULL) {
-      PRLock *lock = PR_NewLock();
-      if (lock != NULL) {
-        PRCondVar *cvar = PR_NewCondVar(lock);
-        if (cvar != NULL) {
-          retval->cvar = cvar;
-          return retval;
+        PRLock *lock = PR_NewLock();
+        if (lock != NULL) {
+            PRCondVar *cvar = PR_NewCondVar(lock);
+            if (cvar != NULL) {
+                retval->cvar = cvar;
+                return retval;
+            } else {
+                PR_DestroyLock(lock);
+            }
         } else {
-          PR_DestroyLock(lock);
+            PR_Free(retval);
         }
-      } else {
-        PR_Free(retval);
-      }
     }
     return NULL;     
 }
@@ -68,11 +72,11 @@ PR_IMPLEMENT(PRMonitor*) PR_NewMonitor(void) {
 **
 */
 PR_IMPLEMENT(void) PR_DestroyMonitor(PRMonitor *mon) {
-  if (mon->name != NULL)
-    PR_Free(mon->name);
-  PR_DestroyLock(mon->cvar->lock);
-  PR_DestroyCondVar(mon->cvar);
-  PR_Free(mon);
+    if (mon->name != NULL)
+        PR_Free(mon->name);
+    PR_DestroyLock(mon->cvar->lock);
+    PR_DestroyCondVar(mon->cvar);
+    PR_Free(mon);
 }
 
 /*
@@ -81,14 +85,14 @@ PR_IMPLEMENT(void) PR_DestroyMonitor(PRMonitor *mon) {
 ** it will increment the entry count by one.
 */
 PR_IMPLEMENT(void) PR_EnterMonitor(PRMonitor *mon) {
-  PRThread *me = PR_GetCurrentThread();
-  //PR_fprintf(PR_STDERR, "%lx entering monitor %lx, owner is %lx, count is %lx\n", me, mon, mon->cvar->lock->owner, mon->entryCount);
-  if (mon->cvar->lock->owner != me) {
-    PR_Lock(mon->cvar->lock);
-  } 
-  mon->entryCount++;
-  //PR_fprintf(PR_STDERR, "%lx done entermonitor, owner is now %lx\n", mon->cvar->lock->owner);
-  PR_ASSERT(mon->cvar->lock->owner == me);
+    PRThread *me = PR_GetCurrentThread();
+    //printf("%lx entering monitor %lx, owner is %lx, count is %lx\n", me, mon, mon->cvar->lock->owner, mon->entryCount);
+    if (mon->cvar->lock->owner != me) {
+        PR_Lock(mon->cvar->lock);
+    } 
+    mon->entryCount++;
+    //printf("%lx done entermonitor, owner is now %lx\n", mon->cvar->lock->owner);
+    PR_ASSERT(mon->cvar->lock->owner == me);
 }
 
 /*
@@ -97,16 +101,16 @@ PR_IMPLEMENT(void) PR_EnterMonitor(PRMonitor *mon) {
 ** calling thread has not entered the monitor.
 */
 PR_IMPLEMENT(PRStatus) PR_ExitMonitor(PRMonitor *mon) {
-  PRThread *me = PR_GetCurrentThread();
-  //PR_fprintf(PR_STDERR, "%lx exitting monitor %lx, owner is %lx, count is %lx\n", me, mon, mon->cvar->lock->owner, mon->entryCount);
-  if (mon->cvar->lock->owner != me) {
-    return PR_FAILURE;
-  }
-  PR_ASSERT(mon->entryCount > 0);
-  if (--mon->entryCount == 0) {
-    PR_Unlock(mon->cvar->lock);
-  }
-  return PR_SUCCESS;
+    PRThread *me = PR_GetCurrentThread();
+    //printf("%lx exitting monitor %lx, owner is %lx, count is %lx\n", me, mon, mon->cvar->lock->owner, mon->entryCount);
+    if (mon->cvar->lock->owner != me) {
+        return PR_FAILURE;
+    }
+    PR_ASSERT(mon->entryCount > 0);
+    if (--mon->entryCount == 0) {
+        PR_Unlock(mon->cvar->lock);
+    }
+    return PR_SUCCESS;
 }
 
 /*
@@ -126,20 +130,20 @@ PR_IMPLEMENT(PRStatus) PR_ExitMonitor(PRMonitor *mon) {
 ** Returns PR_FAILURE if the caller has not entered the monitor.
 */
 PR_IMPLEMENT(PRStatus) PR_Wait(PRMonitor *mon, PRIntervalTime ticks) {
-  PRThread *me = PR_GetCurrentThread();
-  PRStatus retval;
-  int count = mon->entryCount;
+    PRThread *me = PR_GetCurrentThread();
+    PRStatus retval;
+    int count = mon->entryCount;
 
-  //PR_fprintf(PR_STDERR, "%lx is waiting on monitor %lx, ticks are %ld\n", me, mon, ticks);
+    //printf("%lx is waiting on monitor %lx, ticks are %ld\n", me, mon, ticks);
 
-  mon->entryCount = 0;
-  if (mon->cvar->lock->owner != me) {
-    return PR_FAILURE;
-  }
-  retval = PR_WaitCondVar(mon->cvar, ticks);
-  //PR_fprintf(PR_STDERR, "%lx is done waiting on monitor", me);
-  mon->entryCount = count;
-  return retval;
+    mon->entryCount = 0;
+    if (mon->cvar->lock->owner != me) {
+        return PR_FAILURE;
+    }
+    retval = PR_WaitCondVar(mon->cvar, ticks);
+    //printf("%lx is done waiting on monitor", me);
+    mon->entryCount = count;
+    return retval;
 }
 
 /*
@@ -148,13 +152,13 @@ PR_IMPLEMENT(PRStatus) PR_Wait(PRMonitor *mon, PRIntervalTime ticks) {
 ** and attempts to reenter the monitor.
 */
 PR_IMPLEMENT(PRStatus) PR_Notify(PRMonitor *mon) {
-  PRThread *me = PR_GetCurrentThread();
-  //PR_fprintf(PR_STDERR, "%lx notifying monitor %lx, owner is %lx, count is %lx\n", me, mon, mon->cvar->lock->owner, mon->entryCount);
-  if (mon->cvar->lock->owner != me) {
-    return PR_FAILURE;
-  }
+    PRThread *me = PR_GetCurrentThread();
+    //printf("%lx notifying monitor %lx, owner is %lx, count is %lx\n", me, mon, mon->cvar->lock->owner, mon->entryCount);
+    if (mon->cvar->lock->owner != me) {
+        return PR_FAILURE;
+    }
 
-  return PR_NotifyCondVar(mon->cvar);
+    return PR_NotifyCondVar(mon->cvar);
 }
 
 /*
@@ -163,12 +167,12 @@ PR_IMPLEMENT(PRStatus) PR_Notify(PRMonitor *mon) {
 ** monitor.
 */
 PR_IMPLEMENT(PRStatus) PR_NotifyAll(PRMonitor *mon) {
-  PRThread *me = PR_GetCurrentThread();
-  //PR_fprintf(PR_STDERR, "%lx notifyall on monitor %lx, owner is %lx, count is %lx\n", me, mon, mon->cvar->lock->owner, mon->entryCount);
-  if (mon->cvar->lock->owner != me) {
-    return PR_FAILURE;
-  }
-  return PR_NotifyAllCondVar(mon->cvar);
+    PRThread *me = PR_GetCurrentThread();
+    //printf("%lx notifyall on monitor %lx, owner is %lx, count is %lx\n", me, mon, mon->cvar->lock->owner, mon->entryCount);
+    if (mon->cvar->lock->owner != me) {
+        return PR_FAILURE;
+    }
+    return PR_NotifyAllCondVar(mon->cvar);
 }
 
 /*
@@ -179,15 +183,15 @@ PR_IMPLEMENT(PRStatus) PR_NotifyAll(PRMonitor *mon) {
 ** is low.
 */
 PR_IMPLEMENT(PRMonitor*) PR_NewNamedMonitor(const char* name) {
-  PRMonitor *retval = PR_NewMonitor();
-  if (retval != NULL) {
-    retval->name = PR_Malloc(strlen(name) + 1);
-    if (retval->name == NULL) {
-      PR_DestroyMonitor(retval);
-      retval = NULL;
-    } else {
-      strcpy(retval->name, name);
+    PRMonitor *retval = PR_NewMonitor();
+    if (retval != NULL) {
+        retval->name = PR_Malloc(strlen(name) + 1);
+        if (retval->name == NULL) {
+            PR_DestroyMonitor(retval);
+            retval = NULL;
+        } else {
+            strcpy(retval->name, name);
+        }
     }
-  }
-  return retval;
+    return retval;
 }
