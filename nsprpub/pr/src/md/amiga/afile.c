@@ -47,14 +47,6 @@
 #include "primpl.h"
 
 
-/* I/O related */
-#if 0
-extern void _MD_INIT_FILEDESC(PRFileDesc *fd) {
-#warning _MD_INIT_FIELDESC not implemented
-   assert(0);
-}
-#endif
-
 void _PR_MD_MAKE_NONBLOCK(PRFileDesc *fd) {
 #warning _MD_MAKE_NONBLOCK not implemented
   /*   assert(0); */
@@ -269,8 +261,8 @@ PRInt32 _Write(PRFileDesc *fd, const void *buf, PRInt32 amount) {
     PRInt32 rv;
     BPTR osfd = fd->secret->md.osfd;
 
-    if( amount == ( rv = Write( osfd, buf, amount ) ) ) {
-	    // TODO: set error?
+    if( amount != ( rv = Write( osfd, buf, amount ) ) ) {
+      fprintf(stderr, "Didn't write amount(%d) bytes, wrote %d\n", amount, rv);
     }
 
     return rv;
