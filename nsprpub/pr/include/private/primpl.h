@@ -82,6 +82,10 @@ typedef struct PRSegment PRSegment;
 #include <sys/sem.h>
 #endif
 
+#if defined(_PR_ATHREADS)
+#include <setjmp.h>
+#endif
+
 /*************************************************************************
 *****  A Word about Model Dependent Function Naming Convention ***********
 *************************************************************************/
@@ -1641,7 +1645,7 @@ struct PRThread {
     PRThread *next, *prev;          /* linked list of all the threads */
     PRCList waitQLinks;             /* when thread is PR_Wait'ing */
     PRCList lockList;               /* list of locks currently holding */
-    
+    jmp_buf jmpbuf;                 /* setjmp buffer used on PR_ProcessExit() */
     union _wait {
         struct PRLock *lock;
         struct PRCondVar *cvar;
