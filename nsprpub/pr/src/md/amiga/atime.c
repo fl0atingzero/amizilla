@@ -36,7 +36,7 @@
 #include <devices/timer.h>
 #include <proto/timer.h>
 
-_PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
+static _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
 
     PRThread *thread = PR_GetCurrentThread();
     struct timerequest *timerIO = thread->sleepRequest;
@@ -127,17 +127,18 @@ PR_IMPLEMENT(PRTime)
     PRTime retval = LL_INIT(0,0);
     struct timerequest *tr = 
         AllocMem(sizeof(struct timerequest), MEMF_CLEAR| MEMF_PUBLIC);
-
+    PRInt64 secs, mil;
+    
     if (!(OpenDevice(TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0))) {
         struct timeval tv;
         struct Library *TimerBase = (struct Library *)tr->tr_node.io_Device;
         GetSysTime(&tv);
-#ifdef HAVE_LONG_LONG
-        retval = tv.tv_sec << 32 | tv.tv_usec;
-#else
-        retval.lo = tv.tv_usec;
-        retval.hi = tv.tv_sec;
-#endif
+        /* retval = tv.tv_sec * 1000000 + tv.tv_usec */
+        LL_I2L(secs, tv.tv_sec);
+        LL_I2L(mil, 1000000);
+        LL_MUL(secs, secs, mil);
+        LL_I2L(mil, tv.tv_usec);
+        LL_ADD(retval, secs, mil);
         
         CloseDevice((struct IORequest *)tr);
     }
