@@ -10385,8 +10385,7 @@ fi
         -o "$_DEFAULT_TOOLKIT" = "photon" \
         -o "$_DEFAULT_TOOLKIT" = "mac" \
         -o "$_DEFAULT_TOOLKIT" = "windows" \
-        -o "$_DEFAULT_TOOLKIT" = "cocoa" \
-        -o "$_DEFAULT_TOOLKIT" = "amiga"
+        -o "$_DEFAULT_TOOLKIT" = "cocoa"
     then
                         MOZ_WIDGET_TOOLKIT=`echo "$_DEFAULT_TOOLKIT" | sed -e "s/,.*$//"`
     else
