@@ -66,6 +66,10 @@
 #include <Gestalt.h>
 #endif
 
+#ifdef XP_AMIGAOS
+#include <exec/execbase.h>
+#endif
+
 #ifdef DEBUG
 // defined by the socket transport service while active
 extern PRThread *gSocketThread;
@@ -596,6 +600,8 @@ nsHttpHandler::InitUserAgentComponents()
     "Macintosh"
 #elif defined(XP_BEOS)
     "BeOS"
+#elif defined(XP_AMIGAOS)
+    "AmigaOS"
 #elif !defined(MOZ_X11)
     "?"
 #else
@@ -658,6 +664,12 @@ nsHttpHandler::InitUserAgentComponents()
     long version;
     if (::Gestalt(gestaltSystemVersion, &version) == noErr && version >= 0x00001000)
         mOscpu.Adopt(nsCRT::strdup("PPC Mac OS X"));
+    else
+        mOscpu.Adopt(nsCRT::strdup("PPC"));
+#elif defined(XP_AMIGAOS) 
+    extern struct ExecBase *SysBase;
+    if (SysBase->AttnFlags & (AFF_68010 | AFF_68020 | AFF_68030 | AFF_68040 | AFF_68060)) 
+        mOscpu.Adopt(nsCRT::strdup("m68k"));
     else
         mOscpu.Adopt(nsCRT::strdup("PPC"));
 #elif defined (XP_UNIX) || defined (XP_BEOS)
