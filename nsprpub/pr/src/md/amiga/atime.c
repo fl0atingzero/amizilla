@@ -36,6 +36,8 @@
 #include <devices/timer.h>
 #include <proto/timer.h>
 
+#define DAYS_SINCE_1970 (8*365+2)
+
 static _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
 
     PRThread *thread = PR_GetCurrentThread();
@@ -47,7 +49,6 @@ static _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
         goto done;
 
     if (_PR_PENDING_INTERRUPT(thread)) {
-        printf("%lx sleep got a pending interrupt\n", thread);
         PR_ClearInterrupt();
         PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
         return INTERRUPTED;
@@ -61,7 +62,6 @@ static _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
     timerIO->tr_time.tv_secs = timeout / _PR_MD_INTERVAL_PER_SEC();
     timerIO->tr_time.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * (1000000 / _PR_MD_INTERVAL_PER_SEC());
 
-    //printf("%lx, Beginning IO for sleep\n", thread);
     thread->io_pending = PR_TRUE;
 
     thread->sleepRequestUsed = PR_TRUE;
@@ -70,7 +70,6 @@ static _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
 
     if (_PR_PENDING_INTERRUPT(thread)) {
         PR_ClearInterrupt();
-        printf("%lx, Sleep got interrupted\n", thread);
         PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
         retval = INTERRUPTED;
     } else {   
@@ -82,16 +81,12 @@ static _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
     while(GetMsg(thread->port))
         ;
 
-    // printf("%lx, got msg %lx\n", thread, msg);
     if (!(CheckIO((struct IORequest *)timerIO))) {
-        //printf("%lx abort io\n", thread);
         AbortIO((struct IORequest *)timerIO);
-        //printf("%lx wait IO\n", thread);
         WaitIO((struct IORequest *)timerIO);
     }
     thread->io_pending = PR_FALSE;
  done:
-    //printf("%lx done sleep returning\n", thread);
     return retval;
 }
 
@@ -125,19 +120,24 @@ PR_IMPLEMENT(PRTime)
 {
     PRTime retval = LL_INIT(0,0);
     struct timerequest *tr = PR_NEWZAP(struct timerequest);
-    PRInt64 secs, mil;
+    PRInt64 secs, mil, offset;
     
     if (!(OpenDevice(TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0))) {
         struct timeval tv;
         struct Library *TimerBase = (struct Library *)tr->tr_node.io_Device;
         GetSysTime(&tv);
-        /* retval = tv.tv_sec * 1000000 + tv.tv_usec */
+        /* retval = tv.tv_sec * 1000000 + tv.tv_usec + usecs since 1970 to 1978
+         * ( Amiga's time is based upon Jan 1, 1978)
+         */
         LL_I2L(secs, tv.tv_sec);
         LL_I2L(mil, 1000000);
         LL_MUL(secs, secs, mil);
         LL_I2L(mil, tv.tv_usec);
         LL_ADD(retval, secs, mil);
-        
+        LL_I2L(offset, DAYS_SINCE_1970);
+        LL_MUL(offset, offset, 86400);
+        LL_MUL(offset, offset, 1000000);
+        LL_ADD(retval, retval, offset);
         CloseDevice((struct IORequest *)tr);
     }
     PR_Free(tr);
