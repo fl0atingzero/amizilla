@@ -50,4 +50,5 @@ MDCSRCS =             \
 	amemory.c	\
 	arealpath.c	\
 	arandom.c \
+        ainput.c \
 	$(NULL)
