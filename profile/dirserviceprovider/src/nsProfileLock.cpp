@@ -75,6 +75,8 @@ nsProfileLock::nsProfileLock() :
     ,mLockFileHandle(INVALID_HANDLE_VALUE)
 #elif defined (XP_OS2)
     ,mLockFileHandle(-1)
+#elif defined (XP_AMIGAOS)
+    ,mLock(0)
 #elif defined (XP_UNIX)
     ,mPidLockFileName(nsnull)
     ,mLockFileDesc(-1)
@@ -102,6 +104,9 @@ nsProfileLock& nsProfileLock::operator=(nsProfileLock& rhs)
 #if defined (XP_WIN)
     mLockFileHandle = rhs.mLockFileHandle;
     rhs.mLockFileHandle = INVALID_HANDLE_VALUE;
+#elif defined (XP_AMIGAOS)
+	mLock=rhs.mLock;
+	rhs.mLock=0;
 #elif defined (XP_OS2)
     mLockFileHandle = rhs.mLockFileHandle;
     rhs.mLockFileHandle = -1;
@@ -128,7 +133,7 @@ nsProfileLock::~nsProfileLock()
 }
 
 
-#if defined (XP_UNIX)
+#if defined (XP_UNIX) && not defined (XP_AMIGAOS)
 
 static int setupPidLockCleanup;
 
@@ -375,6 +380,26 @@ PR_END_MACRO
 }
 #endif /* XP_UNIX */
 
+#if defined XP_AMIGAOS
+
+/* o1i:
+ * for now, it is simply ok, that we don't lock the prefs window ..
+ * will care for that later
+ */
+nsresult nsProfileLock::Lock(nsILocalFile* aFile)
+{
+	printf("nsProfileLock.cpp: please implement nsProfileLock::Lock\n");
+    return NS_OK;
+}
+
+nsresult nsProfileLock::Unlock()
+{
+	printf("nsProfileLock.cpp: please implement nsProfileLock::Unlock\n");
+	return NS_OK;
+}
+
+#else /* not amiga: */
+
 nsresult nsProfileLock::Lock(nsILocalFile* aFile)
 {
 #if defined (XP_MACOSX)
@@ -596,3 +621,5 @@ nsresult nsProfileLock::Unlock()
 
     return rv;
 }
+
+#endif /* XP_AMIGAOS */

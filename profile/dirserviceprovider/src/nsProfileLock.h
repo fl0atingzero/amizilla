@@ -52,6 +52,10 @@
 #include <os2.h>
 #endif
 
+#if defined (XP_AMIGAOS)
+#include "dos/dos.h"
+#endif
+
 #if defined (XP_UNIX)
 #include "prclist.h"
 #endif
@@ -79,6 +83,8 @@ private:
     HANDLE                  mLockFileHandle;
 #elif defined (XP_OS2)
     LHANDLE                 mLockFileHandle;
+#elif defined (XP_AMIGAOS)
+	BPTR					mLock;
 #elif defined (XP_UNIX)
     static void             RemovePidLockFiles();
     static void             FatalSignalHandler(int signo);
