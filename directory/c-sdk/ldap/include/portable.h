@@ -165,7 +165,7 @@
  * for select()
  */
 #if !defined(WINSOCK) && !defined(_WINDOWS) && !defined(macintosh) && !defined(XP_OS2)
-#if defined(hpux) || defined(LINUX) || defined(SUNOS4) || defined(XP_BEOS)
+#if defined(hpux) || defined(LINUX) || defined(SUNOS4) || defined(XP_BEOS) || defined(amiga)
 #include <sys/time.h>
 #else
 #include <sys/select.h>
@@ -278,7 +278,7 @@ int strncasecmp(const char *, const char *, size_t);
     ( defined(HPUX10) && !defined(_REENTRANT)) || defined(HPUX11) || \
     defined(UnixWare) || defined(LINUX) || defined(NETBSD) || \
     defined(FREEBSD) || defined(OPENBSD) || \
-    (defined(AIX) && !defined(USE_REENTRANT_LIBC))
+    (defined(AIX) && !defined(USE_REENTRANT_LIBC)) || defined(amiga)
 #define GETHOSTBYNAME( n, r, b, l, e )  gethostbyname( n )
 #elif defined(AIX)
 /* Maybe this is for another version of AIX?
@@ -303,7 +303,7 @@ typedef char GETHOSTBYNAME_buf_t [BUFSIZ /* XXX might be too small */];
     defined(LINUX2_1) || defined(SUNOS4) || defined(SNI) || \
     defined(SCOOS) || defined(BSDI) || defined(NCR) || \
     defined(NEC) || ( defined(HPUX10) && !defined(_REENTRANT)) || \
-    (defined(AIX) && !defined(USE_REENTRANT_LIBC))
+    (defined(AIX) && !defined(USE_REENTRANT_LIBC)) || defined(amiga)
 #define NSLDAPI_CTIME( c, b, l )	ctime( c )
 #elif defined(HPUX10) && defined(_REENTRANT) && !defined(HPUX11)
 #define NSLDAPI_CTIME( c, b, l )	nsldapi_compat_ctime_r( c, b, l )
@@ -320,7 +320,7 @@ typedef char GETHOSTBYNAME_buf_t [BUFSIZ /* XXX might be too small */];
 #endif
 #if defined(hpux9) || defined(LINUX1_2) || defined(SUNOS4) || defined(SNI) || \
     defined(SCOOS) || defined(BSDI) || defined(NCR) || defined(VMS) || \
-    defined(NEC) || defined(LINUX) || (defined(AIX) && !defined(USE_REENTRANT_LIBC))
+    defined(NEC) || defined(LINUX) || (defined(AIX) && !defined(USE_REENTRANT_LIBC)) || defined(amiga)
 #define STRTOK( s1, s2, l )		strtok( s1, s2 )
 #else
 #define HAVE_STRTOK_R

@@ -208,11 +208,11 @@ struct prldap_errormap_entry {
 #define ETXTBSY         -1
 #endif
 
-#if defined(BSDI) || defined(OPENBSD) || defined (NETBSD)
+#if defined(BSDI) || defined(OPENBSD) || defined (NETBSD) || defined(XP_AMIGAOS)
 #define ENOTSUP		-1
 #endif
 
-#if defined(OSF1) || defined(BSDI) || defined(VMS) || defined(OPENBSD)
+#if defined(OSF1) || defined(BSDI) || defined(VMS) || defined(OPENBSD) || defined(XP_AMIGAOS)
 #define EOVERFLOW       -1
 #endif
 
@@ -220,6 +220,10 @@ struct prldap_errormap_entry {
   defined(BEOS) || defined(FREEBSD) || defined(BSDI) || defined(VMS) || \
   defined(OPENBSD) || defined(NETBSD)
 #define EDEADLOCK       -1
+#endif
+
+#if defined(XP_AMIGAOS)
+#define EDEADLOCK EDEADLK
 #endif
 
 /* XXX: need to verify that the -1 entries are correct (no mapping) */

@@ -62,8 +62,13 @@ endif # WINNT
 
 LOCAL_INCLUDES	= -I$(srcdir)/../include
 
-FORCE_STATIC_LIB = 1
+FORCE_STATIC_LIB = 1 
+
+ifeq ($(OS_ARCH),amigaos)
+FORCE_NO_PIC = 1
+else
 FORCE_USE_PIC = 1
+endif
 
 include $(topsrcdir)/config/rules.mk
 

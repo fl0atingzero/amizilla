@@ -78,7 +78,8 @@
 
 #elif defined(AIX)
 #define JS_USE_FDLIBM_MATH 1
-
+#elif defined(AMIGA)
+#define JS_USE_FDLIBM_MATH 1
 #else
 #define JS_USE_FDLIBM_MATH 0
 #endif

@@ -20,7 +20,7 @@
  * Contributor(s):
  */
 #include "ldap-int.h"
-#if defined( macintosh ) || defined( DOS ) || defined( _WINDOWS ) || defined( NEED_BSDREGEX ) || defined( XP_OS2)
+#if defined( macintosh ) || defined( DOS ) || defined( _WINDOWS ) || defined( NEED_BSDREGEX ) || defined( XP_OS2) || defined(XP_AMIGAOS)
 #include "regex.h"
 
 /*
@@ -252,7 +252,7 @@ chset(REGEXCHAR c)
  
 char *     
 LDAP_CALL
-re_comp( char *pat )
+re_comp( const char *pat )
 {
 	register REGEXCHAR *p;          /* pattern pointer   */
 	register REGEXCHAR *mp=nfa;     /* nfa pointer       */
@@ -498,7 +498,7 @@ static REGEXCHAR *pmatch();
 
 int
 LDAP_CALL
-re_exec( char *lp )
+re_exec( const char *lp )
 {
 	register REGEXCHAR c;
 	register REGEXCHAR *ep = 0;

@@ -262,7 +262,7 @@ nsldapi_os_connect_with_to(LBER_SOCKET sockfd, struct sockaddr *saptr,
 #else /* NSLDAPI_AVOID_OS_SOCKETS */
 	int		n, error;
 	int		len;
-#if defined(_WINDOWS) || defined(XP_OS2)
+#if defined(_WINDOWS) || defined(XP_OS2) || defined(XP_AMIGAOS)
 	int		nonblock = 1;
 	int		block = 0;
 #else
@@ -284,7 +284,7 @@ nsldapi_os_connect_with_to(LBER_SOCKET sockfd, struct sockaddr *saptr,
 
 #ifdef _WINDOWS
 	ioctlsocket(sockfd, FIONBIO, &nonblock);
-#elif defined(XP_OS2)
+#elif defined(XP_OS2) || defined(XP_AMIGAOS)
   ioctl( sockfd, FIONBIO, &nonblock, sizeof(nonblock) );
 #else
 	flags = fcntl(sockfd, F_GETFL, 0);
@@ -413,7 +413,7 @@ nsldapi_os_connect_with_to(LBER_SOCKET sockfd, struct sockaddr *saptr,
 done:
 #ifdef _WINDOWS
 	ioctlsocket(sockfd, FIONBIO, &block);
-#elif defined(XP_OS2)
+#elif defined(XP_OS2) || defined(XP_AMIGAOS)
   ioctl( sockfd, FIONBIO, &nonblock, sizeof(block) );
 #else
 	fcntl(sockfd, F_SETFL, flags);
@@ -1154,7 +1154,7 @@ nsldapi_get_select_table_size( void )
 	static int	tblsize = 0;	/* static */
 
 	if ( tblsize == 0 ) {
-#if defined(_WINDOWS) || defined(XP_OS2)
+#if defined(_WINDOWS) || defined(XP_OS2) || defined(XP_AMIGAOS)
 		tblsize = FOPEN_MAX; /* ANSI spec. */
 #else
 #ifdef USE_SYSCONF

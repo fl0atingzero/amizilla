@@ -1173,7 +1173,7 @@ open_temp(HTAB *hashp)
 	static const char namestr[] = "/_hashXXXXXX";
 	char filename[1024];
 
-#if !defined(_WIN32) && !defined(_WINDOWS) && !defined(macintosh)
+#if !defined(_WIN32) && !defined(_WINDOWS) && !defined(macintosh) && !defined(XP_AMIGAOS)
 	/* Block signals; make sure file goes away at process exit. */
 	(void)sigfillset(&set);
 	(void)sigprocmask(SIG_BLOCK, &set, &oset);
@@ -1210,13 +1210,13 @@ open_temp(HTAB *hashp)
 #else
 	if ((hashp->fp = mkstemp(filename)) != -1) {
 		(void)unlink(filename);
-#if !defined(macintosh)
+#if !defined(macintosh) && !defined(XP_AMIGAOS)
 		(void)fcntl(hashp->fp, F_SETFD, 1);
 #endif									  
 	}
 #endif
 
-#if !defined(_WIN32) && !defined(_WINDOWS) && !defined(macintosh)
+#if !defined(_WIN32) && !defined(_WINDOWS) && !defined(macintosh) && !defined(XP_AMIGAOS)
 	(void)sigprocmask(SIG_SETMASK, &oset, (sigset_t *)NULL);
 #endif
 #endif  /* !OS2 */
