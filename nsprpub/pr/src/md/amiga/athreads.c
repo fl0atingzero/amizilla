@@ -34,13 +34,20 @@
  */
 
 #include <primpl.h>
+
 extern char **environ;
+
+/* DEBUG threads */
+/* #define DEBUG_ATHREADS */
 
 static PRStatus _InitThread(PRThread *pr);
 static void _MD_Exit();
 
 static void killThread (PRThread *thread, PRBool kill) {
+#ifdef DEBUG_ATHREADS
     printf("Killing thread %lx with kill %d\n", thread, kill);
+#endif
+
     if (kill) {
         Forbid();
         thread->state = _PR_DEAD_STATE;
@@ -51,15 +58,18 @@ static void killThread (PRThread *thread, PRBool kill) {
         PR_Interrupt(thread);
         PR_JoinThread(thread);
     }
+#ifdef DEBUG_ATHREADS
     printf("All done killing %x\n", thread);
-        
+#endif        
 }
 
 static void killThreads(PRBool kill) {
     PRThread *tmp;
     PRThread *me = PR_CurrentThread();
 
+#ifdef DEBUG_ATHREADS
     printf("In processexit, next is %lx, prev is %lx\n", me->next, me->prev);
+#endif
     for (tmp = me->prev; tmp; tmp = tmp->prev) {
         killThread(tmp, kill);
     }
@@ -84,10 +94,16 @@ void _MD_Early_Init(void) {
     thread->p = (struct Process *)FindTask(NULL);
     thread->p->pr_Task.tc_UserData = thread;
     _InitThread(thread);
-    /* For debugging */
-    setvbuf(stdout, NULL, _IONBF, 0);
+
+#ifdef DEBUG_ATHREADS
     printf("Primorial Thread %lx\n", thread);
+#endif
+
     atexit(_MD_Exit);
+
+    _PR_InitSocket();
+    _PR_InitRandom();
+
 }
 
 PR_IMPLEMENT(PRStatus) PR_Interrupt(PRThread *thread) {
@@ -95,10 +111,14 @@ PR_IMPLEMENT(PRStatus) PR_Interrupt(PRThread *thread) {
     char buf[50];
     struct MsgPort *port;
     sprintf(buf, "NSPRPORT-%lx\n", thread);
+
     /* See if the thread is still around by trying to 
      * look for its public message port 
      */
+
+#ifdef DEBUG_ATHREADS
     printf("%lx Interrupting thread %lx with %lx, flags are now %lx\n", me, thread, (1 << thread->interruptSignal), thread->flags);
+#endif
 
     Forbid();
     port = FindPort(buf);
@@ -181,7 +201,9 @@ static void procExit(PRThread *me) {
         CloseLibrary(me->AmiTCP_Base);
 
     if (join != NULL) {
+#ifdef DEBUG_ATHREADS
         printf("%lx done, signalling parent %lx\n", me, join);
+#endif
         PR_ASSERT(join->state == _PR_JOIN_WAIT);
         _PR_MD_Signal(join);
     }    
@@ -304,7 +326,9 @@ PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
     }
     Permit();
 
+#ifdef DEBUG_ATHREADS
     printf("CreateThread(%lx) created thread %lx\n", me, thread);
+#endif
     return thread;
 }
 
@@ -358,7 +382,9 @@ PR_IMPLEMENT(void) PR_ClearInterrupt(void)
     PRThread *me = PR_CurrentThread();
     SetSignal(0, 1 << me->interruptSignal);
     me->flags &= ~_PR_INTERRUPT;
+#ifdef DEBUG_ATHREADS
     printf("Clearing interrupt for %lx, flags are now %lx\n", me, me->flags);
+#endif
 
 }  /* PR_ClearInterrupt */
 
@@ -375,14 +401,18 @@ PR_IMPLEMENT(void) PR_BlockInterrupt(void)
 {
     PRThread *me = PR_CurrentThread();
     _PR_THREAD_BLOCK_INTERRUPT(me);
+#ifdef DEBUG_ATHREADS
     printf("Blocking interrupt for %lx, flags are %lx\n", me, me->flags);
+#endif
 }  /* PR_BlockInterrupt */
 
 PR_IMPLEMENT(void) PR_UnblockInterrupt(void)
 {
     PRThread *me = PR_CurrentThread();
     _PR_THREAD_UNBLOCK_INTERRUPT(me);
+#ifdef DEBUG_ATHREADS
     printf("Unblocking interrupt for %lx, flags are %lx\n", me, me->flags);
+#endif
 }  /* PR_UnblockInterrupt */
 
 
@@ -403,6 +433,7 @@ static void _MD_Exit(void) {
          * all of the other threads
          */
         _PR_CleanupSocket();
+        _PR_CleanupRandom();
         killThreads(PR_TRUE);
         _PR_CleanupMW();
         _PR_CleanupDtoa();
@@ -438,28 +469,31 @@ void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
 
     /* See if someone is trying to kill me by setting my state to dead */
     if (thread->state == _PR_DEAD_STATE) {
+#ifdef DEBUG_ATHREADS
         printf("Thread %x was forceably killed[1]\n", thread);
+#endif
         longjmp(thread->jmpbuf, 1);
     }
 
+    Forbid();
     SetSignal(0, mySig);
     if (interruptable == PR_TRUE) {
         ULONG interruptSig =  1 << thread->interruptSignal;
         ULONG sigs = mySig | interruptSig;
-
-        Forbid();
         PR_ASSERT(thread->state != _PR_RUNNING);
         blocked = (thread->flags & _PR_INTERRUPT_BLOCKED) ? PR_TRUE : PR_FALSE;
-        Permit();        
         Wait(sigs);
     } else {        
         Wait(mySig);
     }
     SetSignal(0, mySig);
+    Permit();
 
     /* See if someone is trying to kill me by setting my state to dead */
     if (thread->state == _PR_DEAD_STATE) {
+#ifdef DEBUG_ATHREADS
         printf("Thread %x was forceably killed[2]\n", thread);
+#endif
         longjmp(thread->jmpbuf, 1);
     }
 }
@@ -507,11 +541,15 @@ static void _MDPollThread(void *arg) {
     int i;
     PRIntn numfds;
     PRBool done = PR_FALSE;
+#ifdef DEBUG_ATHREADS
     printf("FD polling thread started, numfds is %d\n", numfds);
+#endif
     while (!done) {
         char chr[1024];
         numfds = PR_Poll(mpp->pollfds, mpp->numfds, PR_INTERVAL_NO_TIMEOUT);
+#ifdef DEBUG_ATHREADS
         printf("Poll returns %d\n", numfds);
+#endif
         if (numfds < 0) {
             done = PR_TRUE;
             break;
@@ -577,7 +615,9 @@ static void _MDCreateProcessThread(void *arg) {
             equal = strchr(tmpenv, '=');
             if (equal) {
                 *equal++ = '\0';
+#ifdef DEBUG_ATHREADS
                 printf("Setting env: %s to %s\n", tmpenv, equal);
+#endif
                 SetVar(tmpenv, equal, strlen(equal), GVF_LOCAL_ONLY);
             }
             PR_Free(tmpenv);
@@ -594,12 +634,16 @@ static void _MDCreateProcessThread(void *arg) {
             char *equal;
             char *tmpenv = PR_Malloc(pr->md.attr->fdInheritBufferUsed + 1);
             /* Error check */
+#ifdef DEBUG_ATHREADS
             printf("inheritbuffer is %s\n", pr->md.attr->fdInheritBuffer);
+#endif
             strcpy(tmpenv, pr->md.attr->fdInheritBuffer);
             equal = strchr(tmpenv, '=');
             if (equal) {
                 *equal++ = '\0';
+#ifdef DEBUG_ATHREADS
                 printf("Setting env: %s to %s\n", tmpenv, equal);
+#endif
                 SetVar(tmpenv, equal, strlen(equal), GVF_LOCAL_ONLY);
             }
             PR_Free(tmpenv);
@@ -703,7 +747,10 @@ static void _MDCreateProcessThread(void *arg) {
         PR_Free(mpp);
     }
 
+#ifdef DEBUG_ATHREADS
     printf("Spawning '%s'\n", cmdLine);
+#endif
+
     returnCode = SystemTagList(cmdLine, items);
     if (!_PR_PENDING_INTERRUPT(PR_CurrentThread())) {
         pr->md.returnCode = returnCode;
@@ -797,3 +844,8 @@ PRStatus _KillProcess(PRProcess *process) {
 PR_IMPLEMENT(void) PR_SetThreadRecycleMode(PRUint32 count) {
     /* Does nothing */
 }
+
+
+void _MD_INIT_IO(void) {
+}
+
