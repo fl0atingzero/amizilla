@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* 
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -45,12 +45,6 @@
 #include <errno.h>
 
 #include "primpl.h"
-
-
-void _PR_MD_MAKE_NONBLOCK(PRFileDesc *fd) {
-#warning _MD_MAKE_NONBLOCK not implemented
-  /*   assert(0); */
-}
 
 PRInt32 _PR_MD_PIPEAVAILABLE(PRFileDesc *fd) {
     PRInt32 result;
@@ -246,6 +240,13 @@ PRStatus _Close(PRInt32 osfd) {
 PRInt32 _Read(PRFileDesc *fd, void *buf, PRInt32 amount) {
     PRInt32 rv;
     BPTR osfd = fd->secret->md.osfd;
+    PRThread *me = PR_CurrentThread();
+
+    if (_PR_PENDING_INTERRUPT(me)) {
+        PR_ClearInterrupt();
+		PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
+		return -1;
+	}
 
     if( -1 == ( rv = Read( osfd, buf, amount ) ) ) {
 	    // TODO: set error?
@@ -315,7 +316,7 @@ PRStatus _Sync(PRFileDesc *fd) {
 PRInt32 _MD_WRITEV(
     PRFileDesc *fd, const struct PRIOVec *iov,
     PRInt32 iov_size, PRIntervalTime timeout) {
-#warning _MD_LOCKFILE not implemented
+#warning _MD_WRITEV not implemented
     assert(0);
 }
 
