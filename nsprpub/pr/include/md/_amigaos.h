@@ -44,7 +44,7 @@
 #define _PR_SI_ARCHITECTURE   "m68k"
 #define _PR_SI_SYSNAME        "Amiga compatible"
 
-typedef enum { FAILURE = -1, SUCCESS = 0, TIMEDOUT = 1} _PR_MD_Timeout;
+typedef enum { FAILURE = -1, SUCCESS = 0, TIMEDOUT = 1, INTERRUPTED = 2} _PR_MD_Timeout;
 _PR_MD_Timeout _PR_Sleep(PRIntervalTime);
 
 struct _MDFileMap {
@@ -57,6 +57,8 @@ struct _MDFileMap {
  * Used for malloc
  */
 struct _MDMemPtr {
+  struct _MDMemPtr *next;
+  struct _MDMemPtr *prev;
   PRUint32 size;
 };
 
@@ -80,11 +82,12 @@ struct _MDMemPtr {
 #define _MD_GET_ENV getenv
 #define _MD_PUT_ENV putenv
 
-
-NSPR_API(void*)   PR_MD_malloc( size_t size );
-NSPR_API(void*)   PR_MD_calloc( size_t n, size_t size );
-NSPR_API(void*)   PR_MD_realloc( void* old_blk, size_t size );
-NSPR_API(void)    PR_MD_free( void *ptr );
+void *PR_MD_malloc( size_t size );
+void *PR_MD_calloc( size_t n, size_t size );
+void *PR_MD_realloc( void* old_blk, size_t size );
+void  PR_MD_free( void *ptr );
+void _PR_Init_Memory( void );
+void _PR_Release_Memory( void );
 
 #include "_amigaos_dir.h"
 #include "_amigaos_file.h"
