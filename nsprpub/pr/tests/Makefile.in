@@ -77,7 +77,7 @@ CSRCS =             \
 	forktest.c	    \
 	formattm.c	    \
 	fsync.c	        \
-	getai.c			\
+	getai.c	    \
 	gethost.c		\
 	getproto.c		\
 	i2l.c		    \
@@ -429,6 +429,11 @@ ifeq ($(OS_ARCH),BSD_OS)
 ifneq ($(OS_RELEASE),1.1)
 EXTRA_LIBS = -ldl
 endif
+endif
+
+ifeq ($(OS_ARCH),AmigaOS)
+EXTRA_LIBS += -noixemul
+OS_CFLAGS = $(OS_CPPFLAGS) -pipe -m68020-60 -g
 endif
 
 ifeq ($(USE_PTHREADS),1)
