@@ -51,7 +51,7 @@ _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
   timerIO->tr_node.io_Command = TR_ADDREQUEST;
 
   timerIO->tr_time.tv_secs = timeout / _PR_MD_INTERVAL_PER_SEC();
-  timerIO->tr_time.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC();
+  timerIO->tr_time.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC() * 1000;
 
   //PR_fprintf(PR_STDERR,"%lx, Beginning IO for sleep\n", thread);
   SendIO((struct IORequest *)timerIO);
