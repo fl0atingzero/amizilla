@@ -243,9 +243,7 @@ static int local_io_wait(int fd, int type, PRIntervalTime timeout) {
         _PR_MD_MAP_SELECT_ERROR(TCP_Errno());
     } else if (sel == 0) {
         if (flags & (1 << me->interruptSignal)) {
-            PR_Lock(me->stateLock);
             printf("WaitSelect(%lx) Interrupted, flags are %lx\n", me, me->flags);
-            PR_Unlock(me->stateLock);
             PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
         } else {
             PR_SetError(PR_IO_TIMEOUT_ERROR, 0);
@@ -607,6 +605,8 @@ PRInt32 _MD_CONNECT(
             retval = 0;
             break;
         } else if (err == ECONNREFUSED && doneWait) {
+            break;
+        } else if (err == EINVAL) {
             break;
         }
 
