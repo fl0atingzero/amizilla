@@ -47,8 +47,11 @@ ifdef USE_PTHREADS
 else
 ifdef USE_BTHREADS
     DIRS =
+ifdef USE_ATHREADS
+    DIRS =
 else
     DIRS = combined
+endif
 endif
 endif
 
@@ -66,6 +69,13 @@ CSRCS = \
 	prtpd.c \
 	$(NULL)
 else
+ifdef USE_ATHREADS 
+CSRCS = \
+	prcmon.c \
+	prrwlock.c   \
+	prtpd.c \
+	$(NULL)
+else
 CSRCS =	\
 	prcmon.c  \
 	prdump.c  \
@@ -75,6 +85,7 @@ CSRCS =	\
 	prcthr.c \
 	prtpd.c \
 	$(NULL)
+endif
 endif
 endif
 
