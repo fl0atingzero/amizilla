@@ -151,7 +151,7 @@ ifeq ($(OS_ARCH), AmigaOS)
 LIBRARY_X			:= $(LIBRARY_NAME).x
 LIBRARY_IX_SHLIB	:= $(LIBRARY_NAME).ix
 LIBRARY_IX			:= $(LIB_PREFIX)$(LIBRARY_NAME)_ixlibrary.a
-LIBRARY_H			:= $(LIBRARY_NAME).h
+LIBRARY_H			:= $(LIBRARY_NAME)_ixlibrary.h
 endif
 
 ifeq ($(OS_ARCH),OS2)
