@@ -32,6 +32,8 @@
  * GPL.
  */
 
+#include <assert.h>
+
 #include "primpl.h"
 
 /*
@@ -233,3 +235,28 @@ void _SwitchContext(PRThread *thread) {
 void _RestoreContext(PRThread *thread) {
 }
 
+/* Process control */
+
+extern PRProcess * _MD_CREATE_PROCESS(
+    const char *path,
+    char *const *argv,
+    char *const *envp,
+    const PRProcessAttr *attr) {
+#warning _MD_CREATE_PROCESS not implemented
+    assert(0);
+}
+
+PRStatus _MD_DETACH_PROCESS(PRProcess *process) {
+#warning _MD_DETACH_PROCESS not implemented
+    assert(0);
+}
+
+PRStatus _MD_WAIT_PROCESS(PRProcess *process, PRInt32 *exitCode) {
+#warning _MD_WAIT_PROCESS not implemented
+    assert(0);
+}
+
+PRStatus _MD_KILL_PROCESS(PRProcess *process) {
+#warning _MD_KILL_PROCESS not implemented
+    assert(0);
+}

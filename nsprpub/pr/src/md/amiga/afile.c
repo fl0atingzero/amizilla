@@ -51,6 +51,17 @@
 #include <proto/dos.h>
 #include <proto/exec.h>
 
+/* I/O related */
+extern void _MD_INIT_FILEDESC(PRFileDesc *fd) {
+#warning _MD_INIT_FIELDESC not implemented
+   assert(0);
+}
+
+void _PR_MD_MAKE_NONBLOCK(PRFileDesc *fd) {
+#warning _MD_MAKE_NONBLOCK not implemented
+   assert(0);
+}
+
 /* File I/O related */
 /*
  * Opens a file for reading, writing, or both. Also used to create a file.
@@ -345,7 +356,7 @@ void _MD_INIT_FD_INHERITABLE(PRFileDesc *fd, PRBool imported) {
     assert(0);
 }
 
-void _PR_MD_MAKE_NONBLOCK(PRFileDesc *fd) {
-#warning _MD_MAKE_NONBLOCK not implemented
-   assert(0);
+int _MD_ERRNO(void) {
+#warning _MD_ERRNO not implemented
+    assert(0);
 }
