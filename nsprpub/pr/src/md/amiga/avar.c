@@ -144,6 +144,8 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
         slp = PR_Sleep(timeout);
     }
     me->state = _PR_RUNNING;
+    /* Remove myself regardless if I got notified or not */
+    PR_REMOVE_LINK(&me->waitQLinks);
     Permit();
 
     printf("%lx woke up from condvar sleep on %lx, flags are %lx\n", me, cvar, me->flags);
@@ -189,7 +191,7 @@ PR_IMPLEMENT(PRStatus) PR_NotifyCondVar(PRCondVar *cvar) {
         PRThread *thread = _PR_THREAD_CONDQ_PTR(next);
 
         PR_REMOVE_LINK(next);
-        printf(PR_STDERR,"%lx notifying thread %lx of condvar %lx, state is %x\n", me, thread, cvar, thread->state);
+        printf("%lx notifying thread %lx of condvar %lx, state is %x\n", me, thread, cvar, thread->state);
 
 
         PR_ASSERT(thread->state != _PR_RUNNING);
