@@ -114,7 +114,7 @@
 
 #ifdef XP_AMIGAOS
 #include "nspr.h"
-#include "nspr4.h"
+#include "nspr4_ixlibrary.h"
 #endif
 
 // Registry Factory creation function defined in nsRegistry.cpp
@@ -280,6 +280,7 @@ static PRBool gXPCOMHasGlobalsBeenInitalized = PR_TRUE;
 extern "C" {
     extern void _MD_Exit(void);
 }
+
 static void NS_COM closeXPCOM(void) {
     
     if (gXPCOMHasGlobalsBeenInitalized) {
