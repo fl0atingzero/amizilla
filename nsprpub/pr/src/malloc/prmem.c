@@ -154,6 +154,13 @@ pr_FindSymbolInProg(const char *name)
     return NULL;
 }
 
+#elif defined(AMIGAOS)
+pr_FindSymbolInProg(const char *name)
+{
+    /* FIXME: not implemented */
+    return NULL;
+}
+
 #else
 
 #error "The zone allocator is not supported on this platform"

@@ -50,6 +50,13 @@ extern int h_errno;
 #define _MD_GETHOST_ERRNO() _MD_ERRNO()
 #endif
 
+/* 
+ * hostent is defined there on an Amiga
+ */
+#if defined (AMIGAOS)
+#include <netdb.h>
+#endif
+
 /*
  * The meaning of the macros related to gethostbyname, gethostbyaddr,
  * and gethostbyname2 is defined below.
@@ -654,7 +661,6 @@ static PRStatus CopyProtoent(
     gethostbyaddr_r(addr, addrlen, af, &tmphe, tmpbuf, bufsize, &h_err)
 
 #else
-
 #define GETHOSTBYNAME(name) gethostbyname(name)
 #define GETHOSTBYNAME2(name, af) gethostbyname2(name, af)
 #define GETHOSTBYADDR(addr, addrlen, af) gethostbyaddr(addr, addrlen, af)

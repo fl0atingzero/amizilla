@@ -93,7 +93,7 @@ typedef PRIntn intn;
  */
 
 #if !defined(XP_BEOS) && !defined(VMS) \
-    && !defined(XP_UNIX) || defined(NTO)
+    && !defined(XP_UNIX) && !defined(AMIGAOS) || defined(NTO)
 typedef PRUintn uint;
 #endif
 

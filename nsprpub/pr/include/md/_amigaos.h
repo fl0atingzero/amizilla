@@ -91,35 +91,4 @@ struct _MD_IOVector
 };
 extern struct _MD_IOVector _md_iovector;
 
-/* Machine-dependent (MD) data structures */
-
-/** may not be suitable for amiga */
-struct _MDThread {
-};
-
-/** may not be suitable for amiga */
-struct _MDThreadStack {
-};
-
-/** may not be suitable for amiga */
-struct _MDLock {
-};
-
-/** may not be suitable for amiga */
-struct _MDSemaphore {
-};
-
-/** may be suitable for amiga */
-struct _MDCVar {
-};
-
-/** may not be suitable for amiga */
-struct _MDSegment {
-};
-
-/** may not be suitable for amiga */
-struct _MDCPU {
-};
-
-
-#endif /* nspr_amigaos_defs_h___ */
+#endif /* nspr_netbsd_defs_h___ */

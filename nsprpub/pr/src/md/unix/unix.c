@@ -71,11 +71,11 @@
     || defined(AIX4_1) || defined(LINUX) || defined(SONY) \
     || defined(BSDI) || defined(SCO) || defined(NEC) || defined(SNI) \
     || defined(SUNOS4) || defined(NCR) || defined(DARWIN) \
-    || defined(NEXTSTEP) || defined(QNX)
+    || defined(NEXTSTEP) || defined(QNX) || defined(AMIGAOS)
 #define _PRSockLen_t int
 #elif (defined(AIX) && !defined(AIX4_1)) || defined(FREEBSD) \
     || defined(NETBSD) || defined(OPENBSD) || defined(UNIXWARE) \
-    || defined(DGUX) || defined(VMS) || defined(NTO)
+    || defined(DGUX) || defined(VMS) || defined(NTO) 
 #define _PRSockLen_t size_t
 #else
 #error "Cannot determine architecture"
@@ -89,6 +89,8 @@ static PRLock *_pr_rename_lock = NULL;
 static PRMonitor *_pr_Xfe_mon = NULL;
 
 static PRInt64 minus_one;
+
+struct _MD_IOVector _md_iovector = { open };
 
 sigset_t timer_set;
 
@@ -2645,7 +2647,6 @@ PRInt32 _MD_getopenfileinfo64(const PRFileDesc *fd, PRFileInfo64 *info)
     return rv;
 }
 
-struct _MD_IOVector _md_iovector = { open };
 
 /*
 ** These implementations are to emulate large file routines on systems that

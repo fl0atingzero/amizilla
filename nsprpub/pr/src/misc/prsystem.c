@@ -223,6 +223,8 @@ PR_IMPLEMENT(PRInt32) PR_GetNumberOfProcessors( void )
     numCpus = sysconf( _SC_NPROC_ONLN );
 #elif defined(XP_UNIX)
     numCpus = sysconf( _SC_NPROCESSORS_ONLN );
+#elif defined(XP_AMIGAOS)
+    numCpus = 1;
 #else
 #error "An implementation is required"
 #endif

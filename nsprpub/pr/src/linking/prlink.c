@@ -212,6 +212,10 @@ struct PRLibrary {
 #endif 
 #endif 
 
+#ifdef XP_AMIGAOS
+    void*                       dlh;
+#endif 
+
 #ifdef XP_BEOS
     void*                       dlh;
     void*                       stub_dlh;

@@ -73,6 +73,15 @@
 #include <sys/resource.h>
 #endif
 
+/* 
+ * for some (?) reason, ifdef AMIGAOS does not work here !?
+#if defined (AMIGAOS)
+ */
+#include <pth.h>
+/* 
+#endif
+ */
+
 #ifdef SOLARIS
 /*
  * Define HAVE_SENDFILEV if the system has the sendfilev() system call.
@@ -194,7 +203,7 @@ static ssize_t (*pt_aix_sendfile_fptr)() = NULL;
 #elif defined(IRIX) || defined(OSF1) || defined(AIX) || defined(HPUX) \
     || defined(LINUX) || defined(FREEBSD) || defined(BSDI) || defined(VMS) \
     || defined(NTO) || defined(OPENBSD) || defined(DARWIN) \
-    || defined(UNIXWARE)
+    || defined(UNIXWARE) || defined(AMIGAOS) 
 #define _PRSockOptVal_t void *
 #else
 #error "Cannot determine architecture"
@@ -209,7 +218,7 @@ static ssize_t (*pt_aix_sendfile_fptr)() = NULL;
     || defined(HPUX10_30) || defined(HPUX11) || defined(LINUX) \
     || defined(FREEBSD) || defined(NETBSD) || defined(OPENBSD) \
     || defined(BSDI) || defined(VMS) || defined(NTO) || defined(DARWIN) \
-    || defined(UNIXWARE)
+    || defined(UNIXWARE) || defined(AMIGAOS)
 #define _PRSelectFdSetArg_t fd_set *
 #else
 #error "Cannot determine architecture"
@@ -3226,7 +3235,7 @@ static PRIOMethods _pr_socketpollfd_methods = {
 #if defined(HPUX) || defined(OSF1) || defined(SOLARIS) || defined (IRIX) \
     || defined(AIX) || defined(LINUX) || defined(FREEBSD) || defined(NETBSD) \
     || defined(OPENBSD) || defined(BSDI) || defined(VMS) || defined(NTO) \
-    || defined(DARWIN) || defined(UNIXWARE)
+    || defined(DARWIN) || defined(UNIXWARE) || defined(AMIGAOS)
 #define _PR_FCNTL_FLAGS O_NONBLOCK
 #else
 #error "Can't determine architecture"
@@ -3832,7 +3841,6 @@ static PRInt32 _pr_poll_with_poll(
             {
                 /* make poll() ignore this entry */
                 syspoll[index].fd = -1;
-                syspoll[index].events = 0;
                 pds[index].out_flags = 0;
             }
         }
@@ -4696,7 +4704,7 @@ PR_IMPLEMENT(PRInt32) PR_FD_NISSET(PRInt32 fd, PR_fd_set *set)
 
 #include <sys/types.h>
 #include <sys/time.h>
-#if !defined(SUNOS4) && !defined(HPUX) && !defined(LINUX)
+#if !defined(SUNOS4) && !defined(HPUX) && !defined(LINUX) && !defined(AMIGAOS)
 #include <sys/select.h>
 #endif
 
