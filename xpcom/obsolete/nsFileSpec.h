@@ -200,6 +200,8 @@
 #define INCL_GPI
 #include <os2.h>
 #include "prio.h"
+#elif defined(XP_AMIGAOS)
+#include "prio.h"
 #endif
 
 //========================================================================================
@@ -727,7 +729,7 @@ class NS_COM_OBSOLETE nsDirectoryIterator
 	    PRBool                  mExists;
         PRBool                  mResoveSymLinks;
 
-#if (defined(XP_UNIX) || defined(XP_BEOS) || defined (XP_WIN) || defined(XP_OS2))
+#if (defined(XP_UNIX) || defined(XP_BEOS) || defined (XP_WIN) || defined(XP_OS2) || defined(XP_AMIGAOS))
 	    nsFileSpec		        mStarting;
 #endif
         
@@ -738,7 +740,7 @@ class NS_COM_OBSOLETE nsDirectoryIterator
            short         mMaxIndex;
 #elif defined(XP_UNIX) || defined(XP_BEOS)
 	    DIR*                    mDir;
-#elif defined(XP_WIN) || defined(XP_OS2)
+#elif defined(XP_WIN) || defined(XP_OS2) || defined(XP_AMIGAOS)
         PRDir*                  mDir; // XXX why not use PRDir for Unix too?
 #endif
 }; // class nsDirectoryIterator

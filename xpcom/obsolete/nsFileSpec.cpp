@@ -419,7 +419,7 @@ char* nsSimpleCharString::GetLeaf(char inSeparator) const
 #pragma mark -
 #endif
 
-#if (defined(XP_UNIX) || defined(XP_WIN) || defined(XP_OS2) || defined(XP_BEOS))
+#if (defined(XP_UNIX) || defined(XP_WIN) || defined(XP_OS2) || defined(XP_BEOS)|| defined(XP_AMIGAOS)) 
 
 //----------------------------------------------------------------------------------------
 void nsFileSpecHelpers::MakeAllDirectories(const char* inPath, int mode)
@@ -493,7 +493,7 @@ void nsFileSpecHelpers::MakeAllDirectories(const char* inPath, int mode)
     nsCRT::free(pathCopy);
 } // nsFileSpecHelpers::MakeAllDirectories
 
-#endif // XP_UNIX || XP_WIN || XP_OS2 || XP_BEOS
+#endif // XP_UNIX || XP_WIN || XP_OS2 || XP_BEOS || XP_AMIGAOS
 
 #if 0
 #pragma mark -
@@ -506,8 +506,10 @@ void nsFileSpecHelpers::MakeAllDirectories(const char* inPath, int mode)
 // we include the .cpp file in the project now.
 #elif defined(XP_BEOS)
 #include "nsFileSpecBeOS.cpp" // BeOS-specific implementations
-#elif defined(XP_UNIX) || defined(XP_MACOSX)
+#elif defined(XP_UNIX) || defined(XP_MACOSX) 
 #include "nsFileSpecUnix.cpp" // Unix-specific implementations
+#elif defined(XP_AMIGAOS)
+#include "nsFileSpecAmigaOS.cpp" //AmigaOS-specific implementations
 #elif defined(XP_OS2)
 #include "nsFileSpecOS2.cpp" // OS/2-specific implementations
 #endif
@@ -744,7 +746,7 @@ nsFilePath::nsFilePath(const nsFileURL& inOther)
 }
 #endif
 
-#if (defined XP_UNIX || defined XP_BEOS)
+#if (defined XP_UNIX || defined XP_BEOS || defined XP_AMIGAOS)
 //----------------------------------------------------------------------------------------
 nsFilePath::nsFilePath(const nsFileSpec& inOther)
 //----------------------------------------------------------------------------------------
@@ -759,7 +761,7 @@ nsFilePath::~nsFilePath()
 {
 }
 
-#if (defined XP_UNIX || defined XP_BEOS)
+#if (defined XP_UNIX || defined XP_BEOS || defined XP_AMIGAOS)
 //----------------------------------------------------------------------------------------
 void nsFilePath::operator = (const nsFileSpec& inOther)
 //----------------------------------------------------------------------------------------
@@ -979,7 +981,7 @@ void nsFileSpec::operator = (const nsPersistentFileDescriptor& inDescriptor)
 //                                UNIX & WIN nsFileSpec implementation
 //========================================================================================
 
-#if (defined XP_UNIX || defined XP_BEOS)
+#if (defined XP_UNIX || defined XP_BEOS || defined XP_AMIGAOS)
 //----------------------------------------------------------------------------------------
 nsFileSpec::nsFileSpec(const nsFilePath& inPath)
 //----------------------------------------------------------------------------------------
@@ -998,7 +1000,7 @@ void nsFileSpec::operator = (const nsFilePath& inPath)
 }
 #endif //XP_UNIX
 
-#if (defined(XP_UNIX) || defined(XP_WIN) || defined(XP_OS2) || defined(XP_BEOS))
+#if (defined(XP_UNIX) || defined(XP_WIN) || defined(XP_OS2) || defined(XP_BEOS) || defined(XP_AMIGAOS) )
 //----------------------------------------------------------------------------------------
 nsFileSpec::nsFileSpec(const nsFileSpec& inSpec)
 //----------------------------------------------------------------------------------------
@@ -1091,6 +1093,9 @@ PRBool nsFileSpec::operator == (const nsFileSpec& inOther) const
 #else
 #define DIR_STRCMP    _stricmp
 #endif
+#elif defined(XP_AMIGAOS)
+#define DIR_SEPARATOR '/'
+#define DIR_STRCMP stricmp
 #else
 #define DIR_SEPARATOR '/'
 #if defined(VMS)
