@@ -486,7 +486,7 @@ PRIntervalTime now;
 		 */
 		now = PR_IntervalNow();
 		PR_Lock(tp->ioq.lock);
-		for (qp = tp->ioq.list.next; qp != &tp->ioq.list; qp = qp->next) {
+		for (qp = tp->ioq.list.next; qp != &tp->ioq.list;) {
 			jobp = JOB_LINKS_PTR(qp);
 			if (jobp->cancel_io) {
 				CANCEL_IO_JOB(jobp);
@@ -497,6 +497,7 @@ PRIntervalTime now;
 			if ((PR_INTERVAL_NO_WAIT != jobp->timeout) &&
 								((PRInt32)(jobp->absolute - now) > 0))
 				break;
+			qp = qp->next;
 			PR_REMOVE_AND_INIT_LINK(&jobp->links);
 			tp->ioq.cnt--;
 			jobp->on_ioq = PR_FALSE;
