@@ -49,6 +49,8 @@ extern PRLogModuleInfo *_pr_shm_lm;
 /* Posix implementation is in pr/src/md/unix/uxshm.c */
 #elif defined PR_HAVE_WIN32_NAMED_SHARED_MEMORY
 /* Win32 implementation is in pr/src/md/windows/w32shm.c */
+#elif defined PR_HAVE_AMIGA_NAMED_SHARED_MEMORY
+/* Amiga implementation is in pr/src/md/amiga/amemory.c */
 #else 
 /* 
 **  there is no named_shared_memory 
