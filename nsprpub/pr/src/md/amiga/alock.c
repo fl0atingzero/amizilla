@@ -77,23 +77,22 @@ PR_IMPLEMENT(void) PR_Lock(PRLock *lock)
 PR_IMPLEMENT(PRStatus) PR_Unlock(PRLock *lock)
 {
     PRThread *me = PR_GetCurrentThread();
-    PRCList *foo = &(lock->waitQ);
 
     //printf("%lx is going to unlock %lx, owner %lx\n", me, lock, lock->owner);
     PR_ASSERT(lock->owner == me);
 
     PR_REMOVE_LINK(&lock->links);
     Forbid();
-    lock->owner = NULL;
-    if (!PR_CLIST_IS_EMPTY(foo)) {
-        PRCList *next = PR_LIST_HEAD(foo);
+    if (!PR_CLIST_IS_EMPTY(&(lock->waitQ))) {
+        PRCList *next = PR_LIST_HEAD((&lock->waitQ));
         PRThread *thread = _PR_THREAD_CONDQ_PTR(next);
         PR_REMOVE_LINK(next);
         lock->owner = thread;
         //printf("%lx signalling thread %lx for lock %lx\n",me, thread, lock);
         _PR_MD_Signal(thread);        
+    } else {
+        lock->owner = NULL;
     }
-
     Permit();
     //printf("%lx done unlock of %lx, owner is %lx\n", me, lock, lock->owner);
 }
