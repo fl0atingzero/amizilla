@@ -82,7 +82,7 @@
  */
 PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
 	// owner mode is ignored
-	BPTR lock,file = NULL;
+	BPTR lock,file = -1;
 
 	// dependent if write access is wanted get exclusive lock
 	if( NULL != ( lock = ( osflags & PR_WRONLY | osflags & PR_RDWR ) ? Lock( name,EXCLUSIVE_LOCK ) : Lock( name,SHARED_LOCK ) ) ) {
@@ -93,8 +93,8 @@ PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
 
 			if( osflags & PR_TRUNCATE )
 				if( -1 == SetFileSize( file,0,OFFSET_BEGINNING ) ) {
-					// set error
-					file = NULL;
+					// TODO: set error?
+					file = -1;
 				}
 
 			if( osflags & PR_APPEND )
@@ -102,8 +102,8 @@ PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
 		}
 		else {
 			UnLock( lock );
-			//set error
-			file = NULL;
+			// TODO: set error?
+			file = -1;
 		}
 	}
 	else {
@@ -119,37 +119,76 @@ PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
 				}
 			}
 			else { 
-				// set error
-				file = NULL;
+				// TODO: set error?
+				file = -1;
 			}
 		}
 		else { 
-			// set error
-			file = NULL;
+			// TODO: set error?
+			file = -1;
 		}
 	}
-
-	if( file == NULL ) {
-		// TODO: error handling?
-        }                                                                      
 
 	return file;
 }
 
 /*
  * Deletes a file.
- */
+ *
+ * The function has the following parameter:
+ *
+ * name             The pathname of the file to be deleted.
+*/
 PRStatus _Delete(const char *name) {
+	if( DOSFALSE == DeletFile( name ) )
+		return PR_FAILURE;
+	else
+		return PR_SUCCESS;
 }
 
 /*
  * Gets information about a file with a specified pathname. File size is expressed as a 32-bit integer.
+ *
+ * The function has the following parameters:
+ *
+ * fn               The pathname of the file to get information about.
+ * info             A pointer to a file information object (see PRFileInfo). On output,
+ *                  PR_GetFileInfo writes information about the given file to the file information object. 
  */
-PRStatus _GetFileInfo(const char *fn,PRFileInfo *info) {
+PRStatus _GetFileInfo(const char *fn,PRFileInfo *finfo) {
+	struct FileInfoBlock *info;
+	BPTR lock;
+
+	PRStatus status = PR_SUCCESS;
+
+	if( NULL != ( lock = Lock( fn,SHARED_LOCK ) ) && NULL != ( info = (struct FileInfoBlock*)AllocMem( sizeof( struct FileInfoBlock),MEMF_ANY ) ) ) {
+		if( DOSFALSE != Examine( lock,info ) ) {
+			finfo->type         = (info->fib_DirEntryType < 0) ? PR_FILE_FILE : PR_FILE_DIRECTORY;
+			finfo->size         = info->fib_Size;
+			//TODO: finfo->creationTime = (PRInt64)0; // TODO: Convert amiga time to nspr time 
+			finfo->modifyTime   = finfo->creationTime;
+		}
+	}
+	else {
+		// seterror
+
+		status = PR_FAILURE;
+	}
+
+	if( lock != NULL )
+		UnLock( lock );
+	if( info != NULL )
+		FreeMem( info,sizeof( struct FileInfoBlock) );
+
+	return status;
 }
 
 /*
  * Gets information about a file with a specified pathname. File size is expressed as a 64-bit integer.
+ *
+ * fn               The pathname of the file to get information about.
+ * info             A pointer to a file information object (see PRFileInfo). On output,
+ *                  PR_GetFileInfo writes information about the given file to the file information object. 
  */
 PRStatus _GetFileInfo64(const char *fn,PRFileInfo64 *info) {
 }
@@ -158,6 +197,10 @@ PRStatus _GetFileInfo64(const char *fn,PRFileInfo64 *info) {
  * Renames a file.
  */
 PRStatus _Rename(const char *from, const char *to) {
+	if( DOSFALSE != Rename( from,to ) )
+		return PR_SUCCESS;
+
+	return PR_FAILURE;
 }
 
 /*
@@ -169,7 +212,7 @@ PRStatus _Access(const char *name, PRAccessHow how) {
 /*
  * Closes a file descriptor.
  */
-PRStatus _Close(PRFileDesc *osfd) {
+PRStatus _Close(PRInt32 osfd) {
 	// TODO: check for error from Close
 	if( osfd != NULL )
 		Close( (BPTR)osfd );
@@ -181,18 +224,28 @@ PRStatus _Close(PRFileDesc *osfd) {
  * Reads bytes from a file or socket.
  */
 PRInt32 _Read(PRFileDesc *fd, void *buf, PRInt32 amount) {
+    PRInt32 rv;
+    BPTR osfd = fd->secret->md.osfd;
+
+    if( -1 == ( rv = Read( osfd, buf, amount ) ) ) {
+	    // TODO: set error?
+    }
+
+    return rv;
 }
 
 /*
  * Writes a buffer of data to a file or socket.
  */
 PRInt32 _Write(PRFileDesc *fd, const void *buf, PRInt32 amount) {
-}
+    PRInt32 rv;
+    BPTR osfd = fd->secret->md.osfd;
 
-/*
- * Writes data to a socket from multiple buffers.
- */
-PRInt32 _WriteV(PRFileDesc *fd, const struct PRIOVec *iov,PRInt32 iov_size, PRIntervalTime timeout) {
+    if( amount == ( rv = Write( osfd, buf, amount ) ) ) {
+	    // TODO: set error?
+    }
+
+    return rv;
 }
 
 /*
@@ -211,6 +264,20 @@ PRStatus _GetOpenFileInfo64(const PRFileDesc *fd, PRFileInfo64 *info) {
  * Moves the current read-write file pointer by an offset expressed as a 32-bit integer.
  */
 PRInt32 _Seek (PRFileDesc *fd, PRInt32 offset, PRSeekWhence whence) {
+    BPTR osfd = fd->secret->md.osfd;
+
+    switch( whence ) {
+    case PR_SEEK_CUR:
+	    return Seek( osfd,offset, OFFSET_CURRENT );
+	    break;
+    case PR_SEEK_END:
+	    return Seek( osfd,offset, OFFSET_END );
+	    break;
+    case PR_SEEK_SET:
+    default:
+	    return Seek( osfd,offset, OFFSET_BEGINNING );
+	    break;
+    }
 }
 
 /*
@@ -223,37 +290,6 @@ PRInt64 _Seek64 (PRFileDesc *fd, PRInt64 offset, PRSeekWhence whence) {
  * Synchronizes any buffered data for a file descriptor to its backing device (disk).
  */
 PRStatus _Sync(PRFileDesc *fd) {
-}
-
-
-/*
- * Opens the directory with the specified pathname.
- */
-PRDir* _OpenDir(PRDir *md,const char *name) {
-}
-
-/*
- * Gets a pointer to the next entry in the directory.
- */
-PRDirEntry* _ReadDir(PRDir *md, PRIntn flags) {
-}
-
-/*
- * Closes the specified directory.
- */
-PRStatus _CloseDir(PRDir *md) {
-}
-
-/*
- * Creates a directory with a specified name and access mode.
- */
-PRStatus _MakeDir(const char *name,PRIntn mode) {
-}
-
-/*
- * Removes a directory with a specified name.
- */
-PRStatus _RemoveDir(const char *name) {
 }
 
 

@@ -32,8 +32,11 @@
  * GPL.
  */
 
-#ifndef nspr_amigaos_defs_h___
-#define nspr_amigaos_defs_h___
+#ifndef nspr_amigaos_h___
+#define nspr_amigaos_h___
+
+#include "_amigaos_dir.h"
+#include "_amigaos_file.h"
 
 #include "prtypes.h"
 #include "prio.h"
@@ -41,8 +44,8 @@
 //#include <errno.h>
 
 
-#define _PR_SI_ARCHITECTURE "m68k"
-#define _PR_SI_SYSNAME "Amiga compatible"
+#define _PR_SI_ARCHITECTURE   "m68k"
+#define _PR_SI_SYSNAME        "Amiga compatible"
 
 struct _MDFileMap {
     PRIntn prot;
@@ -50,19 +53,14 @@ struct _MDFileMap {
     PRBool isAnonFM; /* when true, PR_CloseFileMap() must close the related fd */
 };
 
-struct _MDDir {
-        DIR *d;
-};
-
 struct _MDProcess {
     pid_t pid;
 };
 
-struct _MDFileDesc {
-    int osfd;
-};
-
 #define HAVE_BSD_FLOCK 1
+
+#define HAVE_LONG_LONG
+
 #define PR_DIRECTORY_SEPARATOR          '/'
 #define PR_DIRECTORY_SEPARATOR_STR      "/"
 #define PR_PATH_SEPARATOR               ';'
@@ -142,8 +140,6 @@ struct _MDCPU {
 // #define _MD_INIT_RUNNING_CPU _MD_init_running_cpu
 // #define _MD_PAUSE_CPU _MD_pause_cpu
 
-/* CPU Stuff */
-
 // NSPR_API(void) _MD_init_cpus();
 // NSPR_API(void) _MD_wakeup_cpus();
 // NSPR_API(void) _MD_start_interrupts(void);
@@ -162,6 +158,50 @@ struct _MDCPU {
 // NSPR_API(PRInt32) _MD_pause_cpu(PRIntervalTime timeout);
 
 
+/* Thread stuff */
+
+// linsk to the threads/pcthr.c shiuld be reolaced with amiga solution 
+#define _MD_CURRENT_THREAD() PR_GetCurrentThread()
+// #define _MD_GET_ATTACHED_THREAD _MD_get_attached_thread
+// #define _MD_LAST_THREAD _MD_last_thread
+// #define _MD_SET_CURRENT_THREAD _MD_set_current_THREAD
+// #define _MD_SET_LAST_THREAD _MD_set_last_thread
+// #define _MD_INIT_THREAD _MD_init_thread
+// #define _MD_EXIT_THREAD _MD_exit_thread
+// #define _MD_INIT_ATTACHED_THREAD _MD_init_attached_thread
+
+// #define _MD_SUSPEND_THREAD _MD_suspend_thread
+// #define _MD_RESUME_THREAD _MD_resume_thread
+// #define _MD_SUSPEND_CPU _MD_suspend_cpu
+// #define _MD_RESUME_CPU _MD_resume_cpu
+// #define _MD_BEGIN_SUSPEND_ALL _MD_begin_suspend_all
+// #define _MD_END_SUSPEND_ALL _MD_end_suspend_all
+// #define _MD_BEGIN_RESUME_ALL _MD_begin_resume_all
+// #define _MD_END_RESUME_ALL _MD_end_resume_all
+
+// #define _MD_GET_SP _MD_get_sp
+
+// #define _MD_CLEAN_THREAD _MD_clean_thread
+// #define _MD_CREATE_PRIMORDIAL_USER_THREAD _MD_create_primordial_user_thread
+// #define _MD_CREATE_USER_THREAD _MD_create_user_thread
+// #define _MD_INIT_PRIMORDIAL_THREAD _MD_init_primordial_thread
+// #define _MD_CREATE_THREAD _MD_create_thread
+// #define _MD_YIELD _MD_yield
+// #define _MD_SET_PRIORITY _MD_set_priority
+
+// #define _MD_SUSPENDALL _MD_suspendall
+// #define _MD_RESUMEALL _MD_resumeall
+
+// #define _MD_SWITCH_CONTEXT _MD_switch_context
+// #define _MD_RESTORE_CONTEXT _MD_restore_context
+
+// #define _MD_WAIT _MD_wait
+// #define _MD_WAKEUP_WAITER _MD_wakeup_waiter
+
+// #define _MD_SETTHREADAFFINITYMASK _MD_setthreadaffinitymask
+// #define _MD_GETTHREADAFFINITYMASK _MD_getthreadaffinitymask
+
+
 
 /* File I/O */
 
@@ -169,32 +209,11 @@ struct _MDCPU {
 // #define _MD_INIT_IO()
 // #define _MD_INIT_FILEDESC(fd)
 
-// #define _MD_MAKE_NONBLOCK _MD_make_nonblock
 // #define _MD_SET_FD_INHERITABLE _MD_set_fd_inheritable
+// #define _MD_MAKE_NONBLOCK _MD_make_nonblock
 // #define _MD_INIT_FD_INHERITABLE _MD_init_fd_inheritable
 // #define _MD_QUERY_FD_INHERITABLE _MD_query_fd_inheritable
-#define _MD_OPEN _Open
-#define _MD_OPEN_FILE _Open
-#define _MD_DELETE _Delete
-#define _MD_GETFILEINFO _GetFileInfo
-#define _MD_GETFILEINFO64 _GetFileInfo64
-#define _MD_RENAME _Rename
-#define _MD_ACCESS _Access
-#define _MD_CLOSE_FILE _Close
-#define _MD_READ _Read
-#define _MD_WRITE _Write
 #define _MD_WRITEV _Writev
-#define _MD_GETOPENFILEINFO _GetOpenFileInfo
-#define _MD_GETOPENFILEINFO64 _GetOpenFileInfo64
-#define _MD_LSEEK _Seek
-#define _MD_LSEEK64 _Seek64
-#define _MD_FSYNC _Sync
-#define _MD_OPEN_DIR _OpenDir
-#define _MD_READ_DIR _ReadDir
-#define _MD_CLOSE_DIR _CloseDir
-#define _MD_MKDIR _MakeDir
-#define _MD_MAKE_DIR _MakeDir
-#define _MD_RMDIR _RemoveDir
 
 // #define _MD_STAT stat
 // #define _MD_PR_POLL _MD_pr_poll
@@ -205,30 +224,12 @@ struct _MDCPU {
 // NSPR_API(void) _MD_make_nonblock(PRFileDesc *fd);
 // NSPR_API(void) _MD_init_fd_inheritable(PRFileDesc *fd, PRBool imported);
 // NSPR_API(void) _MD_query_fd_inheritable(PRFileDesc *fd);
-NSPR_API(PRInt32) _Open(const char *name, PRIntn osflags, PRIntn mode);
-NSPR_API(PRStatus) _Delete(const char *name);
-NSPR_API(PRStatus) _GetFileInfo(const char *fn, PRFileInfo *info);
-NSPR_API(PRStatus) _GetFileInfo64(const char *fn, PRFileInfo64 *info);
-NSPR_API(PRStatus) _Rename(const char *from, const char *to);
-NSPR_API(PRStatus) _Access(const char *name, PRAccessHow how);
-NSPR_API(PRStatus) _Close(PRFileDesc *osfd);
-NSPR_API(PRInt32) _Read(PRFileDesc *fd, void *buf, PRInt32 amount);
-NSPR_API(PRInt32) _Write(PRFileDesc *fd, const void *buf, PRInt32 amount);
 NSPR_API(PRInt32) _Writev(PRFileDesc *fd, const PRIOVec *iov, PRInt32 iov_size, PRIntervalTime timeout);
-NSPR_API(PRStatus) _GetOpenFileInfo(const PRFileDesc *fd, PRFileInfo *info);
-NSPR_API(PRStatus) _GetOpenFileInfo64(const PRFileDesc *fd, PRFileInfo64 *info);
-NSPR_API(PRInt32) _Seek(PRFileDesc *fd, PRInt32 offset, PRSeekWhence whence);
-NSPR_API(PRInt64) _Seek64(PRFileDesc *fd, PRInt64 offset, PRSeekWhence whence);
-NSPR_API(PRStatus) _Sync(PRFileDesc *fd);
-NSPR_API(PRDir*) _OpenDir(PRDir *md,const char *name);
-NSPR_API(PRDirEntry*) _ReadDir(PRDir *md, PRIntn flags);
-NSPR_API(PRStatus) _CloseDir(PRDir *md);
-NSPR_API(PRStatus) _MakeDir(const char *name, PRIntn mode);
-NSPR_API(PRStatus) _RemoveDir(const char *name);
+
 // NSPR_API(PRInt32) _MD_stat(const char *name, struct stat *buf);
 // NSPR_API(PRInt32) _MD_pr_poll(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout);
 
-#endif /* nspr_amigaos_defs_h___ */
+#endif /* nspr_amigaos_h___ */
 
 
 
