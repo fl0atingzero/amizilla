@@ -34,6 +34,9 @@
 
 #include "primpl.h"
 
+/* Debug locks */
+/* #define DEBUG_ALOCK */
+
 PR_IMPLEMENT(PRLock*) PR_NewLock(void)
 {
     PRLock *lock;
@@ -51,7 +54,10 @@ PR_IMPLEMENT(void) PR_Lock(PRLock *lock)
 {
   PRThread *me = PR_GetCurrentThread();
 
-  //printf("%lx going to lock %lx, owner is %lx\n", me, lock, lock->owner);
+#ifdef DEBUG_ALOCK
+  printf("%lx going to lock %lx, owner is %lx\n", me, lock, lock->owner);
+#endif
+
   Forbid();
   PR_ASSERT(lock->owner == NULL || lock->owner != me);
   if (lock->owner != NULL && lock->owner != me) {
@@ -65,9 +71,11 @@ PR_IMPLEMENT(void) PR_Lock(PRLock *lock)
   lock->owner = me;
   PR_APPEND_LINK(&lock->links, &me->lockList);
   Permit();
-  //printf("%lx got lock %lx, owner is %lx\n", me, lock, lock->owner);
-}
 
+#ifdef DEBUG_ALOCK
+  printf("%lx got lock %lx, owner is %lx\n", me, lock, lock->owner);
+#endif
+}
 
 /*
 ** Unlock the lock.
@@ -76,7 +84,9 @@ PR_IMPLEMENT(PRStatus) PR_Unlock(PRLock *lock)
 {
     PRThread *me = PR_GetCurrentThread();
 
-    //printf("%lx is going to unlock %lx, owner %lx\n", me, lock, lock->owner);
+#ifdef DEBUG_ALOCK
+    printf("%lx is going to unlock %lx, owner %lx\n", me, lock, lock->owner);
+#endif
     Forbid();
     PR_ASSERT(lock->owner != NULL);
     PR_ASSERT(lock->owner == me);
@@ -95,7 +105,9 @@ PR_IMPLEMENT(PRStatus) PR_Unlock(PRLock *lock)
         lock->owner = NULL;
     }
     Permit();
-    //printf("%lx done unlock of %lx, owner is %lx\n", me, lock, lock->owner);
+#ifdef DEBUG_ALOCK
+    printf("%lx done unlock of %lx, owner is %lx\n", me, lock, lock->owner);
+#endif
 }
 
 PR_IMPLEMENT(void)PR_DestroyLock(PRLock *lock) {
