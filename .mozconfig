@@ -20,3 +20,5 @@ ac_add_options --disable-jsloader
 ac_add_options --disable-composer
 ac_add_options --disable-mathml
 ac_add_options --disable-installer
+ac_add_options --with-nspr-threads
+
