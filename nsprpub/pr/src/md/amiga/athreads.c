@@ -71,10 +71,8 @@ PR_IMPLEMENT(PRStatus) PR_Interrupt(PRThread *thread) {
         return PR_SUCCESS;
     }
 
-    PR_Lock(thread->stateLock);
     thread->flags |= _PR_INTERRUPT;
     printf("%lx Interrupting thread %lx, flags are now %lx\n", me, thread, thread->flags);
-    PR_Unlock(thread->stateLock);
     if (me != thread) {
         Signal((struct Task *)thread->p, 1 << thread->interruptSignal);
     }
@@ -110,8 +108,6 @@ static PRStatus _InitThread(PRThread *pr) {
     pr->AmiTCP_Base = OpenLibrary("bsdsocket.library", 0);
 
     PR_INIT_CLIST(&pr->lockList);
-    pr->stateLock = PR_NewLock();
-    PR_ASSERT(pr->stateLock);
     return PR_SUCCESS;
 }
 
@@ -131,6 +127,7 @@ static void procExit(void) {
     if (me->next) {
         me->next->prev = me->prev;
     }
+    me->state = _PR_DEAD_STATE;
     Permit();
 
     _PR_DestroyThreadPrivate(me);
@@ -148,9 +145,11 @@ static void procExit(void) {
         fflush(stdout);
         PR_ASSERT(join->state == _PR_JOIN_WAIT);
         _PR_MD_Signal(join);
-    }
-    PR_DestroyLock(me->stateLock);
-    PR_Free(me);
+    }    
+    /* Don't free me here since other people may be using me
+     * let the memory allocater at the end handle it
+     * PR_Free(me);
+     */
 }
 
 /**
@@ -288,7 +287,7 @@ PR_IMPLEMENT(PRStatus) PR_JoinThread(PRThread *thread) {
     me->state = _PR_JOIN_WAIT;
     Permit();
     _PR_MD_Wait(me, PR_FALSE);
-    me->state = _PR_RUNNABLE;
+    me->state = _PR_RUNNING;
     return PR_SUCCESS;
 }
 
@@ -301,14 +300,19 @@ PR_IMPLEMENT(void) PR_SetThreadPriority(PRThread *thread, PRThreadPriority prior
     SetTaskPri((struct Task *)thread->p, _PR_Map_Priority(priority));
 }
 
+PR_IMPLEMENT(PRThreadPriority) PR_GetThreadPriority(const PRThread *thred)
+{
+    PR_ASSERT(thred != NULL);
+    return thred->priority;
+}  /* PR_GetThreadPriority */
+
+
 PR_IMPLEMENT(void) PR_ClearInterrupt(void)
 {
     PRThread *me = PR_CurrentThread();
-    PR_Lock(me->stateLock);
     SetSignal(0, 1 << me->interruptSignal);
     me->flags &= ~_PR_INTERRUPT;
     printf("Clearing interrupt for %lx, flags are now %lx\n", me, me->flags);
-    PR_Unlock(me->stateLock);
 
 }  /* PR_ClearInterrupt */
 
@@ -317,28 +321,22 @@ PR_IMPLEMENT(PRBool) PR_IsInterruptsBlocked(void)
 {
     PRThread *me = PR_CurrentThread();
     PRBool retval;
-    PR_Lock(me->stateLock);
     retval = (me->flags & _PR_INTERRUPT_BLOCKED) ? PR_TRUE : PR_FALSE;
-    PR_Unlock(me->stateLock);
     return retval;
 }
 
 PR_IMPLEMENT(void) PR_BlockInterrupt(void)
 {
     PRThread *me = PR_CurrentThread();
-    PR_Lock(me->stateLock);
     _PR_THREAD_BLOCK_INTERRUPT(me);
     printf("Blocking interrupt for %lx, flags are %lx\n", me, me->flags);
-    PR_Unlock(me->stateLock);
 }  /* PR_BlockInterrupt */
 
 PR_IMPLEMENT(void) PR_UnblockInterrupt(void)
 {
     PRThread *me = PR_CurrentThread();
-    PR_Lock(me->stateLock);
     _PR_THREAD_UNBLOCK_INTERRUPT(me);
     printf("Unblocking interrupt for %lx, flags are %lx\n", me, me->flags);
-    PR_Unlock(me->stateLock);
 }  /* PR_UnblockInterrupt */
 
 
@@ -394,11 +392,9 @@ void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
         ULONG interruptSig =  1 << thread->interruptSignal;
         ULONG sigs = mySig | interruptSig;
 
-        // Can't do this here: PR_Lock(thread->stateLock);
         Forbid();
         PR_ASSERT(thread->state != _PR_RUNNING);
         blocked = (thread->flags & _PR_INTERRUPT_BLOCKED) ? PR_TRUE : PR_FALSE;
-        // Can't do this here: PR_Unlock(thread->stateLock);
         Permit();        
         Wait(sigs);
     } else {        
@@ -408,15 +404,24 @@ void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
 }
 
 void _PR_MD_Signal(PRThread *thread) {
-    PR_Lock(thread->stateLock);
     PR_ASSERT(thread->state != _PR_RUNNING);
     thread->state = _PR_RUNNING;
-    PR_Unlock(thread->stateLock);
     Signal((struct Task *)thread->p, 1 << thread->port->mp_SigBit);
 }
 
 PR_IMPLEMENT(PRThreadScope) PR_GetThreadScope(const PRThread *thread) {
     return PR_GLOBAL_THREAD;
+}
+
+
+PR_IMPLEMENT(PRInt32) PR_GetThreadAffinityMask(PRThread *thread, PRUint32 *mask)
+{
+    return 0;  /* not implemented */
+}
+
+PR_IMPLEMENT(PRInt32) PR_SetThreadAffinityMask(PRThread *thread, PRUint32 mask )
+{
+    return 0;  /* not implemented */
 }
 
 #if 0
