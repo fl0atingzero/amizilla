@@ -70,6 +70,7 @@
 #include "nsITimelineService.h"
 
 #include "nsNativeCharsetUtils.h"
+#include "prerror.h"
 
 // On some platforms file/directory name comparisons need to
 // be case-blind.
@@ -389,7 +390,7 @@ static int
 do_mkdir(const char *path, PRIntn flags, mode_t mode, PRFileDesc **_retval)
 {
     *_retval = nsnull;
-    return mkdir(path, mode);
+    return PR_MkDir(path, mode);
 }
 
 nsresult
@@ -529,7 +530,11 @@ nsLocalFile::LocateNativeLeafName(nsACString::const_iterator &begin,
     nsACString::const_iterator stop = begin;
     --stop;
     while (--it != stop) {
+#ifdef XP_AMIGAOS
+        if (*it == '/' || *it == ':') {
+#else
         if (*it == '/') {
+#endif
             begin = ++it;
             return;
         }
@@ -881,6 +886,7 @@ nsLocalFile::MoveToNative(nsIFile *newParent, const nsACString &newName)
             rv = NSRESULT_FOR_ERRNO();
         }
     }
+
     return rv;
 }
 
@@ -891,14 +897,17 @@ nsLocalFile::Remove(PRBool recursive)
 
     VALIDATE_STAT_CACHE();
     PRBool isSymLink, isDir;
-    
+
     nsresult rv = IsSymlink(&isSymLink);
     if (NS_FAILED(rv))
         return rv;
 
-    if (!recursive && isSymLink)
-        return NSRESULT_FOR_RETURN(unlink(mPath.get()));
-    
+    if (!recursive && isSymLink) {
+        if (PR_Delete(mPath.get()) == PR_FAILURE)
+            return NS_ErrorAccordingToNSPR();
+    }
+
+
     isDir = S_ISDIR(mCachedStat.st_mode);
     InvalidateCache();
     if (isDir) {
@@ -928,11 +937,12 @@ nsLocalFile::Remove(PRBool recursive)
             }
         }
 
-        if (rmdir(mPath.get()) == -1)
-            return NSRESULT_FOR_ERRNO();
+        if (PR_RmDir(mPath.get()) == PR_FAILURE)
+            return NS_ErrorAccordingToNSPR();
+    
     } else {
-        if (unlink(mPath.get()) == -1)
-            return NSRESULT_FOR_ERRNO();
+        if (PR_Delete(mPath.get()) == PR_FAILURE)
+            return NS_ErrorAccordingToNSPR();
     }
 
     return NS_OK;
@@ -1188,6 +1198,11 @@ nsLocalFile::GetParent(nsIFile **aParent)
 
     // find the last significant slash in buffer
     slashp = strrchr(buffer, '/');
+#ifdef XP_AMIGAOS
+    if (!slashp)
+        slashp = strchr(buffer, ':');
+#endif
+
     NS_ASSERTION(slashp, "non-canonical mPath?");
     if (!slashp)
         return NS_ERROR_FILE_INVALID_PATH;
@@ -1222,7 +1237,7 @@ nsLocalFile::Exists(PRBool *_retval)
     CHECK_mPath();
     NS_ENSURE_ARG_POINTER(_retval);
 
-    *_retval = (access(mPath.get(), F_OK) == 0);
+    *_retval = (PR_Access(mPath.get(), PR_ACCESS_READ_OK) == PR_SUCCESS);
     return NS_OK;
 }
 
