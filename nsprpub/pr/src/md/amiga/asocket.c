@@ -1893,3 +1893,21 @@ int ami_host_errno() {
     return TCP_Errno();
 }
 
+struct servent *getservbyname(const char *name, const char *proto) {
+    PRThread *me = PR_GetCurrentThread();
+    if (AMITCP_BASE_NAME) {
+        return TCP_GetServByName(name, proto);
+    } else {
+        return NULL;
+    }
+}
+
+struct servent *getservbyport(int port, const char *proto) {
+    PRThread *me = PR_GetCurrentThread();
+    if (AMITCP_BASE_NAME) {
+        return TCP_GetServByPort(port, proto);
+    } else {
+        return NULL;
+    }
+}    
+
