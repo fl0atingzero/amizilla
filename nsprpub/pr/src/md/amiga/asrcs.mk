@@ -48,4 +48,5 @@ MDCSRCS =             \
 	asem.c		\
 	ashm.c		\
 	amemory.c	\
+	arealpath.c	\
 	$(NULL)
