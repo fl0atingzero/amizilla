@@ -35,9 +35,6 @@
 #include "primpl.h"
 #include <ctype.h>
 #include <string.h>
-#ifdef USE_DLD
-#include <dld.h>
-#endif
 
 PRLogModuleInfo *_pr_clock_lm;
 PRLogModuleInfo *_pr_cmon_lm;
