@@ -46,7 +46,6 @@
 #include "nsDetectionAdaptor.h"
 #include "nsIContentSink.h"
 
-static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);
 
 //--------------------------------------------------------------
 NS_IMETHODIMP nsMyObserver::Notify(
@@ -108,7 +107,7 @@ NS_IMETHODIMP nsMyObserver::Init( nsIWebShellServices* aWebShellSvc,
     return NS_ERROR_ILLEGAL_VALUE;
 }
 //--------------------------------------------------------------
-NS_IMPL_ISUPPORTS1 ( nsMyObserver ,nsICharsetDetectionObserver);
+NS_IMPL_ISUPPORTS1 ( nsMyObserver ,nsICharsetDetectionObserver)
 
 //--------------------------------------------------------------
 nsDetectionAdaptor::nsDetectionAdaptor( void ) 
@@ -121,7 +120,7 @@ nsDetectionAdaptor::~nsDetectionAdaptor()
 }
 
 //--------------------------------------------------------------
-NS_IMPL_ISUPPORTS2 (nsDetectionAdaptor, nsIParserFilter, nsICharsetDetectionAdaptor);
+NS_IMPL_ISUPPORTS2 (nsDetectionAdaptor, nsIParserFilter, nsICharsetDetectionAdaptor)
 
 //--------------------------------------------------------------
 NS_IMETHODIMP nsDetectionAdaptor::Init(

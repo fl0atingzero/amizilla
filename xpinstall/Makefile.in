@@ -30,6 +30,7 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
+MODULE		= xpinstall
 DIRS		= public res src stub cleanup
 
 ifdef MOZ_INSTALLER
@@ -46,4 +47,16 @@ endif
 endif
 
 include $(topsrcdir)/config/rules.mk
+
+packages:
+	$(MAKE) -C packager
+
+installer: packages
+ifeq ($(OS_ARCH),Linux)
+	$(MAKE) -C packager/unix
+endif
+ifeq ($(OS_ARCH),WINNT)
+	$(MAKE) -C wizard/windows/builder
+endif
+
 

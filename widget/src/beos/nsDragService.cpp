@@ -36,13 +36,13 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include <stdio.h>
 #include "nsDragService.h"
 #include "nsITransferable.h"
 #include "nsIServiceManager.h"
 
 #include "nsWidgetsCID.h"
 
-static NS_DEFINE_IID(kIDragServiceIID,   NS_IDRAGSERVICE_IID);
 static NS_DEFINE_CID(kCDragServiceCID,   NS_DRAGSERVICE_CID);
 
 // The class statics:

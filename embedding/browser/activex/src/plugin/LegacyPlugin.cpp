@@ -404,7 +404,7 @@ MozAxAutoPushJSContext::MozAxAutoPushJSContext(JSContext *cx,
         if (NS_SUCCEEDED(mPushResult))
         {
             JSPrincipals* jsprinc;
-            principal->GetJSPrincipals(&jsprinc);
+            principal->GetJSPrincipals(cx, &jsprinc);
 
             mFrame.script = JS_CompileScriptForPrincipals(cx, JS_GetGlobalObject(cx),
                                                           jsprinc, "", 0, "", 1);
@@ -438,16 +438,14 @@ GetPluginsContext(PluginInstanceData *pData)
     nsCOMPtr<nsIDOMWindow> window;
     NPN_GetValue(pData->pPluginInstance, NPNVDOMWindow, 
                  NS_STATIC_CAST(nsIDOMWindow **, getter_AddRefs(window)));
-    if (!window)
-        return nsnull;
 
     nsCOMPtr<nsIScriptGlobalObject> globalObject(do_QueryInterface(window));
     if (!globalObject)
         return nsnull;
 
-    nsCOMPtr<nsIScriptContext> scriptContext;
-    if (NS_FAILED(globalObject->GetContext(getter_AddRefs(scriptContext))) ||
-        !scriptContext)
+    nsIScriptContext *scriptContext = globalObject->GetContext();
+
+    if (!scriptContext)
         return nsnull;
 
     return NS_REINTERPRET_CAST(JSContext*, scriptContext->GetNativeContext());
@@ -855,8 +853,7 @@ NewControl(const char *pluginType,
                         nsCOMPtr<nsIDocument> doc(do_QueryInterface(DOMdocument));
                         if (doc)
                         {
-                            nsCOMPtr<nsIURI> baseURI;
-                            doc->GetBaseURL(getter_AddRefs(baseURI));
+                            nsIURI *baseURI = doc->GetBaseURI();
                             if (baseURI)
                             {
                                 nsCAutoString newURL;

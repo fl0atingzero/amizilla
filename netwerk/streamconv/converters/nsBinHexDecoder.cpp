@@ -51,7 +51,6 @@
 #include "nsIMIMEService.h"
 #include "nsMimeTypes.h"
 
-static NS_DEFINE_CID(kStreamConverterServiceCID, NS_STREAMCONVERTERSERVICE_CID);
 
 #define DATA_BUFFER_SIZE (4096*2) 
 
@@ -86,8 +85,8 @@ nsBinHexDecoder::~nsBinHexDecoder()
     nsMemory::Free(mOutgoingBuffer);
 }
 
-NS_IMPL_ADDREF(nsBinHexDecoder);
-NS_IMPL_RELEASE(nsBinHexDecoder);
+NS_IMPL_ADDREF(nsBinHexDecoder)
+NS_IMPL_RELEASE(nsBinHexDecoder)
 
 NS_INTERFACE_MAP_BEGIN(nsBinHexDecoder)
    NS_INTERFACE_MAP_ENTRY(nsIStreamConverter)
@@ -166,7 +165,6 @@ nsBinHexDecoder::OnDataAvailable(nsIRequest* request,
   if (mOutputStream && mDataBuffer && aCount > 0)
   {
     PRUint32 numBytesRead = 0; 
-    PRUint32 numBytesWritten = 0;
     while (aCount > 0) // while we still have bytes to copy...
     {
       aStream->Read(mDataBuffer, PR_MIN(aCount, DATA_BUFFER_SIZE - 1), &numBytesRead);
@@ -256,7 +254,7 @@ nsresult nsBinHexDecoder::ProcessNextState(nsIRequest * aRequest, nsISupports * 
 				{
           PRUint32 numBytesWritten = 0; 
           mOutputStream->Write(mOutgoingBuffer, mPosOutputBuff, &numBytesWritten);
-          if (numBytesWritten != mPosOutputBuff) 
+          if (PRInt32(numBytesWritten) != mPosOutputBuff)
             status = NS_ERROR_FAILURE;
 
           // now propagate the data we just wrote
@@ -270,9 +268,7 @@ nsresult nsBinHexDecoder::ProcessNextState(nsIRequest * aRequest, nsISupports * 
 				if (status != NS_OK)
 					mState = BINHEX_STATE_DONE;
 				else
-				{
 					mState ++;
-				}
 				
         mInCRC = 1;
 			}
@@ -282,7 +278,7 @@ nsresult nsBinHexDecoder::ProcessNextState(nsIRequest * aRequest, nsISupports * 
 				{
           PRUint32 numBytesWritten = 0; 
           mOutputStream->Write(mOutgoingBuffer, mPosOutputBuff, &numBytesWritten);
-          if (numBytesWritten != mPosOutputBuff) 
+          if (PRInt32(numBytesWritten) != mPosOutputBuff)
             status = NS_ERROR_FAILURE;
 
           mNextListener->OnDataAvailable(aRequest, aContext, mInputStream, 0, numBytesWritten);
@@ -295,9 +291,7 @@ nsresult nsBinHexDecoder::ProcessNextState(nsIRequest * aRequest, nsISupports * 
 		case BINHEX_STATE_DCRC:
 		case BINHEX_STATE_RCRC:
 			if (!mCount++) 
-			{
 				mFileCRC = (unsigned short) c << 8;
-			} 
 			else 
 			{
 				if ((mFileCRC | c) != mCRC) 
@@ -320,9 +314,7 @@ nsresult nsBinHexDecoder::ProcessNextState(nsIRequest * aRequest, nsISupports * 
 				}
 				
 				if (mState == BINHEX_STATE_DFORK) 
-				{			
 					mCount = PR_ntohl(mHeader.dlen);
-				}
 				else
 				{
           // we aren't processing the resurce Fork. uncomment this line if we make this converter
@@ -332,14 +324,10 @@ nsresult nsBinHexDecoder::ProcessNextState(nsIRequest * aRequest, nsISupports * 
 				}
 				
 				if (mCount) 
-				{
 					mInCRC = 0;						
-				} 
 				else 
-				{
 					/* nothing inside, so skip to the next state. */
 					mState ++;
-				}
 			}
 			break;
 	}
@@ -397,7 +385,7 @@ nsresult nsBinHexDecoder::ProcessNextChunk(nsIRequest * aRequest, nsISupports * 
 			c = GetNextChar(numBytesInBuffer);
 			if (c == 0)	return NS_OK;
 				 
-			if ((val = BHEXVAL(c)) == -1) 
+			if ((val = BHEXVAL(c)) == PRUint32(-1))
 			{
 				/* we incount an invalid character.	*/
 				if (c) 
@@ -415,9 +403,11 @@ nsresult nsBinHexDecoder::ProcessNextChunk(nsIRequest * aRequest, nsISupports * 
 			
 		/* handle decoded characters -- run length encoding (rle) detection */
 
-#if defined(XP_MAC) || defined(XP_MACOSX)
-		mOctetBuf.val = PR_ntohl(mOctetBuf.val);
-#endif
+		// We put decoded chars into mOctetBuf.val in order from high to low (via
+		// bitshifting, above).  But we want to byte-address them, so we want the
+		// first byte to correspond to the high byte.  In other words, we want
+		// these bytes to be in network order.
+		mOctetBuf.val = PR_htonl(mOctetBuf.val);
 
 		for (octetpos = 0; octetpos < mDonePos; ++octetpos) 
 		{
@@ -436,9 +426,7 @@ nsresult nsBinHexDecoder::ProcessNextChunk(nsIRequest * aRequest, nsISupports * 
 				else 
 				{
 					while (--c > 0)				/* we are in the run lenght mode */ 
-					{
 						ProcessNextState(aRequest, aContext);
-					}
 				}
 				mMarker = 0;
 			} 
@@ -501,64 +489,41 @@ nsBinHexDecoder::OnStartRequest(nsIRequest* request, nsISupports *aCtxt)
   return rv;
 }
 
-// Given the current request and the fileName we discovered inside the bin hex decoding,
-// figure out the content type and set it on the channel associated with the request.
-nsresult nsBinHexDecoder::SetContentType(nsIRequest * aRequest, const char * fileName)
+// Given the fileName we discovered inside the bin hex decoding, figure out the
+// content type and set it on the channel associated with the request.  If the
+// filename tells us nothing useful, just report an unknown type and let the
+// unknown decoder handle things.
+nsresult nsBinHexDecoder::SetContentType(nsIRequest* aRequest,
+                                         const char * fileName)
 {
-  nsresult rv = NS_OK;
-
-  nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
-  if (!channel) 
-  { 
-    NS_WARNING("QI failed"); 
-    return NS_ERROR_FAILURE; 
+  if (!fileName || !*fileName) {
+    // Nothing to do here.
+    return NS_OK;
   }
 
-  nsCOMPtr<nsIMIMEService> mimeService (do_GetService("@mozilla.org/mime;1", &rv));
+  nsresult rv;
+  nsCOMPtr<nsIChannel> channel(do_QueryInterface(aRequest, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+  
+  nsCOMPtr<nsIMIMEService> mimeService(do_GetService("@mozilla.org/mime;1", &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsXPIDLCString contentType;
-  if (fileName)
-  {
-    // extract the extension from fileName and look it up.
-    const char * fileExt = PL_strrchr(fileName, '.');
-    if (fileExt)
-      mimeService->GetTypeFromExtension(fileExt, getter_Copies(contentType));
-    mContentType = contentType;
+
+  // extract the extension from fileName and look it up.
+  const char * fileExt = strrchr(fileName, '.');
+  if (!fileExt) {
+    return NS_OK;
   }
 
-  if (mContentType.IsEmpty())
-  {
-    // get the url for the channel.....
-    nsCOMPtr<nsIURI> uri; 
-    channel->GetURI(getter_AddRefs(uri));
-    if (uri)
-    {
-      nsCOMPtr<nsIURL> url = do_QueryInterface(uri);
-      if (url)
-      {
-        nsCAutoString fileExt;
-        rv = url->GetFileExtension(fileExt);
-        if (NS_SUCCEEDED(rv) && !fileExt.IsEmpty())
-        {
-          rv = mimeService->GetTypeFromExtension(fileExt.get(), getter_Copies(contentType));
-          if (NS_SUCCEEDED(rv) && *(contentType.get()))
-            mContentType = contentType;
-        }
-      }
-    }
-  } // if the content type is empty
+  mimeService->GetTypeFromExtension(fileExt, getter_Copies(contentType));
 
-  // if we STILL don't have a content type....say the content type is unknown...
-  // AND to avoid a recursive loop, if after extracting the data fork, we didn't get a valid
-  // content type and still think it's mac binhex, then reset to unknown.
-  if (mContentType.IsEmpty() || mContentType.Equals("application/mac-binhex40")) 
-  {
-    mContentType = NS_LITERAL_CSTRING(UNKNOWN_CONTENT_TYPE);
+  // Only set the type if it's not empty and, to prevent recursive loops, not the binhex type
+  if (!contentType.IsEmpty() && !contentType.Equals(APPLICATION_BINHEX)) {
+    channel->SetContentType(contentType);
+  } else {
+    channel->SetContentType(NS_LITERAL_CSTRING(UNKNOWN_CONTENT_TYPE));
   }
-
-  // now set the content type on the channel.
-  channel->SetContentType(mContentType);
 
   return NS_OK;
 }

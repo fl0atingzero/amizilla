@@ -58,7 +58,7 @@ function find()
   var searchURI = "find:datasource=rdf:bookmarks"
   searchURI += "&match=" + match.selectedItem.value;
   searchURI += "&method=" + method.selectedItem.value;
-  searchURI += "&text=" + escape(gSearchField.value);
+  searchURI += "&text=" + encodeURIComponent(gSearchField.value);
   var bmWindow = findMostRecentWindow("bookmarks:searchresults", "chrome://communicator/content/bookmarks/bookmarksManager.xul", searchURI);
   
   // Update the root of the tree if we're using an existing search window. 
@@ -79,7 +79,7 @@ function find()
 
 function findMostRecentWindow(aType, aURI, aParam)
 {
-  var topWindow = WINDOWSVC.getMostRecentWindow(aType);
+  var topWindow = WINDOWSVC && WINDOWSVC.getMostRecentWindow(aType);
   if (!topWindow) gCreatingNewWindow = true;
   return topWindow || openDialog("chrome://communicator/content/bookmarks/bookmarksManager.xul", 
                                  "", "chrome,all,dialog=no", aParam);

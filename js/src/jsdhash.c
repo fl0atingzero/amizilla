@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla JavaScript code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999-2001
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Chris Waterson <waterson@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -104,6 +104,18 @@ JS_DHashMatchEntryStub(JSDHashTable *table,
     return stub->key == key;
 }
 
+JS_PUBLIC_API(JSBool)
+JS_DHashMatchStringKey(JSDHashTable *table,
+                       const JSDHashEntryHdr *entry,
+                       const void *key)
+{
+    const JSDHashEntryStub *stub = (const JSDHashEntryStub *)entry;
+
+    /* XXX tolerate null keys on account of sloppy Mozilla callers. */
+    return stub->key == key ||
+           (stub->key && key && strcmp(stub->key, key) == 0);
+}
+
 JS_PUBLIC_API(void)
 JS_DHashMoveEntryStub(JSDHashTable *table,
                       const JSDHashEntryHdr *from,
@@ -115,6 +127,15 @@ JS_DHashMoveEntryStub(JSDHashTable *table,
 JS_PUBLIC_API(void)
 JS_DHashClearEntryStub(JSDHashTable *table, JSDHashEntryHdr *entry)
 {
+    memset(entry, 0, table->entrySize);
+}
+
+JS_PUBLIC_API(void)
+JS_DHashFreeStringKey(JSDHashTable *table, JSDHashEntryHdr *entry)
+{
+    const JSDHashEntryStub *stub = (const JSDHashEntryStub *)entry;
+
+    free((void *) stub->key);
     memset(entry, 0, table->entrySize);
 }
 
@@ -191,8 +212,8 @@ JS_DHashTableInit(JSDHashTable *table, const JSDHashTableOps *ops, void *data,
     if (capacity >= JS_DHASH_SIZE_LIMIT)
         return JS_FALSE;
     table->hashShift = JS_DHASH_BITS - log2;
-    table->maxAlphaFrac = 0xC0;                 /* 12/16 or .75 */
-    table->minAlphaFrac = 0x40;                 /* 1/4   or .25 */
+    table->maxAlphaFrac = 0xC0;                 /* .75 */
+    table->minAlphaFrac = 0x40;                 /* .25 */
     table->entrySize = entrySize;
     table->entryCount = table->removedCount = 0;
     table->generation = 0;
@@ -519,8 +540,12 @@ JS_DHashTableOperate(JSDHashTable *table, const void *key, JSDHashOperator op)
                 table->removedCount--;
                 keyHash |= COLLISION_FLAG;
             }
-            if (table->ops->initEntry)
-                table->ops->initEntry(table, entry, key);
+            if (table->ops->initEntry &&
+                !table->ops->initEntry(table, entry, key)) {
+                /* We haven't claimed entry yet; fail with null return. */
+                memset(entry + 1, 0, table->entrySize - sizeof *entry);
+                return NULL;
+            }
             entry->keyHash = keyHash;
             table->entryCount++;
         }

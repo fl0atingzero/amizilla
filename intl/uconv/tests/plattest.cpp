@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: NPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -50,36 +50,35 @@ NS_DEFINE_IID(kPlatformCharsetIID,NS_IPLATFORMCHARSET_IID);
 int
 main(int argc, const char** argv)
 {
-	nsCOMPtr<nsILocaleService>		locale_service;
-	nsCOMPtr<nsILocale>				locale;
-	nsCOMPtr<nsIPlatformCharset>	platform_charset;
-	nsString						locale_category(NS_LITERAL_STRING("NSILOCALE_MESSAGES"));
-	PRUnichar*						category_value, *charset;
-	nsString						categoryAsNSString, charsetAsNSString;
 
-	nsresult rv = nsComponentManager::CreateInstance(NS_PLATFORMCHARSET_CONTRACTID,NULL,kPlatformCharsetIID,getter_AddRefs(platform_charset));
-	rv = nsComponentManager::CreateInstance(kLocaleServiceCID,NULL,kLocaleServiceIID,getter_AddRefs(locale_service));
-	if (NS_FAILED(rv)) return -1;
+    nsCOMPtr<nsIPlatformCharset> platform_charset = 
+        do_CreateInstance(NS_PLATFORMCHARSET_CONTRACTID);
+    if (!platform_charset) return -1;
 
-	rv = locale_service->GetSystemLocale(getter_AddRefs(locale));
-	if (NS_FAILED(rv)) return -1;
+    nsCOMPtr<nsILocaleService>      locale_service = 
+        do_CreateInstance(kLocaleServiceCID);
+    if (!locale_service) return -1;
 
-	rv = locale->GetCategory(locale_category.get(),&category_value);
-	if (NS_FAILED(rv)) return -1;
+    nsCOMPtr<nsILocale>             locale;
+    nsCAutoString                   charset;
+    nsAutoString                    category;
 
-	rv = platform_charset->GetDefaultCharsetForLocale(category_value,&charset);
-	if (NS_FAILED(rv)) return -1;
+    nsresult rv = locale_service->GetSystemLocale(getter_AddRefs(locale));
+    if (NS_FAILED(rv)) return -1;
 
-	charsetAsNSString = charset;
-	categoryAsNSString = category_value;
-	printf("DefaultCharset for %s is %s\n", NS_LossyConvertUCS2toASCII(categoryAsNSString).get(), NS_LossyConvertUCS2toASCII(charsetAsNSString).get());
+    rv = locale->GetCategory(NS_LITERAL_STRING("NSILOCALE_MESSAGES"), category);
+    if (NS_FAILED(rv)) return -1;
 
-	categoryAsNSString.Assign(NS_LITERAL_STRING("en-US"));
-	rv = platform_charset->GetDefaultCharsetForLocale(categoryAsNSString.get(),&charset);
-	if (NS_FAILED(rv)) return -1;
+    rv = platform_charset->GetDefaultCharsetForLocale(category, charset);
+    if (NS_FAILED(rv)) return -1;
 
-	charsetAsNSString = charset;
-	printf("DefaultCharset for %s is %s\n", NS_LossyConvertUCS2toASCII(categoryAsNSString).get(), NS_LossyConvertUCS2toASCII(charsetAsNSString).get());
+    printf("DefaultCharset for %s is %s\n", NS_LossyConvertUTF16toASCII(category).get(), charset.get());
 
-	return 0;
+    category.Assign(NS_LITERAL_STRING("en-US"));
+    rv = platform_charset->GetDefaultCharsetForLocale(category, charset);
+    if (NS_FAILED(rv)) return -1;
+
+    printf("DefaultCharset for %s is %s\n", NS_LossyConvertUTF16toASCII(category).get(), charset.get());
+
+    return 0;
 }

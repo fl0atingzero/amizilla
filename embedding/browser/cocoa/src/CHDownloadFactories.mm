@@ -69,7 +69,6 @@ protected:
 DownloadListenerFactory::DownloadListenerFactory()
 : mControllerFactory(nil)
 {
-  NS_INIT_ISUPPORTS();
   mControllerFactory = [[ChimeraDownloadControllerFactory alloc] init];
 }
 
@@ -78,7 +77,7 @@ DownloadListenerFactory::~DownloadListenerFactory()
   [mControllerFactory release];
 }
 
-NS_IMPL_ISUPPORTS1(DownloadListenerFactory, nsIFactory);
+NS_IMPL_ISUPPORTS1(DownloadListenerFactory, nsIFactory)
 
 /* void createInstance (in nsISupports aOuter, in nsIIDRef iid, [iid_is (iid), retval] out nsQIResult result); */
 NS_IMETHODIMP

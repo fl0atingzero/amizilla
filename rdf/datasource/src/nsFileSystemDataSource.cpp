@@ -95,7 +95,6 @@
 #endif
 
 static NS_DEFINE_CID(kRDFServiceCID,               NS_RDFSERVICE_CID);
-static NS_DEFINE_IID(kISupportsIID,                NS_ISUPPORTS_IID);
 
 #define NS_MOZICON_SCHEME           "moz-icon:"
 
@@ -278,9 +277,12 @@ FileSystemDataSource::FileSystemDataSource(void)
 {
     if (gRefCnt++ == 0)
     {
-        nsresult rv = nsServiceManager::GetService(kRDFServiceCID,
-                       NS_GET_IID(nsIRDFService),
-                       (nsISupports**) &gRDFService);
+#ifdef DEBUG
+        nsresult rv =
+#endif
+        nsServiceManager::GetService(kRDFServiceCID,
+                                     NS_GET_IID(nsIRDFService),
+                                     (nsISupports**) &gRDFService);
 
         PR_ASSERT(NS_SUCCEEDED(rv));
 
@@ -1251,7 +1253,6 @@ FileSystemDataSource::isValidFolder(nsIRDFResource *source)
     rv = source->GetValueConst(&uri);
     if (NS_FAILED(rv)) return(isValid);
 
-    PRBool          isIEFavorite = PR_FALSE;
     nsAutoString        theURI; theURI.AssignWithConversion(uri);
     if (theURI.Find(ieFavoritesDir) == 0)
     {
@@ -1632,7 +1633,7 @@ FileSystemDataSource::GetName(nsIRDFResource *source, nsIRDFLiteral **aResult)
                         0, beNameAttr, sizeof(beNameAttr)-1)) > 0)
                     {
                         beNameAttr[len] = '\0';
-                        name = NS_ConvertUTF8toUCS2(beNameAttr);
+                        CopyUTF8toUTF16(beNameAttr, name);
                         rv = NS_OK;
                     }
                 }
@@ -1642,7 +1643,7 @@ FileSystemDataSource::GetName(nsIRDFResource *source, nsIRDFLiteral **aResult)
                 nsCAutoString leafName;
                 rv = aFileLocal->GetNativeLeafName(leafName);
                 if (NS_SUCCEEDED(rv)) {
-                    name = NS_ConvertUTF8toUCS2(leafName);
+                    CopyUTF8toUTF16(leafName, name);
                     rv = NS_OK;
                 }
             }
@@ -1675,7 +1676,7 @@ FileSystemDataSource::GetExtension(nsIRDFResource *source, nsIRDFLiteral **aResu
     PRInt32 lastDot = filename.RFindChar('.');
     if (lastDot == -1)
     {
-        gRDFService->GetLiteral(NS_LITERAL_STRING("").get(), aResult);
+        gRDFService->GetLiteral(EmptyString().get(), aResult);
     }
     else
     {

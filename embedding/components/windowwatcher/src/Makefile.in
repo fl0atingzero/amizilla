@@ -29,16 +29,15 @@ LIBRARY_NAME	= windowwatcher_s
 REQUIRES	= xpcom \
 		  string \
 		  dom \
+		  gfx \
 		  windowwatcher \
 		  widget \
-		  gfx \
 		  js \
 		  xpconnect \
 		  caps \
 		  content \
 		  pref \
 		  necko \
-		  uriloader \
 		  docshell \
 		  webbrwsr \
 		  embed_base \

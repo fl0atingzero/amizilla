@@ -495,7 +495,7 @@ nsresult CViewSourceHTML::WillBuildModel(const CParserContext& aParserContext,
       fprintf(gDumpFile, "Source of: ");
       fputs(NS_ConvertUCS2toUTF8(mFilename).get(), gDumpFile);
       fprintf(gDumpFile, "</title>\n");
-      fprintf(gDumpFile, "<link rel=\"stylesheet\" type=\"text/css\" href=\"resource:/res/viewsource.css\">\n");
+      fprintf(gDumpFile, "<link rel=\"stylesheet\" type=\"text/css\" href=\"resource://gre/res/viewsource.css\">\n");
       fprintf(gDumpFile, "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\">\n");
       fprintf(gDumpFile, "</head>\n");
       fprintf(gDumpFile, "<body id=\"viewsource\">\n");
@@ -547,7 +547,7 @@ NS_IMETHODIMP CViewSourceHTML::BuildModel(nsIParser* aParser,nsITokenizer* aToke
       mSink->OpenHead(headNode);
 
       // Note that XUL will automatically add the prefix "Source of: "
-      if (Substring(mFilename, 0, 5).Equals(NS_LITERAL_STRING("data:")) &&
+      if (StringBeginsWith(mFilename, NS_LITERAL_STRING("data:")) &&
           mFilename.Length() > 50) {
         nsAutoString dataFilename(Substring(mFilename, 0, 50));
         dataFilename.Append(NS_LITERAL_STRING("..."));
@@ -575,7 +575,7 @@ NS_IMETHODIMP CViewSourceHTML::BuildModel(nsIParser* aParser,nsITokenizer* aToke
 
           AddAttrToNode(theNode, theAllocator,
                         NS_LITERAL_STRING("href"),
-                        NS_LITERAL_STRING("resource:/res/viewsource.css"));
+                        NS_LITERAL_STRING("resource://gre/res/viewsource.css"));
           
           result = mSink->AddLeaf(theNode);
           didBlock = result == NS_ERROR_HTMLPARSER_BLOCK;
@@ -784,7 +784,7 @@ NS_IMETHODIMP CViewSourceHTML::DidBuildModel(nsresult anErrorCode,PRBool aNotify
         nsCParserNode htmlNode(&htmlToken, 0/*stack token*/);
         mSink->CloseHTML();
       }
-      result = mSink->DidBuildModel(1);
+      result = mSink->DidBuildModel();
     }
 
     START_TIMER();
@@ -901,6 +901,17 @@ CViewSourceHTML::IntTagToStringTag(PRInt32 aIntTag) const
                "!!");
 
   return str_ptr;
+}
+
+NS_IMETHODIMP_(nsIAtom *)
+CViewSourceHTML::IntTagToAtom(PRInt32 aIntTag) const
+{
+  nsIAtom *atom = nsHTMLTags::GetAtom((nsHTMLTag)aIntTag);
+
+  NS_ASSERTION(atom, "Bad tag enum passed to COtherDTD::IntTagToAtom()"
+               "!!");
+
+  return atom;
 }
 
 PRBool CViewSourceHTML::IsBlockElement(PRInt32 aTagID,PRInt32 aParentID) const {

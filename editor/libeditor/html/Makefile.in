@@ -42,13 +42,15 @@ REQUIRES	= xpcom \
 		  pref \
 		  gfx \
 		  widget \
-              view \
+		  view \
 		  $(NULL)
 
 # Building the full blown HTML Editor  so add its source files and objects:
 
 CPPSRCS  = \
            nsEditProperty.cpp             \
+           nsHTMLAbsPosition.cpp          \
+           nsHTMLAnonymousUtils.cpp       \
            nsHTMLDataTransfer.cpp         \
            nsHTMLCSSUtils.cpp             \
            nsHTMLEditor.cpp               \
@@ -57,7 +59,8 @@ CPPSRCS  = \
            nsHTMLEditUtils.cpp            \
            nsHTMLObjectResizer.cpp        \
            nsHTMLEditorMouseListener.cpp  \
-	     nsHTMLURIRefObject.cpp         \
+           nsHTMLInlineTableEditor.cpp    \
+           nsHTMLURIRefObject.cpp         \
            nsTableEditor.cpp              \
            nsWSRunObject.cpp              \
            TypeInState.cpp                \

@@ -23,11 +23,11 @@ Rights Reserved.
 
 <!DOCTYPE dialog SYSTEM "chrome://messenger/locale/subscribe.dtd">
 
-<dialog xmlns:NC="http://home.netscape.com/NC-rdf#" 
+<dialog id="subscribeWindow"
+        xmlns:NC="http://home.netscape.com/NC-rdf#" 
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         title="&subscribeDialog.title;"
-        width="500"
-        height="400"
+        style="width: 44em; height: 33em;"
         persist="width height screenX screenY"
         buttons="accept,cancel,help"
         onload="SubscribeOnLoad()"
@@ -37,6 +37,7 @@ Rights Reserved.
         ondialoghelp="return doHelpButton();">   
      
 <stringbundle id="bundle_subscribe" src="chrome://messenger/locale/subscribe.properties"/>
+<stringbundle id="bundle_messenger" src="chrome://messenger/locale/messenger.properties"/>
 <script type="application/x-javascript" src="chrome://messenger/content/mailWindow.js"/>
 <script type="application/x-javascript" src="chrome://messenger/content/subscribe.js"/>
 <script type="application/x-javascript" src="chrome://messenger/content/widgetglue.js"/>
@@ -63,8 +64,8 @@ Rights Reserved.
               </hbox>
               <menulist oncommand="onServerClick(event);" id="serverMenu"
                         datasources="rdf:msgaccountmanager rdf:mailnewsfolders"
-                        containment="http://home.netscape.com/NC-rdf#child"
-                        ref="msgaccounts:/" flex="1">
+                        sortResource="http://home.netscape.com/NC-rdf#FolderTreeName"
+                        sortDirection="ascending" ref="msgaccounts:/" flex="1">
                 <template>
                   <rule NC:CanSubscribe="true">
                     <menupopup>
@@ -77,7 +78,7 @@ Rights Reserved.
             <row align="center">
               <label value="&namefield.label;" accesskey="&namefield.accesskey;" 
                      id="namefieldlabel" control="namefield"/>
-              <textbox id="namefield" flex="1" oninput="Search();"/>
+              <textbox id="namefield" flex="1" type="timed" timeout="300" oncommand="Search();"/>
             </row>
           </rows>
         </grid>
@@ -94,13 +95,14 @@ Rights Reserved.
               flex="1"
               datasources="rdf:null"
               flags="dont-build-content"
+              statedatasource="rdf:null"
               disableKeyNavigation="true"
               onkeypress="onSubscribeTreeKeyPress(event);"
               onclick="SubscribeOnClick(event);"> 
           <template>
             <rule>
               <conditions>
-                <treeitem uri="?container"/>
+                <content uri="?container"/>
                 <member container="?container" child="?member"/>
               </conditions>
               
@@ -115,6 +117,9 @@ Rights Reserved.
                         predicate="http://home.netscape.com/NC-rdf#Subscribed"
                         object="?Subscribed"/>
                 <binding subject="?member"
+                        predicate="http://home.netscape.com/NC-rdf#Subscribable"
+                        object="?Subscribable"/>
+                <binding subject="?member"
                         predicate="http://home.netscape.com/NC-rdf#TotalMessages"
                         object="?TotalMessages"/>
               </bindings>
@@ -123,8 +128,8 @@ Rights Reserved.
                 <treechildren>
                   <treeitem uri="?member">
                     <treerow>
-                      <treecell label="?LeafName" properties="ServerType-?ServerType"/>
-                      <treecell properties="Subscribed-?Subscribed"/>
+                      <treecell label="?LeafName" properties="ServerType-?ServerType Subscribable-?Subscribable"/>
+                      <treecell properties="Subscribed-?Subscribed Subscribable-?Subscribable"/>
                       <!-- commenting out until bug 38906 is fixed 
                       <treecell label="?TotalMessages"/> -->
                     </treerow>
@@ -171,7 +176,7 @@ Rights Reserved.
                   oncommand="SetSubscribeState(false)"/>
           <button id="refresh" label="&refreshButton.label;" accesskey="&refreshButton.accesskey;" 
                   oncommand="Refresh()"/>
-          <button id="stop" label="&stopButton.label;" accesskey="&stopButton.accesskey;" 
+          <button id="cmd_stop" label="&stopButton.label;" accesskey="&stopButton.accesskey;" 
                   oncommand="Stop()"/>
           <spacer flex="1"/>
         </vbox>
@@ -187,5 +192,4 @@ Rights Reserved.
       </row>
     </rows>
   </grid>
-  <separator  class="thin"/>
 </dialog>

@@ -41,7 +41,6 @@
 #include "nsIRenderingContext.h"
 #include "nsHTMLAtoms.h"
 #include "nsLayoutAtoms.h"
-#include "nsIStyleSet.h"
 #include "nsIPresShell.h"
 #include "nsIDeviceContext.h"
 #include "nsReadableUtils.h"
@@ -100,20 +99,17 @@ NS_IMETHODIMP nsPageContentFrame::Reflow(nsIPresContext*   aPresContext,
       // absolutely positioned elements
       nsMargin      border(0,0,0,0);
       nsMargin      padding(0,0,0,0);
-      nsFrameState  kidState;
 
       // Ignore the return values for these
       // Typically they are zero and if they fail 
       // we should keep going anyway, there impact is small
       kidReflowState.mStyleBorder->GetBorder(border);
       kidReflowState.mStylePadding->GetPadding(padding);
-      frame->GetFrameState(&kidState);
 
       // First check the combined area
-      if (NS_FRAME_OUTSIDE_CHILDREN & kidState) {
+      if (NS_FRAME_OUTSIDE_CHILDREN & frame->GetStateBits()) {
         // The background covers the content area and padding area, so check
         // for children sticking outside the child frame's padding edge
-        nscoord paddingEdgeX = aDesiredSize.width - border.right - padding.right;
         if (aDesiredSize.mOverflowArea.XMost() > aDesiredSize.width) {
           mPD->mPageContentXMost =  aDesiredSize.mOverflowArea.XMost() + border.right + padding.right;
         }
@@ -133,12 +129,11 @@ NS_IMETHODIMP nsPageContentFrame::Reflow(nsIPresContext*   aPresContext,
 #endif
 
 #ifdef DEBUG_PRINTING
-      nsRect r;
-      frame->GetRect(r);
+      nsRect r = frame->GetRect();
       printf("PCF: Area Frame %p Bounds: %5d,%5d,%5d,%5d\n", frame, r.x, r.y, r.width, r.height);
-      nsIView* view = frame->GetView(aPresContext);
+      nsIView* view = frame->GetView();
       if (view) {
-        view->GetBounds(r);
+        r = view->GetBounds();
         printf("PCF: Area Frame View Bounds: %5d,%5d,%5d,%5d\n", r.x, r.y, r.width, r.height);
       } else {
         printf("PCF: Area Frame View Bounds: NO VIEW\n");
@@ -160,13 +155,10 @@ NS_IMETHODIMP nsPageContentFrame::Reflow(nsIPresContext*   aPresContext,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsPageContentFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsPageContentFrame::GetType() const
 {
-  NS_PRECONDITION(nsnull != aType, "null OUT parameter pointer");
-  *aType = nsLayoutAtoms::pageContentFrame; 
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsLayoutAtoms::pageContentFrame; 
 }
 
 #ifdef DEBUG
@@ -177,11 +169,10 @@ nsPageContentFrame::GetFrameName(nsAString& aResult) const
 }
 #endif
 
-NS_IMETHODIMP
-nsPageContentFrame::IsPercentageBase(PRBool& aBase) const
+/* virtual */ PRBool
+nsPageContentFrame::IsContainingBlock() const
 {
-  aBase = PR_TRUE;
-  return NS_OK;
+  return PR_TRUE;
 }
 
 

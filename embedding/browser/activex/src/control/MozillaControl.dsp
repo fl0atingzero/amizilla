@@ -90,19 +90,7 @@ SOURCE=.\ActiveScriptSite.cpp
 # End Source File
 # Begin Source File
 
-SOURCE=.\ControlSite.cpp
-# End Source File
-# Begin Source File
-
-SOURCE=.\ControlSiteIPFrame.cpp
-# End Source File
-# Begin Source File
-
 SOURCE=.\DropTarget.cpp
-# End Source File
-# Begin Source File
-
-SOURCE=.\guids.cpp
 # End Source File
 # Begin Source File
 
@@ -111,22 +99,6 @@ SOURCE=.\HelperAppDlg.cpp
 # Begin Source File
 
 SOURCE=.\IEHtmlDocument.cpp
-# End Source File
-# Begin Source File
-
-SOURCE=.\IEHtmlElement.cpp
-# End Source File
-# Begin Source File
-
-SOURCE=.\IEHtmlElementCollection.cpp
-# End Source File
-# Begin Source File
-
-SOURCE=.\IEHtmlNode.cpp
-# End Source File
-# Begin Source File
-
-SOURCE=.\ItemContainer.cpp
 # End Source File
 # Begin Source File
 
@@ -142,15 +114,7 @@ SOURCE=.\MozillaControl.idl
 # End Source File
 # Begin Source File
 
-SOURCE=.\nsSetupRegistry.cpp
-# End Source File
-# Begin Source File
-
 SOURCE=.\PromptService.cpp
-# End Source File
-# Begin Source File
-
-SOURCE=.\PropertyBag.cpp
 # End Source File
 # Begin Source File
 
@@ -159,10 +123,6 @@ SOURCE=.\PropertyDlg.cpp
 # Begin Source File
 
 SOURCE=.\StdAfx.cpp
-# End Source File
-# Begin Source File
-
-SOURCE=.\TextProviderService.cpp
 # End Source File
 # Begin Source File
 
@@ -190,27 +150,11 @@ SOURCE=.\BrowserDiagnostics.h
 # End Source File
 # Begin Source File
 
-SOURCE=.\ControlSite.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\ControlSiteIPFrame.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\CPMozillaControl.h
-# End Source File
-# Begin Source File
-
 SOURCE=.\DHTMLCmdIds.h
 # End Source File
 # Begin Source File
 
 SOURCE=.\DropTarget.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\guids.h
 # End Source File
 # Begin Source File
 
@@ -222,30 +166,6 @@ SOURCE=.\IEHtmlDocument.h
 # End Source File
 # Begin Source File
 
-SOURCE=.\IEHtmlElement.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\IEHtmlElementCollection.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\IEHtmlNode.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\IOleCommandTargetImpl.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\ItemContainer.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\IWebBrowserImpl.h
-# End Source File
-# Begin Source File
-
 SOURCE=.\MozillaBrowser.h
 # End Source File
 # Begin Source File
@@ -254,15 +174,7 @@ SOURCE=.\PromptService.h
 # End Source File
 # Begin Source File
 
-SOURCE=.\PropertyBag.h
-# End Source File
-# Begin Source File
-
 SOURCE=.\PropertyDlg.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\PropertyList.h
 # End Source File
 # Begin Source File
 
@@ -271,10 +183,6 @@ SOURCE=.\resource.h
 # Begin Source File
 
 SOURCE=.\StdAfx.h
-# End Source File
-# Begin Source File
-
-SOURCE=.\TextProviderService.h
 # End Source File
 # Begin Source File
 
@@ -299,6 +207,118 @@ SOURCE=.\MozillaBrowser.rgs
 # Begin Source File
 
 SOURCE=.\MozillaControl.rc
+# End Source File
+# End Group
+# Begin Group "Common Source Files"
+
+# PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=..\common\ControlEventSink.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\ControlSite.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\ControlSiteIPFrame.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IEHtmlElement.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IEHtmlElementCollection.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IEHtmlNode.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IEHtmlSelectionObject.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IEHtmlTxtRange.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\ItemContainer.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\PropertyBag.cpp
+# End Source File
+# End Group
+# Begin Group "Common Header Files"
+
+# PROP Default_Filter ""
+# Begin Source File
+
+SOURCE=..\common\ControlEventSink.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\ControlSite.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\ControlSiteIPFrame.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\CPMozillaControl.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IEHtmlElement.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IEHtmlElementCollection.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IEHtmlNode.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IEHtmlSelectionObject.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IEHtmlTxtRange.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IHTMLLocationImpl.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IOleCommandTargetImpl.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\ItemContainer.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\IWebBrowserImpl.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\PropertyBag.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\PropertyList.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\common\StdAfx.h
 # End Source File
 # End Group
 # Begin Source File

@@ -118,16 +118,11 @@ nsProxyAutoConfig.prototype = {
         }
         // add predefined functions to pac
         var mypac = pacUtils + pac;
-        // evaluate loded js file
-        evalInSandbox(mypac, ProxySandBox, pacURL);
-        try {
-            ProxySandBox.myIP = dns.myIPAddress;
-        } catch (e) {
-            // Well, theres nothing better.
-            // see bugs 80363 and 92516.
-            ProxySandBox.myIP = "127.0.0.1";
-        }
+        ProxySandBox.myIpAddress = myIpAddress;
         ProxySandBox.dnsResolve = dnsResolve;
+        ProxySandBox.alert = proxyAlert;
+        // evaluate loaded js file
+        evalInSandbox(mypac, ProxySandBox, pacURL);
         LocalFindProxyForURL=ProxySandBox.FindProxyForURL;
         this.done = true;
     },
@@ -138,25 +133,32 @@ nsProxyAutoConfig.prototype = {
     }
 }
 
-// Synchronous calls to nsDNSService::Resolve ignore the cache! (bug 97097)
-// Keep a simple one of our own.
-var dnsResolveCachedHost = null;
-var dnsResolveCachedIp = null;
-
-// wrapper for dns.resolve to catch exception on failure
-function dnsResolve(host) {
-    if (host == dnsResolveCachedHost) {
-        return dnsResolveCachedIp;
-    }
+function proxyAlert(msg) {
     try {
-        dnsResolveCachedIp = dns.resolve(host);
-        dnsResolveCachedHost = host;
+        var cns = Components.classes["@mozilla.org/consoleservice;1"]
+                            .getService(Components.interfaces.nsIConsoleService);
+        cns.logStringMessage("PAC-alert: "+msg);
+    } catch (e) {
+        dump("PAC: proxyAlert ERROR: "+e+"\n");
     }
-    catch (e) {
-        dnsResolveCachedIp = null;
-        dnsResolveCachedHost = null;
+}
+
+// wrapper for getting local IP address called by PAC file
+function myIpAddress() {
+    try {
+        return dns.resolve(dns.myHostName, false).getNextAddrAsString();
+    } catch (e) {
+        return '127.0.0.1';
     }
-    return dnsResolveCachedIp;
+}
+
+// wrapper for resolving hostnames called by PAC file
+function dnsResolve(host) {
+    try {
+        return dns.resolve(host, false).getNextAddrAsString();
+    } catch (e) {
+        return null;
+    }
 }
 
 var pacModule = new Object();
@@ -195,7 +197,8 @@ pacFactory.createInstance =
             throw Components.results.NS_ERROR_NO_AGGREGATION;
 
         if (!iid.equals(nsIProxyAutoConfig) &&
-            !!iid.equals(Components.interfaces.nsIStreamListener) &&
+            !iid.equals(Components.interfaces.nsIStreamListener) &&
+            !iid.equals(Components.interfaces.nsIRequestObserver) &&
             !iid.equals(Components.interfaces.nsISupports)) {
             // shouldn't this be NO_INTERFACE?
             throw Components.results.NS_ERROR_INVALID_ARG;
@@ -264,11 +267,6 @@ var pacUtils =
 "    else {\n" +
 "        return (host == hostdom); //TODO check \n" +
 "    }\n" +
-"}\n" +
-
-" var myIP;\n" +
-"function myIpAddress() {\n" +
-"    return (myIP) ? myIP : '127.0.0.1';\n" +
 "}\n" +
 
 "function shExpMatch(url, pattern) {\n" +

@@ -8,6 +8,7 @@
 #ifdef XP_WIN
 #include "windows.h"
 #endif
+#include "nsDebug.h"
 
 // #define MILLISECOND_RESOLUTION to track time with greater precision
 //  If not defined the resolution is to the second only
@@ -81,11 +82,15 @@ void Stopwatch::Stop() {
 void Stopwatch::SaveState() {
   if (!mCreatedStack) {
     mSavedStates = new nsDeque(nsnull);
+    if (!mSavedStates)
+      return;
     mCreatedStack = PR_TRUE;
   }
   EState* state = new EState();
-  *state = fState;
-  mSavedStates->PushFront((void*) state);
+  if (state) {
+    *state = fState;
+    mSavedStates->PushFront((void*) state);
+  }
 }
 
 void Stopwatch::RestoreState() {
@@ -99,7 +104,7 @@ void Stopwatch::RestoreState() {
     delete state;
   }
   else {
-    PR_ASSERT("Stopwatch::RestoreState(): The saved state stack is empty.\n");
+    NS_WARNING("Stopwatch::RestoreState(): The saved state stack is empty.\n");
   }
 }
 
@@ -261,12 +266,11 @@ void Stopwatch::Print(void) {
    realt -= min * 60000;
    int  sec   = int(realt/1000);
    realt -= sec * 1000;
-   int ms     = int(realt);
 #ifdef MOZ_PERF_METRICS
+  int ms = int(realt);
    RAPTOR_STOPWATCH_TRACE(("Real time %d:%d:%d.%d, CP time %.3f\n", hours, min, sec, ms, CpuTime()));
 #elif defined(DEBUG)
+  int ms = int(realt);
    printf("Real time %d:%d:%d.%d, CP time %.3f\n", hours, min, sec, ms, CpuTime());
 #endif
 }
-
-

@@ -19,7 +19,7 @@
  *
  * Contributor(s): 
  *   Pierre Phaneuf <pp@ludusdesign.com>
- *   Brian Ryner <bryner@netscape.com>
+ *   Brian Ryner <bryner@brianryner.com>
  * This Original Code has been modified by IBM Corporation. Modifications made by IBM 
  * described herein are Copyright (c) International Business Machines Corporation, 2000.
  * Modifications to Mozilla code or documentation identified per MPL Section 3.3
@@ -52,7 +52,6 @@
 #include "prprf.h"
 #include "nsIComponentManager.h"
 #include "nsParserCIID.h"
-#include "nsIEnumerator.h"
 #include "nsCOMPtr.h"
 #include "nsIServiceManager.h"
 #include "nsIStringBundle.h"
@@ -173,23 +172,14 @@ static NS_DEFINE_CID(kWalletServiceCID, NS_WALLETSERVICE_CID);
 static NS_DEFINE_CID(kLookAndFeelCID, NS_LOOKANDFEEL_CID);
 static NS_DEFINE_CID(kButtonCID, NS_BUTTON_CID);
 static NS_DEFINE_CID(kTextFieldCID, NS_TEXTFIELD_CID);
-static NS_DEFINE_CID(kWebShellCID, NS_WEB_SHELL_CID);
 static NS_DEFINE_CID(kWindowCID, NS_WINDOW_CID);
-static NS_DEFINE_CID(kDialogCID, NS_DIALOG_CID);
-static NS_DEFINE_CID(kCheckButtonCID, NS_CHECKBUTTON_CID);
-static NS_DEFINE_CID(kLabelCID, NS_LABEL_CID);
 
 static NS_DEFINE_IID(kIXPBaseWindowIID, NS_IXPBASE_WINDOW_IID);
 static NS_DEFINE_IID(kILookAndFeelIID, NS_ILOOKANDFEEL_IID);
 static NS_DEFINE_IID(kIButtonIID, NS_IBUTTON_IID);
 static NS_DEFINE_IID(kIDOMDocumentIID, NS_IDOMDOCUMENT_IID);
-static NS_DEFINE_IID(kIFactoryIID, NS_IFACTORY_IID);
-static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);
 static NS_DEFINE_IID(kITextWidgetIID, NS_ITEXTWIDGET_IID);
-static NS_DEFINE_IID(kIWebShellContainerIID, NS_IWEB_SHELL_CONTAINER_IID);
 static NS_DEFINE_IID(kIWidgetIID, NS_IWIDGET_IID);
-static NS_DEFINE_IID(kICheckButtonIID, NS_ICHECKBUTTON_IID);
-static NS_DEFINE_IID(kILabelIID, NS_ILABEL_IID);
 static NS_DEFINE_IID(kIDocumentViewerIID, NS_IDOCUMENT_VIEWER_IID);
 static NS_DEFINE_CID(kXPBaseWindowCID, NS_XPBASE_WINDOW_CID);
 static NS_DEFINE_IID(kIStringBundleServiceIID, NS_ISTRINGBUNDLESERVICE_IID);
@@ -207,12 +197,6 @@ static NS_DEFINE_CID(kLayoutDebuggerCID, NS_LAYOUT_DEBUGGER_CID);
   extern nsresult NS_NewTextWidget(nsITextWidget** aControl);
   extern nsresult NS_NewCheckButton(nsICheckButton** aControl);
 #endif
-
-// prototypes
-#if 0
-static nsEventStatus PR_CALLBACK HandleEvent(nsGUIEvent *aEvent);
-#endif
-static void* GetItemsNativeData(nsISupports* aObject);
 
 //******* Cleanup Above here***********/
 
@@ -422,7 +406,7 @@ NS_IMETHODIMP nsBrowserWindow::GetMainWidget(nsIWidget** aMainWidget)
 NS_IMETHODIMP nsBrowserWindow::SetFocus()
 {
    //XXX First Check In
-   NS_WARNING("Not Yet Implemented");
+   //NS_WARNING("Not Yet Implemented");
    return NS_OK;
 }
 
@@ -482,7 +466,7 @@ GetPresShellFor(nsIDocShell* aDocShell)
         nsCOMPtr<nsIPresContext> cx;
         docv->GetPresContext(getter_AddRefs(cx));
         if (nsnull != cx) {
-          cx->GetShell(&shell);
+          NS_IF_ADDREF(shell = cx->GetPresShell());
         }
         NS_RELEASE(docv);
       }
@@ -704,36 +688,6 @@ HandleLocationEvent(nsGUIEvent *aEvent)
         bw->GoTo(text.get());
       }
       break;
-
-    case NS_DRAGDROP_EVENT: {
-      /*printf("Drag & Drop Event\n");
-      nsDragDropEvent * ev = (nsDragDropEvent *)aEvent;
-      nsAutoString fileURL;
-      BuildFileURL(ev->mURL, fileURL);
-      nsAutoString fileName(ev->mURL);
-      char * str = ToNewCString(fileName);
-
-      PRInt32 len = strlen(str);
-      PRInt32 sum = len + sizeof(FILE_PROTOCOL);
-      char* lpszFileURL = new char[sum];
-  
-      // Translate '\' to '/'
-      for (PRInt32 i = 0; i < len; i++) {
-        if (str[i] == '\\') {
-          str[i] = '/';
-        }
-      }
-
-      // Build the file URL
-      PR_snprintf(lpszFileURL, sum, "%s%s", FILE_PROTOCOL, str);
-
-      // Ask the Web widget to load the file URL
-      nsString urlStr(lpszFileURL);
-      const PRUnichar * uniStr = fileURL.get();
-      bw->GoTo(uniStr);
-      //delete [] lpszFileURL;
-      //delete [] str;*/
-      } break;
 
     default:
       break;
@@ -1171,55 +1125,6 @@ nsBrowserWindow::DoFileOpen()
 #define DIALOG_FONT      "Helvetica"
 #define DIALOG_FONT_SIZE 10
 
-/**--------------------------------------------------------------------------------
- * Main Handler
- *--------------------------------------------------------------------------------
- */
-#if 0
-nsEventStatus PR_CALLBACK HandleEvent(nsGUIEvent *aEvent)
-{
-  //printf("HandleEvent aEvent->message %d\n", aEvent->message);
-  nsEventStatus result = nsEventStatus_eIgnore;
-  if (aEvent == nsnull ||  aEvent->widget == nsnull) {
-    return result;
-  }
-
-  if (aEvent->message == 301 || aEvent->message == 302) {
-    //int x = 0;
-  }
-
-  void * data;
-  aEvent->widget->GetClientData(data);
-
-  if (data == nsnull) {
-    nsIWidget * parent = aEvent->widget->GetParent();
-    if (parent != nsnull) {
-      parent->GetClientData(data);
-      NS_RELEASE(parent);
-    }
-  }
-  
-  if (data != nsnull) {
-    nsBrowserWindow * browserWindow = (nsBrowserWindow *)data;
-    result = browserWindow->ProcessDialogEvent(aEvent);
-  }
-
-  return result;
-}
-#endif
-
-static void* GetItemsNativeData(nsISupports* aObject)
-{
-  void*                   result = nsnull;
-  nsIWidget*      widget;
-  if (NS_OK == aObject->QueryInterface(kIWidgetIID,(void**)&widget))
-  {
-    result = widget->GetNativeData(NS_NATIVE_WIDGET);
-    NS_RELEASE(widget);
-  }
-  return result;
-}
-
 //---------------------------------------------------------------
 NS_IMETHODIMP nsBrowserWindow::FindNext(const nsString &aSearchStr, PRBool aMatchCase, PRBool aSearchDown, PRBool &aIsFound)
 {
@@ -1366,7 +1271,7 @@ nsBrowserWindow::~nsBrowserWindow()
   }
 }
 
-NS_IMPL_ISUPPORTS4(nsBrowserWindow, nsIBaseWindow, nsIInterfaceRequestor, nsIProgressEventSink, nsIWebShellContainer);
+NS_IMPL_ISUPPORTS4(nsBrowserWindow, nsIBaseWindow, nsIInterfaceRequestor, nsIProgressEventSink, nsIWebShellContainer)
 
 nsresult
 nsBrowserWindow::GetInterface(const nsIID& aIID,
@@ -1426,7 +1331,7 @@ nsBrowserWindow::Init(nsIAppShell* aAppShell,
   NS_ENSURE_SUCCESS(EnsureWebBrowserChrome(), NS_ERROR_FAILURE);
   mWebBrowser->SetContainerWindow(mWebBrowserChrome);
   nsWeakPtr weakling(
-      dont_AddRef(NS_GetWeakReference((nsIWebProgressListener*)mWebBrowserChrome)));
+      do_GetWeakReference((nsIWebProgressListener*)mWebBrowserChrome));
   mWebBrowser->AddWebBrowserListener(weakling, NS_GET_IID(nsIWebProgressListener));
 
   webBrowserWin->Create();
@@ -1595,9 +1500,9 @@ nsBrowserWindow::CreateToolBar(PRInt32 aWidth)
 
   nsIDeviceContext* dc = mWindow->GetDeviceContext();
   float t2d;
-  dc->GetTwipsToDevUnits(t2d);
+  t2d = dc->TwipsToDevUnits();
   float d2a;
-  dc->GetDevUnitsToAppUnits(d2a);
+  d2a = dc->DevUnitsToAppUnits();
   nsFont font(TOOL_BAR_FONT, NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
               NS_FONT_WEIGHT_NORMAL, 0,
               nscoord(NSIntPointsToTwips(TOOL_BAR_FONT_SIZE) * t2d * d2a));
@@ -1707,7 +1612,7 @@ nsBrowserWindow::CreateStatusBar(PRInt32 aWidth)
 
   nsIDeviceContext* dc = mWindow->GetDeviceContext();
   float t2d;
-  dc->GetTwipsToDevUnits(t2d);
+  t2d = dc->TwipsToDevUnits();
   nsFont font(STATUS_BAR_FONT, NS_FONT_STYLE_NORMAL, NS_FONT_VARIANT_NORMAL,
               NS_FONT_WEIGHT_NORMAL, 0,
               nscoord(t2d * NSIntPointsToTwips(STATUS_BAR_FONT_SIZE)));
@@ -2108,7 +2013,7 @@ nsBrowserWindow::OnProgress(nsIRequest* request, nsISupports *ctxt,
     if (nsnull != aURL) {
       nsCAutoString str;
       aURL->GetSpec(str);
-      url = NS_ConvertUTF8toUCS2(str);
+      AppendUTF8toUTF16(str, url);
     }
     url.Append(NS_LITERAL_STRING(": progress "));
     url.AppendInt(aProgress, 10);
@@ -2408,7 +2313,6 @@ nsBrowserWindow::DoEditorTest(nsIDocShell *aDocShell, PRInt32 aCommandID)
 #include "nsIContent.h"
 #include "nsIFrame.h"
 #include "nsIFrameDebug.h"
-#include "nsIStyleSet.h"
 
 
 static void DumpAWebShell(nsIDocShellTreeItem* aShellItem, FILE* out, PRInt32 aIndent)
@@ -2475,11 +2379,9 @@ DumpContentRecurse(nsIDocShell* aDocShell, FILE* out)
       nsCOMPtr<nsIDocument> doc;
       shell->GetDocument(getter_AddRefs(doc));
       if (doc) {
-        nsIContent* root = nsnull;
-        doc->GetRootContent(&root);
+        nsIContent *root = doc->GetRootContent();
         if (nsnull != root) {
           root->List(out);
-          NS_RELEASE(root);
         }
       }
       NS_RELEASE(shell);
@@ -2606,18 +2508,10 @@ nsBrowserWindow::DumpViews(FILE* out)
 void
 nsBrowserWindow::DumpStyleSheets(FILE* out)
 {
-  nsIPresShell* shell = GetPresShell();
-  if (nsnull != shell) {
-    nsCOMPtr<nsIStyleSet> styleSet;
-    shell->GetStyleSet(getter_AddRefs(styleSet));
-    if (!styleSet) {
-      fputs("null style set\n", out);
-    } else {
-      styleSet->List(out);
-    }
-    NS_RELEASE(shell);
-  }
-  else {
+  nsCOMPtr<nsIPresShell> shell = dont_AddRef(GetPresShell());
+  if (shell) {
+    shell->ListStyleSheets(out);
+  } else {
     fputs("null pres shell\n", out);
   }
 }
@@ -2625,22 +2519,11 @@ nsBrowserWindow::DumpStyleSheets(FILE* out)
 void
 nsBrowserWindow::DumpStyleContexts(FILE* out)
 {
-  nsIPresShell* shell = GetPresShell();
-  if (nsnull != shell) {
-    nsCOMPtr<nsIStyleSet> styleSet;
-    shell->GetStyleSet(getter_AddRefs(styleSet));
-    if (!styleSet) {
-      fputs("null style set\n", out);
-    } else {
-      nsIFrame* root;
-      shell->GetRootFrame(&root);
-      if (nsnull == root) {
-        fputs("null root frame\n", out);
-      } else {
-        styleSet->ListContexts(root, out);
-      }
-    }
-    NS_RELEASE(shell);
+  nsCOMPtr<nsIPresShell> shell = dont_AddRef(GetPresShell());
+  if (shell) {
+    nsIFrame* root;
+    shell->GetRootFrame(&root);
+    shell->ListStyleContexts(root, out);
   } else {
     fputs("null pres shell\n", out);
   }
@@ -2900,29 +2783,6 @@ nsBrowserWindow::DispatchDebugMenu(PRInt32 aID)
 
     case VIEWER_DSP_REFLOW_CNTS_OFF:
       DisplayReflowStats(PR_FALSE);
-      result = nsEventStatus_eConsumeNoDefault;
-      break;
-
-    case VIEWER_SHOW_CONTENT_QUALITY:
-      if (nsnull != mDocShell) {
-        nsIPresShell   *ps = GetPresShellFor(mDocShell);
-        nsIViewManager *vm = nsnull;
-        PRBool         qual;
-
-        if (ps) {
-          ps->GetViewManager(&vm);
-
-          if (vm) {
-            vm->GetShowQuality(qual);
-            vm->ShowQuality(!qual);
-
-            NS_RELEASE(vm);
-          }
-
-          NS_RELEASE(ps);
-        }
-      }
-
       result = nsEventStatus_eConsumeNoDefault;
       break;
 

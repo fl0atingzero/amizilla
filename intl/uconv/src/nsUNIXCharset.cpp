@@ -56,14 +56,15 @@
 #ifdef HAVE_NL_TYPES_H
 #include <nl_types.h>
 #endif
-#if HAVE_NL_LANGINFO
+#if HAVE_LANGINFO_CODESET
 #include <langinfo.h>
 #endif
 #include "nsPlatformCharset.h"
 #include "nsAutoLock.h"
 #include "prinit.h"
+#include "nsUnicharUtils.h"
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsPlatformCharset, nsIPlatformCharset);
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsPlatformCharset, nsIPlatformCharset)
 
 static nsURLProperties *gNLInfo = nsnull;
 static nsURLProperties *gInfo_deprecated = nsnull;
@@ -89,14 +90,14 @@ nsPlatformCharset::nsPlatformCharset()
 }
 
 nsresult
-nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAutoString& locale, nsAString& oResult)
+nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAString& locale, nsACString& oResult)
 {
 
   // locked for thread safety 
   {
     nsAutoLock guard(gLock);
     if (!gInfo_deprecated) {
-      nsURLProperties *info = new nsURLProperties(NS_LITERAL_CSTRING("resource:/res/unixcharset.properties"));
+      nsURLProperties *info = new nsURLProperties(NS_LITERAL_CSTRING("resource://gre/res/unixcharset.properties"));
       NS_ASSERTION( info, "cannot create nsURLProperties");
       gInfo_deprecated = info;
     }
@@ -108,22 +109,26 @@ nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAutoString& loc
     platformLocaleKey.Assign(NS_LITERAL_STRING("locale."));
     platformLocaleKey.AppendWithConversion(OSTYPE);
     platformLocaleKey.Append(NS_LITERAL_STRING("."));
-    platformLocaleKey.Append(locale.get());
+    platformLocaleKey.Append(locale);
 
-    nsresult res = gInfo_deprecated->Get(platformLocaleKey, oResult);
+    nsAutoString charset;
+    nsresult res = gInfo_deprecated->Get(platformLocaleKey, charset);
     if (NS_SUCCEEDED(res))  {
+      LossyCopyUTF16toASCII(charset, oResult);
       return NS_OK;
     }
     nsAutoString localeKey;
     localeKey.Assign(NS_LITERAL_STRING("locale.all."));
-    localeKey.Append(locale.get());
-    res = gInfo_deprecated->Get(localeKey, oResult);
+    localeKey.Append(locale);
+    res = gInfo_deprecated->Get(localeKey, charset);
     if (NS_SUCCEEDED(res))  {
+      LossyCopyUTF16toASCII(charset, oResult);
       return NS_OK;
     }
    }
    NS_ASSERTION(0, "unable to convert locale to charset using deprecated config");
    mCharset.Assign(NS_LITERAL_CSTRING("ISO-8859-1"));
+   oResult.Assign(NS_LITERAL_CSTRING("ISO-8859-1"));
    return NS_SUCCESS_USING_FALLBACK_LOCALE;
 }
 
@@ -152,32 +157,42 @@ nsPlatformCharset::GetCharset(nsPlatformCharsetSel selector, nsACString& oResult
 }
 
 NS_IMETHODIMP 
-nsPlatformCharset::GetDefaultCharsetForLocale(const PRUnichar* localeName, PRUnichar** _retValue)
+nsPlatformCharset::GetDefaultCharsetForLocale(const nsAString& localeName, nsACString &oResult)
 {
-  nsAutoString localeNameAsString(localeName);
-
   // 
   // if this locale is the user's locale then use the charset 
   // we already determined at initialization
   // 
-  if (mLocale.Equals(localeNameAsString) ||
+  if (mLocale.Equals(localeName) ||
     // support the 4.x behavior
-    (mLocale.EqualsIgnoreCase("en_US") && localeNameAsString.EqualsIgnoreCase("C"))) {
-    *_retValue = ToNewUnicode(mCharset);
+    (mLocale.EqualsIgnoreCase("en_US") && 
+     localeName.Equals(NS_LITERAL_STRING("C"),nsCaseInsensitiveStringComparator()))) {
+    oResult = mCharset;
     return NS_OK;
   }
 
-#if HAVE_NL_LANGINFO
+#if HAVE_LANGINFO_CODESET
   //
   // This locale appears to be a different locale from the user's locale. 
   // To do this we would need to lock the global resource we are currently 
   // using or use a library that provides multi locale support. 
   // ICU is a possible example of a multi locale library.
   //     http://oss.software.ibm.com/icu/
+  //
+  // A more common cause of hitting this warning than the above is that 
+  // Mozilla is launched under an ll_CC.UTF-8 locale. In xpLocale, 
+  // we only store the language and the region (ll-CC) losing 'UTF-8', which
+  // leads |mLocale| to be different from |localeName|. Although we lose
+  // 'UTF-8', we init'd |mCharset| with the value obtained via 
+  // |nl_langinfo(CODESET)| so that we're all right here.
   // 
-  NS_ASSERTION(0, "GetDefaultCharsetForLocale: need to add multi locale support");
+  NS_WARNING("GetDefaultCharsetForLocale: need to add multi locale support");
+#ifdef DEBUG_jungshik
+  printf("localeName=%s mCharset=%s\n", NS_ConvertUTF16toUTF8(localeName).get(),
+         mCharset.get());
+#endif
   // until we add multi locale support: use the the charset of the user's locale
-  *_retValue = ToNewUnicode(mCharset);
+  oResult = mCharset;
   return NS_SUCCESS_USING_FALLBACK_LOCALE;
 #endif
 
@@ -186,16 +201,12 @@ nsPlatformCharset::GetDefaultCharsetForLocale(const PRUnichar* localeName, PRUni
   // using the deprecated locale to charset mapping 
   //
   nsAutoString localeStr(localeName);
-  nsString charset;
-  nsresult res = ConvertLocaleToCharsetUsingDeprecatedConfig(localeStr, charset);
-  if (NS_SUCCEEDED(res)) {
-    *_retValue = ToNewUnicode(charset);
-    return res; // succeeded
-  }
+  nsresult res = ConvertLocaleToCharsetUsingDeprecatedConfig(localeStr, oResult);
+  if (NS_SUCCEEDED(res))
+    return res;
 
   NS_ASSERTION(0, "unable to convert locale to charset using deprecated config");
-  charset.Assign(NS_LITERAL_STRING("ISO-8859-1"));
-  *_retValue = ToNewUnicode(charset);
+  oResult.Assign(NS_LITERAL_CSTRING("ISO-8859-1"));
   return NS_SUCCESS_USING_FALLBACK_LOCALE;
 }
 
@@ -206,7 +217,7 @@ nsPlatformCharset::InitGetCharset(nsACString &oString)
   nsCString aCharset;
   nsresult res;
 
-#if HAVE_NL_LANGINFO && defined(CODESET)
+#if HAVE_LANGINFO_CODESET
   nl_langinfo_codeset = nl_langinfo(CODESET);
   NS_ASSERTION(nl_langinfo_codeset, "cannot get nl_langinfo(CODESET)");
 
@@ -229,7 +240,7 @@ nsPlatformCharset::InitGetCharset(nsACString &oString)
     if (!gNLInfo) {
       nsCAutoString propertyURL;
       // note: NS_LITERAL_STRING("resource:/res/unixcharset." OSARCH ".properties") does not compile on AIX
-      propertyURL.Assign(NS_LITERAL_CSTRING("resource:/res/unixcharset."));
+      propertyURL.Assign(NS_LITERAL_CSTRING("resource://gre/res/unixcharset."));
       propertyURL.Append(OSARCH);
       propertyURL.Append(NS_LITERAL_CSTRING(".properties"));
       nsURLProperties *info;
@@ -302,13 +313,12 @@ nsPlatformCharset::InitGetCharset(nsACString &oString)
   char* locale = setlocale(LC_CTYPE, nsnull);
   nsAutoString localeStr;
   localeStr.AssignWithConversion(locale);
-  nsAutoString uCharset;
-  res = ConvertLocaleToCharsetUsingDeprecatedConfig(localeStr, uCharset);
+  res = ConvertLocaleToCharsetUsingDeprecatedConfig(localeStr, oString);
   if (NS_SUCCEEDED(res)) {
-    CopyUCS2toASCII(uCharset, oString);
     return res; // succeeded
   }
 
+  oString.Truncate();
   return res;
 }
 

@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /*
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -30,7 +31,7 @@
 
 #include "nsIDOMText.h"
 #include "nsITextContent.h"
-#include "nsIFrameManager.h"
+#include "nsFrameManager.h"
 #include "nsLayoutAtoms.h"
 #include "nsStyleChangeList.h"
 #include "nsINameSpaceManager.h"
@@ -60,33 +61,23 @@ nsMathMLTokenFrame::~nsMathMLTokenFrame()
 {
 }
 
-NS_IMETHODIMP
-nsMathMLTokenFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsMathMLTokenFrame::GetType() const
 {
-  *aType = nsMathMLAtoms::ordinaryMathMLFrame;
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsMathMLAtoms::ordinaryMathMLFrame;
 }
 
 static void
 CompressWhitespace(nsIContent* aContent)
 {
-  PRInt32 numKids;
-  aContent->ChildCount(numKids);
-  for (PRInt32 kid = 0; kid < numKids; kid++) {
-    nsCOMPtr<nsIContent> kidContent;
-    aContent->ChildAt(kid, getter_AddRefs(kidContent));
-    if (kidContent) {       
-      nsCOMPtr<nsIDOMText> kidText(do_QueryInterface(kidContent));
-      if (kidText) {
-        nsCOMPtr<nsITextContent> tc(do_QueryInterface(kidContent));
-        if (tc) {
-          nsAutoString text;
-          tc->CopyText(text);
-          text.CompressWhitespace();
-          tc->SetText(text, PR_FALSE); // not meant to be used if notify is needed
-        }
-      }
+  PRUint32 numKids = aContent->GetChildCount();
+  for (PRUint32 kid = 0; kid < numKids; kid++) {
+    nsCOMPtr<nsITextContent> tc(do_QueryInterface(aContent->GetChildAt(kid)));
+    if (tc && tc->IsContentOfType(nsIContent::eTEXT)) {
+      nsAutoString text;
+      tc->CopyText(text);
+      text.CompressWhitespace();
+      tc->SetText(text, PR_FALSE); // not meant to be used if notify is needed
     }
   }
 }
@@ -123,10 +114,8 @@ nsMathMLTokenFrame::SetInitialChildList(nsIPresContext* aPresContext,
   mState |= NS_FRAME_OUTSIDE_CHILDREN;
   nsIFrame* childFrame = mFrames.FirstChild();
   while (childFrame) {
-    nsFrameState state;
-    childFrame->GetFrameState(&state);
-    childFrame->SetFrameState(state | NS_FRAME_OUTSIDE_CHILDREN);
-    childFrame->GetNextSibling(&childFrame);
+    childFrame->AddStateBits(NS_FRAME_OUTSIDE_CHILDREN);
+    childFrame = childFrame->GetNextSibling();
   }
 
   SetQuotes(aPresContext);
@@ -161,8 +150,7 @@ printf("\n");
                       aDesiredSize.mFlags | NS_REFLOW_CALC_BOUNDING_METRICS);
   nsSize availSize(aReflowState.mComputedWidth, aReflowState.mComputedHeight);
   PRInt32 count = 0;
-  nsIFrame* childFrame;
-  FirstChild(aPresContext, nsnull, &childFrame);
+  nsIFrame* childFrame = GetFirstChild(nsnull);
   while (childFrame) {
     nsHTMLReflowState childReflowState(aPresContext, aReflowState,
                                        childFrame, availSize);
@@ -172,8 +160,7 @@ printf("\n");
     if (NS_FAILED(rv)) return rv;
 
     // origins are used as placeholders to store the child's ascent and descent.
-    childFrame->SetRect(aPresContext,
-                        nsRect(childDesiredSize.descent, childDesiredSize.ascent,
+    childFrame->SetRect(nsRect(childDesiredSize.descent, childDesiredSize.ascent,
                                childDesiredSize.width, childDesiredSize.height));
     // compute and cache the bounding metrics
     if (0 == count)
@@ -182,7 +169,7 @@ printf("\n");
       aDesiredSize.mBoundingMetrics += childDesiredSize.mBoundingMetrics;
 
     count++;
-    childFrame->GetNextSibling(&childFrame);
+    childFrame = childFrame->GetNextSibling();
   }
 
   if (aDesiredSize.mComputeMEW) {
@@ -194,6 +181,8 @@ printf("\n");
 
   // place and size children
   FinalizeReflow(aPresContext, *aReflowState.rendContext, aDesiredSize);
+
+  aStatus = NS_FRAME_COMPLETE;
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
   return NS_OK;
 }
@@ -221,11 +210,9 @@ nsMathMLTokenFrame::Place(nsIPresContext*      aPresContext,
 
   if (aPlaceOrigin) {
     nscoord dy, dx = 0;
-    nsRect rect;
-    nsIFrame* childFrame;
-    FirstChild(aPresContext, nsnull, &childFrame);
+    nsIFrame* childFrame = GetFirstChild(nsnull);
     while (childFrame) {
-      childFrame->GetRect(rect);
+      nsRect rect = childFrame->GetRect();
       nsHTMLReflowMetrics childSize(nsnull);
       childSize.width = rect.width;
       childSize.height = aDesiredSize.height; //rect.height;
@@ -234,7 +221,7 @@ nsMathMLTokenFrame::Place(nsIPresContext*      aPresContext,
       dy = rect.IsEmpty() ? 0 : aDesiredSize.ascent - rect.y;
       FinishReflowChild(childFrame, aPresContext, nsnull, childSize, dx, dy, 0);
       dx += rect.width;
-      childFrame->GetNextSibling(&childFrame);
+      childFrame = childFrame->GetNextSibling();
     }
   }
 
@@ -263,8 +250,7 @@ nsMathMLTokenFrame::AttributeChanged(nsIPresContext* aPresContext,
                                      nsIContent*     aContent,
                                      PRInt32         aNameSpaceID,
                                      nsIAtom*        aAttribute,
-                                     PRInt32         aModType, 
-                                     PRInt32         aHint)
+                                     PRInt32         aModType)
 {
   if (nsMathMLAtoms::lquote_ == aAttribute ||
       nsMathMLAtoms::rquote_ == aAttribute) {
@@ -273,7 +259,7 @@ nsMathMLTokenFrame::AttributeChanged(nsIPresContext* aPresContext,
 
   return nsMathMLContainerFrame::
          AttributeChanged(aPresContext, aContent, aNameSpaceID,
-                          aAttribute, aModType, aHint);
+                          aAttribute, aModType);
 }
 
 void
@@ -289,9 +275,7 @@ nsMathMLTokenFrame::ProcessTextData(nsIPresContext* aPresContext)
 void
 nsMathMLTokenFrame::SetTextStyle(nsIPresContext* aPresContext)
 {
-  nsCOMPtr<nsIAtom> tag;
-  mContent->GetTag(getter_AddRefs(tag));
-  if (tag != nsMathMLAtoms::mi_)
+  if (mContent->Tag() != nsMathMLAtoms::mi_)
     return;
 
   if (!mFrames.FirstChild())
@@ -301,18 +285,13 @@ nsMathMLTokenFrame::SetTextStyle(nsIPresContext* aPresContext)
   // our content can include comment-nodes, attribute-nodes, text-nodes...
   // we use the DOM to make sure that we are only looking at text-nodes...
   nsAutoString data;
-  PRInt32 numKids;
-  mContent->ChildCount(numKids);
-  for (PRInt32 kid = 0; kid < numKids; kid++) {
-    nsCOMPtr<nsIContent> kidContent;
-    mContent->ChildAt(kid, getter_AddRefs(kidContent));
-    if (kidContent) {
-      nsCOMPtr<nsIDOMText> kidText(do_QueryInterface(kidContent));
-      if (kidText) {
-        nsAutoString kidData;
-        kidText->GetData(kidData);
-        data += kidData;
-      }
+  PRUint32 numKids = mContent->GetChildCount();
+  for (PRUint32 kid = 0; kid < numKids; kid++) {
+    nsCOMPtr<nsIDOMText> kidText(do_QueryInterface(mContent->GetChildAt(kid)));
+    if (kidText) {
+      nsAutoString kidData;
+      kidText->GetData(kidData);
+      data += kidData;
     }
   }
 
@@ -346,25 +325,14 @@ nsMathMLTokenFrame::SetTextStyle(nsIPresContext* aPresContext)
     mContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::fontstyle, fontstyle, PR_FALSE);
 
   // then, re-resolve the style contexts in our subtree
-  nsCOMPtr<nsIPresShell> presShell;
-  aPresContext->GetShell(getter_AddRefs(presShell));
-  if (presShell) {
-    nsCOMPtr<nsIFrameManager> fm;
-    presShell->GetFrameManager(getter_AddRefs(fm));
-    if (fm) {
-      nsChangeHint maxChange, minChange = NS_STYLE_HINT_NONE;
-      nsStyleChangeList changeList;
-      fm->ComputeStyleChangeFor(this,
-                                kNameSpaceID_None, nsMathMLAtoms::fontstyle,
-                                changeList, minChange, maxChange);
+  nsFrameManager *fm = aPresContext->FrameManager();
+  nsStyleChangeList changeList;
+  fm->ComputeStyleChangeFor(this, &changeList, NS_STYLE_HINT_NONE);
 #ifdef DEBUG
-      // Use the parent frame to make sure we catch in-flows and such
-      nsIFrame* parentFrame;
-      GetParent(&parentFrame);
-      fm->DebugVerifyStyleTree(parentFrame ? parentFrame : this);
+  // Use the parent frame to make sure we catch in-flows and such
+  nsIFrame* parentFrame = GetParent();
+  fm->DebugVerifyStyleTree(parentFrame ? parentFrame : this);
 #endif
-    }
-  }
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -389,18 +357,15 @@ SetQuote(nsIPresContext* aPresContext,
   nsIFrame* textFrame;
   do {
     // walk down the hierarchy of first children because they could be wrapped
-    aFrame->FirstChild(aPresContext, nsnull, &textFrame);
+    textFrame = aFrame->GetFirstChild(nsnull);
     if (textFrame) {
-      nsCOMPtr<nsIAtom> frameType;
-      textFrame->GetFrameType(getter_AddRefs(frameType));
-      if (frameType == nsLayoutAtoms::textFrame)
+      if (textFrame->GetType() == nsLayoutAtoms::textFrame)
         break;
     }
     aFrame = textFrame;
   } while (textFrame);
   if (textFrame) {
-    nsCOMPtr<nsIContent> quoteContent;
-    textFrame->GetContent(getter_AddRefs(quoteContent));
+    nsIContent* quoteContent = textFrame->GetContent();
     if (quoteContent) {
       nsCOMPtr<nsIDOMText> domText(do_QueryInterface(quoteContent));
       if (domText) {
@@ -416,18 +381,16 @@ SetQuote(nsIPresContext* aPresContext,
 void
 nsMathMLTokenFrame::SetQuotes(nsIPresContext* aPresContext)
 {
-  nsCOMPtr<nsIAtom> tag;
-  mContent->GetTag(getter_AddRefs(tag));
-  if (tag != nsMathMLAtoms::ms_)
+  if (mContent->Tag() != nsMathMLAtoms::ms_)
     return;
 
   nsIFrame* rightFrame = nsnull;
   nsIFrame* baseFrame = nsnull;
   nsIFrame* leftFrame = mFrames.FirstChild();
   if (leftFrame)
-    leftFrame->GetNextSibling(&baseFrame);
+    baseFrame = leftFrame->GetNextSibling();
   if (baseFrame)
-    baseFrame->GetNextSibling(&rightFrame);
+    rightFrame = baseFrame->GetNextSibling();
   if (!leftFrame || !baseFrame || !rightFrame)
     return;
 

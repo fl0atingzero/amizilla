@@ -44,8 +44,6 @@ extern nsIRollupListener * gRollupListener;
 extern nsIWidget         * gRollupWidget;
 extern PRBool              gRollupConsumeRollupEvent;
 
-BOOL nsFrameWindow::fHiddenWindowCreated = FALSE;
-
 nsFrameWindow::nsFrameWindow() : nsWindow()
 {
    fnwpDefFrame = 0;
@@ -106,14 +104,6 @@ void nsFrameWindow::RealDoCreate( HWND hwndP, nsWindow *aParent,
 #endif
 
    ULONG fcfFlags = GetFCFlags();
-
-   // Set flags only if not first hidden window created by nsAppShellService
-   if (!fHiddenWindowCreated) {
-      if ((aRect.x == 0) && (aRect.y == 0) && (aRect.height == 100) && (aRect.width == 100)) {
-         fcfFlags &= ~FCF_TASKLIST;
-         fHiddenWindowCreated = TRUE;
-      }
-   }
 
    ULONG style = WindowStyle();
    if( aInitData)
@@ -243,9 +233,6 @@ void nsFrameWindow::RealDoCreate( HWND hwndP, nsWindow *aParent,
 
 
    WinSetWindowPos(mFrameWnd, 0, frameRect.x, frameRect.y, frameRect.width, frameRect.height, SWP_SIZE | SWP_MOVE);
-
-   // Record frame hwnd somewhere that the window object can see during dtor
-   mHackDestroyWnd = mFrameWnd;
 }
 
 
@@ -372,27 +359,39 @@ MRESULT nsFrameWindow::FrameMessage( ULONG msg, MPARAM mp1, MPARAM mp2)
          }
  
          if ( pSwp->fl & (SWP_MAXIMIZE | SWP_MINIMIZE | SWP_RESTORE)) {
-            nsSizeModeEvent event;
-            event.eventStructType = NS_SIZEMODE_EVENT;
+	    nsSizeModeEvent event(NS_SIZEMODE, this);
             if ( pSwp->fl & SWP_MAXIMIZE)
               event.mSizeMode = nsSizeMode_Maximized;
             else if ( pSwp->fl & SWP_MINIMIZE)
               event.mSizeMode = nsSizeMode_Minimized;
             else
               event.mSizeMode = nsSizeMode_Normal;
-            InitEvent(event, NS_SIZEMODE);
+            InitEvent(event);
             DispatchWindowEvent(&event);
             NS_RELEASE(event.widget);
          }
 
          break;
       }
-
        case WM_ADJUSTWINDOWPOS:
           {
             PSWP pswp = (PSWP)mp1;
+#if 0
             if (pswp->fl & SWP_ZORDER)
               ConstrainZLevel(&pswp->hwndInsertBehind);
+#endif
+            if (mChromeHidden) {
+              if (pswp->fl & SWP_MINIMIZE) {
+                 HWND hwndTemp = (HWND)WinQueryProperty(mFrameWnd, "hwndSysMenu");
+                 if (hwndTemp)
+                   WinSetParent(hwndTemp, mFrameWnd, TRUE);
+              }
+              if (pswp->fl & SWP_RESTORE) {
+                HWND hwndTemp = (HWND)WinQueryProperty(mFrameWnd, "hwndSysMenu");
+                if (hwndTemp)
+                  WinSetParent(hwndTemp, HWND_OBJECT, TRUE);
+              }
+            }
           }
           break;
       case WM_DESTROY:
@@ -402,6 +401,44 @@ MRESULT nsFrameWindow::FrameMessage( ULONG msg, MPARAM mp1, MPARAM mp2)
          WinRemoveProperty(mFrameWnd, "hwndSysMenu");
          WinRemoveProperty(mFrameWnd, "hwndMinMax");
          WinRemoveProperty(mFrameWnd, "ulStyle");
+         break;
+      case WM_INITMENU:
+         /* If we are in fullscreen/kiosk mode, disable maximize menu item */
+         if (mChromeHidden) {
+            if (WinQueryWindowULong(mFrameWnd, QWL_STYLE) & WS_MINIMIZED) {
+              if (SHORT1FROMMP(mp1) == SC_SYSMENU) {
+                MENUITEM menuitem;
+                WinSendMsg(WinWindowFromID(mFrameWnd, FID_SYSMENU), MM_QUERYITEM, MPFROM2SHORT(SC_SYSMENU, FALSE), MPARAM(&menuitem));
+                mRC = (*fnwpDefFrame)( mFrameWnd, msg, mp1, mp2);
+                WinEnableMenuItem(menuitem.hwndSubMenu, SC_MAXIMIZE, FALSE);
+                bDone = TRUE;
+              }
+            }
+         }
+         break;
+      case WM_SYSCOMMAND:
+         /* If we are in fullscreen/kiosk mode, don't honor maximize requests */
+         if (mChromeHidden) {
+            if (WinQueryWindowULong(mFrameWnd, QWL_STYLE) & WS_MINIMIZED) {
+              if ((SHORT1FROMMP(mp1) == SC_MAXIMIZE))
+              {
+                bDone = TRUE;
+              }
+            }
+         }
+         break;
+      /* To simulate Windows better, we need to send a focus message to the */
+      /* client when the frame is activated if there is a non mozilla window focused */
+      case WM_ACTIVATE:
+#ifdef DEBUG_FOCUS
+         printf("[%x] WM_ACTIVATE (%d)\n", this, mWindowIdentifier);
+#endif
+         if (SHORT1FROMMP(mp1)) {
+#ifdef DEBUG_FOCUS
+            printf("[%x] NS_GOTFOCUS (%d)\n", this, mWindowIdentifier);
+#endif
+            mRC = DispatchFocus(NS_GOTFOCUS, PR_TRUE);
+         }
          break;
    }
 

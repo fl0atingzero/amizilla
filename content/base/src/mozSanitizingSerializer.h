@@ -94,7 +94,7 @@ public:
 
   // nsIContentSink
   NS_IMETHOD WillBuildModel(void) { return NS_OK; }
-  NS_IMETHOD DidBuildModel(PRInt32 aQualityLevel) { return NS_OK; }
+  NS_IMETHOD DidBuildModel(void) { return NS_OK; }
   NS_IMETHOD WillInterrupt(void) { return NS_OK; }
   NS_IMETHOD WillResume(void) { return NS_OK; }
   NS_IMETHOD SetParser(nsIParser* aParser) { return NS_OK; }
@@ -146,7 +146,7 @@ protected:
                              nsString& value /*inout*/);
   nsresult SanitizeTextNode(nsString& value /*inout*/);
   PRBool IsContainer(PRInt32 aId);
-  nsresult GetIdForContent(nsIContent* aContent, PRInt32* aID);
+  static PRInt32 GetIdForContent(nsIContent* aContent);
   nsresult GetParserService(nsIParserService** aParserService);
   nsresult DoOpenContainer(PRInt32 aTag);
   nsresult DoCloseContainer(PRInt32 aTag);

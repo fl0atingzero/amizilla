@@ -182,7 +182,7 @@ NS_IMETHODIMP nsAddrBookSession::GetUserProfileDirectory(nsFileSpec * *userDir)
   NS_ENSURE_ARG_POINTER(userDir);
   *userDir = nsnull;
 
-  nsresult rv;		
+  nsresult rv;
   nsCOMPtr<nsIFile> profileDir;
   nsCAutoString pathBuf;
 
@@ -205,7 +205,7 @@ NS_IMETHODIMP nsAddrBookSession::GetUserProfileDirectory(nsFileSpec * *userDir)
 NS_IMETHODIMP nsAddrBookSession::GenerateNameFromCard(nsIAbCard *card, PRInt32 generateFormat, PRUnichar **aName)
 {
   nsresult rv = NS_OK;
-	
+  
   if (generateFormat == kDisplayName) {
     rv = card->GetDisplayName(aName);
   }
@@ -215,10 +215,10 @@ NS_IMETHODIMP nsAddrBookSession::GenerateNameFromCard(nsIAbCard *card, PRInt32 g
     
     rv = card->GetFirstName(getter_Copies(firstName));
     NS_ENSURE_SUCCESS(rv, rv);       
-
+    
     rv = card->GetLastName(getter_Copies(lastName));
     NS_ENSURE_SUCCESS(rv,rv);
-
+    
     if (!lastName.IsEmpty() && !firstName.IsEmpty()) {
       if (!mBundle) {       
         nsCOMPtr<nsIStringBundleService> stringBundleService = do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv); 
@@ -227,9 +227,9 @@ NS_IMETHODIMP nsAddrBookSession::GenerateNameFromCard(nsIAbCard *card, PRInt32 g
         rv = stringBundleService->CreateBundle("chrome://messenger/locale/addressbook/addressBook.properties", getter_AddRefs(mBundle));
         NS_ENSURE_SUCCESS(rv,rv);
       }
-
+      
       nsXPIDLString generatedName;
-
+      
       if (generateFormat == kLastFirst) {
         const PRUnichar *stringParams[2] = {lastName.get(), firstName.get()};
         
@@ -244,17 +244,33 @@ NS_IMETHODIMP nsAddrBookSession::GenerateNameFromCard(nsIAbCard *card, PRInt32 g
         
       }
       
-  NS_ENSURE_SUCCESS(rv,rv); 
+      NS_ENSURE_SUCCESS(rv,rv); 
       *aName = ToNewUnicode(generatedName);
     }
     else {
       if (lastName.Length())
         *aName = ToNewUnicode(lastName);
-      else if (firstName.Length())
+      else {
+        // aName may be empty here, but that's ok.
         *aName = ToNewUnicode(firstName);
-      else
-        *aName = ToNewUnicode(NS_LITERAL_STRING(""));
+      }
     }
+  }
+  
+  if (!*aName || **aName == '\0') 
+  {
+    // see bug #211078
+    // if there is no generated name at this point
+    // use the userid from the email address
+    // it is better than nothing.
+    nsXPIDLString primaryEmail;
+    card->GetPrimaryEmail(getter_Copies(primaryEmail));
+    PRInt32 index = primaryEmail.FindChar('@');
+    if (index != kNotFound)
+      primaryEmail.Truncate(index);
+    if (*aName)
+      nsMemory::Free(*aName);
+    *aName = ToNewUnicode(primaryEmail);
   }
 
   return NS_OK;

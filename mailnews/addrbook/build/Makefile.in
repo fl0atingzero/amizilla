@@ -32,6 +32,9 @@ META_COMPONENT = mail
 EXPORT_LIBRARY = 1
 IS_COMPONENT	= 1
 MODULE_NAME	= nsAbModule
+
+PACKAGE_FILE = addrbook.pkg
+
 REQUIRES	= xpcom \
 		  xpcom_obsolete \
 		  string \
@@ -50,13 +53,13 @@ REQUIRES	= xpcom \
 		  appcomps \
 		  layout \
 		  intl \
+		  uriloader \
 		  $(NULL)
 
 CPPSRCS		= nsAbFactory.cpp
 
 ifdef MOZ_LDAP_XPCOM
 REQUIRES	+= mozldap \
-                   uriloader \
                    $(NULL)
 DEFINES		+= -DMOZ_LDAP_XPCOM
 endif

@@ -82,6 +82,8 @@ struct nsCSSValueList {
   nsCSSValueList(const nsCSSValueList& aCopy);
   ~nsCSSValueList(void);
 
+  static PRBool Equal(nsCSSValueList* aList1, nsCSSValueList* aList2);
+
   nsCSSValue      mValue;
   nsCSSValueList* mNext;
 };
@@ -113,6 +115,8 @@ struct nsCSSShadow {
   nsCSSShadow(void);
   nsCSSShadow(const nsCSSShadow& aCopy);
   ~nsCSSShadow(void);
+
+  static PRBool Equal(nsCSSShadow* aList1, nsCSSShadow* aList2);
 
   nsCSSValue mColor;
   nsCSSValue mXOffset;
@@ -241,7 +245,19 @@ struct nsCSSMargin : public nsCSSStruct  {
 #endif
 
   nsCSSRect   mMargin;
+  nsCSSValue  mMarginStart;
+  nsCSSValue  mMarginEnd;
+  nsCSSValue  mMarginLeftLTRSource;
+  nsCSSValue  mMarginLeftRTLSource;
+  nsCSSValue  mMarginRightLTRSource;
+  nsCSSValue  mMarginRightRTLSource;
   nsCSSRect   mPadding;
+  nsCSSValue  mPaddingStart;
+  nsCSSValue  mPaddingEnd;
+  nsCSSValue  mPaddingLeftLTRSource;
+  nsCSSValue  mPaddingLeftRTLSource;
+  nsCSSValue  mPaddingRightLTRSource;
+  nsCSSValue  mPaddingRightRTLSource;
   nsCSSRect   mBorderWidth;
   nsCSSRect   mBorderColor;
   nsCSSValueListRect mBorderColors;
@@ -366,6 +382,8 @@ struct nsCSSCounterData {
   nsCSSCounterData(const nsCSSCounterData& aCopy);
   ~nsCSSCounterData(void);
 
+  static PRBool Equal(nsCSSCounterData* aList1, nsCSSCounterData* aList2);
+
   nsCSSValue        mCounter;
   nsCSSValue        mValue;
   nsCSSCounterData* mNext;
@@ -375,6 +393,8 @@ struct nsCSSQuotes {
   nsCSSQuotes(void);
   nsCSSQuotes(const nsCSSQuotes& aCopy);
   ~nsCSSQuotes(void);
+
+  static PRBool Equal(nsCSSQuotes* aList1, nsCSSQuotes* aList2);
 
   nsCSSValue    mOpen;
   nsCSSValue    mClose;
@@ -486,9 +506,12 @@ struct nsCSSSVG : public nsCSSStruct {
   void List(FILE* out = stdout, PRInt32 aIndent = 0) const;
 #endif
 
+  nsCSSValue mDominantBaseline;
   nsCSSValue mFill;
   nsCSSValue mFillOpacity;
   nsCSSValue mFillRule;
+  nsCSSValue mPointerEvents;
+  nsCSSValue mShapeRendering;
   nsCSSValue mStroke;
   nsCSSValue mStrokeDasharray;
   nsCSSValue mStrokeDashoffset;
@@ -497,6 +520,8 @@ struct nsCSSSVG : public nsCSSStruct {
   nsCSSValue mStrokeMiterlimit;
   nsCSSValue mStrokeOpacity;
   nsCSSValue mStrokeWidth;
+  nsCSSValue mTextAnchor;
+  nsCSSValue mTextRendering;
 };
 
 struct nsRuleDataSVG : public nsCSSSVG {

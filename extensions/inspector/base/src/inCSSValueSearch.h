@@ -43,14 +43,15 @@
 
 #include "nsCOMPtr.h"
 #include "nsString.h"
-#include "nsIDocument.h"
 #include "nsIDOMDocument.h"
 #include "inISearchObserver.h"
 #include "nsVoidArray.h"
-#include "nsICSSStyleSheet.h"
-#include "nsICSSStyleRule.h"
-#include "nsCSSValue.h"
 #include "nsIInspectorCSSUtils.h"
+
+class nsIDOMCSSStyleSheet;
+class nsIDOMCSSRuleList;
+class nsIDOMCSSStyleRule;
+class nsIURI;
 
 class inCSSValueSearch : public inICSSValueSearch
 {
@@ -68,9 +69,9 @@ protected:
   nsCOMPtr<nsIDOMDocument> mDocument;
   nsVoidArray* mResults;
   nsCSSProperty* mProperties;
-  nsAutoString* mLastResult;
-  nsAutoString* mBaseURL;
-  nsAutoString* mTextCriteria;
+  nsString mLastResult;
+  nsString mBaseURL;
+  nsString mTextCriteria;
   PRInt32 mResultCount;
   PRUint32 mPropertyCount;
   PRBool mIsActive;
@@ -80,9 +81,10 @@ protected:
 
   nsresult InitSearch();
   nsresult KillSearch(PRInt16 aResult);
-  nsresult SearchStyleSheet(nsIStyleSheet* aStyleSheet);
-  nsresult SearchStyleRule(nsIStyleRule* aStyleRule);
-  nsresult SearchStyleValue(nsICSSStyleRule* aDec, nsCSSProperty aProp);
+  nsresult SearchStyleSheet(nsIDOMCSSStyleSheet* aStyleSheet, nsIURI* aBaseURI);
+  nsresult SearchRuleList(nsIDOMCSSRuleList* aRuleList, nsIURI* aBaseURI);
+  nsresult SearchStyleRule(nsIDOMCSSStyleRule* aStyleRule, nsIURI* aBaseURI);
+  nsresult SearchStyleValue(const nsAFlatString& aValue, nsIURI* aBaseURI);
   nsresult EqualizeURL(nsAutoString* aURL);
 };
 

@@ -54,8 +54,6 @@ CSS_ANON_BOX(mozNonElement, ":-moz-non-element")
 
 CSS_ANON_BOX(mozAnonymousBlock, ":-moz-anonymous-block")
 CSS_ANON_BOX(mozAnonymousPositionedBlock, ":-moz-anonymous-positioned-block")
-CSS_ANON_BOX(mozGCWrapperBlock, ":-moz-gc-wrapper-block")
-CSS_ANON_BOX(mozGCWrapperInline, ":-moz-gc-wrapper-inline")
 
 CSS_ANON_BOX(mozFirstLineFixup, ":-moz-first-line-fixup")
 CSS_ANON_BOX(mozLineFrame, ":-moz-line-frame")
@@ -102,4 +100,10 @@ CSS_ANON_BOX(moztreeimage, ":-moz-tree-image")
 CSS_ANON_BOX(moztreeseparator, ":-moz-tree-separator")
 CSS_ANON_BOX(moztreedropfeedback, ":-moz-tree-drop-feedback")
 CSS_ANON_BOX(moztreeprogressmeter, ":-moz-tree-progressmeter")
+#endif
+
+#ifdef MOZ_MATHML
+CSS_ANON_BOX(mozMathStretchy, ":-moz-math-stretchy")
+CSS_ANON_BOX(mozMathAnonymous, ":-moz-math-anonymous")
+CSS_ANON_BOX(mozMathInline, ":-moz-math-inline")
 #endif

@@ -47,69 +47,19 @@
 #include "nsReadableUtils.h"
 #include "nsIScriptContext.h"
 
-static nsIJSRuntimeService* gJSRuntimeService = nsnull;
-static JSRuntime* gScriptRuntime = nsnull;
-static PRInt32 gScriptRuntimeRefcnt = 0;
-
-static nsresult
-AddJSGCRoot(void* aScriptObjectRef, const char* aName)
-{
-  if (++gScriptRuntimeRefcnt == 1 || !gScriptRuntime) {
-    CallGetService("@mozilla.org/js/xpc/RuntimeService;1",
-                   &gJSRuntimeService);
-    if (! gJSRuntimeService) {
-        NS_NOTREACHED("couldn't add GC root");
-        return NS_ERROR_FAILURE;
-    }
-
-    gJSRuntimeService->GetRuntime(&gScriptRuntime);
-    if (! gScriptRuntime) {
-        NS_NOTREACHED("couldn't add GC root");
-        return NS_ERROR_FAILURE;
-    }
-  }
-
-  PRBool ok;
-  ok = ::JS_AddNamedRootRT(gScriptRuntime, aScriptObjectRef, aName);
-  if (! ok) {
-    NS_NOTREACHED("couldn't add GC root");
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  return NS_OK;
-}
-
-static nsresult
-RemoveJSGCRoot(void* aScriptObjectRef)
-{
-  if (!gScriptRuntime) {
-    NS_NOTREACHED("couldn't remove GC root");
-    return NS_ERROR_FAILURE;
-  }
-
-  ::JS_RemoveRootRT(gScriptRuntime, aScriptObjectRef);
-
-  if (--gScriptRuntimeRefcnt == 0) {
-    NS_RELEASE(gJSRuntimeService);
-    gScriptRuntime = nsnull;
-  }
-
-  return NS_OK;
-}
-
-MOZ_DECL_CTOR_COUNTER(nsXBLProtoImplProperty);
+MOZ_DECL_CTOR_COUNTER(nsXBLProtoImplProperty)
 
 nsXBLProtoImplProperty::nsXBLProtoImplProperty(const PRUnichar* aName,
                                                const PRUnichar* aGetter, 
                                                const PRUnichar* aSetter,
-                                               const PRUnichar* aReadOnly)
-:nsXBLProtoImplMember(aName), 
- mGetterText(nsnull),
- mSetterText(nsnull)
+                                               const PRUnichar* aReadOnly) :
+  nsXBLProtoImplMember(aName), 
+  mGetterText(nsnull),
+  mSetterText(nsnull),
+  mJSAttributes(JSPROP_ENUMERATE)
 {
   MOZ_COUNT_CTOR(nsXBLProtoImplProperty);
 
-  mJSAttributes = JSPROP_ENUMERATE;
   if (aReadOnly) {
     nsAutoString readOnly; readOnly.Assign(*aReadOnly);
     if (readOnly.EqualsIgnoreCase("true"))
@@ -138,8 +88,8 @@ nsXBLProtoImplProperty::Destroy(PRBool aIsCompiled)
     mJSGetterObject = mJSSetterObject = nsnull;
   }
   else {
-    nsMemory::Free(mGetterText);
-    nsMemory::Free(mSetterText);
+    delete mGetterText;
+    delete mSetterText;
     mGetterText = mSetterText = nsnull;
   }
 }
@@ -147,32 +97,57 @@ nsXBLProtoImplProperty::Destroy(PRBool aIsCompiled)
 void 
 nsXBLProtoImplProperty::AppendGetterText(const nsAString& aText)
 {
-  if (mGetterText) {
-    PRUnichar* temp = mGetterText;
-    mGetterText = ToNewUnicode(nsDependentString(temp) + aText);
-    nsMemory::Free(temp);
+  if (!mGetterText) {
+    mGetterText = new nsXBLTextWithLineNumber();
+    if (!mGetterText)
+      return;
   }
-  else
-    mGetterText = ToNewUnicode(aText);
+
+  mGetterText->AppendText(aText);
 }
 
 void 
 nsXBLProtoImplProperty::AppendSetterText(const nsAString& aText)
 {
-  if (mSetterText) {
-    PRUnichar* temp = mSetterText;
-    mSetterText = ToNewUnicode(nsDependentString(temp) + aText);
-    nsMemory::Free(temp);
+  if (!mSetterText) {
+    mSetterText = new nsXBLTextWithLineNumber();
+    if (!mSetterText)
+      return;
   }
-  else
-    mSetterText = ToNewUnicode(aText);
+
+  mSetterText->AppendText(aText);
+}
+
+void
+nsXBLProtoImplProperty::SetGetterLineNumber(PRUint32 aLineNumber) {
+  if (!mGetterText) {
+    mGetterText = new nsXBLTextWithLineNumber();
+    if (!mGetterText)
+      return;
+  }
+
+  mGetterText->SetLineNumber(aLineNumber);
+}
+
+void
+nsXBLProtoImplProperty::SetSetterLineNumber(PRUint32 aLineNumber) {
+  if (!mSetterText) {
+    mSetterText = new nsXBLTextWithLineNumber();
+    if (!mSetterText)
+      return;
+  }
+
+  mSetterText->SetLineNumber(aLineNumber);
 }
 
 const char* gPropertyArgs[] = { "val" };
 
 nsresult
-nsXBLProtoImplProperty::InstallMember(nsIScriptContext* aContext, nsIContent* aBoundElement, 
-                                      void* aScriptObject, void* aTargetClassObject)
+nsXBLProtoImplProperty::InstallMember(nsIScriptContext* aContext,
+                                      nsIContent* aBoundElement, 
+                                      void* aScriptObject,
+                                      void* aTargetClassObject,
+                                      const nsCString& aClassStr)
 {
   JSContext* cx = (JSContext*) aContext->GetNativeContext();
   JSObject * scriptObject = (JSObject *) aScriptObject;
@@ -187,16 +162,20 @@ nsXBLProtoImplProperty::InstallMember(nsIScriptContext* aContext, nsIContent* aB
   if ((mJSGetterObject || mJSSetterObject) && targetClassObject) {
     JSObject * getter = nsnull;
     if (mJSGetterObject)
-      getter = ::JS_CloneFunctionObject(cx, mJSGetterObject, globalObject);
+      if (!(getter = ::JS_CloneFunctionObject(cx, mJSGetterObject, globalObject)))
+        return NS_ERROR_OUT_OF_MEMORY;
     
     JSObject * setter = nsnull;
     if (mJSSetterObject)
-      setter = ::JS_CloneFunctionObject(cx, mJSSetterObject, globalObject);
+      if (!(setter = ::JS_CloneFunctionObject(cx, mJSSetterObject, globalObject)))
+        return NS_ERROR_OUT_OF_MEMORY;
 
     nsDependentString name(mName);
-    ::JS_DefineUCProperty(cx, targetClassObject, NS_REINTERPRET_CAST(const jschar*, mName), 
-                          name.Length(), JSVAL_VOID,  (JSPropertyOp) getter, 
-                          (JSPropertyOp) setter, mJSAttributes); 
+    if (!::JS_DefineUCProperty(cx, targetClassObject,
+                               NS_REINTERPRET_CAST(const jschar*, mName), 
+                               name.Length(), JSVAL_VOID,  (JSPropertyOp) getter, 
+                               (JSPropertyOp) setter, mJSAttributes))
+      return NS_ERROR_OUT_OF_MEMORY;
   }
   return NS_OK;
 }
@@ -214,81 +193,106 @@ nsXBLProtoImplProperty::CompileMember(nsIScriptContext* aContext, const nsCStrin
   // We have a property.
   nsresult rv = NS_OK;
 
-  // Do we have a getter?
-  nsAutoString getter(mGetterText);
-
-  // Make sure we free mGetterText here before calling
-  // CompileFunction() since that'll overwrite mGetterText
-  nsMemory::Free(mGetterText);
-  mGetterText = nsnull;
-
   nsCAutoString functionUri;
-  if (!getter.IsEmpty() && aClassObject) {
-    functionUri = aClassStr + NS_LITERAL_CSTRING(".");
-    AppendUTF16toUTF8(mName, functionUri);
-    functionUri += NS_LITERAL_CSTRING(" (getter)");
-    rv = aContext->CompileFunction(aClassObject,
-                                   nsCAutoString("onget"),
-                                   0,
-                                   nsnull,
-                                   getter, 
-                                   functionUri.get(),
-                                   0,
-                                   PR_FALSE,
-                                   (void **) &mJSGetterObject);
-    if (mJSGetterObject && NS_SUCCEEDED(rv)) {
-      mJSAttributes |= JSPROP_GETTER | JSPROP_SHARED;
-      // Root the compiled prototype script object.
-      JSContext* cx = NS_REINTERPRET_CAST(JSContext*,
-                                          aContext->GetNativeContext());
-      rv = (cx)
-            ? AddJSGCRoot(&mJSGetterObject, "nsXBLProtoImplProperty::mJSGetterObject")
-            : NS_ERROR_UNEXPECTED;
+  if (mGetterText || mSetterText) {
+    functionUri = aClassStr;
+    PRInt32 hash = functionUri.RFindChar('#');
+    if (hash != kNotFound) {
+      functionUri.Truncate(hash);
     }
-    if (NS_FAILED(rv)) {
-      mJSGetterObject = nsnull;
-      mJSAttributes &= ~JSPROP_GETTER;
-      /*chaining to return failure*/
+  }
+
+  PRBool deletedGetter = PR_FALSE;
+  if (mGetterText) {
+    nsDependentString getter(mGetterText->GetText());
+    if (!getter.IsEmpty()) {
+      // Compile into a temp object so we don't wipe out mGetterText
+      JSObject* getterObject = nsnull;
+      rv = aContext->CompileFunction(aClassObject,
+                                     NS_LITERAL_CSTRING("get_") +
+                                     NS_ConvertUCS2toUTF8(mName),
+                                     0,
+                                     nsnull,
+                                     getter, 
+                                     functionUri.get(),
+                                     mGetterText->GetLineNumber(),
+                                     PR_FALSE,
+                                     (void **) &getterObject);
+
+      // Make sure we free mGetterText here before setting mJSGetterObject, since
+      // that'll overwrite mGetterText
+      delete mGetterText;
+      deletedGetter = PR_TRUE;
+      mJSGetterObject = getterObject;
+    
+      if (mJSGetterObject && NS_SUCCEEDED(rv)) {
+        mJSAttributes |= JSPROP_GETTER | JSPROP_SHARED;
+        // Root the compiled prototype script object.
+        JSContext* cx = NS_REINTERPRET_CAST(JSContext*,
+                                            aContext->GetNativeContext());
+        rv = (cx)
+          ? AddJSGCRoot(&mJSGetterObject, "nsXBLProtoImplProperty::mJSGetterObject")
+          : NS_ERROR_UNEXPECTED;
+      }
+      if (NS_FAILED(rv)) {
+        mJSGetterObject = nsnull;
+        mJSAttributes &= ~JSPROP_GETTER;
+        /*chaining to return failure*/
+      }
     }
   } // if getter is not empty
+
+  if (!deletedGetter) {  // Empty getter
+    delete mGetterText;
+    mJSGetterObject = nsnull;
+  }
+  
   nsresult rvG=rv;
 
-  // Do we have a setter?
-  nsAutoString setter(mSetterText);
+  PRBool deletedSetter = PR_FALSE;
+  if (mSetterText) {
+    nsDependentString setter(mSetterText->GetText());
+    if (!setter.IsEmpty()) {
+      // Compile into a temp object so we don't wipe out mSetterText
+      JSObject* setterObject = nsnull;
+      rv = aContext->CompileFunction(aClassObject,
+                                     NS_LITERAL_CSTRING("set_") +
+                                     NS_ConvertUCS2toUTF8(mName),
+                                     1,
+                                     gPropertyArgs,
+                                     setter, 
+                                     functionUri.get(),
+                                     mSetterText->GetLineNumber(),
+                                     PR_FALSE,
+                                     (void **) &setterObject);
 
-  // Make sure we free mSetterText here before calling
-  // CompileFunction() since that'll overwrite mSetterText
-  nsMemory::Free(mSetterText);
-  mSetterText = nsnull;
+      // Make sure we free mSetterText here before setting mJSGetterObject, since
+      // that'll overwrite mSetterText
+      delete mSetterText;
+      deletedSetter = PR_TRUE;
+      mJSSetterObject = setterObject;
 
-  if (!setter.IsEmpty() && aClassObject) {
-    functionUri = aClassStr + NS_LITERAL_CSTRING(".");
-    AppendUTF16toUTF8(mName, functionUri);
-    functionUri += NS_LITERAL_CSTRING(" (setter)");
-    rv = aContext->CompileFunction(aClassObject,
-                                   nsCAutoString("onset"),
-                                   1,
-                                   gPropertyArgs,
-                                   setter, 
-                                   functionUri.get(),
-                                   0,
-                                   PR_FALSE,
-                                   (void **) &mJSSetterObject);
-    if (mJSSetterObject && NS_SUCCEEDED(rv)) {
-      mJSAttributes |= JSPROP_SETTER | JSPROP_SHARED;
-      // Root the compiled prototype script object.
-      JSContext* cx = NS_REINTERPRET_CAST(JSContext*,
-                                          aContext->GetNativeContext());
-      rv = (cx)
-            ? AddJSGCRoot(&mJSSetterObject, "nsXBLProtoImplProperty::mJSSetterObject")
-            : NS_ERROR_UNEXPECTED;
-    }
-    if (NS_FAILED(rv)) {
-      mJSSetterObject = nsnull;
-      mJSAttributes &= ~JSPROP_SETTER;
-      /*chaining to return failure*/
+      if (mJSSetterObject && NS_SUCCEEDED(rv)) {
+        mJSAttributes |= JSPROP_SETTER | JSPROP_SHARED;
+        // Root the compiled prototype script object.
+        JSContext* cx = NS_REINTERPRET_CAST(JSContext*,
+                                            aContext->GetNativeContext());
+        rv = (cx)
+          ? AddJSGCRoot(&mJSSetterObject, "nsXBLProtoImplProperty::mJSSetterObject")
+          : NS_ERROR_UNEXPECTED;
+      }
+      if (NS_FAILED(rv)) {
+        mJSSetterObject = nsnull;
+        mJSAttributes &= ~JSPROP_SETTER;
+        /*chaining to return failure*/
+      }
     }
   } // if setter wasn't empty....
 
+  if (!deletedSetter) {  // Empty setter
+    delete mSetterText;
+    mJSSetterObject = nsnull;
+  }
+  
   return NS_SUCCEEDED(rv) ? rvG : rv;
 }

@@ -40,8 +40,9 @@
 #include "pldhash.h"
 #include "prlock.h"
 #include "nscore.h"
-#include "nsCom.h"
 #include "nsString.h"
+#include "nsISupportsBase.h"
+#include "nsTraceRefcnt.h"
 
 class nsIObjectInputStream;
 class nsIObjectOutputStream;
@@ -60,6 +61,9 @@ class NS_COM nsHashKey {
 
 
   public:
+    // Virtual destructor because all hash keys are |delete|d via a
+    // nsHashKey pointer.
+
     virtual ~nsHashKey(void);
     virtual PRUint32 HashCode(void) const = 0;
     virtual PRBool Equals(const nsHashKey *aKey) const = 0;

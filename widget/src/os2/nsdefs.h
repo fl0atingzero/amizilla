@@ -41,17 +41,13 @@
 #ifdef _DEBUG
 #define INCL_WINERRORS
 #endif
+#define INCL_WIN
+#define INCL_DOS
+#define INCL_GPI
 #include <os2.h>
-#ifdef XP_OS2_VACPP
-#include <builtin.h>
-#endif
 
 #ifdef _DEBUG
- #ifdef XP_OS2_VACPP
-  #define BREAK_TO_DEBUGGER           _interrupt(3)
- #else
   #define BREAK_TO_DEBUGGER           asm("int $3")
- #endif
 #else   
   #define BREAK_TO_DEBUGGER
 #endif  
@@ -67,12 +63,16 @@
 
 
 extern "C" {
-PVOID APIENTRY WinQueryProperty(HWND hwnd, PCSZ  pszNameOrAtom);
+  PVOID  APIENTRY WinQueryProperty(HWND hwnd, PCSZ  pszNameOrAtom);
 
-PVOID APIENTRY WinRemoveProperty(HWND hwnd, PCSZ  pszNameOrAtom);
+  PVOID  APIENTRY WinRemoveProperty(HWND hwnd, PCSZ  pszNameOrAtom);
 
-BOOL  APIENTRY WinSetProperty(HWND hwnd, PCSZ  pszNameOrAtom,
-                              PVOID pvData, ULONG ulFlags);
+  BOOL   APIENTRY WinSetProperty(HWND hwnd, PCSZ  pszNameOrAtom,
+                                 PVOID pvData, ULONG ulFlags);
+
+  APIRET APIENTRY DosQueryModFromEIP(HMODULE *phMod, ULONG *pObjNum,
+                                     ULONG BuffLen,  PCHAR pBuff,
+                                     ULONG *pOffset, ULONG Address);
 }
 
 #endif  // NSDEFS_H

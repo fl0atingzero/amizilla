@@ -31,6 +31,7 @@
  * 06/15/2000       IBM Corp.      Added NS2PM for rectangles
  * 06/21/2000       IBM Corp.      Added CaptureMouse
  *
+ * Rich Walsh <dragtext@e-vertise.com>
  */
 
 #ifndef _nswindow_h
@@ -66,7 +67,9 @@
    #define      nsWindowState_eDoingDelete 0x00000010
    // window destroyed 
    #define      nsWindowState_eDead        0x00000100         
-   
+
+MRESULT EXPENTRY fnwpNSWindow( HWND, ULONG, MPARAM, MPARAM);
+MRESULT EXPENTRY fnwpFrame( HWND, ULONG, MPARAM, MPARAM);
 
 class nsWindow : public nsBaseWidget,
                  public nsSwitchToUIThread
@@ -120,7 +123,8 @@ class nsWindow : public nsBaseWidget,
    NS_IMETHOD SetFocus(PRBool aRaise);
    NS_IMETHOD GetBounds(nsRect &aRect);
    NS_IMETHOD IsVisible( PRBool &aState);
-   NS_IMETHOD PlaceBehind(nsIWidget *aWidget, PRBool aActivate);
+   NS_IMETHOD PlaceBehind(nsTopLevelWidgetZPlacement aPlacement,
+                          nsIWidget *aWidget, PRBool aActivate);
 
    NS_IMETHOD CaptureMouse(PRBool aCapture);
 
@@ -227,9 +231,7 @@ protected:
 //   virtual PRBool OnActivateMenu( HWND aMenu, BOOL aActivate);
    // called after param has been set...
    virtual PRBool OnPresParamChanged( MPARAM mp1, MPARAM mp2);
-   virtual PRBool OnDragOver( MPARAM mp1, MPARAM mp2, MRESULT &mr);
-   virtual PRBool OnDragLeave( MPARAM mp1, MPARAM mp2);
-   virtual PRBool OnDrop( MPARAM mp1, MPARAM mp2);
+   virtual PRBool OnDragDropMsg(ULONG msg, MPARAM mp1, MPARAM mp2, MRESULT &mr);
 
    static BOOL sIsRegistered;
 
@@ -242,16 +244,16 @@ protected:
    PSWP      mSWPs;           // SWPs for deferred window positioning
    ULONG     mlHave, mlUsed;  // description of mSWPs array
    HPOINTER  mFrameIcon;      // current frame icon
-   BOOL      mNativeDrag;     // is the drag from outside Mozilla
    VDKEY     mDeadKey;        // dead key from previous keyevent
    BOOL      mHaveDeadKey;    // is mDeadKey valid [0 may be a valid dead key, for all I know]
-   HWND      mHackDestroyWnd; // access GetMainWindow() window from destructor
    QMSG      mQmsg;
    PRBool    mIsTopWidgetWindow;
    BOOL      mIsScrollBar;
    BOOL      mInSetFocus;
    BOOL      mChromeHidden;
    nsContentType mContentType;
+   HPS       mDragHps;        // retrieved by DrgGetPS() during a drag
+   PRUint32  mDragStatus;     // set while this object is being dragged over
 
    HWND      GetParentHWND() const;
    HWND      GetHWND() const   { return mWnd; }
@@ -285,16 +287,18 @@ protected:
    virtual void SubclassWindow(BOOL bState);
 
    PRBool  ConvertStatus( nsEventStatus aStatus);
-   void    InitEvent( nsGUIEvent &event, PRUint32 aEventType, nsPoint *pt = 0);
+   void    InitEvent( nsGUIEvent &event, nsPoint *pt = 0);
    virtual PRBool DispatchWindowEvent(nsGUIEvent* event);
    virtual PRBool DispatchWindowEvent(nsGUIEvent*event, nsEventStatus &aStatus);
-   PRBool  DispatchStandardEvent( PRUint32 aMsg, PRUint8 aStructType = NS_GUI_EVENT);
+   PRBool  DispatchStandardEvent( PRUint32 aMsg);
    virtual PRBool DispatchMouseEvent( PRUint32 aEventType, MPARAM mp1, MPARAM mp2);
    virtual PRBool DispatchResizeEvent( PRInt32 aClientX, PRInt32 aClientY);
    void GetNonClientBounds(nsRect &aRect);
    void    DeferPosition( HWND, HWND, long, long, long, long, ULONG);
+   void ConstrainZLevel(HWND *aAfter);
 
-    void ConstrainZLevel(HWND *aAfter);
+   PRBool   CheckDragStatus(PRUint32 aAction, HPS * oHps);
+   PRBool   ReleaseIfDragHPS(HPS aHps);
 
    // Enumeration of the methods which are accessable on the PM thread
    enum {

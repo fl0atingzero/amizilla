@@ -34,6 +34,9 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+ 
+ /* Header file for oeICalTodoImpl.cpp containing its CID and CONTRACTID.*/
+
 #ifndef _OEICALTODOIMPL_H_
 #define _OEICALTODOIMPL_H_
 
@@ -67,10 +70,10 @@ public:
   NS_IMETHOD Clone(oeIICalTodo **_retval);
   bool matchId( const char *id );
   NS_IMETHODIMP SetParent( oeIICal *parent );
+  oeICalEventImpl *GetBaseEvent();
 private:
     int m_percent;
     oeDateTimeImpl *m_completed;
-    oeDateTimeImpl *m_due;
     oeICalEventImpl *mEvent;
 };
 

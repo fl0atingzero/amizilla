@@ -17,7 +17,7 @@
  * All Rights Reserved.
  *
  * Contributor(s): 
- *   Brian Ryner <bryner@uiuc.edu>
+ *   Brian Ryner <bryner@brianryner.com>
  *   Darin Fisher <darin@netscape.com>
  */
 
@@ -144,7 +144,7 @@ NS_IMETHODIMP
 nsFingerChannel::Suspend()
 {
     if (mPump)
-        mPump->Suspend();
+        return mPump->Suspend();
     return NS_ERROR_UNEXPECTED;
 }
 
@@ -152,7 +152,7 @@ NS_IMETHODIMP
 nsFingerChannel::Resume()
 {
     if (mPump)
-        mPump->Resume();
+        return mPump->Resume();
     return NS_ERROR_UNEXPECTED;
 }
 
@@ -185,8 +185,7 @@ nsFingerChannel::GetURI(nsIURI* *aURI)
 NS_IMETHODIMP
 nsFingerChannel::Open(nsIInputStream **_retval)
 {
-    NS_NOTREACHED("nsFingerChannel::Open");
-    return NS_ERROR_NOT_IMPLEMENTED;
+    return NS_ImplementChannelOpen(this, _retval);
 }
 
 NS_IMETHODIMP
@@ -240,8 +239,8 @@ nsFingerChannel::AsyncOpen(nsIStreamListener *aListener, nsISupports *ctxt)
         rv = mURI->GetPath(userHost);
 
         nsAutoString title;
-        title = NS_LITERAL_STRING("Finger information for ")
-              + NS_ConvertUTF8toUCS2(userHost);
+        title = NS_LITERAL_STRING("Finger information for ");
+        AppendUTF8toUTF16(userHost, title);
 
         conv->SetTitle(title.get());
         conv->PreFormatHTML(PR_TRUE);
@@ -426,8 +425,8 @@ nsFingerChannel::OnTransportStatus(nsITransport *trans, nsresult status,
 {
     // suppress status notification if channel is no longer pending!
     if (mProgressSink && NS_SUCCEEDED(mStatus) && mPump && !(mLoadFlags & LOAD_BACKGROUND)) {
-        NS_ConvertUTF8toUCS2 host(mHost);
-        mProgressSink->OnStatus(this, nsnull, status, host.get());
+        mProgressSink->OnStatus(this, nsnull, status,
+                                NS_ConvertUTF8toUCS2(mHost).get());
 
         if (status == nsISocketTransport::STATUS_RECEIVING_FROM ||
             status == nsISocketTransport::STATUS_SENDING_TO) {

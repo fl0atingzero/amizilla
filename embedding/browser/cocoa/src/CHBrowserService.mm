@@ -63,7 +63,6 @@ PRBool CHBrowserService::sCanTerminate = PR_FALSE;
 // CHBrowserService implementation
 CHBrowserService::CHBrowserService()
 {
-  NS_INIT_ISUPPORTS();
 }
 
 CHBrowserService::~CHBrowserService()
@@ -226,9 +225,9 @@ CHBrowserService::CreateChromeWindow(nsIWebBrowserChrome *parent,
 }
 
 
-//    void show( in nsIHelperAppLauncher aLauncher, in nsISupports aContext );
+//    void show( in nsIHelperAppLauncher aLauncher, in nsISupports aContext, in boolean aForced );
 NS_IMETHODIMP
-CHBrowserService::Show(nsIHelperAppLauncher* inLauncher, nsISupports* inContext)
+CHBrowserService::Show(nsIHelperAppLauncher* inLauncher, nsISupports* inContext, PRBool aForced)
 {
   // Old way - always prompt to save file to disk
   return inLauncher->SaveToDisk(nsnull, PR_FALSE);
@@ -239,7 +238,11 @@ CHBrowserService::Show(nsIHelperAppLauncher* inLauncher, nsISupports* inContext)
 }
 
 NS_IMETHODIMP
-CHBrowserService::PromptForSaveToFile(nsISupports *aWindowContext, const PRUnichar *aDefaultFile, const PRUnichar *aSuggestedFileExtension, nsILocalFile **_retval)
+CHBrowserService::PromptForSaveToFile(nsIHelperAppLauncher* aLauncher, 
+                                      nsISupports *aWindowContext, 
+                                      const PRUnichar *aDefaultFile, 
+                                      const PRUnichar *aSuggestedFileExtension, 
+                                      nsILocalFile **_retval)
 {
   NSString* filename = [NSString stringWithPRUnichars:aDefaultFile];
   NSSavePanel *thePanel = [NSSavePanel savePanel];
@@ -256,15 +259,6 @@ CHBrowserService::PromptForSaveToFile(nsISupports *aWindowContext, const PRUnich
 
   return NS_ERROR_FAILURE;
 }
-
-/* void showProgressDialog (in nsIHelperAppLauncher aLauncher, in nsISupports aContext); */
-NS_IMETHODIMP
-CHBrowserService::ShowProgressDialog(nsIHelperAppLauncher *aLauncher, nsISupports *aContext)
-{
-  NSLog(@"CHBrowserService::ShowProgressDialog");
-  return NS_OK;
-}
-
 
 //
 // RegisterAppComponents

@@ -37,7 +37,7 @@
 
 #include "nsISupports.idl"
 
-[scriptable, uuid(5FB62950-9A0B-41b4-8D11-F6888DFF835E)]
+[scriptable, uuid(3f92b7c0-8679-4dc6-9af9-9da5546db5b0)]
 interface nsIMsgAttachment : nsISupports {
 
   /**
@@ -46,7 +46,7 @@ interface nsIMsgAttachment : nsISupports {
    * @Attachment real name, will be sent with the attachment's header.
    * @If no name has been provided, a name will be generated using the url.
    */
-	attribute wstring   name;
+ 	attribute AString   name;
 	
   /**
    * url attribute
@@ -56,9 +56,18 @@ interface nsIMsgAttachment : nsISupports {
 	attribute string    url;
 
   /**
+   * urlCharset attribute
+   *
+   * @specify the Charset of url  (used to convert url to Unicode after 
+   *  unescaping)
+   */
+	attribute ACString    urlCharset;
+
+
+  /**
    * temporary attribute
    *
-   * @If set to true, the file pointed by the url will be destroyed when tis object is destroyed.
+   * @If set to true, the file pointed by the url will be destroyed when this object is destroyed.
    * @This is only for local attachment.
    */
 	attribute boolean   temporary;
@@ -73,7 +82,7 @@ interface nsIMsgAttachment : nsISupports {
   /**
    * contentType attribute
    *
-   * @Specify the content-type of the attachment, this not include extra content-type parameters. If
+   * @Specify the content-type of the attachment, this does not include extra content-type parameters. If
    * @you need to specify extra information, use contentTypeParam, charset, macType or macCreator.
    * @If ommitted, it will be determined base on either the name, the url or the content of the file.
    */

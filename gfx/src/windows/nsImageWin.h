@@ -106,6 +106,7 @@ public:
   NS_IMETHOD DrawTile(nsIRenderingContext &aContext,
                       nsDrawingSurface aSurface,
                       PRInt32 aSXOffset, PRInt32 aSYOffset,
+                      PRInt32 aPadX, PRInt32 aPadY,
                       const nsRect &aTileRect);
 
    /** 
@@ -171,9 +172,13 @@ private:
    */
   void CreateDDB(nsDrawingSurface aSurface);
 
-  void DrawComposited24(unsigned char *aBits, int aX, int aY, int aWidth, int aHeight);
+  void DrawComposited24(unsigned char *aBits,
+                        PRUint8 *aImageRGB, PRUint32 aStrideRGB,
+                        PRUint8 *aImageAlpha, PRUint32 aStrideAlpha,
+                        int aWidth, int aHeight);
   nsresult DrawComposited(HDC TheHDC, int aDX, int aDY, int aDWidth, int aDHeight,
-                          int aSX, int aSY, int aSWidth, int aSHeight);
+                          int aSX, int aSY, int aSWidth, int aSHeight,
+                          int aOrigDWidth, int aOrigDHeight);
   static PRBool CanAlphaBlend(void);
 
   /** 
@@ -200,7 +205,8 @@ private:
    * Progressively double the bitmap size as we blit.. very fast way to tile
    * @return if TRUE, no errors
    */
-  PRBool ProgressiveDoubleBlit(nsDrawingSurface aSurface,
+  PRBool ProgressiveDoubleBlit(nsIDeviceContext *aContext,
+                               nsDrawingSurface aSurface,
                                PRInt32 aSXOffset, PRInt32 aSYOffset,
                                nsRect aDestRect);
 

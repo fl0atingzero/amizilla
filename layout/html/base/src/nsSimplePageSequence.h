@@ -41,6 +41,7 @@
 #include "nsContainerFrame.h"
 #include "nsIPrintSettings.h"
 #include "nsIPrintOptions.h"
+#include "nsIDateTimeFormat.h"
 
 //-----------------------------------------------
 // This class maintains all the data that 
@@ -122,16 +123,12 @@ public:
   NS_IMETHOD SuppressHeadersAndFooters(PRBool aDoSup);
   NS_IMETHOD SetClipRect(nsIPresContext* aPresContext, nsRect* aSize);
 
-  NS_IMETHOD  SizeTo(nsIPresContext* aPresContext,
-                     nscoord         aWidth,
-                     nscoord         aHeight);
-
   /**
    * Get the "type" of the frame
    *
    * @see nsLayoutAtoms::sequenceFrame
    */
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
   
 #ifdef NS_DEBUG
   NS_IMETHOD  GetFrameName(nsAString& aResult) const;
@@ -189,6 +186,9 @@ protected:
   // Selection Printing Info
   nscoord      mSelectionHeight;
   nscoord      mYSelOffset;
+
+  // I18N date formatter service which we'll want to cache locally.
+  nsCOMPtr<nsIDateTimeFormat> mDateFormatter;
 
 private:
   void CacheBackground(nsIPresContext* aPresContext);

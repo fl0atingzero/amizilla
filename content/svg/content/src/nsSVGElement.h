@@ -48,22 +48,22 @@
 #include "nsCOMPtr.h"
 #include "nsIDOMSVGElement.h"
 #include "nsGenericElement.h"
-#include "nsSVGAttributes.h"
 #include "nsISVGValue.h"
 #include "nsISVGValueObserver.h"
 #include "nsWeakReference.h"
 #include "nsISVGStyleValue.h"
+#include "nsISVGContent.h"
 
-class nsSVGElement : public nsGenericElement,    // :nsIHTMLContent:nsIStyledContent:nsIContent
-                     public nsIDOMSVGElement,    // :nsIDOMElement:nsIDOMNode
+class nsSVGElement : public nsGenericElement,    // :nsIHTMLContent:nsIXMLContent:nsIStyledContent:nsIContent
                      public nsISVGValueObserver, 
-                     public nsSupportsWeakReference // :nsISupportsWeakReference
+                     public nsSupportsWeakReference, // :nsISupportsWeakReference
+                     public nsISVGContent
 {
 protected:
   nsSVGElement();
   virtual ~nsSVGElement();
 
-  virtual nsresult Init();
+  nsresult Init(nsINodeInfo* aNodeInfo);
 
 public:
   // nsISupports
@@ -71,92 +71,40 @@ public:
 
   // nsIContent interface methods
 
-  // NS_IMETHOD GetDocument(nsIDocument** aResult) const;
-  // NS_IMETHOD SetDocument(nsIDocument* aDocument, PRBool aDeep,
-  //                       PRBool aCompileEventHandlers);
-  // NS_IMETHOD GetParent(nsIContent** aResult) const;
-  // NS_IMETHOD SetParent(nsIContent* aParent);
-  // NS_IMETHOD GetNameSpaceID(PRInt32& aNameSpaceID) const;
-  // NS_IMETHOD GetTag(nsIAtom** aResult) const;
-  // NS_IMETHOD GetNodeInfo(nsINodeInfo** aResult) const;
-  
-  NS_IMETHOD CanContainChildren(PRBool& aResult) const;
-  NS_IMETHOD ChildCount(PRInt32& aResult) const;
-  NS_IMETHOD ChildAt(PRInt32 aIndex, nsIContent** aResult) const;
-  NS_IMETHOD IndexOf(nsIContent* aPossibleChild, PRInt32& aResult) const;
-  NS_IMETHOD InsertChildAt(nsIContent* aKid, PRInt32 aIndex,
-                           PRBool aNotify,
-                           PRBool aDeepSetDocument);
-  NS_IMETHOD ReplaceChildAt(nsIContent* aKid, PRInt32 aIndex,
-                            PRBool aNotify,
-                            PRBool aDeepSetDocument);
-  NS_IMETHOD AppendChildTo(nsIContent* aKid, PRBool aNotify,
-                           PRBool aDeepSetDocument);
-  NS_IMETHOD RemoveChildAt(PRInt32 aIndex, PRBool aNotify);
-  NS_IMETHOD NormalizeAttrString(const nsAString& aStr,
-                                 nsINodeInfo** aNodeInfo);
-  NS_IMETHOD SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, 
-                     const nsAString& aValue,
-                          PRBool aNotify);
-  NS_IMETHOD SetAttr(nsINodeInfo* aNodeInfo,
-                     const nsAString& aValue,
-                     PRBool aNotify);
-  NS_IMETHOD GetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, 
-                     nsAString& aResult) const;
-  NS_IMETHOD GetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, 
-                     nsIAtom** aPrefix,
-                     nsAString& aResult) const;
-  NS_IMETHOD_(PRBool) HasAttr(PRInt32 aNameSpaceID, nsIAtom* aName) const;
-  NS_IMETHOD UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute, 
-                       PRBool aNotify);
-  NS_IMETHOD GetAttrNameAt(PRInt32 aIndex,
-                           PRInt32* aNameSpaceID,
-                           nsIAtom** aName,
-                           nsIAtom** aPrefix) const;
-  NS_IMETHOD GetAttrCount(PRInt32& aResult) const;
-#ifdef DEBUG
-  NS_IMETHOD List(FILE* out, PRInt32 aIndent) const;
-  NS_IMETHOD DumpContent(FILE* out, PRInt32 aIndent,PRBool aDumpAll) const;
-#endif // DEBUG
-  
-  // NS_IMETHOD RangeAdd(nsIDOMRange& aRange);
-//   NS_IMETHOD RangeRemove(nsIDOMRange& aRange);
-//   NS_IMETHOD GetRangeList(nsVoidArray** aResult) const;
-//   NS_IMETHOD HandleDOMEvent(nsIPresContext* aPresContext,
-//                             nsEvent* aEvent,
-//                             nsIDOMEvent** aDOMEvent,
-//                             PRUint32 aFlags,
-//                             nsEventStatus* aEventStatus);
-//   NS_IMETHOD GetContentID(PRUint32* aID);
-//   NS_IMETHOD SetContentID(PRUint32 aID);
-//   NS_IMETHOD SetFocus(nsIPresContext* aContext);
-//   NS_IMETHOD RemoveFocus(nsIPresContext* aContext);
-//   NS_IMETHOD GetBindingParent(nsIContent** aContent);
-//   NS_IMETHOD SetBindingParent(nsIContent* aParent);
+  virtual void SetParent(nsIContent* aParent);
+  virtual nsIAtom *GetIDAttributeName() const;
+  nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                   const nsAString& aValue, PRBool aNotify)
+  {
+    return SetAttr(aNameSpaceID, aName, nsnull, aValue, aNotify);
+  }
+  virtual nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                           nsIAtom* aPrefix, const nsAString& aValue,
+                           PRBool aNotify);
 
-  // nsIXMLContent
-//   NS_IMETHOD MaybeTriggerAutoLink(nsIDocShell *aShell);
+  virtual nsresult SetBindingParent(nsIContent* aParent);
 
   // nsIStyledContent
   NS_IMETHOD GetID(nsIAtom** aResult) const;
-//   NS_IMETHOD GetClasses(nsVoidArray& aArray) const;
+//   virtual const nsAttrValue* GetClasses() const;
 //   NS_IMETHOD HasClass(nsIAtom* aClass) const;
   
   NS_IMETHOD WalkContentStyleRules(nsRuleWalker* aRuleWalker);
-  NS_IMETHOD GetInlineStyleRule(nsIStyleRule** aStyleRule);
-  
-  NS_IMETHOD GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                      nsChangeHint& aHint) const;
+  NS_IMETHOD GetInlineStyleRule(nsICSSStyleRule** aStyleRule);
+
+  static const MappedAttributeEntry sFillStrokeMap[];
+  static const MappedAttributeEntry sGraphicsMap[];
+  static const MappedAttributeEntry sTextContentElementsMap[];
+  static const MappedAttributeEntry sFontSpecificationMap[];
   
   // nsIDOMNode
-  NS_DECL_NSIDOMNODE
-  
-  // nsIDOMElement
-  // NS_DECL_IDOMELEMENT
-  NS_FORWARD_NSIDOMELEMENT(nsGenericElement::)
+  NS_IMETHOD IsSupported(const nsAString& aFeature, const nsAString& aVersion, PRBool* aReturn);
   
   // nsIDOMSVGElement
-  NS_DECL_NSIDOMSVGELEMENT
+  NS_IMETHOD GetId(nsAString & aId);
+  NS_IMETHOD SetId(const nsAString & aId);
+  NS_IMETHOD GetOwnerSVGElement(nsIDOMSVGSVGElement** aOwnerSVGElement);
+  NS_IMETHOD GetViewportElement(nsIDOMSVGElement** aViewportElement);
 
   // nsISVGValueObserver
   NS_IMETHOD WillModifySVGObservable(nsISVGValue* observable);
@@ -164,14 +112,44 @@ public:
 
   // nsISupportsWeakReference
   // implementation inherited from nsSupportsWeakReference
+
+  // nsISVGContent
+  virtual void ParentChainChanged(); 
   
 protected:
+  /**
+   * Set attribute and (if needed) notify documentobservers and fire off
+   * mutation events.
+   *
+   * @param aNamespaceID  namespace of attribute
+   * @param aAttribute    local-name of attribute
+   * @param aPrefix       aPrefix of attribute
+   * @param aOldValue     previous value of attribute. Only needed if
+   *                      aFireMutation is true.
+   * @param aParsedValue  parsed new value of attribute
+   * @param aModification is this a attribute-modification or addition. Only
+   *                      needed if aFireMutation or aNotify is true.
+   * @param aFireMutation should mutation-events be fired?
+   * @param aNotify       should we notify document-observers?
+   */
+  nsresult SetAttrAndNotify(PRInt32 aNamespaceID,
+                            nsIAtom* aAttribute,
+                            nsIAtom* aPrefix,
+                            const nsAString& aOldValue,
+                            nsAttrValue& aParsedValue,
+                            PRBool aModification,
+                            PRBool aFireMutation,
+                            PRBool aNotify);
 
   nsresult CopyNode(nsSVGElement* dest, PRBool deep);
+  void UpdateContentStyleRule();
+  nsISVGValue* GetMappedAttribute(PRInt32 aNamespaceID, nsIAtom* aName);
+  nsresult AddMappedSVGValue(nsIAtom* aName, nsISupports* aValue,
+                             PRInt32 aNamespaceID = kNameSpaceID_None);
   
-  nsVoidArray                  mChildren;   
-  nsSVGAttributes*             mAttributes;
-  nsCOMPtr<nsISVGStyleValue>   mStyle;
+  nsCOMPtr<nsICSSStyleRule> mContentStyleRule;
+  nsAttrAndChildArray mMappedAttributes;
+  nsCOMPtr<nsISVGStyleValue> mStyle;
 };
 
 #endif // __NS_SVGELEMENT_H__

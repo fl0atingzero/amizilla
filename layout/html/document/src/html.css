@@ -55,7 +55,7 @@ p, dl, multicol {
 
 dd {
   display: block;
-  margin-left: 40px;
+  -moz-margin-start: 40px;
 }
 
 blockquote {
@@ -150,7 +150,7 @@ plaintext, xmp, pre {
 
 table {
   display: table;
-  border-spacing: 2px; 
+  border-spacing: 2px;
   border-collapse: separate;
   margin-top: 0;
   margin-bottom: 0;
@@ -169,11 +169,6 @@ table[align="right"] {
 
 table[rules] {
   border-collapse: collapse;
-}
-
-/* make sure backgrounds are inherited in tables  -- see bug 4510*/
-td, th, tr {
-  background: inherit;
 }
    
 /* caption inherits from table not table-outer */  
@@ -221,6 +216,11 @@ thead {
 
 tfoot {
   display: table-footer-group;
+  vertical-align: middle;
+}
+
+/* for XHTML tables without tbody */
+table > tr {
   vertical-align: middle;
 }
 
@@ -307,7 +307,7 @@ ul, menu, dir {
   display: block;
   list-style-type: disc;
   margin: 1em 0;
-  padding-left: 40px;
+  -moz-padding-start: 40px;
   -moz-counter-reset: -html-counter 0;
 }
 
@@ -315,7 +315,7 @@ ol {
   display: block;
   list-style-type: decimal;
   margin: 1em 0;
-  padding-left: 40px;
+  -moz-padding-start: 40px;
   -moz-counter-reset: -html-counter 0;
 }
 
@@ -360,10 +360,20 @@ dir ol dir,   dir ul dir,   dir menu dir,   dir dir dir {
 
 /* leafs */
 
+/* <hr> noshade and color attributes are handled completely by
+ * the nsHTMLHRElement attribute mapping code
+ */
 hr {
   display: block;
-  border: 1px inset;
-  margin: 0 auto 0 auto;
+  height: 2px;
+  border: 1px -moz-bg-inset;
+  margin: 0.5em auto 0.5em auto;
+  -moz-float-edge: margin-box;
+  -moz-box-sizing: border-box;
+}
+
+hr[size="1"] {
+  border-style: -moz-bg-solid none none none;
 }
 
 *|*:-moz-any-link img, img[usemap], object[usemap] {
@@ -382,7 +392,7 @@ object, embed, applet {
 
 frameset {
   display: block ! important;
-  overflow: hidden;
+  overflow: -moz-hidden-unscrollable;
 }
 
 frame {
@@ -428,18 +438,18 @@ marquee[direction="up"], marquee[direction="down"] {
   -moz-binding: url('chrome://xbl-marquee/content/xbl-marquee.xml#marquee-vertical');
 }
 
-@media print {
-  marquee { -moz-binding: none; }
-}
 /* PRINT ONLY rules follow */
-
 @media print {
+
+  marquee { -moz-binding: none; }
  
   *|*:-moz-any-link img, img[usemap], object[usemap],
   img[usemap], object[usemap], object, embed, applet, iframe {
     -moz-user-focus: none !important;
   }
 
+  /* XXX this should not be necessary, we should be stopping blinking
+     of any kind in print preview, not just the <blink> element */
   blink {
     text-decoration: none;
   }

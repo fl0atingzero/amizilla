@@ -28,7 +28,6 @@
 
 #include "nspr.h"
 #include "nsIFactory.h"
-#include "nsIRegistry.h"
 #include "nsIGenericFactory.h"
 #include "nsIServiceManager.h"
 #include "nsICharsetConverterManager.h"
@@ -37,8 +36,6 @@
 #include "nsICharRepresentable.h"
 
 #include "nsILE.h"
-
-struct textRunList;
 
 //----------------------------------------------------------------------
 // Class nsUnicodeToTIS620 [declaration]
@@ -77,9 +74,5 @@ private:
   PRInt32 mCharOff;
 
   nsCOMPtr<nsILE> mCtlObj;
-
-  // beg and end denote ranges and may need to be expanded in the future to
-  // handle discontinous ranges
-  PRInt32 Itemize(const PRUnichar* aSrcBuf, PRInt32 aSrcLen, textRunList *aRunList);
 };
 #endif /* !nsUnicodeToTIS620_h___ */

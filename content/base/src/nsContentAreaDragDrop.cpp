@@ -307,7 +307,10 @@ nsContentAreaDragDrop::DragOver(nsIDOMEvent* inEvent)
           break;
         nsCOMPtr<nsIClipboardDragDropHooks> override = do_QueryInterface(isupp);
         if (override) {
-          nsresult hookResult = override->AllowDrop(inEvent, session, &dropAllowed);
+#ifdef DEBUG
+          nsresult hookResult =
+#endif
+          override->AllowDrop(inEvent, session, &dropAllowed);
           NS_ASSERTION(NS_SUCCEEDED(hookResult), "hook failure in AllowDrop");    
           if (!dropAllowed)
             break;
@@ -450,7 +453,10 @@ nsContentAreaDragDrop::DragDrop(nsIDOMEvent* inMouseEvent)
           break;
         nsCOMPtr<nsIClipboardDragDropHooks> override = do_QueryInterface(isupp);
         if (override) {
-          nsresult hookResult = override->OnPasteOrDrop(inMouseEvent, trans, &actionCanceled);
+#ifdef DEBUG
+          nsresult hookResult =
+#endif
+          override->OnPasteOrDrop(inMouseEvent, trans, &actionCanceled);
           NS_ASSERTION(NS_SUCCEEDED(hookResult), "hook failure in OnPasteOrDrop");
           if (!actionCanceled)
             return NS_OK;
@@ -555,9 +561,8 @@ nsContentAreaDragDrop::GetHookEnumeratorFromEvent(nsIDOMEvent* inEvent,
   nsCOMPtr<nsIDocument> doc = do_QueryInterface(domdoc);
   NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsISupports> isupp;
-  doc->GetContainer(getter_AddRefs(isupp));
-  nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(isupp);
+  nsCOMPtr<nsISupports> container = doc->GetContainer();
+  nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(container);
   NS_ENSURE_TRUE(docShell, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsIClipboardDragDropHookList> hookList = do_GetInterface(docShell);
@@ -602,7 +607,10 @@ nsContentAreaDragDrop::DragGesture(nsIDOMEvent* inMouseEvent)
         break;
       nsCOMPtr<nsIClipboardDragDropHooks> override = do_QueryInterface(isupp);
       if (override) {
-        nsresult hookResult = override->AllowStartDrag(inMouseEvent, &allow);
+#ifdef DEBUG
+        nsresult hookResult =
+#endif
+        override->AllowStartDrag(inMouseEvent, &allow);
         NS_ASSERTION(NS_SUCCEEDED(hookResult), "hook failure in AllowStartDrag");
         if (!allow)
           return NS_OK;
@@ -633,7 +641,10 @@ nsContentAreaDragDrop::DragGesture(nsIDOMEvent* inMouseEvent)
           nsCOMPtr<nsIClipboardDragDropHooks> override = do_QueryInterface(isupp);
           if (override)
           {
-            nsresult hookResult = override->OnCopyOrDrag(inMouseEvent, trans, &doContinueDrag);
+#ifdef DEBUG
+            nsresult hookResult =
+#endif
+            override->OnCopyOrDrag(inMouseEvent, trans, &doContinueDrag);
             NS_ASSERTION(NS_SUCCEEDED(hookResult), "hook failure in OnCopyOrDrag");
             if (!doContinueDrag)
               return NS_OK;
@@ -985,14 +996,11 @@ nsTransferableFactory::GetAnchorURL(nsIDOMNode* inNode, nsAString& outURL)
       if (value.Equals(NS_LITERAL_STRING("simple"))) {
         content->GetAttr(kNameSpaceID_XLink, nsHTMLAtoms::href, value);
         if (!value.IsEmpty()) {
-          nsCOMPtr<nsIXMLContent> xml(do_QueryInterface(inNode));
-          if (xml) {
-            nsCOMPtr<nsIURI> baseURI;
-            if (NS_SUCCEEDED(xml->GetXMLBaseURI(getter_AddRefs(baseURI)))) {
-              nsCAutoString absoluteSpec;
-              baseURI->Resolve(NS_ConvertUCS2toUTF8(value), absoluteSpec);
-              outURL = NS_ConvertUTF8toUCS2(absoluteSpec);
-            }
+          nsCOMPtr<nsIURI> baseURI = content->GetBaseURI();
+          if (baseURI) {
+            nsCAutoString absoluteSpec;
+            baseURI->Resolve(NS_ConvertUCS2toUTF8(value), absoluteSpec);
+            CopyUTF8toUTF16(absoluteSpec, outURL);
           }
         }
       } else {
@@ -1425,13 +1433,14 @@ nsresult nsTransferableFactory::GetDraggableSelectionData(nsISelection* inSelect
             nsCOMPtr<nsIContent> selStartContent = do_QueryInterface(selectionStart);
             if (selStartContent)
             {
-              PRInt32 childOffset = (anchorOffset < focusOffset) ? anchorOffset : focusOffset;
-              nsCOMPtr<nsIContent> childContent;
-              selStartContent->ChildAt(childOffset, getter_AddRefs(childContent));
+              PRInt32 childOffset =
+                (anchorOffset < focusOffset) ? anchorOffset : focusOffset;
+              nsIContent *childContent =
+                selStartContent->GetChildAt(childOffset);
               // if we find an image, we'll fall into the node-dragging code,
               // rather the the selection-dragging code
-              nsCOMPtr<nsIDOMHTMLImageElement> selectedImage;
-              selectedImage = do_QueryInterface(childContent);
+              nsCOMPtr<nsIDOMHTMLImageElement> selectedImage =
+                do_QueryInterface(childContent);
               if (selectedImage)
               {
                 CallQueryInterface(selectedImage, outImageOrLinkNode);    // addrefs

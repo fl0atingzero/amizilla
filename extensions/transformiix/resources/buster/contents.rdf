@@ -12,16 +12,16 @@
         chrome:displayName="XSLT QA Tools"
         chrome:author="mozilla.org"
         chrome:name="xslt-qa"
-        chrome:localeVersion="1.5a"
-        chrome:skinVersion="1.2">
+#expand         chrome:localeVersion="__MOZILLA_LOCALE_VERSION__"
+#expand         chrome:skinVersion="__MOZILLA_SKIN_VERSION__">
   </RDF:Description>
 
   <!-- overlay information -->
   <RDF:Seq about="urn:mozilla:overlays">
-    <RDF:li resource="chrome://navigator/content/navigatorOverlay.xul"/>
+    <RDF:li resource="chrome://communicator/content/tasksOverlay.xul"/>
   </RDF:Seq>
 
-  <RDF:Seq about="chrome://navigator/content/navigatorOverlay.xul">
+  <RDF:Seq about="chrome://communicator/content/tasksOverlay.xul">
     <RDF:li>chrome://xslt-qa/content/xslt-qa-overlay.xul</RDF:li>
   </RDF:Seq>
 

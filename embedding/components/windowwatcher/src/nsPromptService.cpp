@@ -255,10 +255,8 @@ nsPromptService::ConfirmCheck(nsIDOMWindow *parent,
   block->GetInt(eButtonPressed, &tempInt);
   *_retval = tempInt ? PR_FALSE : PR_TRUE;
 
-  if (*_retval) {
-    block->GetInt(eCheckboxState, & tempInt);
-    *checkValue = PRBool( tempInt );
-  }
+  block->GetInt(eCheckboxState, & tempInt);
+  *checkValue = PRBool( tempInt );
   
   return rv;
 }
@@ -290,10 +288,15 @@ nsPromptService::ConfirmEx(nsIDOMWindow *parent,
   
   int buttonIDs[] = { eButton0Text, eButton1Text, eButton2Text };
   const PRUnichar* buttonStrings[] = { button0Title, button1Title, button2Title };
-  
+
+#define BUTTON_DEFAULT_MASK 0x03000000
+
+  block->SetInt(eDefaultButton, (buttonFlags & BUTTON_DEFAULT_MASK) >> 24);
+  block->SetInt(eDelayButtonEnable, buttonFlags & BUTTON_DELAY_ENABLE);
+
   PRInt32 numberButtons = 0;
   for (int i = 0; i < 3; i++) { 
-    
+
     nsXPIDLString buttonTextStr;
     const PRUnichar* buttonText = 0;
     switch (buttonFlags & 0xff) {

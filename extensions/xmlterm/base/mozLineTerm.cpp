@@ -48,13 +48,6 @@
 
 #define MAXCOL 4096            // Maximum columns in line buffer
 
-static NS_DEFINE_IID(kISupportsIID,     NS_ISUPPORTS_IID);
-
-static NS_DEFINE_IID(kILineTermIID,     MOZILINETERM_IID);
-static NS_DEFINE_IID(kILineTermAuxIID,  MOZILINETERMAUX_IID);
-
-static NS_DEFINE_IID(kLineTermCID,      MOZLINETERM_CID);
-
 /////////////////////////////////////////////////////////////////////////
 // mozLineTerm implementaion
 /////////////////////////////////////////////////////////////////////////
@@ -63,7 +56,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(mozLineTerm)
 
 NS_IMPL_THREADSAFE_ISUPPORTS2(mozLineTerm, 
                               mozILineTerm,
-                              mozILineTermAux);
+                              mozILineTermAux)
 
 
 PRBool mozLineTerm::mLoggingEnabled = PR_FALSE;
@@ -217,10 +210,9 @@ NS_IMETHODIMP mozLineTerm::GetSecurePrincipal(nsIDOMDocument *domDoc,
   if (!doc)
     return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIPrincipal> principal;
-  result = doc->GetPrincipal(getter_AddRefs(principal));
-  if (NS_FAILED(result)) 
-    return result;
+  nsIPrincipal *principal = doc->GetPrincipal();
+  if (!principal) 
+    return NS_ERROR_FAILURE;
 
 #if 0  // Temporarily comented out, because ToString is not immplemented
   result = principal->ToString(aPrincipalStr);
@@ -321,7 +313,7 @@ NS_IMETHODIMP mozLineTerm::OpenAux(const PRUnichar *command,
 
   if (NS_SUCCEEDED(result) &&
       (cookieStr.Length() > cookiePrefix.Length()) &&
-      (Substring(cookieStr, 0, cookiePrefix.Length()) == cookiePrefix)) {
+      StringBeginsWith(cookieStr, cookiePrefix)) {
     // Cookie value already defined for document; simply copy it
     mCookie = cookieStr;
 

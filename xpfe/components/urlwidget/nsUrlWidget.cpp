@@ -79,13 +79,10 @@ nsUrlWidget::SetURLToHiddenControl( char const *aURL, nsIDOMWindowInternal *pare
     {
         return NS_ERROR_FAILURE;
     }
-    nsCOMPtr<nsIDocShell> ppDocShell;
-    ppScriptGlobalObj->GetDocShell(getter_AddRefs(ppDocShell));
-    if (!ppDocShell)
-    {
-        return NS_ERROR_FAILURE;
-    }
-    nsCOMPtr<nsIBaseWindow> ppBaseWindow(do_QueryInterface(ppDocShell));
+
+    nsCOMPtr<nsIBaseWindow> ppBaseWindow =
+      do_QueryInterface(ppScriptGlobalObj->GetDocShell());
+
     if (ppBaseWindow)
     {
         nsCOMPtr<nsIWidget> ppWidget;
@@ -132,7 +129,7 @@ nsUrlWidget::SetURLToHiddenControl( char const *aURL, nsIDOMWindowInternal *pare
 }
 
 // Use standard implementation of nsISupports stuff.
-NS_IMPL_ISUPPORTS1( nsUrlWidget, nsIUrlWidget );
+NS_IMPL_ISUPPORTS1( nsUrlWidget, nsIUrlWidget )
 
 nsUrlWidget::nsUrlWidget() {
 #ifdef DEBUG_URLWIDGET

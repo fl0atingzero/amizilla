@@ -18,7 +18,7 @@
  * Rights Reserved.
  *
  * Contributors(s):
- *   Jan Varga <varga@utcru.sk>
+ *   Jan Varga <varga@nixcorp.com>
  *   Håkan Waara (hwaara@chello.se)
  */
 
@@ -211,9 +211,15 @@ function ChangeFolderByURI(uri, viewType, viewFlags, sortType, sortOrder)
   var showMessagesAfterLoading;
   try {
     var server = msgfolder.server;
-    if (server.redirectorType) {
+    if (gPrefBranch.getBoolPref("mail.password_protect_local_cache"))
+    {
+      showMessagesAfterLoading = server.passwordPromptRequired;
+      // servers w/o passwords (like local mail) will always be non-authenticated.
+      // So we need to use the account manager for that case.
+    }
+    else if (server.redirectorType) {
       var prefString = server.type + "." + server.redirectorType + ".showMessagesAfterLoading";
-      showMessagesAfterLoading = gPrefs.getBoolPref(prefString);
+      showMessagesAfterLoading = gPrefBranch.getBoolPref(prefString);
     }
     else
       showMessagesAfterLoading = false;
@@ -274,8 +280,6 @@ function RerootFolder(uri, newFolder, viewType, viewFlags, sortType, sortOrder)
   //Set the window's new open folder.
   msgWindow.openFolder = newFolder;
 
-  SetViewFlags(viewFlags);
-
   //the new folder being selected should have its biff state get cleared.
   if(newFolder)
   {
@@ -293,6 +297,9 @@ function RerootFolder(uri, newFolder, viewType, viewFlags, sortType, sortOrder)
     gDBView.close();
     gDBView = null;
   }
+
+  // cancel the pending mark as read timer
+  ClearPendingReadTimer();
 
   // if this is the drafts, sent, or send later folder,
   // we show "Recipient" instead of "Author"
@@ -334,7 +341,7 @@ function SwitchView(command)
   // now switch views
   var oldSortType = gDBView ? gDBView.sortType : nsMsgViewSortType.byThread;
   var oldSortOrder = gDBView ? gDBView.sortOrder : nsMsgViewSortOrder.ascending;
-  var viewFlags = gCurViewFlags;
+  var viewFlags = gDBView ? gDBView.viewFlags : gCurViewFlags;
 
   // close existing view.
   if (gDBView) {
@@ -385,18 +392,32 @@ function SwitchView(command)
 
 function SetSentFolderColumns(isSentFolder)
 {
-  var senderOrRecipientColumn = document.getElementById("senderOrRecipientCol");
+  var tree = GetThreadTree();
   var searchCriteria = document.getElementById("searchCriteria");
+
+  var lastFolderSent = tree.getAttribute("lastfoldersent") == "true";
+  if (isSentFolder != lastFolderSent)
+  {
+    var senderColumn = document.getElementById("senderCol");
+    var recipientColumn = document.getElementById("recipientCol");
+    
+    var saveHidden = senderColumn.getAttribute("hidden");
+    senderColumn.setAttribute("hidden", senderColumn.getAttribute("swappedhidden"));
+    senderColumn.setAttribute("swappedhidden", saveHidden);
+
+    saveHidden = recipientColumn.getAttribute("hidden");
+    recipientColumn.setAttribute("hidden", recipientColumn.getAttribute("swappedhidden"));
+    recipientColumn.setAttribute("swappedhidden", saveHidden);
+  }
+
   if(isSentFolder)
   {
-    senderOrRecipientColumn.setAttribute("tooltiptext", gMessengerBundle.getString("recipientColumnTooltip"));
-    senderOrRecipientColumn.setAttribute("label", gMessengerBundle.getString("recipientColumnHeader"));
+    tree.setAttribute("lastfoldersent", "true");
     searchCriteria.setAttribute("value", gMessengerBundle.getString("recipientSearchCriteria"));
   }
   else
   {
-    senderOrRecipientColumn.setAttribute("tooltiptext", gMessengerBundle.getString("senderColumnTooltip"));
-    senderOrRecipientColumn.setAttribute("label", gMessengerBundle.getString("senderColumnHeader"));
+    tree.setAttribute("lastfoldersent", "false");
     searchCriteria.setAttribute("value", gMessengerBundle.getString("senderSearchCriteria"));
   }
 }
@@ -430,6 +451,8 @@ function UpdateStatusMessageCounts(folder)
 
     unreadElement.setAttribute("label", numUnread);
     totalElement.setAttribute("label", numTotal);
+    unreadElement.hidden = false;
+    totalElement.hidden = false;
 
   }
 
@@ -443,13 +466,11 @@ function ConvertColumnIDToSortType(columnID)
     case "dateCol":
       sortKey = nsMsgViewSortType.byDate;
       break;
-    case "senderOrRecipientCol":
-      if (IsSpecialFolderSelected(MSG_FOLDER_FLAG_SENTMAIL | MSG_FOLDER_FLAG_DRAFTS | MSG_FOLDER_FLAG_QUEUE)) {
-      	sortKey = nsMsgViewSortType.byRecipient;
-      }
-      else {
-      	sortKey = nsMsgViewSortType.byAuthor;
-      }
+    case "senderCol":
+    	sortKey = nsMsgViewSortType.byAuthor;
+      break;
+    case "recipientCol":
+    	sortKey = nsMsgViewSortType.byRecipient;
       break;
     case "subjectCol":
       sortKey = nsMsgViewSortType.bySubject;
@@ -505,8 +526,10 @@ function ConvertSortTypeToColumnID(sortKey)
       columnID = "dateCol";
       break;
     case nsMsgViewSortType.byAuthor:
+      columnID = "senderCol";
+      break;
     case nsMsgViewSortType.byRecipient:
-      columnID = "senderOrRecipientCol";
+      columnID = "recipientCol";
       break;
     case nsMsgViewSortType.bySubject:
       columnID = "subjectCol";
@@ -594,18 +617,11 @@ function CreateBareDBView(originalView, msgFolder, viewType, viewFlags, sortType
   if (!gThreadPaneCommandUpdater)
     gThreadPaneCommandUpdater = new nsMsgDBViewCommandUpdater();
 
-  if ((sortType == nsMsgViewSortType.byAuthor) && IsSpecialFolder(msgFolder, MSG_FOLDER_FLAG_SENTMAIL | MSG_FOLDER_FLAG_DRAFTS | MSG_FOLDER_FLAG_QUEUE)) {
-    gCurSortType = nsMsgViewSortType.byRecipient;
-  }
-  else {
-    gCurSortType = sortType;
-  }
+  gCurSortType = sortType;
 
   if (!originalView) {
     gDBView.init(messenger, msgWindow, gThreadPaneCommandUpdater);
-
-    var treatRecipientAsAuthor = IsSpecialFolder(msgFolder, MSG_FOLDER_FLAG_SENTMAIL | MSG_FOLDER_FLAG_DRAFTS | MSG_FOLDER_FLAG_QUEUE);
-    gDBView.open(msgFolder, gCurSortType, sortOrder, viewFlags, treatRecipientAsAuthor, count);
+    gDBView.open(msgFolder, gCurSortType, sortOrder, viewFlags, count);
   } 
   else {
     gDBView = originalView.cloneDBView(messenger, msgWindow, gThreadPaneCommandUpdater);
@@ -624,12 +640,6 @@ function CreateDBView(msgFolder, viewType, viewFlags, sortType, sortOrder)
   gDBView.suppressMsgDisplay = IsThreadAndMessagePaneSplitterCollapsed();
 
   UpdateSortIndicators(gCurSortType, sortOrder);
-}
-
-function SetViewFlags(viewFlags)
-{
-    if (!gDBView) return;
-    gDBView.viewFlags = viewFlags;
 }
 
 //------------------------------------------------------------

@@ -49,9 +49,9 @@
 #include "prmem.h"
 #include "plstr.h"
 #include <windows.h>
+#undef CompareString
 
-
-NS_IMPL_ISUPPORTS1(nsCollationWin, nsICollation);
+NS_IMPL_ISUPPORTS1(nsCollationWin, nsICollation)
 
 
 nsCollationWin::nsCollationWin() 
@@ -72,15 +72,14 @@ nsresult nsCollationWin::Initialize(nsILocale* locale)
   nsresult res;
 
   mCollation = new nsCollation;
-  if (mCollation == NULL) {
+  if (!mCollation) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
   OSVERSIONINFO os;
   os.dwOSVersionInfoSize = sizeof(os);
   ::GetVersionEx(&os);
-  if (VER_PLATFORM_WIN32_NT == os.dwPlatformId &&
-      os.dwMajorVersion >= 4) {
+  if (VER_PLATFORM_WIN32_NT == os.dwPlatformId && os.dwMajorVersion >= 4) {
     mW_API = PR_TRUE;
   }
   else {
@@ -90,88 +89,97 @@ nsresult nsCollationWin::Initialize(nsILocale* locale)
   // default LCID (en-US)
   mLCID = 1033;
 
-  PRUnichar *aLocaleUnichar = NULL;
-  nsString aCategory(NS_LITERAL_STRING("NSILOCALE_COLLATE"));
+  nsAutoString localeStr;
 
   // get locale string, use app default if no locale specified
-  if (locale == nsnull) {
+  if (!locale) {
     nsCOMPtr<nsILocaleService> localeService = 
-             do_GetService(NS_LOCALESERVICE_CONTRACTID, &res);
-    if (NS_SUCCEEDED(res)) {
-      nsILocale *appLocale;
-      res = localeService->GetApplicationLocale(&appLocale);
+             do_GetService(NS_LOCALESERVICE_CONTRACTID);
+    if (localeService) {
+      nsCOMPtr<nsILocale> appLocale;
+      res = localeService->GetApplicationLocale(getter_AddRefs(appLocale));
       if (NS_SUCCEEDED(res)) {
-        res = appLocale->GetCategory(aCategory.get(), &aLocaleUnichar);
-        appLocale->Release();
+        res = appLocale->GetCategory(NS_LITERAL_STRING("NSILOCALE_COLLATE"), 
+                                     localeStr);
       }
     }
   }
   else {
-    res = locale->GetCategory(aCategory.get(), &aLocaleUnichar);
+    res = locale->GetCategory(NS_LITERAL_STRING("NSILOCALE_COLLATE"), 
+                              localeStr);
   }
 
   // Get LCID and charset name from locale, if available
-  if (NS_SUCCEEDED(res)) {
-    nsString aLocale;
-    aLocale.Assign(aLocaleUnichar);
-    if (NULL != aLocaleUnichar) {
-      nsMemory::Free(aLocaleUnichar);
-    }
-
-    nsCOMPtr <nsIWin32Locale> win32Locale = do_GetService(NS_WIN32LOCALE_CONTRACTID, &res);
+  nsCOMPtr <nsIWin32Locale> win32Locale = 
+      do_GetService(NS_WIN32LOCALE_CONTRACTID);
+  if (win32Locale) {
+    LCID lcid;
+    res = win32Locale->GetPlatformLocale(localeStr, &lcid);
     if (NS_SUCCEEDED(res)) {
-      LCID lcid;
-  	  res = win32Locale->GetPlatformLocale(&aLocale, &lcid);
-      if (NS_SUCCEEDED(res)) {
-        mLCID = lcid;
-      }
+      mLCID = lcid;
     }
+  }
 
-    nsCOMPtr <nsIPlatformCharset> platformCharset = do_GetService(NS_PLATFORMCHARSET_CONTRACTID, &res);
+  nsCOMPtr <nsIPlatformCharset> platformCharset = 
+      do_GetService(NS_PLATFORMCHARSET_CONTRACTID);
+  if (platformCharset) {
+    nsCAutoString mappedCharset;
+    res = platformCharset->GetDefaultCharsetForLocale(localeStr, mappedCharset);
     if (NS_SUCCEEDED(res)) {
-      PRUnichar* mappedCharset = NULL;
-      res = platformCharset->GetDefaultCharsetForLocale(aLocale.get(), &mappedCharset);
-      if (NS_SUCCEEDED(res) && mappedCharset) {
-        mCollation->SetCharset(NS_LossyConvertUCS2toASCII(mappedCharset).get());
-        nsMemory::Free(mappedCharset);
-      }
+      mCollation->SetCharset(mappedCharset.get());
     }
   }
 
   return NS_OK;
-};
- 
+}
 
-nsresult nsCollationWin::GetSortKeyLen(const nsCollationStrength strength, 
-                                       const nsAString& stringIn, PRUint32* outLen)
+
+nsresult nsCollationWin::CompareString(const nsCollationStrength strength,
+                                       const nsAString& string1, const nsAString& string2, PRInt32* result)
 {
-  nsresult res = NS_OK;
-  DWORD dwMapFlags = LCMAP_SORTKEY;
+  int retval;
+  nsresult res;
+  DWORD dwMapFlags = 0;
 
   if (strength == kCollationCaseInSensitive)
     dwMapFlags |= NORM_IGNORECASE;
 
   if (mW_API) {
-    *outLen = LCMapStringW(mLCID, dwMapFlags, 
-                           (LPCWSTR) PromiseFlatString(stringIn).get(),
-                           (int) stringIn.Length(), NULL, 0);
-  }
-  else {
-    char *Cstr = nsnull;
-    res = mCollation->UnicodeToChar(stringIn, &Cstr);
-    if (NS_SUCCEEDED(res) && Cstr != nsnull) {
-      *outLen = LCMapStringA(mLCID, dwMapFlags, Cstr, PL_strlen(Cstr), NULL, 0);
-      PR_Free(Cstr);
+    retval = CompareStringW(mLCID, dwMapFlags,
+                            (LPCWSTR) PromiseFlatString(string1).get(), -1,
+                            (LPCWSTR) PromiseFlatString(string2).get(), -1);
+    if (retval) {
+      res = NS_OK;
+      *result = retval - 2;
+    } else {
+      res = NS_ERROR_FAILURE;
+    }
+  } else {
+    char *Cstr1 = nsnull, *Cstr2 = nsnull;
+    res = mCollation->UnicodeToChar(string1, &Cstr1);
+    if (NS_SUCCEEDED(res) && Cstr1 != nsnull) {
+      res = mCollation->UnicodeToChar(string2, &Cstr2);
+      if (NS_SUCCEEDED(res) && Cstr2 != nsnull) {
+        retval = CompareStringA(mLCID, dwMapFlags, Cstr1, -1, Cstr2, -1);
+        if (retval)
+          *result = retval - 2;
+        else
+          res = NS_ERROR_FAILURE;
+        PR_Free(Cstr2);
+      }
+      PR_Free(Cstr1);
     }
   }
 
   return res;
 }
+ 
 
-nsresult nsCollationWin::CreateRawSortKey(const nsCollationStrength strength, 
-                                          const nsAString& stringIn, PRUint8* key, PRUint32* outLen)
+nsresult nsCollationWin::AllocateRawSortKey(const nsCollationStrength strength, 
+                                            const nsAString& stringIn, PRUint8** key, PRUint32* outLen)
 {
   int byteLen;
+  void *buffer;
   nsresult res = NS_OK;
   DWORD dwMapFlags = LCMAP_SORTKEY;
 
@@ -180,17 +188,33 @@ nsresult nsCollationWin::CreateRawSortKey(const nsCollationStrength strength,
 
   if (mW_API) {
     byteLen = LCMapStringW(mLCID, dwMapFlags, 
-                          (LPCWSTR) PromiseFlatString(stringIn).get(), (int) stringIn.Length(), (LPWSTR) key, *outLen);
+                           (LPCWSTR) PromiseFlatString(stringIn).get(),
+                           -1, NULL, 0);
+    buffer = PR_Malloc(byteLen);
+    if (!buffer) {
+      res = NS_ERROR_OUT_OF_MEMORY;
+    } else {
+      *key = (PRUint8 *)buffer;
+      *outLen = LCMapStringW(mLCID, dwMapFlags, 
+                             (LPCWSTR) PromiseFlatString(stringIn).get(),
+                             -1, (LPWSTR) buffer, byteLen);
+    }
   }
   else {
     char *Cstr = nsnull;
     res = mCollation->UnicodeToChar(stringIn, &Cstr);
     if (NS_SUCCEEDED(res) && Cstr != nsnull) {
-      byteLen = LCMapStringA(mLCID, dwMapFlags, Cstr, PL_strlen(Cstr), (char *) key, (int) *outLen);
+      byteLen = LCMapStringA(mLCID, dwMapFlags, Cstr, -1, NULL, 0);
+      buffer = PR_Malloc(byteLen);
+      if (!buffer) {
+        res = NS_ERROR_OUT_OF_MEMORY;
+      } else {
+        *key = (PRUint8 *)buffer;
+        *outLen = LCMapStringA(mLCID, dwMapFlags, Cstr, -1, (char *) buffer, byteLen);
+      }
       PR_Free(Cstr);
     }
   }
-  *outLen = (PRUint32) byteLen;
 
   return res;
 }

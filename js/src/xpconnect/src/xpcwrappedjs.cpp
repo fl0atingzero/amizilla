@@ -1,38 +1,43 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   John Bandhauer <jband@netscape.com> (original author)
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* Class that wraps JS objects to appear as XPCOM objects. */
 
@@ -122,8 +127,16 @@ nsXPCWrappedJS::AddRef(void)
     if(2 == cnt && IsValid())
     {
         XPCCallContext ccx(NATIVE_CALLER);
-        if(ccx.IsValid())
+        if(ccx.IsValid()) {
+#ifdef GC_MARK_DEBUG
+            mGCRootName = JS_smprintf("nsXPCWrappedJS::mJSObj[%s,0x%p,0x%p]",
+                                      GetClass()->GetInterfaceName(),
+                                      this, mJSObj);
+            JS_AddNamedRoot(ccx.GetJSContext(), &mJSObj, mGCRootName);
+#else
             JS_AddNamedRoot(ccx.GetJSContext(), &mJSObj, "nsXPCWrappedJS::mJSObj");
+#endif
+        }
     }
 
     return cnt;
@@ -154,8 +167,13 @@ do_decrement:
         if(IsValid())
         {
             XPCJSRuntime* rt = mClass->GetRuntime();
-            if(rt)
+            if(rt) {
                 JS_RemoveRootRT(rt->GetJSRuntime(), &mJSObj);
+#ifdef GC_MARK_DEBUG
+                JS_smprintf_free(mGCRootName);
+                mGCRootName = nsnull;
+#endif
+            }
         }
 
         // If we are not the root wrapper or if we are not being used from a
@@ -304,6 +322,9 @@ nsXPCWrappedJS::nsXPCWrappedJS(XPCCallContext& ccx,
       mRoot(root ? root : this),
       mNext(nsnull),
       mOuter(root ? nsnull : aOuter)
+#ifdef GC_MARK_DEBUG
+      , mGCRootName(nsnull)
+#endif
 {
 #ifdef DEBUG_stats_jband
     static int count = 0;

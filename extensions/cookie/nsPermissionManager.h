@@ -48,14 +48,23 @@
 #include "nsIFile.h"
 #include "nsTHashtable.h"
 #include "nsString.h"
+#include "nsITimer.h"
+
+class nsIPermission;
 
 ////////////////////////////////////////////////////////////////////////////////
 
 // This allow us 8 types of permissions, with 256 values for each
-// permission. (Some types might want to prompt, block 3rd party etc)
+// permission (some types might want to prompt, block 3rd party etc).
+// Note that nsIPermissionManager.idl only allows 16 values for permission,
+// and that nsPermissionManager::Write() can only deal with 26 values of
+// permission safely. (We allow space for 256 here, since it's faster to
+// deal with bytes than with bits).
 // Note: When changing NUMBER_OF_TYPES, also update PermissionsAreEmpty()
+// and the constructors.
 // This should be a multiple of 4, to make PermissionsAreEmpty() fast
-#define NUMBER_OF_TYPES      (8)
+#define NUMBER_OF_TYPES       (8)
+#define NUMBER_OF_PERMISSIONS (16)
 
 class nsHostEntry : public PLDHashEntryHdr
 {
@@ -107,9 +116,22 @@ public:
   }
 
   // Callers must do boundary checks
-  void SetPermission(PRUint32 aType, PRUint32 aPermission);
-  PRUint32 GetPermission(PRUint32 aType) const;
-  PRBool PermissionsAreEmpty() const;
+  void SetPermission(PRInt32 aTypeIndex, PRUint32 aPermission)
+  {
+    mPermissions[aTypeIndex] = (PRUint8)aPermission;
+  }
+
+  PRUint32 GetPermission(PRInt32 aTypeIndex) const
+  {
+    return (PRUint32)mPermissions[aTypeIndex];
+  }
+
+  PRBool PermissionsAreEmpty() const
+  {
+    // Cast to PRUint32, to make this faster. Only 2 checks instead of 8
+    return (*NS_REINTERPRET_CAST(const PRUint32*, &mPermissions[0])==0 && 
+            *NS_REINTERPRET_CAST(const PRUint32*, &mPermissions[4])==0 );
+  }
 
 private:
   const char *mHost;
@@ -141,20 +163,41 @@ public:
 private:
 
   nsresult AddInternal(const nsAFlatCString &aHost,
-                       PRUint32 aType,
-                       PRUint32 aPermission);
+                       PRInt32  aTypeIndex,
+                       PRUint32 aPermission,
+                       PRBool   aNotify);
+  PRInt32 GetTypeIndex(const char *aTypeString,
+                       PRBool      aAdd);
+
+  nsHostEntry *GetHostEntry(const nsAFlatCString &aHost,
+                            PRUint32              aType);
+
+  // Use LazyWrite to save the permissions file on a timer. It will write
+  // the file only once if repeatedly hammered quickly.
+  void        LazyWrite();
+  static void DoLazyWrite(nsITimer *aTimer, void *aClosure);
+  nsresult    Write();
 
   nsresult Read();
-  nsresult Write();
-  nsresult NotifyObservers(const nsACString &aHost);
+  void     NotifyObserversWithPermission(const nsACString &aHost,
+                                         const char       *aType,
+                                         PRUint32          aPermission,
+                                         const PRUnichar  *aData);
+  void     NotifyObservers(nsIPermission *aPermission, const PRUnichar *aData);
   nsresult RemoveAllFromMemory();
+  nsresult GetHost(nsIURI *aURI, nsACString &aResult);
+  void     RemoveTypeStrings();
 
   nsCOMPtr<nsIObserverService> mObserverService;
   nsCOMPtr<nsIFile>            mPermissionsFile;
-  PRBool                       mChangedList;
+  nsCOMPtr<nsITimer>           mWriteTimer;
   nsTHashtable<nsHostEntry>    mHostTable;
   PRUint32                     mHostCount;
- 
+  PRPackedBool                 mChangedList;
+  PRPackedBool                 mHasUnknownTypes;
+
+  // An array to store the strings identifying the different types.
+  char                        *mTypeArray[NUMBER_OF_TYPES];
 };
 
 // {4F6B5E00-0C36-11d5-A535-0010A401EB10}

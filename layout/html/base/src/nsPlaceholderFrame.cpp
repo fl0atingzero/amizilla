@@ -86,22 +86,16 @@ nsPlaceholderFrame::Reflow(nsIPresContext*          aPresContext,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsPlaceholderFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsPlaceholderFrame::GetType() const
 {
-  NS_PRECONDITION(nsnull != aType, "null OUT parameter pointer");
-  *aType = nsLayoutAtoms::placeholderFrame; 
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsLayoutAtoms::placeholderFrame; 
 }
 
-NS_IMETHODIMP
-nsPlaceholderFrame::IsEmpty(nsCompatibility aCompatMode,
-                            PRBool aIsPre,
-                            PRBool *aResult)
+/* virtual */ PRBool
+nsPlaceholderFrame::IsEmpty()
 {
-  *aResult = PR_TRUE;
-  return NS_OK;
+  return PR_TRUE;
 }
 
 #ifdef DEBUG
@@ -114,7 +108,7 @@ nsPlaceholderFrame::Paint(nsIPresContext*      aPresContext,
 {
   if ((NS_FRAME_PAINT_LAYER_DEBUG == aWhichLayer) && GetShowFrameBorders()) {
     float p2t;
-    aPresContext->GetPixelsToTwips(&p2t);
+    p2t = aPresContext->PixelsToTwips();
     aRenderingContext.SetColor(NS_RGB(0, 255, 255));
     nscoord x = NSIntPixelsToTwips(-5, p2t);
     aRenderingContext.FillRect(x, 0, NSIntPixelsToTwips(13, p2t),
@@ -142,7 +136,7 @@ nsPlaceholderFrame::List(nsIPresContext* aPresContext, FILE* out, PRInt32 aInden
   fprintf(out, " [parent=%p]", NS_STATIC_CAST(void*, mParent));
 #endif
   if (HasView()) {
-    fprintf(out, " [view=%p]", (void*)GetView(aPresContext));
+    fprintf(out, " [view=%p]", (void*)GetView());
   }
   fprintf(out, " {%d,%d,%d,%d}", mRect.x, mRect.y, mRect.width, mRect.height);
   if (0 != mState) {

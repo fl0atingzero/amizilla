@@ -154,15 +154,15 @@ nsMathMLmsubsupFrame::PlaceSubSupScript(nsIPresContext*      aPresContext,
   nsHTMLReflowMetrics subScriptSize (nsnull);
   nsHTMLReflowMetrics supScriptSize (nsnull);
   nsBoundingMetrics bmBase, bmSubScript, bmSupScript;
-  nsIFrame* baseFrame = nsnull;
   nsIFrame* subScriptFrame = nsnull;
   nsIFrame* supScriptFrame = nsnull;
-  aFrame->FirstChild(aPresContext, nsnull, &baseFrame);
+  nsIFrame* baseFrame = aFrame->GetFirstChild(nsnull);
   if (baseFrame)
-    baseFrame->GetNextSibling(&subScriptFrame);
+    subScriptFrame = baseFrame->GetNextSibling();
   if (subScriptFrame)
-    subScriptFrame->GetNextSibling(&supScriptFrame);
-  if (!baseFrame || !subScriptFrame || !supScriptFrame || HasNextSibling(supScriptFrame)) {
+    supScriptFrame = subScriptFrame->GetNextSibling();
+  if (!baseFrame || !subScriptFrame || !supScriptFrame ||
+      supScriptFrame->GetNextSibling()) {
     // report an error, encourage people to get their markups in order
     NS_WARNING("invalid markup");
     return NS_STATIC_CAST(nsMathMLContainerFrame*,

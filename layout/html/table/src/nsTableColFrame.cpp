@@ -57,7 +57,7 @@ nsTableColFrame::nsTableColFrame()
   : nsFrame()
 {
   SetIsAnonymous(PR_FALSE);
-  SetType(eColContent);
+  SetColType(eColContent);
   ResetSizingInfo();
 }
 
@@ -66,13 +66,13 @@ nsTableColFrame::~nsTableColFrame()
 }
 
 nsTableColType 
-nsTableColFrame::GetType() const 
+nsTableColFrame::GetColType() const 
 {
   return (nsTableColType)((mState & COL_TYPE_BITS) >> COL_TYPE_OFFSET);
 }
 
 void 
-nsTableColFrame::SetType(nsTableColType aType) 
+nsTableColFrame::SetColType(nsTableColType aType) 
 {
   PRUint32 type = aType - eColContent;
   mState |= (type << COL_TYPE_OFFSET);
@@ -107,22 +107,33 @@ nsTableColFrame::SetIsAnonymous(PRBool aIsAnonymous)
 // XXX what about other style besides width
 nsStyleCoord nsTableColFrame::GetStyleWidth() const
 {
-  const nsStylePosition* position = GetStylePosition();
-  nsStyleCoord styleWidth = position->mWidth;
-  // the following is necessary because inheritance happens on computed
-  // values, which the style system does not know.
-  if (eStyleUnit_Auto == styleWidth.GetUnit() ||
-      eStyleUnit_Inherit == styleWidth.GetUnit()) {
-    nsIFrame* parent;
-    GetParent(&parent);
-    position = parent->GetStylePosition();
-    styleWidth = position->mWidth;
+  nsStyleCoord styleWidth = GetStylePosition()->mWidth;
+  if (eStyleUnit_Auto == styleWidth.GetUnit()) {
+    styleWidth = GetParent()->GetStylePosition()->mWidth;
   }
 
   nsStyleCoord returnWidth;
   returnWidth.mUnit  = styleWidth.mUnit;
   returnWidth.mValue = styleWidth.mValue;
   return returnWidth;
+}
+
+void nsTableColFrame::SetContinuousBCBorderWidth(PRUint8     aForSide,
+                                                 BCPixelSize aPixelValue)
+{
+  switch (aForSide) {
+    case NS_SIDE_TOP:
+      mTopContBorderWidth = aPixelValue;
+      return;
+    case NS_SIDE_RIGHT:
+      mRightContBorderWidth = aPixelValue;
+      return;
+    case NS_SIDE_BOTTOM:
+      mBottomContBorderWidth = aPixelValue;
+      return;
+    default:
+      NS_ERROR("invalid side arg");
+  }
 }
 
 void nsTableColFrame::ResetSizingInfo()
@@ -142,8 +153,6 @@ nsTableColFrame::Paint(nsIPresContext*      aPresContext,
   if (NS_SUCCEEDED(IsVisibleForPainting(aPresContext, aRenderingContext, PR_FALSE, &isVisible)) && !isVisible) {
     return NS_OK;
   }
-  
-  // Standards mode background painting removed.  See bug 4510
 
   return NS_OK;
 }
@@ -280,26 +289,20 @@ nsTableColFrame::Init(nsIPresContext*  aPresContext,
 nsTableColFrame*  
 nsTableColFrame::GetNextCol() const
 {
-  nsIFrame* childFrame;
-  GetNextSibling(&childFrame);
+  nsIFrame* childFrame = GetNextSibling();
   while (childFrame) {
-    nsCOMPtr<nsIAtom> frameType;
-    childFrame->GetFrameType(getter_AddRefs(frameType));
-    if (nsLayoutAtoms::tableColFrame == frameType.get()) {
+    if (nsLayoutAtoms::tableColFrame == childFrame->GetType()) {
       return (nsTableColFrame*)childFrame;
     }
-    childFrame->GetNextSibling(&childFrame);
+    childFrame = childFrame->GetNextSibling();
   }
   return nsnull;
 }
 
-NS_IMETHODIMP
-nsTableColFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsTableColFrame::GetType() const
 {
-  NS_PRECONDITION(nsnull != aType, "null OUT parameter pointer");
-  *aType = nsLayoutAtoms::tableColFrame; 
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsLayoutAtoms::tableColFrame;
 }
 
 #ifdef DEBUG

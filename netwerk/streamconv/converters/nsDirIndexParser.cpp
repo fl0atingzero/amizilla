@@ -42,6 +42,8 @@
 
 /* This parsing code originally lived in xpfe/components/directory/ - bbaetz */
 
+#include "prprf.h"
+
 #include "nsDirIndexParser.h"
 #include "nsReadableUtils.h"
 #include "nsDirIndex.h"
@@ -51,7 +53,9 @@
 #include "nsIChannel.h"
 #include "nsIURI.h"
 #include "nsCRT.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
+#include "nsIPrefLocalizedString.h"
 
 NS_IMPL_THREADSAFE_ISUPPORTS3(nsDirIndexParser,
                               nsIRequestObserver,
@@ -63,42 +67,47 @@ nsDirIndexParser::nsDirIndexParser() {
 
 nsresult
 nsDirIndexParser::Init() {
-  nsresult rv = NS_OK;
-
   mLineStart = 0;
   mHasDescription = PR_FALSE;
   mFormat = nsnull;
 
+  // get default charset to be used for directory listings (fallback to
+  // ISO-8859-1 if pref is unavailable).
   NS_NAMED_LITERAL_CSTRING(kFallbackEncoding, "ISO-8859-1");
-
-  nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID));
-  if (prefs)  {
-    nsXPIDLString defCharset;
-    rv = prefs->GetLocalizedUnicharPref("intl.charset.default", getter_Copies(defCharset));
-    if (NS_SUCCEEDED(rv) && !defCharset.IsEmpty())
-      mEncoding.Assign(NS_ConvertUCS2toUTF8(defCharset).get());
-    else
-      mEncoding.Assign(kFallbackEncoding);
+  nsXPIDLString defCharset;
+  nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID));
+  if (prefs) {
+    nsCOMPtr<nsIPrefLocalizedString> prefVal;
+    prefs->GetComplexValue("intl.charset.default",
+                           NS_GET_IID(nsIPrefLocalizedString),
+                           getter_AddRefs(prefVal));
+    if (prefVal)
+      prefVal->ToString(getter_Copies(defCharset));
   }
+  if (!defCharset.IsEmpty())
+    LossyCopyUTF16toASCII(defCharset, mEncoding); // charset labels are always ASCII
   else
     mEncoding.Assign(kFallbackEncoding);
  
-  if (gRefCntParser++ == 0) {
+  nsresult rv;
+  // XXX not threadsafe
+  if (gRefCntParser++ == 0)
     rv = nsServiceManager::GetService(NS_ITEXTTOSUBURI_CONTRACTID,
                                       NS_GET_IID(nsITextToSubURI),
                                       NS_REINTERPRET_CAST(nsISupports**, &gTextToSubURI));
-    if (NS_FAILED(rv)) return rv;
-  }
+  else
+    rv = NS_OK;
 
   return rv;
 }
 
 nsDirIndexParser::~nsDirIndexParser() {
   delete[] mFormat;
+  // XXX not threadsafe
   if (--gRefCntParser == 0) {
     NS_IF_RELEASE(gTextToSubURI);
   }
-};
+}
 
 NS_IMETHODIMP
 nsDirIndexParser::SetListener(nsIDirIndexListener* aListener) {
@@ -213,7 +222,7 @@ nsDirIndexParser::ParseFormat(const char* aFormatStr) {
     aFormatStr += len;
     
     // Okay, we're gonna monkey with the nsStr. Bold!
-    name.SetLength(nsUnescapeCount(NS_CONST_CAST(char*, name.get())));
+    name.SetLength(nsUnescapeCount(name.BeginWriting()));
 
     // All tokens are case-insensitive - http://www.area.com/~roeber/file_format.html
     if (name.EqualsIgnoreCase("description"))
@@ -320,8 +329,12 @@ nsDirIndexParser::ParseData(nsIDirIndex *aIdx, char* aDataStr) {
       break;
     case FIELD_CONTENTLENGTH:
       {
-        unsigned long len = strtoul(value,NULL,10);
-        aIdx->SetSize(len);
+        PRInt64 len;
+        PRInt32 status = PR_sscanf(value, "%lld", &len);
+        if (status == 1)
+          aIdx->SetSize(len);
+        else
+          aIdx->SetSize(LL_INIT(0, -1)); // -1 means unknown
       }
       break;
     case FIELD_LASTMODIFIED:
@@ -377,7 +390,7 @@ nsDirIndexParser::OnDataAvailable(nsIRequest *aRequest, nsISupports *aCtxt,
   // Now read the data into our buffer.
   nsresult rv;
   PRUint32 count;
-  rv = aStream->Read(NS_CONST_CAST(char*, mBuf.get() + len), aCount, &count);
+  rv = aStream->Read(mBuf.BeginWriting() + len, aCount, &count);
   if (NS_FAILED(rv)) return rv;
 
   // Set the string's length according to the amount of data we've read.

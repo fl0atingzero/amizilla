@@ -58,8 +58,8 @@
 static nsresult GetDOMWindow(nsIXULWindow* inWindow,
                   nsCOMPtr<nsIDOMWindowInternal> &outDOMWindow);
 static nsCOMPtr<nsIDOMNode> GetDOMNodeFromDocShell(nsIDocShell *aShell);
-static void GetAttribute( nsIXULWindow* inWindow,
-              const nsAutoString& inAttribute, nsAutoString& outValue);
+static void GetAttribute(nsIXULWindow *inWindow, const nsAString &inAttribute,
+                         nsAString &outValue);
 static void GetWindowType(nsIXULWindow* inWindow, nsString &outType);
 
 // fetch the nsIDOMWindow(Internal) from a XUL Window
@@ -101,19 +101,17 @@ nsCOMPtr<nsIDOMNode> GetDOMNodeFromDocShell(nsIDocShell *aShell)
 }
 
 // generic "retrieve the value of a XUL attribute" function
-void GetAttribute(nsIXULWindow* aWindow, const nsAString &anAttribute,
+void GetAttribute(nsIXULWindow *inWindow, const nsAString &inAttribute,
                   nsAString &outValue)
 {
   nsCOMPtr<nsIDocShell> shell;
-  if (aWindow &&
-      NS_SUCCEEDED(aWindow->GetDocShell(getter_AddRefs(shell)))) {
+  if (inWindow && NS_SUCCEEDED(inWindow->GetDocShell(getter_AddRefs(shell)))) {
 
     nsCOMPtr<nsIDOMNode> node(GetDOMNodeFromDocShell(shell));
-
     if (node) {
       nsCOMPtr<nsIDOMElement> webshellElement(do_QueryInterface(node));
       if (webshellElement)
-        webshellElement->GetAttribute(anAttribute, outValue);
+        webshellElement->GetAttribute(inAttribute, outValue);
     }
   }
 }
@@ -130,7 +128,7 @@ void GetWindowType(nsIXULWindow* aWindow, nsString &outType)
 /********************************************************************/
 
 nsWindowInfo::nsWindowInfo(nsIXULWindow* inWindow, PRInt32 inTimeStamp) :
-  mWindow(inWindow),mTimeStamp(inTimeStamp)
+  mWindow(inWindow),mTimeStamp(inTimeStamp),mZLevel(nsIXULWindow::normalZ)
 {
   ReferenceSelf(PR_TRUE, PR_TRUE);
 }
@@ -204,7 +202,7 @@ void nsWindowInfo::ReferenceSelf(PRBool inAge, PRBool inZ) {
 /*********************** nsAppShellWindowEnumerator *****************/
 /********************************************************************/
 
-NS_IMPL_ISUPPORTS1(nsAppShellWindowEnumerator, nsISimpleEnumerator);
+NS_IMPL_ISUPPORTS1(nsAppShellWindowEnumerator, nsISimpleEnumerator)
 
 nsAppShellWindowEnumerator::nsAppShellWindowEnumerator (
     const PRUnichar* aTypeString,
@@ -275,7 +273,7 @@ NS_IMETHODIMP nsASDOMWindowEnumerator::GetNext(nsISupports **retval) {
     mCurrentPosition = FindNext();
   }
   return NS_OK;
-};
+}
 
 /********************************************************************/
 /*********************** nsASXULWindowEnumerator ********************/
@@ -303,7 +301,7 @@ NS_IMETHODIMP nsASXULWindowEnumerator::GetNext(nsISupports **retval) {
     mCurrentPosition = FindNext();
   }
   return NS_OK;
-};
+}
 
 /********************************************************************/
 /****************** nsASDOMWindowEarlyToLateEnumerator **************/

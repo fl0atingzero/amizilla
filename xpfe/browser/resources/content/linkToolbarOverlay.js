@@ -84,6 +84,7 @@ function(event)
     return;
 
   linkToolbarHandler.clearAllItems();
+  linkToolbarUI.deactivate();
   linkToolbarUI.fullSlowRefresh();
 }
 
@@ -219,6 +220,8 @@ function(id, checkedItem)
 }
 
 LinkToolbarUI.prototype.addHandlerActive = false;
+
+LinkToolbarUI.prototype.initialized = false;
 
 LinkToolbarUI.prototype.initHandlers =
 function()

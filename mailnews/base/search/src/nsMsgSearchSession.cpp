@@ -73,7 +73,7 @@ nsMsgSearchSession::~nsMsgSearchSession()
 	DestroyScopeList ();
 	DestroyTermList ();
 
-    PR_FREEIF (m_pSearchParam);
+  PR_Free (m_pSearchParam);
 }
 
 /* [noscript] void AddSearchTerm (in nsMsgSearchAttribute attrib, in nsMsgSearchOperator op, in nsMsgSearchValue value, in boolean BooleanAND, in string arbitraryHeader); */
@@ -736,7 +736,7 @@ nsMsgSearchSession::RemoveFolderListener(nsIFolderListener *listener)
 
 // nsIFolderListener methods.
 NS_IMETHODIMP 
-nsMsgSearchSession::OnItemEvent(nsIFolder *aFolder,
+nsMsgSearchSession::OnItemEvent(nsIMsgFolder *aFolder,
                                 nsIAtom *aEvent)
 {
 	PRInt32 count = m_folderListenerList.Count();

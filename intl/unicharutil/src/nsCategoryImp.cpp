@@ -36,14 +36,14 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsCom.h"
+#include "nscore.h"
 #include "pratom.h"
 #include "nsUUDll.h"
 #include "nsISupports.h"
 #include "nsCategoryImp.h"
 #include "cattable.h"
 
-NS_IMPL_ISUPPORTS1(nsCategoryImp, nsIUGenCategory);
+NS_IMPL_ISUPPORTS1(nsCategoryImp, nsIUGenCategory)
 
 
 nsCategoryImp::nsCategoryImp()

@@ -51,17 +51,12 @@
 
 #include <os2.h>
 
-#ifdef XP_OS2_VACPP
-#define ENOTDIR EBADPOS
-#endif
-
 class NS_COM nsLocalFile : public nsILocalFile
 {
 public:
     NS_DEFINE_STATIC_CID_ACCESSOR(NS_LOCAL_FILE_CID)
     
     nsLocalFile();
-    virtual ~nsLocalFile();
 
     static NS_METHOD nsLocalFileConstructor(nsISupports* outer, const nsIID& aIID, void* *aInstancePtr);
 
@@ -79,6 +74,9 @@ public:
     static void GlobalShutdown();
 
 private:
+    ~nsLocalFile() {}
+
+    nsLocalFile(const nsLocalFile& other);
 
     // this is the flag which indicates if I can used cached information about the file
     PRPackedBool mDirty;

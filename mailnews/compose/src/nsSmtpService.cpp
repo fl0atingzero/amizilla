@@ -82,7 +82,6 @@ typedef struct _findServerByHostnameEntry {
 
 static NS_DEFINE_CID(kCSmtpUrlCID, NS_SMTPURL_CID);
 static NS_DEFINE_CID(kCMailtoUrlCID, NS_MAILTOURL_CID);
-static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID); 
 
 // foward declarations...
 nsresult
@@ -111,7 +110,7 @@ nsSmtpService::~nsSmtpService()
 
 }
 
-NS_IMPL_ISUPPORTS2(nsSmtpService, nsISmtpService, nsIProtocolHandler);
+NS_IMPL_ISUPPORTS2(nsSmtpService, nsISmtpService, nsIProtocolHandler)
 
 
 nsresult nsSmtpService::SendMailMessage(nsIFileSpec * aFilePath,
@@ -124,24 +123,34 @@ nsresult nsSmtpService::SendMailMessage(nsIFileSpec * aFilePath,
                                         nsIURI ** aURL,
                                         nsIRequest ** aRequest)
 {
-	nsIURI * urlToRun = nsnull;
-	nsresult rv = NS_OK;
+  nsIURI * urlToRun = nsnull;
+  nsresult rv = NS_OK;
 
   nsCOMPtr<nsISmtpServer> smtpServer;
   rv = GetSmtpServerByIdentity(aSenderIdentity, getter_AddRefs(smtpServer));
 
   if (NS_SUCCEEDED(rv) && smtpServer)
   {
-      if (aPassword && *aPassword)
-          smtpServer->SetPassword(aPassword);
+    if (aPassword && *aPassword)
+      smtpServer->SetPassword(aPassword);
 
     nsXPIDLCString smtpHostName;
     nsXPIDLCString smtpUserName;
     PRInt32 smtpPort;
+    PRInt32 trySSL;
 
     smtpServer->GetHostname(getter_Copies(smtpHostName));
     smtpServer->GetUsername(getter_Copies(smtpUserName));
     smtpServer->GetPort(&smtpPort);
+    smtpServer->GetTrySSL(&trySSL);
+
+    if (smtpPort == 0)
+    {
+        if (trySSL == PREF_SECURE_ALWAYS_SMTPS)
+            smtpPort = nsISmtpUrl::DEFAULT_SMTPS_PORT;
+        else
+            smtpPort = nsISmtpUrl::DEFAULT_SMTP_PORT;
+    }
 
     if (smtpHostName && smtpHostName.get()[0] && !CHECK_SIMULATED_ERROR(SIMULATED_SEND_ERROR_10)) 
     {
@@ -163,9 +172,9 @@ nsresult nsSmtpService::SendMailMessage(nsIFileSpec * aFilePath,
     }
     else
       rv = NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER;
-	}
+  }
 
-	return rv;
+  return rv;
 }
 
 
@@ -205,7 +214,7 @@ nsresult NS_MsgBuildSmtpUrl(nsIFileSpec * aFilePath,
         if (!PL_strchr(aSmtpHostName, ':'))
         {
             urlSpec += ':';
-            urlSpec.AppendInt((aSmtpPort > 0) ? aSmtpPort : nsISmtpUrl::DEFAULT_SMTP_PORT);
+            urlSpec.AppendInt(aSmtpPort);
         }
 
         if (urlSpec.get())
@@ -243,7 +252,7 @@ nsresult NS_MsgBuildSmtpUrl(nsIFileSpec * aFilePath,
 
 nsresult NS_MsgLoadSmtpUrl(nsIURI * aUrl, nsISupports * aConsumer, nsIRequest ** aRequest)
 {
-    // for now, assume the url is a news url and load it....
+    // for now, assume the url is an smtp url and load it....
     nsCOMPtr <nsISmtpUrl> smtpUrl;
     nsSmtpProtocol	*smtpProtocol = nsnull;
     nsresult rv = NS_OK;
@@ -309,12 +318,12 @@ NS_IMETHODIMP nsSmtpService::NewURI(const nsACString &aSpec,
   // get a new smtp url 
 
   nsresult rv = NS_OK;
-	nsCOMPtr <nsIURI> mailtoUrl;
+  nsCOMPtr <nsIURI> mailtoUrl;
 
-	rv = nsComponentManager::CreateInstance(kCMailtoUrlCID, NULL, NS_GET_IID(nsIURI), getter_AddRefs(mailtoUrl));
+  rv = nsComponentManager::CreateInstance(kCMailtoUrlCID, NULL, NS_GET_IID(nsIURI), getter_AddRefs(mailtoUrl));
 
-	if (NS_SUCCEEDED(rv))
-	{
+  if (NS_SUCCEEDED(rv))
+  {
     nsCAutoString utf8Spec;
     if (aOriginCharset)
     {
@@ -324,12 +333,14 @@ NS_IMETHODIMP nsSmtpService::NewURI(const nsACString &aSpec,
           rv = utf8Converter->ConvertURISpecToUTF8(aSpec, aOriginCharset, utf8Spec);
     }
 
-    if (NS_SUCCEEDED(rv) && !utf8Spec.IsEmpty())
+    // utf8Spec is filled up only when aOriginCharset is specified and 
+    // the conversion is successful. Otherwise, fall back to aSpec.
+    if (aOriginCharset && NS_SUCCEEDED(rv))
       mailtoUrl->SetSpec(utf8Spec);
     else
       mailtoUrl->SetSpec(aSpec);
     rv = mailtoUrl->QueryInterface(NS_GET_IID(nsIURI), (void **) _retval);
-	}
+  }
   return rv;
 }
 
@@ -491,7 +502,7 @@ nsSmtpService::loadSmtpServers()
       }
 
       char *newStr;
-      char *pref = nsCRT::strtok(NS_CONST_CAST(char*,(const char*)serverList), ", ", &newStr);
+      char *pref = nsCRT::strtok(serverList.BeginWriting(), ", ", &newStr);
 
       while (pref) {
         // fix for bug #96207
@@ -539,7 +550,7 @@ nsSmtpService::createKeyedServer(const char *key, nsISmtpServer** aResult)
                                             (void **)getter_AddRefs(server));
     if (NS_FAILED(rv)) return rv;
     
-    server->SetKey(NS_CONST_CAST(char *,key));
+    server->SetKey(key);
     mSmtpServers->AppendElement(server);
 
     nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));

@@ -102,7 +102,8 @@
             </template>
             <menuitem label="&sidebar.customize.label;" accesskey="&sidebar.customize.accesskey;"
                       oncommand="SidebarCustomize();" />
-            <menuitem label="&sidebar.sbDirectory.label;"
+            <menuitem id="sidebar.sbDirectory"
+                      label="&sidebar.sbDirectory.label;"
                       oncommand="BrowseMorePanels();" />
             <menuseparator />
           </menupopup>
@@ -160,7 +161,8 @@
                 <browser flex="1" class="browser-sidebar" src="about:blank"
                   hidden="true" collapsed="true" content="?content"/>
                 <browser flex="1" class="browser-sidebar" src="about:blank"
-                  hidden="true" collapsed="true" content="?content" type="content" context="contentAreaContextMenu"/>
+                  hidden="true" collapsed="true" content="?content"
+                  type="content" context="contentAreaContextMenu" tooltip="aHTMLTooltip"/>
               </vbox>
             </action>
           </rule>

@@ -38,7 +38,6 @@
 #include "nsIModule.h"
 #include "xcDll.h"
 #include "nsHashtable.h"
-#include "nsHashtableEnumerator.h"
 #include "nsXPIDLString.h"
 #include "nsCRT.h"
 #include "nsIObserverService.h"
@@ -68,14 +67,9 @@ nsNativeComponentLoader::nsNativeComponentLoader() :
 {
 }
 
-nsNativeComponentLoader::~nsNativeComponentLoader()
-{
-    mCompMgr = nsnull;
-}
-    
 NS_IMPL_THREADSAFE_ISUPPORTS2(nsNativeComponentLoader, 
                               nsIComponentLoader,
-                              nsINativeComponentLoader);
+                              nsINativeComponentLoader)
 
 NS_IMETHODIMP
 nsNativeComponentLoader::GetFactory(const nsIID & aCID,
@@ -458,7 +452,7 @@ nsNativeComponentLoader::SelfRegisterDll(nsDll *dll,
 //
 
 #if defined(MOZ_DEMANGLE_SYMBOLS)
-#include "nsTraceRefcnt.h" // for nsTraceRefcnt::DemangleSymbol()
+#include "nsTraceRefcntImpl.h" // for nsTraceRefcntImpl::DemangleSymbol()
 #endif
 
 nsresult 
@@ -492,7 +486,7 @@ nsNativeComponentLoader::DumpLoadError(nsDll *dll,
         
         char demangled[4096] = "\0";
         
-        nsTraceRefcnt::DemangleSymbol(symbol.get(),demangled,sizeof(demangled));
+        nsTraceRefcntImpl::DemangleSymbol(symbol.get(),demangled,sizeof(demangled));
         
         if (demangled && *demangled != '\0')
             demangledSymbol = demangled;
@@ -516,16 +510,18 @@ nsNativeComponentLoader::DumpLoadError(nsDll *dll,
     nsXPIDLCString displayPath;
     dll->GetDisplayPath(displayPath);
 
+#ifdef DEBUG
     fprintf(stderr, 
-            "nsNativeComponentLoader: %s(%s) Load FAILED with error:%s\n", 
+            "nsNativeComponentLoader: %s(%s) Load FAILED with error: %s\n", 
             aCallerName,
             displayPath.get(), 
             errorMsg.get());
+#endif
 
     // Do NSPR log
 #ifdef PR_LOGGING
     PR_LOG(nsComponentManagerLog, PR_LOG_ALWAYS,
-           ("nsNativeComponentLoader: %s(%s) Load FAILED with error:%s", 
+           ("nsNativeComponentLoader: %s(%s) Load FAILED with error: %s", 
             aCallerName,
             displayPath.get(), 
             errorMsg.get()));

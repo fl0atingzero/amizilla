@@ -20,32 +20,34 @@
 
 // dialog param block
 var gParam;
+var gBundle;
 
 function addTreeItem(num, aName, aUrl, aCertName)
 {
   // first column is the package name
   var item = document.createElement("description");
   item.setAttribute("value", aName);
-  item.setAttribute("tooltiptext", aUrl);
+  item.setAttribute("tooltiptext", aName);
   item.setAttribute("class", "confirmName");
+  item.setAttribute("crop", "center");
 
   // second column is for the cert name
   var certName = document.createElement("description");
-  if (aCertName == "")
-    certName.setAttribute("value", "Unsigned"); // i18n!
-  else
-    certName.setAttribute("value", aCertName);
+  var certNameValue = aCertName ? aCertName : gBundle.getString("Unsigned");
+  certName.setAttribute("value", certNameValue);
+  certName.setAttribute("tooltiptext", certNameValue);
+  certName.setAttribute("crop", "center");
 
   // third column is the host serving the file
   var urltext = aUrl.replace(/^([^:]*:\/*[^\/]+).*/, "$1");
-  var url = document.createElement('description');
+  var url = document.createElement("description");
   url.setAttribute("value", aUrl);
   url.setAttribute("tooltiptext", aUrl);
   url.setAttribute("class", "confirmURL");
-  url.setAttribute("crop", "end");
+  url.setAttribute("crop", "center");
 
   // create row and add it to the grid
-  var row  = document.createElement("row");
+  var row = document.createElement("row");
   row.appendChild(item);
   row.appendChild(certName);
   row.appendChild(url);
@@ -53,17 +55,15 @@ function addTreeItem(num, aName, aUrl, aCertName)
   document.getElementById("xpirows").appendChild(row);
 }
 
-
 function onLoad()
 {
   var row = 0;
-  var moduleName, URL, certName, numberOfDialogTreeElements;
+  var moduleName, URL, IconURL, certName, numberOfDialogTreeElements;
 
-  doSetOKCancel(onOk, onCancel);
-
+  gBundle = document.getElementById("xpinstallBundle");
   gParam = window.arguments[0].QueryInterface(Components.interfaces.nsIDialogParamBlock);
 
-  gParam.SetInt(0, 1 ); /* Set the default return to Cancel */
+  gParam.SetInt(0, 1); // Set the default return to Cancel
 
   numberOfDialogTreeElements = gParam.GetInt(1);
 
@@ -71,36 +71,51 @@ function onLoad()
   {
     moduleName = gParam.GetString(i);
     URL = gParam.GetString(++i);
+    IconURL = gParam.GetString(++i); // Advance the enumeration, parameter is unused just now.
     certName = gParam.GetString(++i);
 
     addTreeItem(row++, moduleName, URL, certName);
   }
 
-  var okText = document.getElementById("xpinstallBundle").getString("OK");
-  var okButton = document.getElementById("ok")
-  okButton.label = okText;
-  okButton.setAttribute("default",false);
+  // Move default+focus from |accept| to |cancel| button.
+  var aButton = document.documentElement.getButton("accept");
+  aButton.setAttribute("default", false);
+  aButton.setAttribute("label", gBundle.getString("OK"));
+  aButton.setAttribute("disabled", true);
 
-  var cancelButton = document.getElementById("cancel")
-  cancelButton.focus();
-  cancelButton.setAttribute("default",true);
+  aButton = document.documentElement.getButton("cancel");
+  aButton.focus();
+  aButton.setAttribute("default", true);
+
+  // start timer to re-enable buttons
+  var delayInterval = 2000;
+  try {
+    var prefs = Components.classes["@mozilla.org/preferences-service;1"]
+                .getService(Components.interfaces.nsIPrefBranch);
+    delayInterval = prefs.getIntPref("security.dialog_enable_delay");
+  } catch (e) {}
+  setTimeout(reenableInstallButtons, delayInterval);
 }
 
-function onOk()
+function reenableInstallButtons()
 {
-   // set the okay button in the param block
-   if (gParam)
-     gParam.SetInt(0, 0 );
+    document.documentElement.getButton("accept").setAttribute("disabled", false);
+}
 
-   window.close();
+function onAccept()
+{
+  // set the accept button in the param block
+  if (gParam)
+    gParam.SetInt(0, 0);
+
+  return true;
 }
 
 function onCancel()
 {
-    // set the cancel button in the param block
-    if (gParam)
-      gParam.SetInt(0, 1 );
+  // set the cancel button in the param block
+  if (gParam)
+    gParam.SetInt(0, 1);
 
-    window.close();
+  return true;
 }
-

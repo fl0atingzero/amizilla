@@ -100,7 +100,7 @@ NS_METHOD nsMenuItem::Create ( nsIMenu* aParent, const nsString & aLabel, PRBool
 {
   mContent = aNode;         // addref
   mMenuParent = aParent;    // weak
-  mWebShellWeakRef = getter_AddRefs(NS_GetWeakReference(aShell));
+  mWebShellWeakRef = do_GetWeakReference(aShell);
   
   mEnabled = aEnabled;
   mMenuType = aItemType;
@@ -298,9 +298,7 @@ NS_METHOD nsMenuItem::DoCommand()
   nsAutoString command;
   mContent->GetAttr(kNameSpaceID_None, nsWidgetAtoms::command, command);
   if (!command.IsEmpty()) {
-    nsCOMPtr<nsIDocument> doc;
-    mContent->GetDocument(getter_AddRefs(doc));
-    nsCOMPtr<nsIDOMDocument> domDoc(do_QueryInterface(doc));
+    nsCOMPtr<nsIDOMDocument> domDoc(do_QueryInterface(mContent->GetDocument()));
     nsCOMPtr<nsIDOMElement> commandElt;
     domDoc->GetElementById(command, getter_AddRefs(commandElt));
     nsCOMPtr<nsIContent> commandContent(do_QueryInterface(commandElt));
@@ -367,13 +365,11 @@ nsMenuItem :: UncheckRadioSiblings ( nsIContent* inCheckedContent )
     return;
 
   // loop over siblings
-  PRInt32 count;
-  parent->ChildCount(count);
-  for ( PRInt32 i = 0; i < count; ++i ) {
-    nsCOMPtr<nsIContent> sibling;
-    parent->ChildAt(i, getter_AddRefs(sibling));
+  PRUint32 count = parent->GetChildCount();
+  for ( PRUint32 i = 0; i < count; ++i ) {
+    nsIContent *sibling = parent->GetChildAt(i);
     if ( sibling ) {      
-      if ( sibling.get() != inCheckedContent ) {                    // skip this node
+      if ( sibling != inCheckedContent ) {                    // skip this node
         // if the current sibling is in the same group, clear it
         nsAutoString currGroupName;
         sibling->GetAttr(kNameSpaceID_None, nsWidgetAtoms::name, currGroupName);
@@ -393,8 +389,7 @@ nsMenuItem :: UncheckRadioSiblings ( nsIContent* inCheckedContent )
 
 
 NS_IMETHODIMP
-nsMenuItem :: AttributeChanged ( nsIDocument *aDocument, PRInt32 aNameSpaceID, nsIAtom *aAttribute,
-                                    PRInt32 aHint )
+nsMenuItem :: AttributeChanged ( nsIDocument *aDocument, PRInt32 aNameSpaceID, nsIAtom *aAttribute )
 {  
   if (aAttribute == nsWidgetAtoms::checked) {
     // if we're a radio menu, uncheck our sibling radio items. No need to

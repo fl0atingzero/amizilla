@@ -56,7 +56,6 @@
 #include "nsEscape.h"
 #include "nsITextToSubURI.h"
 #include "nsCRT.h"
-#include "nsIHTMLContent.h"
 #include "nsIParserService.h"
 #include "nsContentUtils.h"
 #include "nsILineBreakerFactory.h"
@@ -165,7 +164,7 @@ nsHTMLContentSerializer::AppendText(nsIDOMText* aText,
     aText->GetOwnerDocument(getter_AddRefs(domDoc));
     nsCOMPtr<nsIDocument> document = do_QueryInterface(domDoc);
     if (document) {
-      document->GetLineBreaker(getter_AddRefs(mLineBreaker));
+      mLineBreaker = document->GetLineBreaker();
     }
 
     if (!mLineBreaker) {
@@ -461,7 +460,7 @@ nsHTMLContentSerializer::IsJavaScript(nsIAtom* aAttrNameAtom, const nsAString& a
       aAttrNameAtom == nsHTMLAtoms::src) {
     static const char kJavaScript[] = "javascript";
     PRInt32 pos = aValueString.FindChar(':');
-    if ( pos < (PRInt32)(sizeof kJavaScript - 1) )
+    if (pos < (PRInt32)(sizeof kJavaScript - 1))
         return PR_FALSE;
     nsAutoString scheme(Substring(aValueString, 0, pos));
     scheme.StripWhitespace();
@@ -533,7 +532,7 @@ nsHTMLContentSerializer::EscapeURI(const nsAString& aURI, nsAString& aEscapedURI
     else {
       escapedURI.Adopt(nsEscape(NS_ConvertUCS2toUTF8(part).get(), url_Path));
     }
-    aEscapedURI.Append(NS_ConvertASCIItoUCS2(escapedURI));
+    AppendASCIItoUTF16(escapedURI, aEscapedURI);
 
     // Append a reserved character without escaping.
     part = Substring(aURI, end, 1);
@@ -551,7 +550,7 @@ nsHTMLContentSerializer::EscapeURI(const nsAString& aURI, nsAString& aEscapedURI
     else {
       escapedURI.Adopt(nsEscape(NS_ConvertUCS2toUTF8(part).get(), url_Path));
     }
-    aEscapedURI.Append(NS_ConvertASCIItoUCS2(escapedURI));
+    AppendASCIItoUTF16(escapedURI, aEscapedURI);
   }
 
   return rv;
@@ -563,16 +562,20 @@ nsHTMLContentSerializer::SerializeAttributes(nsIContent* aContent,
                                              nsAString& aStr)
 {
   nsresult rv;
-  PRInt32 index, count;
+  PRUint32 index, count;
   nsAutoString nameStr, valueStr;
   PRInt32 namespaceID;
   nsCOMPtr<nsIAtom> attrName, attrPrefix;
 
-  aContent->GetAttrCount(count);
+  count = aContent->GetAttrCount();
 
-  NS_NAMED_LITERAL_STRING(mozStr1, "_moz");
-  
-  for (index = 0; index < count; index++) {
+  NS_NAMED_LITERAL_STRING(_mozStr, "_moz");
+
+  // Loop backward over the attributes, since the order they are stored in is
+  // the opposite of the order they were parsed in (see bug 213347 for reason).
+  // index is unsigned, hence index >= 0 is always true.
+  for (index = count; index > 0; ) {
+    --index;
     aContent->GetAttrNameAt(index, 
                             &namespaceID,
                             getter_AddRefs(attrName),
@@ -591,48 +594,40 @@ nsHTMLContentSerializer::SerializeAttributes(nsIContent* aContent,
     // Filter out special case of <br type="_moz"> or <br _moz*>,
     // used by the editor.  Bug 16988.  Yuck.
     //
-    if ((aTagName == nsHTMLAtoms::br) &&
-        (attrName.get() == nsHTMLAtoms::type) &&
-        (mozStr1.Equals(Substring(valueStr, 0, mozStr1.Length())))) {
+    if (aTagName == nsHTMLAtoms::br && attrName == nsHTMLAtoms::type &&
+        StringBeginsWith(valueStr, _mozStr)) {
       continue;
     }
     
     // XXX: This special cased textarea code should be
     //      removed when bug #17003 is fixed.  
-    if ( (aTagName == nsHTMLAtoms::textarea) &&
-         ((attrName.get() == nsHTMLAtoms::value) || 
-         (attrName.get() == nsHTMLAtoms::defaultvalue)) ){
+    if ((aTagName == nsHTMLAtoms::textarea) &&
+        ((attrName == nsHTMLAtoms::value) || 
+         (attrName == nsHTMLAtoms::defaultvalue))){
         continue;
     }
 
-    if ( mIsCopying && mIsFirstChildOfOL && (aTagName == nsHTMLAtoms::li) && 
-         (attrName.get() == nsHTMLAtoms::value)){
+    if (mIsCopying && mIsFirstChildOfOL && (aTagName == nsHTMLAtoms::li) && 
+        (attrName == nsHTMLAtoms::value)){
       // This is handled separately in SerializeLIValueAttribute()
       continue;
     }
     PRBool isJS = IsJavaScript(attrName, valueStr);
     
-    if (((attrName.get() == nsHTMLAtoms::href) || 
-         (attrName.get() == nsHTMLAtoms::src))) {
+    if (((attrName == nsHTMLAtoms::href) || 
+         (attrName == nsHTMLAtoms::src))) {
       // Make all links absolute when converting only the selection:
       if (mFlags & nsIDocumentEncoder::OutputAbsoluteLinks) {
         // Would be nice to handle OBJECT and APPLET tags,
         // but that gets more complicated since we have to
         // search the tag list for CODEBASE as well.
         // For now, just leave them relative.
-        nsCOMPtr<nsIDocument> document;
-        aContent->GetDocument(getter_AddRefs(document));
-        if (document) {
-          nsCOMPtr<nsIURI> uri;
-          document->GetBaseURL(getter_AddRefs(uri));
-          if (!uri)
-            document->GetDocumentURL(getter_AddRefs(uri));
-          if (uri) {
-            nsAutoString absURI;
-            rv = NS_MakeAbsoluteURI(absURI, valueStr, uri);
-            if (NS_SUCCEEDED(rv)) {
-              valueStr = absURI;
-            }
+        nsCOMPtr<nsIURI> uri = aContent->GetBaseURI();
+        if (uri) {
+          nsAutoString absURI;
+          rv = NS_MakeAbsoluteURI(absURI, valueStr, uri);
+          if (NS_SUCCEEDED(rv)) {
+            valueStr = absURI;
           }
         }
       }
@@ -680,10 +675,9 @@ nsHTMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
   // even if we're not in pretty printing mode
   PRBool hasDirtyAttr = HasDirtyAttr(content);
 
-  nsCOMPtr<nsIAtom> name;
-  content->GetTag(getter_AddRefs(name));
+  nsIAtom *name = content->Tag();
 
-  if (name.get() == nsHTMLAtoms::br && mPreLevel > 0
+  if (name == nsHTMLAtoms::br && mPreLevel > 0
       && (mFlags & nsIDocumentEncoder::OutputNoFormattingInPre)) {
     AppendToString(mLineBreak, aStr);
     mMayIgnoreLineBreakSequence = PR_TRUE;
@@ -691,7 +685,7 @@ nsHTMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
     return NS_OK;
   }
 
-  if (name.get() == nsHTMLAtoms::body) {
+  if (name == nsHTMLAtoms::body) {
     mInBody = PR_TRUE;
   }
 
@@ -705,12 +699,18 @@ nsHTMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
     AppendToString(PRUnichar(' '), aStr);
     mAddSpace = PR_FALSE;
   }
+  else {
+    MaybeAddNewline(aStr);
+  }
+  // Always reset to avoid false newlines in case MaybeAddNewline wasn't
+  // called
+  mAddNewline = PR_FALSE;
 
   StartIndentation(name, hasDirtyAttr, aStr);
 
-  if ((name.get() == nsHTMLAtoms::pre) ||
-      (name.get() == nsHTMLAtoms::script) ||
-      (name.get() == nsHTMLAtoms::style)) {
+  if (name == nsHTMLAtoms::pre ||
+      name == nsHTMLAtoms::script ||
+      name == nsHTMLAtoms::style) {
     mPreLevel++;
   }
   
@@ -722,7 +722,7 @@ nsHTMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
 
   // Need to keep track of OL and LI elements in order to get ordinal number 
   // for the LI.
-  if (mIsCopying && name.get() == nsHTMLAtoms::ol){
+  if (mIsCopying && name == nsHTMLAtoms::ol){
     // We are copying and current node is an OL;
     // Store it's start attribute value in olState->startVal.
     nsAutoString start;
@@ -744,7 +744,7 @@ nsHTMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
       mOLStateStack.AppendElement(state);
   }
 
-  if (mIsCopying && name.get() == nsHTMLAtoms::li) {
+  if (mIsCopying && name == nsHTMLAtoms::li) {
     mIsFirstChildOfOL = IsFirstChildOfOL(aElement);
     if (mIsFirstChildOfOL){
       // If OL is parent of this LI, serialize attributes in different manner.
@@ -766,17 +766,17 @@ nsHTMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
 
   // XXX: This special cased textarea code should be
   //      removed when bug #17003 is fixed.  
-  if (name.get() == nsHTMLAtoms::textarea)
+  if (name == nsHTMLAtoms::textarea)
   {
     nsAutoString valueStr;
     content->GetAttr(kNameSpaceID_None, nsHTMLAtoms::value, valueStr);
     AppendToString(valueStr, aStr);
   }
 
-  if ((name.get() == nsHTMLAtoms::script) ||
-      (name.get() == nsHTMLAtoms::style) ||
-      (name.get() == nsHTMLAtoms::noscript) ||
-      (name.get() == nsHTMLAtoms::noframes)) {
+  if (name == nsHTMLAtoms::script ||
+      name == nsHTMLAtoms::style ||
+      name == nsHTMLAtoms::noscript ||
+      name == nsHTMLAtoms::noframes) {
     mInCDATA = PR_TRUE;
   }
 
@@ -794,16 +794,15 @@ nsHTMLContentSerializer::AppendElementEnd(nsIDOMElement *aElement,
 
   PRBool hasDirtyAttr = HasDirtyAttr(content);
 
-  nsCOMPtr<nsIAtom> name;
-  content->GetTag(getter_AddRefs(name));
+  nsIAtom *name = content->Tag();
 
-  if ((name.get() == nsHTMLAtoms::pre) ||
-      (name.get() == nsHTMLAtoms::script) ||
-      (name.get() == nsHTMLAtoms::style)) {
+  if (name == nsHTMLAtoms::pre ||
+      name == nsHTMLAtoms::script ||
+      name == nsHTMLAtoms::style) {
     mPreLevel--;
   }
 
-  if (mIsCopying && (name.get() == nsHTMLAtoms::ol)){
+  if (mIsCopying && (name == nsHTMLAtoms::ol)){
     NS_ASSERTION((mOLStateStack.Count() > 0), "Cannot have an empty OL Stack");
     /* Though at this point we must always have an state to be deleted as all 
     the OL opening tags are supposed to push an olState object to the stack*/
@@ -814,16 +813,13 @@ nsHTMLContentSerializer::AppendElementEnd(nsIDOMElement *aElement,
     }
   }
   
-  nsAutoString nameStr;
-  name->ToString(nameStr);
-
   nsIParserService* parserService = nsContentUtils::GetParserServiceWeakRef();
 
-  if (parserService && (name.get() != nsHTMLAtoms::style)) {
+  if (parserService && (name != nsHTMLAtoms::style)) {
     PRBool isContainer;
     PRInt32 id;
 
-    parserService->HTMLStringTagToId(nameStr, &id);
+    parserService->HTMLAtomTagToId(name, &id);
     parserService->IsContainer(id, isContainer);
     if (!isContainer) return NS_OK;
   }
@@ -841,6 +837,9 @@ nsHTMLContentSerializer::AppendElementEnd(nsIDOMElement *aElement,
 
   EndIndentation(name, hasDirtyAttr, aStr);
 
+  nsAutoString nameStr;
+  name->ToString(nameStr);
+
   AppendToString(kEndTag, aStr);
   AppendToString(nameStr.get(), -1, aStr);
   AppendToString(kGreaterThan, aStr);
@@ -849,6 +848,9 @@ nsHTMLContentSerializer::AppendElementEnd(nsIDOMElement *aElement,
     AppendToString(mLineBreak, aStr);
     mMayIgnoreLineBreakSequence = PR_TRUE;
     mColPos = 0;
+  }
+  else {
+    MaybeFlagNewline(aElement);
   }
 
   mInCDATA = PR_FALSE;
@@ -991,13 +993,13 @@ nsHTMLContentSerializer::AppendToString(const nsAString& aStr,
         aOutputStr.Append(fragmentStart, advanceLength);
         if (entityText) {
           aOutputStr.Append(PRUnichar('&'));
-          aOutputStr.Append(NS_ConvertASCIItoUCS2(entityText));
+          AppendASCIItoUTF16(entityText, aOutputStr);
           aOutputStr.Append(PRUnichar(';'));
           advanceLength++;
         }
         // if it comes from nsIEntityConverter, it already has '&' and ';'
         else if (fullEntityText) {
-          aOutputStr.Append(NS_ConvertASCIItoUCS2(fullEntityText));
+          AppendASCIItoUTF16(fullEntityText, aOutputStr);
           nsMemory::Free(fullEntityText);
           advanceLength++;
         }
@@ -1076,12 +1078,10 @@ nsHTMLContentSerializer::LineBreakBeforeOpen(nsIAtom* aName,
       nsContentUtils::GetParserServiceWeakRef();
     
     if (parserService) {
-      nsAutoString str;
-      aName->ToString(str);
       PRBool res;
       PRInt32 id;
 
-      parserService->HTMLStringTagToId(str, &id);
+      parserService->HTMLAtomTagToId(aName, &id);
       parserService->IsBlock(id, res);
       return res;
     }
@@ -1179,12 +1179,10 @@ nsHTMLContentSerializer::LineBreakAfterClose(nsIAtom* aName,
       nsContentUtils::GetParserServiceWeakRef();
     
     if (parserService) {
-      nsAutoString str;
-      aName->ToString(str);
       PRBool res;
       PRInt32 id;
 
-      parserService->HTMLStringTagToId(str, &id);
+      parserService->HTMLAtomTagToId(aName, &id);
       parserService->IsBlock(id, res);
       return res;
     }

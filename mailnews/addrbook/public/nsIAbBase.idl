@@ -46,9 +46,6 @@ interface nsIAbBase : nsICollection {
     nsISupports GetChildNamed(in string name);
     attribute nsIAbBase parent;
 
-    nsIEnumerator GetChildNodes();
-
-    void AddUnique(in nsISupports element);
-    void ReplaceElement(in nsISupports element, in nsISupports newElement);
+    nsISimpleEnumerator GetChildNodes();
 
 };

@@ -49,6 +49,7 @@
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsCOMPtr.h"
+#include "nsIInputStreamPump.h"
 
 class nsDataChannel : public nsIDataChannel,
                       public nsIStreamListener {
@@ -76,14 +77,14 @@ protected:
     nsCOMPtr<nsIURI>                    mOriginalURI;
     nsCOMPtr<nsIURI>                    mUrl;
     nsCOMPtr<nsIInputStream>            mDataStream;
-    nsresult                            mStatus;
-    PRUint32                            mLoadFlags;
     nsCOMPtr<nsILoadGroup>              mLoadGroup;
     nsCString                           mContentType;
     nsCString                           mContentCharset;
     PRInt32                             mContentLength;
     nsCOMPtr<nsISupports>               mOwner; 
+    PRBool                              mOpened;
     nsCOMPtr<nsIStreamListener>         mListener;
+    nsCOMPtr<nsIInputStreamPump>        mPump;
 };
 
-#endif /* nsFTPChannel_h___ */
+#endif /* nsDataChannel_h___ */

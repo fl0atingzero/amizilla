@@ -21,7 +21,7 @@
  *
  * Contributor(s):
  * Original Author: David W. Hyatt (hyatt@netscape.com)
- *  Brian Ryner <bryner@netscape.com>
+ *  Brian Ryner <bryner@brianryner.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or 
@@ -40,10 +40,12 @@
 #include "nsIPresContext.h"
 #include "nsIPresShell.h"
 #include "nsITreeBoxObject.h"
+#include "nsTreeSelection.h"
 #include "nsBoxObject.h"
 #include "nsIFrame.h"
 #include "nsTreeBodyFrame.h"
 #include "nsIAtom.h"
+#include "nsINodeInfo.h"
 #include "nsXULAtoms.h"
 #include "nsChildIterator.h"
 
@@ -79,8 +81,13 @@ nsTreeBoxObject::SetDocument(nsIDocument* aDocument)
   nsCOMPtr<nsISupports> suppView;
   GetPropertyAsSupports(NS_LITERAL_STRING("view").get(), getter_AddRefs(suppView));
   nsCOMPtr<nsITreeView> treeView(do_QueryInterface(suppView));
-  if (treeView)
+  if (treeView) {
+    nsCOMPtr<nsITreeSelection> sel;
+    treeView->GetSelection(getter_AddRefs(sel));
+    if (sel)
+      sel->SetTree(nsnull);
     treeView->SetTree(nsnull); // Break the circular ref between the view and us.
+  }
 
   return nsBoxObject::SetDocument(aDocument);
 }
@@ -118,14 +125,14 @@ static void FindBodyElement(nsIContent* aParent, nsIContent** aResult)
   ChildIterator iter, last;
   for (ChildIterator::Init(aParent, &iter, &last); iter != last; ++iter) {
     nsCOMPtr<nsIContent> content = *iter;
-    nsCOMPtr<nsIAtom> tag;
-    content->GetTag(getter_AddRefs(tag));
-    if (tag.get() == nsXULAtoms::treechildren) {
+
+    nsINodeInfo *ni = content->GetNodeInfo();
+    if (ni && ni->Equals(nsXULAtoms::treechildren, kNameSpaceID_XUL)) {
       *aResult = content;
       NS_ADDREF(*aResult);
       break;
     }
-    else if (tag != nsXULAtoms::templateAtom) {
+    else if (ni && !ni->Equals(nsXULAtoms::templateAtom, kNameSpaceID_XUL)) {
       FindBodyElement(content, aResult);
       if (*aResult)
         break;
@@ -149,11 +156,8 @@ nsTreeBoxObject::GetTreeBody()
     return nsnull;
 
   // Iterate over our content model children looking for the body.
-  nsCOMPtr<nsIContent> startContent;
-  frame->GetContent(getter_AddRefs(startContent));
-
   nsCOMPtr<nsIContent> content;
-  FindBodyElement(startContent, getter_AddRefs(content));
+  FindBodyElement(frame->GetContent(), getter_AddRefs(content));
 
   mPresShell->GetPrimaryFrameFor(content, &frame);
   if (!frame)
@@ -247,7 +251,7 @@ NS_IMETHODIMP nsTreeBoxObject::GetColumnIndex(const PRUnichar *aColID, PRInt32 *
 
 NS_IMETHODIMP nsTreeBoxObject::GetColumnID(PRInt32 colIndex, nsAString & _retval)
 {
-  _retval = NS_LITERAL_STRING("");
+  _retval.Truncate();
   nsITreeBoxObject* body = GetTreeBody();
   if (body)
     return body->GetColumnID(colIndex, _retval);
@@ -369,14 +373,6 @@ NS_IMETHODIMP nsTreeBoxObject::InvalidateRange(PRInt32 aStart, PRInt32 aEnd)
   nsITreeBoxObject* body = GetTreeBody();
   if (body)
     return body->InvalidateRange(aStart, aEnd);
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsTreeBoxObject::InvalidateScrollbar()
-{
-  nsITreeBoxObject* body = GetTreeBody();
-  if (body)
-    return body->InvalidateScrollbar();
   return NS_OK;
 }
 

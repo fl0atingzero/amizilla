@@ -50,12 +50,8 @@
 #include "nsDirectoryService.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsAppDirectoryServiceDefs.h"
-#include "nsIPref.h"
 
 #define EXE_EXTENSION ".exe" 
-#define USERAGENT_VERSION_PREF "general.useragent.misc"
-#define USERAGENT_VERSION_NS_PREF "general.useragent.vendorSub"
-#define USERAGENT_PREF_PREFIX "rv:"
 #define MOZ_HWND_BROADCAST_MSG_TIMEOUT 5000
 #define MOZ_CLIENT_MAIL_KEY "Software\\Clients\\Mail"
 
@@ -112,29 +108,6 @@ const PRUnichar * nsMapiRegistryUtils::vendorName()
     if (m_vendor.IsEmpty())
         getVarValue(NS_LITERAL_STRING("vendorShortName").get(), m_vendor);
     return m_vendor.get();
-}
-
-const PRUnichar * nsMapiRegistryUtils::versionNo()
-{
-    if (!m_versionNo.IsEmpty())
-        return m_versionNo.get() ;
-
-    nsCOMPtr<nsIPref> prefs = do_GetService(NS_PREF_CONTRACTID);
-    if (prefs) {
-        nsXPIDLCString versionStr ;
-        nsresult rv = prefs->GetCharPref(USERAGENT_VERSION_NS_PREF, getter_Copies(versionStr));
-        if (NS_SUCCEEDED(rv) && versionStr)
-            m_versionNo.AssignWithConversion (versionStr.get()) ;
-        else {
-            rv = prefs->GetCharPref(USERAGENT_VERSION_PREF, getter_Copies(versionStr));
-            if (NS_SUCCEEDED(rv) && versionStr)  {
-                m_versionNo.AssignWithConversion (versionStr.get()) ;
-                m_versionNo.StripChars (USERAGENT_PREF_PREFIX) ;
-            }
-        }
-    }
-
-    return m_versionNo.get() ;
 }
 
 
@@ -230,8 +203,14 @@ PRBool nsMapiRegistryUtils::IsDefaultMailClient()
 {
     if (!isSmartDll() && !isMozDll()) 
         return PR_FALSE;
+    //first try to get the users default mail client
     nsCAutoString name; 
-    GetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Clients\\Mail", "", name);
+    GetRegistryKey(HKEY_CURRENT_USER, "Software\\Clients\\Mail", "", name);
+    //if that fails then get the machine's default client
+    if(name.IsEmpty()){
+        GetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Clients\\Mail", "", name);
+    }
+
     if (!name.IsEmpty()) {
          nsCAutoString keyName("Software\\Clients\\Mail\\");
          keyName += name.get(); 
@@ -467,6 +446,45 @@ nsresult nsMapiRegistryUtils::RestoreBackedUpMapiDll()
     return rv;
 }
 
+nsresult nsMapiRegistryUtils::setMailtoProtocolHandler()
+{
+    // make sure mailto urls go through our application if we are the default
+    // mail application...
+    nsCAutoString appName (NS_ConvertUCS2toUTF8(vendorName()).get());
+
+    nsCAutoString mailAppPath(thisApplication());
+    mailAppPath += " -compose %1";
+
+    nsresult rv = SetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\mailto\\shell\\open\\command", "", (char *)mailAppPath.get());
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCAutoString iconPath(thisApplication());
+    iconPath += ",0";
+    return SetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\mailto\\DefaultIcon", "", (char *)iconPath.get());
+}
+
+nsresult nsMapiRegistryUtils::setNewsProtocolHandler()
+{
+    // make sure news and snews urls go through our application if we are the default
+    // mail application...
+    nsCAutoString appName (NS_ConvertUCS2toUTF8(vendorName()).get());
+
+    nsCAutoString mailAppPath(thisApplication());
+    mailAppPath += " -mail %1";
+
+    nsresult rv = SetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\news\\shell\\open\\command", "", (char *)mailAppPath.get());
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = SetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\snews\\shell\\open\\command", "", (char *)mailAppPath.get());
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCAutoString iconPath(thisApplication());
+    iconPath += ",0";
+    rv = SetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\news\\DefaultIcon", "", (char *)iconPath.get());
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return SetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\snews\\DefaultIcon", "", (char *)iconPath.get());
+}
+
 /** Sets Mozilla as default Mail Client
  */
 nsresult nsMapiRegistryUtils::setDefaultMailClient()
@@ -560,6 +578,21 @@ nsresult nsMapiRegistryUtils::setDefaultMailClient()
     }
 
     if (NS_SUCCEEDED(mailKeySet)) {
+
+#ifdef MOZ_THUNDERBIRD
+        // XXX: Test this out in thunderbird first. Hopefully we can just remove this ifdef and let seamonkey
+        // register the same keys if the feedback is good. 
+
+        // if we succeeded in setting ourselves as the default mapi client, then 
+        // make sure we also set ourselves as the mailto protocol handler for the user...
+        rv = setMailtoProtocolHandler(); 
+        
+        // and set our selves as the default news protocol handler
+        // rv = setNewsProtocolHandler(); // XXX news is not ready to be turned on yet. 
+#endif
+
+        // ignore the error returned by setNewsProtocolHandler and setMailtoProtocolHandler
+
         nsresult desktopKeySet = SetRegistryKey(HKEY_CURRENT_USER, 
                                                 "Software\\Clients\\Mail",
                                                 "", (char *)appName.get());

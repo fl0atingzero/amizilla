@@ -1,36 +1,40 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
 ** Portable safe sprintf code.
@@ -392,7 +396,7 @@ static int cvt_s(SprintfState *ss, const char *s, int width, int prec,
 }
 
 /*
-** BiuldArgArray stands for Numbered Argument list Sprintf
+** BuildArgArray stands for Numbered Argument list Sprintf
 ** for example,
 **      fmp = "%4$i, %2$d, %3s, %1d";
 ** the number must start from 1, and no gap among them
@@ -401,9 +405,9 @@ static int cvt_s(SprintfState *ss, const char *s, int width, int prec,
 static struct NumArgState* BuildArgArray( const char *fmt, va_list ap, int* rv, struct NumArgState* nasArray )
 {
     int number = 0, cn = 0, i;
-    const char* p;
-    char  c;
-    struct NumArgState* nas;
+    const char *p;
+    char c;
+    struct NumArgState *nas;
 
 
     /*
@@ -474,7 +478,7 @@ static struct NumArgState* BuildArgArray( const char *fmt, va_list ap, int* rv, 
         if( c == '%' )  continue;
 
         cn = 0;
-        while( c && c != '$' ){     /* should imporve error check later */
+        while( c && c != '$' ){     /* should improve error check later */
             cn = cn*10 + c - '0';
             c = *p++;
         }
@@ -602,7 +606,7 @@ static struct NumArgState* BuildArgArray( const char *fmt, va_list ap, int* rv, 
 
     if( *rv < 0 ){
         if( nas != nasArray )
-            JS_DELETE( nas );
+            free( nas );
         return NULL;
     }
 
@@ -637,7 +641,7 @@ static struct NumArgState* BuildArgArray( const char *fmt, va_list ap, int* rv, 
 
         default:
             if( nas != nasArray )
-                JS_DELETE( nas );
+                free( nas );
             *rv = -1;
             return NULL;
         }
@@ -670,10 +674,10 @@ static int dosprintf(SprintfState *ss, const char *fmt, va_list ap)
     static char *HEX = "0123456789ABCDEF";
     char *hexp;
     int rv, i;
-    struct NumArgState* nas = NULL;
-    struct NumArgState  nasArray[ NAS_DEFAULT_NUM ];
-    char  pattern[20];
-    const char* dolPt = NULL;  /* in "%4$.2f", dolPt will poiont to . */
+    struct NumArgState *nas = NULL;
+    struct NumArgState nasArray[ NAS_DEFAULT_NUM ];
+    char pattern[20];
+    const char *dolPt = NULL;  /* in "%4$.2f", dolPt will poiont to . */
 
 
     /*
@@ -723,7 +727,7 @@ static int dosprintf(SprintfState *ss, const char *fmt, va_list ap)
 
             if( nas[i-1].type == TYPE_UNKNOWN ){
                 if( nas && ( nas != nasArray ) )
-                    JS_DELETE( nas );
+                    free( nas );
                 return -1;
             }
 
@@ -983,7 +987,7 @@ static int dosprintf(SprintfState *ss, const char *fmt, va_list ap)
     rv = (*ss->stuff)(ss, "\0", 1);
 
     if( nas && ( nas != nasArray ) ){
-        JS_DELETE( nas );
+        free( nas );
     }
 
     return rv;
@@ -1085,7 +1089,7 @@ JS_PUBLIC_API(char *) JS_smprintf(const char *fmt, ...)
 */
 JS_PUBLIC_API(void) JS_smprintf_free(char *mem)
 {
-        JS_DELETE(mem);
+        free(mem);
 }
 
 JS_PUBLIC_API(char *) JS_vsmprintf(const char *fmt, va_list ap)
@@ -1100,7 +1104,7 @@ JS_PUBLIC_API(char *) JS_vsmprintf(const char *fmt, va_list ap)
     rv = dosprintf(&ss, fmt, ap);
     if (rv < 0) {
         if (ss.base) {
-            JS_DELETE(ss.base);
+            free(ss.base);
         }
         return 0;
     }
@@ -1199,7 +1203,7 @@ JS_PUBLIC_API(char *) JS_vsprintf_append(char *last, const char *fmt, va_list ap
     rv = dosprintf(&ss, fmt, ap);
     if (rv < 0) {
         if (ss.base) {
-            JS_DELETE(ss.base);
+            free(ss.base);
         }
         return 0;
     }

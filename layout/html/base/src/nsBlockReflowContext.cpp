@@ -41,6 +41,7 @@
 #include "nsSpaceManager.h"
 #include "nsIFontMetrics.h"
 #include "nsIPresContext.h"
+#include "nsFrameManager.h"
 #include "nsIContent.h"
 #include "nsStyleContext.h"
 #include "nsHTMLReflowCommand.h"
@@ -69,9 +70,7 @@ nsBlockReflowContext::nsBlockReflowContext(nsIPresContext* aPresContext,
   : mPresContext(aPresContext),
     mOuterReflowState(aParentRS),
     mMetrics(aComputeMaxElementWidth),
-    mIsTable(PR_FALSE),
-    mComputeMaximumWidth(aComputeMaximumWidth),
-    mBlockShouldInvalidateItself(PR_FALSE)
+    mComputeMaximumWidth(aComputeMaximumWidth)
 {
   mStyleBorder = nsnull;
   mStyleMargin = nsnull;
@@ -102,24 +101,15 @@ nsBlockReflowContext::ComputeCollapsedTopMargin(nsIPresContext* aPresContext,
   // top-padding then this step is skipped because it will be a margin
   // root.  It is also skipped if the frame is a margin root for other
   // reasons.
-  nsFrameState state;
   if (0 == aRS.mComputedBorderPadding.top &&
-      (aRS.frame->GetFrameState(&state), !(state & NS_BLOCK_MARGIN_ROOT))) {
+      !(aRS.frame->GetStateBits() & NS_BLOCK_MARGIN_ROOT)) {
     nsBlockFrame* bf;
     if (NS_SUCCEEDED(aRS.frame->QueryInterface(kBlockFrameCID,
                                        NS_REINTERPRET_CAST(void**, &bf)))) {
-      nsCompatibility compat;
-      aPresContext->GetCompatibilityMode(&compat);
-
-      const nsStyleText* text = bf->GetStyleText();
-      PRBool isPre = NS_STYLE_WHITESPACE_PRE == text->mWhiteSpace ||
-                     NS_STYLE_WHITESPACE_MOZ_PRE_WRAP == text->mWhiteSpace;
-
       for (nsBlockFrame::line_iterator line = bf->begin_lines(),
                                    line_end = bf->end_lines();
            line != line_end; ++line) {
-        PRBool isEmpty;
-        line->IsEmpty(compat, isPre, &isEmpty);
+        PRBool isEmpty = line->IsEmpty();
         if (line->IsBlock()) {
           // Here is where we recur. Now that we have determined that a
           // generational collapse is required we need to compute the
@@ -166,18 +156,13 @@ nsBlockReflowContext::AlignBlockHorizontally(nscoord                 aWidth,
 
   // Get style unit associated with the left and right margins
   nsStyleUnit leftUnit = mStyleMargin->mMargin.GetLeftUnit();
-  if (eStyleUnit_Inherit == leftUnit) {
-    leftUnit = GetRealMarginLeftUnit();
-  }
   nsStyleUnit rightUnit = mStyleMargin->mMargin.GetRightUnit();
-  if (eStyleUnit_Inherit == rightUnit) {
-    rightUnit = GetRealMarginRightUnit();
-  }
 
   // Apply post-reflow horizontal alignment. When a block element
   // doesn't use it all of the available width then we need to
   // align it using the text-align property.
-  if (NS_UNCONSTRAINEDSIZE != mSpace.width) {
+  if (NS_UNCONSTRAINEDSIZE != mSpace.width &&
+      NS_UNCONSTRAINEDSIZE != mOuterReflowState.mComputedWidth) {
     // It is possible that the object reflowed was given a
     // constrained width and ended up picking a different width
     // (e.g. a table width a set width that ended up larger
@@ -252,41 +237,39 @@ nsBlockReflowContext::AlignBlockHorizontally(nscoord                 aWidth,
 }
 
 static void
-ComputeShrinkwrapMargins(const nsStyleMargin* aStyleMargin, nscoord aWidth, nsMargin& aMargin, nscoord& aXToUpdate) {
+ComputeShrinkwrapMargins(const nsStyleMargin* aStyleMargin, nscoord aWidth,
+                         nsMargin& aMargin, nscoord& aXToUpdate)
+{
   nscoord boxWidth = aWidth;
-  float   leftPct = 0.0;
-  float   rightPct = 0.0;
+  float leftPct = 0.0, rightPct = 0.0;
+  const nsStyleSides& margin = aStyleMargin->mMargin;
   
-  if (eStyleUnit_Percent == aStyleMargin->mMargin.GetLeftUnit()) {
-    nsStyleCoord  leftCoord;
-    
-    aStyleMargin->mMargin.GetLeft(leftCoord);
-    leftPct = leftCoord.GetPercentValue();
-    
+  if (eStyleUnit_Percent == margin.GetLeftUnit()) {
+    nsStyleCoord coord;
+    leftPct = margin.GetLeft(coord).GetPercentValue();
   } else {
     boxWidth += aMargin.left;
   }
   
-  if (eStyleUnit_Percent == aStyleMargin->mMargin.GetRightUnit()) {
-    nsStyleCoord  rightCoord;
-    
-    aStyleMargin->mMargin.GetRight(rightCoord);
-    rightPct = rightCoord.GetPercentValue();
-    
+  if (eStyleUnit_Percent == margin.GetRightUnit()) {
+    nsStyleCoord coord;
+    rightPct = margin.GetRight(coord).GetPercentValue();
   } else {
     boxWidth += aMargin.right;
   }
   
-  // The total shrink wrap width "sww" is calculated by the expression:
+  // The total shrink wrap width "sww" (i.e., the width that the
+  // containing block needs to be to shrink-wrap this block) is
+  // calculated by the expression:
   //   sww = bw + (mp * sww)
-  // where "bw" is the box width (frame width plus margins that aren't percentage
-  // based) and "mp" are the total margin percentages (i.e., the left percentage
-  // value plus the right percentage value)
-  // Solving for "sww" gives us:
+  // where "bw" is the box width (frame width plus margins that aren't
+  // percentage based) and "mp" are the total margin percentages (i.e.,
+  // the left percentage value plus the right percentage value).
+  // Solving for "sww" gives:
   //  sww = bw / (1 - mp)
-  // Note that this is only well defined for "mp" less than 100%
+  // Note that this is only well defined for "mp" less than 100% and 
+  // greater than -100% (XXXldb but we only accept 0 to 100%).
 
-  // XXXldb  Um... percentage margins are based on the containing block width.
   float marginPct = leftPct + rightPct;
   if (marginPct >= 1.0) {
     // Ignore the right percentage and just use the left percentage
@@ -298,14 +281,22 @@ ComputeShrinkwrapMargins(const nsStyleMargin* aStyleMargin, nscoord aWidth, nsMa
   if ((marginPct > 0.0) && (marginPct < 1.0)) {
     double shrinkWrapWidth = float(boxWidth) / (1.0 - marginPct);
     
-    if (eStyleUnit_Percent == aStyleMargin->mMargin.GetLeftUnit()) {
+    if (eStyleUnit_Percent == margin.GetLeftUnit()) {
       aMargin.left = NSToCoordFloor((float)(shrinkWrapWidth * leftPct));
       aXToUpdate += aMargin.left;
     }
-    if (eStyleUnit_Percent == aStyleMargin->mMargin.GetRightUnit()) {
+    if (eStyleUnit_Percent == margin.GetRightUnit()) {
       aMargin.right = NSToCoordFloor((float)(shrinkWrapWidth * rightPct));
     }
   }
+}
+
+static void
+nsPointDtor(nsIPresContext *aPresContext, nsIFrame *aFrame,
+             nsIAtom *aPropertyName, void *aPropertyValue)
+{
+  nsPoint *point = NS_STATIC_CAST(nsPoint*, aPropertyValue);
+  delete point;
 }
 
 nsresult
@@ -327,9 +318,7 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
   // line). In this case the reason will be wrong so we need to check
   // the frame state.
   aFrameRS.reason = eReflowReason_Resize;
-  nsFrameState state;
-  mFrame->GetFrameState(&state);
-  if (NS_FRAME_FIRST_REFLOW & state) {
+  if (NS_FRAME_FIRST_REFLOW & mFrame->GetStateBits()) {
     aFrameRS.reason = eReflowReason_Initial;
   }
   else if (mOuterReflowState.reason == eReflowReason_Incremental) {
@@ -351,7 +340,7 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
       if (type == eReflowType_StyleChanged)
         aFrameRS.reason = eReflowReason_StyleChange;
       else if (type == eReflowType_ReflowDirty &&
-               (state & NS_FRAME_IS_DIRTY) &&
+               (mFrame->GetStateBits() & NS_FRAME_IS_DIRTY) &&
                !frameIsOnReflowPath) {
         aFrameRS.reason = eReflowReason_Dirty;
       }
@@ -361,14 +350,14 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
     aFrameRS.reason = eReflowReason_StyleChange;
   }
   else if (mOuterReflowState.reason == eReflowReason_Dirty) {
-    if (state & NS_FRAME_IS_DIRTY)
+    if (mFrame->GetStateBits() & NS_FRAME_IS_DIRTY)
       aFrameRS.reason = eReflowReason_Dirty;
   }
 
   /* We build a different reflow context based on the width attribute of the block,
-   * if it's a floater.
-   * Auto-width floaters need to have their containing-block size set explicitly,
-   * factoring in other floaters that impact it.  
+   * if it's a float.
+   * Auto-width floats need to have their containing-block size set explicitly,
+   * factoring in other floats that impact it.  
    * It's possible this should be quirks-only.
    * All other blocks proceed normally.
    */
@@ -392,11 +381,29 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
   }
 
   aComputedOffsets = aFrameRS.mComputedOffsets;
+  if (NS_STYLE_POSITION_RELATIVE == display->mPosition) {
+    nsFrameManager *frameManager = mPresContext->FrameManager();
+
+    nsPoint *offsets = NS_STATIC_CAST(nsPoint*,
+      frameManager->GetFrameProperty(mFrame,
+                                     nsLayoutAtoms::computedOffsetProperty,
+                                     0));
+
+    if (offsets)
+      offsets->MoveTo(aComputedOffsets.left, aComputedOffsets.top);
+    else {
+      offsets = new nsPoint(aComputedOffsets.left, aComputedOffsets.top);
+      if (offsets)
+        frameManager->SetFrameProperty(mFrame,
+                                       nsLayoutAtoms::computedOffsetProperty,
+                                       offsets, nsPointDtor);
+    }
+  }
+
   aFrameRS.mLineLayout = nsnull;
   if (!aIsAdjacentWithTop) {
     aFrameRS.mFlags.mIsTopOfPage = PR_FALSE;  // make sure this is cleared
   }
-  mIsTable = NS_STYLE_DISPLAY_TABLE == aFrameRS.mStyleDisplay->mDisplay;
   mComputedWidth = aFrameRS.mComputedWidth;
 
   if (aApplyTopMargin) {
@@ -435,19 +442,15 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
     nscoord frameWidth;
      
     if (NS_UNCONSTRAINEDSIZE == aFrameRS.mComputedWidth) {
-      nsSize  frameSize;
-
       // Use the current frame width
-      mFrame->GetSize(frameSize);
-      frameWidth = frameSize.width;
-
+      frameWidth = mFrame->GetSize().width;
     } else {
       frameWidth = aFrameRS.mComputedWidth +
                    aFrameRS.mComputedBorderPadding.left +
                    aFrameRS.mComputedBorderPadding.right;
     }
 
-    // if this is an unconstrained width reflow, then just place the floater at the left margin
+    // if this is an unconstrained width reflow, then just place the float at the left margin
     if (NS_UNCONSTRAINEDSIZE == mSpace.width)
       x = mSpace.x;
     else
@@ -461,22 +464,31 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
 
   // If it's an auto-width table, then it doesn't behave like other blocks
   // XXX why not for a floating table too?
-  if (mIsTable && !aFrameRS.mStyleDisplay->IsFloating()) {
+  if (aFrameRS.mStyleDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE &&
+      !aFrameRS.mStyleDisplay->IsFloating()) {
     // If this isn't the table's initial reflow, then use its existing
     // width to determine where it will be placed horizontally
     if (aFrameRS.reason != eReflowReason_Initial) {
       nsBlockHorizontalAlign  align;
-      nsSize                  size;
 
-      mFrame->GetSize(size);
       align.mXOffset = x;
-      AlignBlockHorizontally(size.width, align);
+      AlignBlockHorizontally(mFrame->GetSize().width, align);
       // Don't reset "mX". because PlaceBlock() will recompute the
       // x-offset and expects "mX" to be at the left margin edge
       x = align.mXOffset;
     }
   }
 
+   // Compute the translation to be used for adjusting the spacemanagager
+   // coordinate system for the frame.  The spacemanager coordinates are
+   // <b>inside</b> the callers border+padding, but the x/y coordinates
+   // are not (recall that frame coordinates are relative to the parents
+   // origin and that the parents border/padding is <b>inside</b> the
+   // parent frame. Therefore we have to subtract out the parents
+   // border+padding before translating.
+   nscoord tx = x - mOuterReflowState.mComputedBorderPadding.left;
+   nscoord ty = y - mOuterReflowState.mComputedBorderPadding.top;
+ 
   // If the element is relatively positioned, then adjust x and y accordingly
   if (NS_STYLE_POSITION_RELATIVE == aFrameRS.mStyleDisplay->mPosition) {
     x += aFrameRS.mComputedOffsets.left;
@@ -489,7 +501,7 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
   // Position it and its view (if it has one)
   // Note: Use "x" and "y" and not "mX" and "mY" because they more accurately
   // represents where we think the block will be placed
-  mFrame->MoveTo(mPresContext, x, y);
+  mFrame->SetPosition(nsPoint(x, y));
   nsContainerFrame::PositionFrameView(mPresContext, mFrame);
 
 #ifdef DEBUG
@@ -502,15 +514,6 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
   }
 #endif
 
-  // Adjust spacemanager coordinate system for the frame. The
-  // spacemanager coordinates are <b>inside</b> the callers
-  // border+padding, but the x/y coordinates are not (recall that
-  // frame coordinates are relative to the parents origin and that the
-  // parents border/padding is <b>inside</b> the parent
-  // frame. Therefore we have to subtract out the parents
-  // border+padding before translating.
-  nscoord tx = x - mOuterReflowState.mComputedBorderPadding.left;
-  nscoord ty = y - mOuterReflowState.mComputedBorderPadding.top;
   mOuterReflowState.mSpaceManager->Translate(tx, ty);
 
   // See if this is the child's initial reflow and we are supposed to
@@ -595,8 +598,7 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
   }
 #endif
 
-  mFrame->GetFrameState(&state);
-  if (0 == (NS_FRAME_OUTSIDE_CHILDREN & state)) {
+  if (!(NS_FRAME_OUTSIDE_CHILDREN & mFrame->GetStateBits())) {
     // Provide overflow area for child that doesn't have any
     mMetrics.mOverflowArea.x = 0;
     mMetrics.mOverflowArea.y = 0;
@@ -608,11 +610,11 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
   // the NS_FRAME_FIRST_REFLOW bit is cleared so that never give it an
   // initial reflow reason again.
   if (eReflowReason_Initial == aFrameRS.reason) {
-    mFrame->SetFrameState(state & ~NS_FRAME_FIRST_REFLOW);
+    mFrame->RemoveStateBits(NS_FRAME_FIRST_REFLOW);
   }
 
   if (!NS_INLINE_IS_BREAK_BEFORE(aFrameReflowStatus) ||
-      (state & NS_FRAME_OUT_OF_FLOW)) {
+      (mFrame->GetStateBits() & NS_FRAME_OUT_OF_FLOW)) {
     // If frame is complete and has a next-in-flow, we need to delete
     // them now. Do not do this when a break-before is signaled because
     // the frame is going to get reflowed again (and may end up wanting
@@ -625,9 +627,8 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
         // the right parent to do the removal (it's possible that the
         // parent is not this because we are executing pullup code)
 /* XXX promote DeleteChildsNextInFlow to nsIFrame to elminate this cast */
-        nsHTMLContainerFrame* parent;
-        kidNextInFlow->GetParent((nsIFrame**)&parent);
-        parent->DeleteNextInFlowChild(mPresContext, kidNextInFlow);
+        NS_STATIC_CAST(nsHTMLContainerFrame*, kidNextInFlow->GetParent())
+          ->DeleteNextInFlowChild(mPresContext, kidNextInFlow);
       }
     }
   }
@@ -669,8 +670,8 @@ nsBlockReflowContext::PlaceBlock(const nsHTMLReflowState& aReflowState,
   // XXXldb What should really matter is whether there exist non-
   // empty frames in the block (with appropriate whitespace munging).
   // Consider the case where we clip off the overflow with
-  // 'overflow: hidden' (which doesn't currently affect mOverflowArea,
-  // but probably should.
+  // 'overflow: -moz-hidden-unscrollable' (which doesn't currently
+  // affect mOverflowArea, but probably should.
   if ((0 == mMetrics.height) && (0 == mMetrics.mOverflowArea.height)) 
   {
     // Collapse the bottom margin with the top margin that was already
@@ -694,7 +695,7 @@ nsBlockReflowContext::PlaceBlock(const nsHTMLReflowState& aReflowState,
     // always fit. Note: don't force the width to 0
     aInFlowBounds = nsRect(x, y, mMetrics.width, 0);
 
-    // Retain combined area information in case we contain a floater
+    // Retain combined area information in case we contain a float
     // and nothing else.
     aCombinedRect = mMetrics.mOverflowArea;
     aCombinedRect.x += x;
@@ -739,28 +740,50 @@ nsBlockReflowContext::PlaceBlock(const nsHTMLReflowState& aReflowState,
       nsContainerFrame::FinishReflowChild(mFrame, mPresContext, &aReflowState, mMetrics, x, y, 0);
 
       // Adjust the max-element-size in the metrics to take into
-      // account the margins around the block element. Note that we
-      // use the collapsed top and bottom margin values.
+      // account the margins around the block element.
+      // Do not allow auto margins to impact the max-element size
+      // since they are springy and don't really count!
       if (mMetrics.mComputeMEW) {
-        nsMargin maxElemMargin = mMargin;
+        nsMargin maxElemMargin;
+        const nsStyleSides &styleMargin = mStyleMargin->mMargin;
+        nsStyleCoord coord;
+        if (styleMargin.GetLeftUnit() == eStyleUnit_Coord)
+          maxElemMargin.left = styleMargin.GetLeft(coord).GetCoordValue();
+        else
+          maxElemMargin.left = 0;
+        if (styleMargin.GetRightUnit() == eStyleUnit_Coord)
+          maxElemMargin.right = styleMargin.GetRight(coord).GetCoordValue();
+        else
+          maxElemMargin.right = 0;
 
-        if (NS_SHRINKWRAPWIDTH == mComputedWidth) {
-          nscoord dummyXOffset;
-          // Base the margins on the max-element size
-          ComputeShrinkwrapMargins(mStyleMargin, mMetrics.mMaxElementWidth,
-                                   maxElemMargin, dummyXOffset);
-        }
+        nscoord dummyXOffset;
+        // Base the margins on the max-element size
+        ComputeShrinkwrapMargins(mStyleMargin, mMetrics.mMaxElementWidth,
+                                 maxElemMargin, dummyXOffset);
 
-        // Do not allow auto margins to impact the max-element size
-        // since they are springy and don't really count!
-        if ((eStyleUnit_Auto != mStyleMargin->mMargin.GetLeftUnit()) && 
-            (eStyleUnit_Null != mStyleMargin->mMargin.GetLeftUnit())) {
-          mMetrics.mMaxElementWidth += maxElemMargin.left;
-        }
-        if ((eStyleUnit_Auto != mStyleMargin->mMargin.GetRightUnit()) &&
-            (eStyleUnit_Null != mStyleMargin->mMargin.GetRightUnit())) {
-          mMetrics.mMaxElementWidth += maxElemMargin.right;
-        }
+        mMetrics.mMaxElementWidth += maxElemMargin.left + maxElemMargin.right;
+      }
+
+      // do the same for the maximum width
+      if (mComputeMaximumWidth) {
+        nsMargin maxWidthMargin;
+        const nsStyleSides &styleMargin = mStyleMargin->mMargin;
+        nsStyleCoord coord;
+        if (styleMargin.GetLeftUnit() == eStyleUnit_Coord)
+          maxWidthMargin.left = styleMargin.GetLeft(coord).GetCoordValue();
+        else
+          maxWidthMargin.left = 0;
+        if (styleMargin.GetRightUnit() == eStyleUnit_Coord)
+          maxWidthMargin.right = styleMargin.GetRight(coord).GetCoordValue();
+        else
+          maxWidthMargin.right = 0;
+
+        nscoord dummyXOffset;
+        // Base the margins on the maximum width
+        ComputeShrinkwrapMargins(mStyleMargin, mMetrics.mMaximumWidth,
+                                 maxWidthMargin, dummyXOffset);
+
+        mMetrics.mMaximumWidth += maxWidthMargin.left + maxWidthMargin.right;
       }
     }
     else {
@@ -772,42 +795,4 @@ nsBlockReflowContext::PlaceBlock(const nsHTMLReflowState& aReflowState,
   }
 
   return fits;
-}
-
-// If we have an inherited margin its possible that its auto all the
-// way up to the top of the tree. If that is the case, we need to know
-// it.
-nsStyleUnit
-nsBlockReflowContext::GetRealMarginLeftUnit()
-{
-  nsStyleUnit unit = eStyleUnit_Inherit;
-  nsStyleContext* sc = mFrame->GetStyleContext();
-  while (sc && eStyleUnit_Inherit == unit) {
-    // Get parent style context
-    sc = sc->GetParent();
-    if (sc) {
-      const nsStyleMargin* margin = sc->GetStyleMargin();
-      unit = margin->mMargin.GetLeftUnit();
-    }
-  }
-  return unit;
-}
-
-// If we have an inherited margin its possible that its auto all the
-// way up to the top of the tree. If that is the case, we need to know
-// it.
-nsStyleUnit
-nsBlockReflowContext::GetRealMarginRightUnit()
-{
-  nsStyleUnit unit = eStyleUnit_Inherit;
-  nsStyleContext* sc = mFrame->GetStyleContext();
-  while (sc && eStyleUnit_Inherit == unit) {
-    // Get parent style context
-    sc = sc->GetParent();
-    if (sc) {
-      const nsStyleMargin* margin = sc->GetStyleMargin();
-      unit = margin->mMargin.GetRightUnit();
-    }
-  }
-  return unit;
 }

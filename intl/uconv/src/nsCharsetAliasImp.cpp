@@ -51,7 +51,7 @@
 #include "nsCharsetAlias.h"
 
 //--------------------------------------------------------------
-NS_IMPL_ISUPPORTS1(nsCharsetAlias2, nsICharsetAlias);
+NS_IMPL_ISUPPORTS1(nsCharsetAlias2, nsICharsetAlias)
 
 //--------------------------------------------------------------
 nsCharsetAlias2::nsCharsetAlias2()
@@ -101,7 +101,7 @@ NS_IMETHODIMP nsCharsetAlias2::GetPreferred(const nsACString& aAlias,
      //load charsetalias.properties string bundle with all remaining aliases
      // we may need to protect the following section with a lock so we won't call the 
      // 'new nsURLProperties' from two different threads
-     mDelegate = new nsURLProperties( NS_LITERAL_CSTRING("resource:/res/charsetalias.properties") );
+     mDelegate = new nsURLProperties( NS_LITERAL_CSTRING("resource://gre/res/charsetalias.properties") );
      NS_ASSERTION(mDelegate, "cannot create nsURLProperties");
      if(nsnull == mDelegate)
        return NS_ERROR_OUT_OF_MEMORY;
@@ -114,7 +114,7 @@ NS_IMETHODIMP nsCharsetAlias2::GetPreferred(const nsACString& aAlias,
    // string bundles use UTF8 keys
    nsAutoString result;
    nsresult rv = mDelegate->Get(NS_ConvertASCIItoUCS2(aKey), result);
-   oResult = NS_LossyConvertUCS2toASCII(result);
+   LossyAppendUTF16toASCII(result, oResult);
    return rv;
 }
 

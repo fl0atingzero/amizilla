@@ -45,7 +45,8 @@
 #include "nsMimeTypes.h"
 #include "netCore.h"
 #include "nsXPIDLString.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "imgILoader.h"
 
 #include "nsCRT.h"
@@ -58,8 +59,6 @@
 
 #define MAX_BUFFER_SIZE 1024
 
-static NS_DEFINE_IID(kPrefServiceCID, NS_PREF_CID);
-
 #if defined WORDS_BIGENDIAN || defined IS_BIG_ENDIAN
 #define LITTLE_TO_NATIVE16(x) ((((x) & 0xFF) << 8) | ((x) >> 8))
 #else
@@ -67,18 +66,16 @@ static NS_DEFINE_IID(kPrefServiceCID, NS_PREF_CID);
 #endif
 
 nsUnknownDecoder::nsUnknownDecoder()
+  : mBuffer(nsnull)
+  , mBufferLen(0)
+  , mRequireHTMLsuffix(PR_FALSE)
 {
-  mBuffer = nsnull;
-  mBufferLen = 0;
-  mRequireHTMLsuffix = PR_FALSE;
-
-  nsresult rv;
-  nsCOMPtr<nsIPref> pPrefService = do_GetService(kPrefServiceCID, &rv);
-  if (NS_SUCCEEDED(rv)) {
-    rv = pPrefService->GetBoolPref("security.requireHTMLsuffix", &mRequireHTMLsuffix);
+  nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
+  if (prefs) {
+    PRBool val;
+    if (NS_SUCCEEDED(prefs->GetBoolPref("security.requireHTMLsuffix", &val)))
+      mRequireHTMLsuffix = val;
   }
-
-
 }
 
 nsUnknownDecoder::~nsUnknownDecoder()
@@ -95,8 +92,8 @@ nsUnknownDecoder::~nsUnknownDecoder()
 //
 // ----
 
-NS_IMPL_ADDREF(nsUnknownDecoder);
-NS_IMPL_RELEASE(nsUnknownDecoder);
+NS_IMPL_ADDREF(nsUnknownDecoder)
+NS_IMPL_RELEASE(nsUnknownDecoder)
 
 NS_INTERFACE_MAP_BEGIN(nsUnknownDecoder)
    NS_INTERFACE_MAP_ENTRY(nsIStreamConverter)
@@ -312,6 +309,8 @@ nsUnknownDecoder::nsSnifferEntry nsUnknownDecoder::sSnifferEntries[] = {
   // text or whether it's data.
   SNIFFER_ENTRY_WITH_FUNC("#!", &nsUnknownDecoder::LastDitchSniff),
 
+  // XXXbz should (and can) we also include the various ways that <?xml can
+  // appear as UTF-16 and such?  See http://www.w3.org/TR/REC-xml#sec-guessing
   SNIFFER_ENTRY_WITH_FUNC("<?xml", &nsUnknownDecoder::SniffForXML)
 };
 
@@ -389,52 +388,63 @@ PRBool nsUnknownDecoder::SniffForHTML(nsIRequest* aRequest)
     return PR_FALSE;
   }
   
-  // Now look for HTML.  First, we get us a nice nsCAutoString
-  // containing our data in a readonly-ish manner...
-  const CBufDescriptor bufDesc((const char*)mBuffer, PR_TRUE, mBufferLen, mBufferLen);
-  const nsCAutoString str(bufDesc);
-
-  nsCAutoString::const_iterator start, end;
-  str.BeginReading(start);
-  str.EndReading(end);
-  PRUint32 pos = 0; // for Substring ease
+  // Now look for HTML.
+  const char* str = mBuffer;
+  const char* end = mBuffer + mBufferLen;
 
   // skip leading whitespace
-  while (start != end && nsCRT::IsAsciiSpace(*start)) {
-    ++start;
-    ++pos;
+  while (str != end && nsCRT::IsAsciiSpace(*str)) {
+    ++str;
   }
 
   // did we find something like a start tag?
-  if (start == end || *start != '<' || ++start == end) {
+  if (str == end || *str != '<' || ++str == end) {
     return PR_FALSE;
   }
 
-  // advance pos to keep synch with |start|
-  ++pos;
-
   // If we seem to be SGML or XML and we got down here, just pretend we're HTML
-  if (*start == '!' || *start == '?') {
+  if (*str == '!' || *str == '?') {
     mContentType = TEXT_HTML;
     return PR_TRUE;
   }
-
-  nsCaseInsensitiveCStringComparator comparator;
-
-#define MATCHES_TAG(_tagstr) \
-  Substring(str, pos, sizeof(_tagstr) - 1).Equals(_tagstr, comparator)
   
+  PRUint32 bufSize = end - str;
+  // We use sizeof(_tagstr) below because that's the length of _tagstr
+  // with the one char " " or ">" appended.
+#define MATCHES_TAG(_tagstr)                                              \
+  (bufSize >= sizeof(_tagstr) &&                                          \
+   (PL_strncasecmp(str, _tagstr " ", sizeof(_tagstr)) == 0 ||             \
+    PL_strncasecmp(str, _tagstr ">", sizeof(_tagstr)) == 0))
+    
   if (MATCHES_TAG("html")     ||
       MATCHES_TAG("frameset") ||
       MATCHES_TAG("body")     ||
+      MATCHES_TAG("head")     ||
       MATCHES_TAG("script")   ||
-      MATCHES_TAG("a href")   ||
+      MATCHES_TAG("iframe")   ||
+      MATCHES_TAG("a")        ||
       MATCHES_TAG("img")      ||
       MATCHES_TAG("table")    ||
       MATCHES_TAG("title")    ||
+      MATCHES_TAG("link")     ||
+      MATCHES_TAG("base")     ||
+      MATCHES_TAG("style")    ||
       MATCHES_TAG("div")      ||
+      MATCHES_TAG("p")        ||
+      MATCHES_TAG("font")     ||
       MATCHES_TAG("applet")   ||
-      MATCHES_TAG("meta")) {
+      MATCHES_TAG("meta")     ||
+      MATCHES_TAG("center")   ||
+      MATCHES_TAG("form")     ||
+      MATCHES_TAG("isindex")  ||
+      MATCHES_TAG("h1")       ||
+      MATCHES_TAG("h2")       ||
+      MATCHES_TAG("h3")       ||
+      MATCHES_TAG("h4")       ||
+      MATCHES_TAG("h5")       ||
+      MATCHES_TAG("h6")       ||
+      MATCHES_TAG("b")        ||
+      MATCHES_TAG("pre")) {
   
     mContentType = TEXT_HTML;
     return PR_TRUE;
@@ -483,16 +493,39 @@ PRBool nsUnknownDecoder::SniffURI(nsIRequest* aRequest)
   return PR_FALSE;
 }
 
+// This macro is based on RFC 2046 Section 4.1.2.  Treat any char 0-31
+// except the 9-13 range (\t, \n, \v, \f, \r) and char 27 (used by
+// encodings like Shift_JIS) as non-text
+#define IS_TEXT_CHAR(ch)                                     \
+  (((unsigned char)(ch)) > 31 || (9 <= (ch) && (ch) <= 13) || (ch) == 27)
+
 PRBool nsUnknownDecoder::LastDitchSniff(nsIRequest* aRequest)
 {
   // All we can do now is try to guess whether this is text/plain or
   // application/octet-stream
-  //
-  // See if the buffer has any embedded nulls.  If not, then lets just
-  // call it text/plain...
+
+  // First, check for a BOM.  If we see one, assume this is text/plain
+  // in whatever encoding.  If there is a BOM _and_ text we will
+  // always have at least 4 bytes in the buffer (since the 2-byte BOMs
+  // are for 2-byte encodings and the UTF-8 BOM is 3 bytes).
+  if (mBufferLen >= 4) {
+    const unsigned char* buf = (const unsigned char*)mBuffer;
+    if ((buf[0] == 0xFE && buf[1] == 0xFF) || // UTF-16BE
+        (buf[0] == 0xFF && buf[1] == 0xFE) || // UTF-16LE
+        (buf[0] == 0xEF && buf[1] == 0xBB && buf[2] == 0xBF) || // UTF-8
+        (buf[0] == 0 && buf[1] == 0 && buf[2] == 0xFE && buf[3] == 0xFF) || // UCS-4BE
+        (buf[0] == 0 && buf[1] == 0 && buf[2] == 0xFF && buf[3] == 0xFE)) { // UCS-4
+        
+      mContentType = TEXT_PLAIN;
+      return PR_TRUE;
+    }
+  }
+  
+  // Now see whether the buffer has any non-text chars.  If not, then let's
+  // just call it text/plain...
   //
   PRUint32 i;
-  for (i=0; i<mBufferLen && mBuffer[i]; i++);
+  for (i=0; i<mBufferLen && IS_TEXT_CHAR(mBuffer[i]); i++);
 
   if (i == mBufferLen) {
     mContentType = TEXT_PLAIN;
@@ -561,4 +594,14 @@ nsresult nsUnknownDecoder::FireListenerNotifications(nsIRequest* request,
   mBufferLen = 0;
 
   return rv;
+}
+
+void
+nsBinaryDetector::DetermineContentType(nsIRequest* aRequest)
+{
+  LastDitchSniff(aRequest);
+  if (mContentType.Equals(APPLICATION_OCTET_STREAM)) {
+    // We want to guess at it instead
+    mContentType = APPLICATION_GUESS_FROM_EXT;
+  }
 }

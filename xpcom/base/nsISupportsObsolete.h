@@ -44,57 +44,6 @@
 
 #define NS_INIT_REFCNT() NS_INIT_ISUPPORTS()
 
-
-#define NS_DECL_ISUPPORTS_EXPORTED                                            \
-public:                                                                       \
-  NS_EXPORT NS_IMETHOD QueryInterface(REFNSIID aIID,                          \
-                            void** aInstancePtr);                             \
-  NS_EXPORT NS_IMETHOD_(nsrefcnt) AddRef(void);                               \
-  NS_EXPORT NS_IMETHOD_(nsrefcnt) Release(void);                              \
-protected:                                                                    \
-  nsrefcnt mRefCnt;                                                           \
-  NS_DECL_OWNINGTHREAD                                                        \
-public:
-
-
-#ifdef NS_DEBUG
-
-/*
- * Adding this debug-only function as per bug #26803.  If you are debugging
- * and this function returns wrong refcounts, fix the objects |AddRef()| and
- * |Release()| to do the right thing.
- *
- * Of course, this function is only available for debug builds.
- */
-
-inline
-nsrefcnt
-NS_DebugGetRefCount( nsISupports* obj )
-    // Warning: don't apply this to an object whose refcount is
-    //  |0| or not yet initialized ... it may be destroyed.
-  {
-    nsrefcnt ref_count = 0;
-
-    if ( obj )
-      {
-          // |AddRef()| and |Release()| are supposed to return
-          //  the new refcount of the object
-        obj->AddRef();
-        ref_count = obj->Release();
-          // Can't use |NS_[ADDREF|RELEASE]| since (a) they _don't_ return
-          //  the refcount, and (b) we don't want to log these guaranteed
-          //  balanced calls.
-
-        NS_ASSERTION(ref_count,
-                     "Oops! Calling |NS_DebugGetRefCount()| probably just "
-                     "destroyed this object.");
-      }
-
-     return ref_count;
-  }
-
-#endif // NS_DEBUG
-
 /**
  * Macro to free an array of pointers to nsISupports (or classes
  * derived from it).  A convenience wrapper around
@@ -139,21 +88,24 @@ _method(_type aResult) \
  * special for strings to get/set char* strings
  * using PL_strdup and PR_FREEIF
  */
-#define NS_METHOD_GETTER_STR(_method,_member) \
-_method(char* *aString)\
-{\
+#define NS_METHOD_GETTER_STR(_method,_member)   \
+_method(char* *aString)                         \
+{                                               \
     if (!aString) return NS_ERROR_NULL_POINTER; \
-    *aString = PL_strdup(_member); \
-    return NS_OK; \
+    if (!(*aString = PL_strdup(_member)))       \
+      return NS_ERROR_OUT_OF_MEMORY;            \
+    return NS_OK;                               \
 }
 
 #define NS_METHOD_SETTER_STR(_method, _member) \
-_method(const char *aString)\
-{\
-    PR_FREEIF(_member);\
-    if (aString) _member = PL_strdup(aString); \
-    else _member = nsnull;\
-    return NS_OK; \
+_method(const char *aString)                   \
+{                                              \
+    if (_member) PR_Free(_member);             \
+    if (!aString)                              \
+      _member = nsnull;                        \
+    else if (!(_member = PL_strdup(aString)))  \
+      return NS_ERROR_OUT_OF_MEMORY;           \
+    return NS_OK;                              \
 }
 
 /* Getter/Setter macros.

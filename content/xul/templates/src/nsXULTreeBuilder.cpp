@@ -22,7 +22,7 @@
  * Contributor(s):
  *   Chris Waterson <waterson@netscape.com>
  *   Ben Goodger <ben@netscape.com>
- *   Jan Varga <varga@utcru.sk>
+ *   Jan Varga <varga@nixcorp.com>
  *
  *
  * Alternatively, the contents of this file may be used under the terms of
@@ -41,6 +41,7 @@
 
 #include "nscore.h"
 #include "nsIContent.h"
+#include "nsINodeInfo.h"
 #include "nsIDOMElement.h"
 #include "nsILocalStore.h"
 #include "nsIBoxObject.h"
@@ -70,6 +71,7 @@
 #include "nsVoidArray.h"
 #include "nsUnicharUtils.h"
 #include "nsINameSpaceManager.h"
+#include "nsIDOMClassInfo.h"
 
 // For security check
 #include "nsIDocument.h"
@@ -92,7 +94,7 @@ public:
     // nsITreeView
     NS_DECL_NSITREEVIEW
 
-    NS_IMETHOD DocumentWillBeDestroyed(nsIDocument *aDocument);
+    virtual void DocumentWillBeDestroyed(nsIDocument *aDocument);
 
 protected:
     friend NS_IMETHODIMP
@@ -308,9 +310,16 @@ NS_NewXULTreeBuilder(nsISupports* aOuter, REFNSIID aIID, void** aResult)
     return rv;
 }
 
-NS_IMPL_ISUPPORTS_INHERITED2(nsXULTreeBuilder, nsXULTemplateBuilder,
-                             nsIXULTreeBuilder,
-                             nsITreeView)
+NS_IMPL_ADDREF(nsXULTreeBuilder)
+NS_IMPL_RELEASE(nsXULTreeBuilder)
+
+NS_INTERFACE_MAP_BEGIN(nsXULTreeBuilder)
+  NS_INTERFACE_MAP_ENTRY(nsIXULTreeBuilder)
+  NS_INTERFACE_MAP_ENTRY(nsITreeView)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIXULTreeBuilder)
+  NS_INTERFACE_MAP_ENTRY_DOM_CLASSINFO(XULTreeBuilder)
+NS_INTERFACE_MAP_END_INHERITING(nsXULTemplateBuilder)
+
 
 nsXULTreeBuilder::nsXULTreeBuilder()
     : mSortVariable(0),
@@ -448,21 +457,21 @@ nsXULTreeBuilder::Sort(nsIDOMElement* aElement)
     header->SetAttr(kNameSpaceID_None, nsXULAtoms::sortActive, NS_LITERAL_STRING("true"), PR_TRUE);
 
     // Unset sort attribute(s) on the other columns
-    nsCOMPtr<nsIContent> parentContent;
-    header->GetParent(getter_AddRefs(parentContent));
+    nsIContent* parentContent = header->GetParent();
     if (parentContent) {
-        nsCOMPtr<nsIAtom> parentTag;
-        parentContent->GetTag(getter_AddRefs(parentTag));
-        if (parentTag == nsXULAtoms::treecols) {
-            PRInt32 numChildren;
-            parentContent->ChildCount(numChildren);
-            for (int i = 0; i < numChildren; ++i) {
-                nsCOMPtr<nsIContent> childContent;
-                nsCOMPtr<nsIAtom> childTag;
-                parentContent->ChildAt(i, getter_AddRefs(childContent));
+        nsINodeInfo *ni = parentContent->GetNodeInfo();
+
+        if (ni && ni->Equals(nsXULAtoms::treecols, kNameSpaceID_XUL)) {
+            PRUint32 numChildren = parentContent->GetChildCount();
+            for (PRUint32 i = 0; i < numChildren; ++i) {
+                nsIContent *childContent = parentContent->GetChildAt(i);
+
                 if (childContent) {
-                    childContent->GetTag(getter_AddRefs(childTag));
-                    if (childTag == nsXULAtoms::treecol && childContent != header) {
+                    ni = childContent->GetNodeInfo();
+
+                    if (ni &&
+                        ni->Equals(nsXULAtoms::treecol, kNameSpaceID_XUL) &&
+                        childContent != header) {
                         childContent->UnsetAttr(kNameSpaceID_None,
                                                 nsXULAtoms::sortDirection, PR_TRUE);
                         childContent->UnsetAttr(kNameSpaceID_None,
@@ -800,20 +809,22 @@ nsXULTreeBuilder::SetTree(nsITreeBoxObject* tree)
 
     mBoxObject = tree;
 
-    nsCOMPtr<nsIDocument> doc;
-    mRoot->GetDocument(getter_AddRefs(doc));
+    // If this is teardown time, then we're done.
+    if (! mBoxObject)
+        return NS_OK;
+
+    nsCOMPtr<nsIDocument> doc = mRoot->GetDocument();
     NS_ASSERTION(doc, "element has no document");
     if (!doc)
         return NS_ERROR_UNEXPECTED;
 
     // Grab the doc's principal...
-    nsCOMPtr<nsIPrincipal> docPrincipal;
-    nsresult rv = doc->GetPrincipal(getter_AddRefs(docPrincipal));
-    if (NS_FAILED(rv)) 
-        return rv;
+    nsIPrincipal* docPrincipal = doc->GetPrincipal();
+    if (!docPrincipal)
+        return NS_ERROR_FAILURE;
 
     PRBool isTrusted = PR_FALSE;
-    rv = IsSystemPrincipal(docPrincipal.get(), &isTrusted);
+    nsresult rv = IsSystemPrincipal(docPrincipal, &isTrusted);
     if (NS_SUCCEEDED(rv) && isTrusted) {
         // Get the datasource we intend to use to remember open state.
         nsAutoString datasourceStr;
@@ -1058,13 +1069,13 @@ nsXULTreeBuilder::PerformActionOnCell(const PRUnichar* action, PRInt32 row, cons
 }
 
 
-NS_IMETHODIMP
+void
 nsXULTreeBuilder::DocumentWillBeDestroyed(nsIDocument* aDocument)
 {
     if (mObservers)
         mObservers->Clear();
 
-    return nsXULTemplateBuilder::DocumentWillBeDestroyed(aDocument);
+    nsXULTemplateBuilder::DocumentWillBeDestroyed(aDocument);
 }
 
  
@@ -1101,11 +1112,12 @@ nsXULTreeBuilder::ReplaceMatch(nsIRDFResource* aMember,
             // Remove the rows from the view
             PRInt32 row = iter.GetRowIndex();
             PRInt32 delta = mRows.GetSubtreeSizeFor(iter);
-            mRows.RemoveRowAt(iter);
-
-            // XXX Could potentially invalidate the iterator's
-            // mContainer[Type|State] caching here, but it'll work
-            // itself out.
+            if (mRows.RemoveRowAt(iter) == 0 && iter.GetRowIndex() >= 0) {
+              // In this case iter now points to its parent
+              // Invalidate the row's cached fill state
+              iter->mContainerFill = nsTreeRows::eContainerFill_Unknown;
+              mBoxObject->InvalidatePrimaryCell(iter.GetRowIndex());
+            }
 
             // Notify the box object
             mBoxObject->RowCountChanged(row, -delta - 1);
@@ -1253,14 +1265,12 @@ nsXULTreeBuilder::EnsureSortVariables()
     if (!treecols)
         return NS_OK;
 
-    PRInt32 count;
-    treecols->ChildCount(count);
-    for (PRInt32 i = 0; i < count; i++) {
-        nsCOMPtr<nsIContent> child;
-        treecols->ChildAt(i, getter_AddRefs(child));
-        nsCOMPtr<nsIAtom> tag;
-        child->GetTag(getter_AddRefs(tag));
-        if (tag == nsXULAtoms::treecol) {
+    PRUint32 count = treecols->GetChildCount();
+    for (PRUint32 i = 0; i < count; ++i) {
+        nsIContent *child = treecols->GetChildAt(i);
+
+        nsINodeInfo *ni = child->GetNodeInfo();
+        if (ni && ni->Equals(nsXULAtoms::treecol, kNameSpaceID_XUL)) {
             nsAutoString sortActive;
             child->GetAttr(kNameSpaceID_None, nsXULAtoms::sortActive, sortActive);
             if (sortActive == NS_LITERAL_STRING("true")) {
@@ -1334,22 +1344,22 @@ nsXULTreeBuilder::RebuildAll()
     if (! mRoot)
         return NS_ERROR_NOT_INITIALIZED;
 
-    nsCOMPtr<nsIDocument> doc;
-    nsresult rv = mRoot->GetDocument(getter_AddRefs(doc));
-    if (NS_FAILED(rv)) return rv;
+    nsCOMPtr<nsIDocument> doc = mRoot->GetDocument();
 
     // Bail out early if we are being torn down.
     if (!doc)
         return NS_OK;
 
-    if (mBoxObject) {
-        mBoxObject->BeginUpdateBatch();
-    }
-
+    PRInt32 count = mRows.Count();
     mRows.Clear();
     mConflictSet.Clear();
 
-    rv = CompileRules();
+    if (mBoxObject) {
+        mBoxObject->BeginUpdateBatch();
+        mBoxObject->RowCountChanged(0, -count);
+    }
+
+    nsresult rv = CompileRules();
     if (NS_FAILED(rv)) return rv;
 
     // Seed the rule network with assignments for the tree row
@@ -1388,7 +1398,7 @@ nsXULTreeBuilder::CompileCondition(nsIAtom* aTag,
 {
     nsresult rv;
 
-    if (aTag == nsXULAtoms::treeitem)
+    if (aTag == nsXULAtoms::content || aTag == nsXULAtoms::treeitem)
         rv = CompileTreeRowCondition(aRule, aCondition, aParentNode, aResult);
     else
         rv = nsXULTemplateBuilder::CompileCondition(aTag, aRule, aCondition, aParentNode, aResult);
@@ -1402,9 +1412,9 @@ nsXULTreeBuilder::CompileTreeRowCondition(nsTemplateRule* aRule,
                                                   InnerNode* aParentNode,
                                                   TestNode** aResult)
 {
-    // Compile a <treeitem> condition, which must be of the form:
+    // Compile a <content> condition, which must be of the form:
     //
-    //   <treeitem uri="?uri" />
+    //   <content uri="?uri" />
     //
     // Right now, exactly one <row> condition is required per rule. It
     // creates an nsTreeRowTestNode, binding the test's variable
@@ -1475,8 +1485,8 @@ nsXULTreeBuilder::GetTemplateActionRowFor(PRInt32 aRow, nsIContent** aResult)
 
 nsresult
 nsXULTreeBuilder::GetTemplateActionCellFor(PRInt32 aRow,
-                                               const PRUnichar* aColID,
-                                               nsIContent** aResult)
+                                           const PRUnichar* aColID,
+                                           nsIContent** aResult)
 {
     *aResult = nsnull;
 
@@ -1487,22 +1497,21 @@ nsXULTreeBuilder::GetTemplateActionCellFor(PRInt32 aRow,
         if (mBoxObject)
             mBoxObject->GetColumnIndex(aColID, &colIndex);
 
-        PRInt32 count;
-        row->ChildCount(count);
-        PRInt32 j = 0;
-        for (PRInt32 i = 0; i < count; ++i) {
-            nsCOMPtr<nsIContent> child;
-            row->ChildAt(i, getter_AddRefs(child));
-            nsCOMPtr<nsIAtom> tag;
-            child->GetTag(getter_AddRefs(tag));
-            if (tag == nsXULAtoms::treecell) {
+        PRUint32 count = row->GetChildCount();
+        PRUint32 j = 0;
+        for (PRUint32 i = 0; i < count; ++i) {
+            nsIContent *child = row->GetChildAt(i);
+
+            nsINodeInfo *ni = child->GetNodeInfo();
+
+            if (ni && ni->Equals(nsXULAtoms::treecell, kNameSpaceID_XUL)) {
                 nsAutoString ref;
                 child->GetAttr(kNameSpaceID_None, nsXULAtoms::ref, ref);
                 if (!ref.IsEmpty() && ref.Equals(aColID)) {
                     *aResult = child;
                     break;
                 }
-                else if (j == colIndex)
+                else if (j == (PRUint32)colIndex)
                     *aResult = child;
                 j++;
             }
@@ -1997,7 +2006,7 @@ nsXULTreeBuilder::CompareMatches(nsTemplateMatch* aLeft, nsTemplateMatch* aRight
                 r->GetLength(&rlen);
                 
                 mCollation->CompareRawSortKey(lval, llen, rval, rlen, &result);
-                return result;
+                return result * mSortDirection;
             }
         }
     }
@@ -2083,7 +2092,7 @@ nsXULTreeBuilder::Drop(PRInt32 row, PRInt32 orient)
                 if (orient == nsITreeView::inDropOn)
                     observer->CanDropOn(row, &canDrop);
                 else
-                    observer->CanDropBeforeAfter(row, orient, &canDrop);
+                    observer->CanDropBeforeAfter(row, orient == nsITreeView::inDropBefore, &canDrop);
                 if (canDrop)
                     observer->OnDrop(row, orient);
             }

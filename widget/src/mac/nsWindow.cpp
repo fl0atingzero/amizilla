@@ -342,7 +342,7 @@ nsWindow::~nsWindow()
 	}
 }
 
-NS_IMPL_ISUPPORTS_INHERITED2(nsWindow, nsBaseWidget, nsIKBStateControl, nsIPluginWidget);
+NS_IMPL_ISUPPORTS_INHERITED2(nsWindow, nsBaseWidget, nsIKBStateControl, nsIPluginWidget)
 
 //-------------------------------------------------------------------------
 //
@@ -693,6 +693,19 @@ nsIMenuBar* nsWindow::GetMenuBar()
   return mMenuBar;
 }
 
+PRBool OnJaguarOrLater() // Return true if we are on Mac OS X 10.2 or later
+{
+    static PRBool gInitVer = PR_FALSE;
+    static PRBool gOnJaguarOrLater = PR_FALSE;
+    if(!gInitVer)
+    {
+        long version;
+        OSErr err = ::Gestalt(gestaltSystemVersion, &version);
+        gOnJaguarOrLater = (err == noErr && version >= 0x00001020);
+        gInitVer = PR_TRUE;
+    }
+    return gOnJaguarOrLater;
+}
 
 //
 // SetCursor
@@ -710,7 +723,7 @@ NS_METHOD nsWindow::SetCursor(nsCursor aCursor)
     return NS_OK;
   }
 
-  if ( gCursorSpinner == nsnull)
+  if ( gCursorSpinner == nsnull && OnJaguarOrLater())
   {
       gCursorSpinner = new CursorSpinner();
   }
@@ -751,19 +764,26 @@ NS_METHOD nsWindow::SetCursor(nsCursor aCursor)
     case eCursor_count_down:          cursor = kThemeCountingDownHandCursor; break;
     case eCursor_count_up_down:       cursor = kThemeCountingUpAndDownHandCursor; break;
     case eCursor_zoom_in:             cursor = 149; break;
-    case eCursor_zoom_out:            cursor = 150; break;        
+    case eCursor_zoom_out:            cursor = 150; break;
+    default:                          cursor = kThemeArrowCursor; break;
   }
 
-  if (aCursor == eCursor_spinning)
+  //animated cursors cause crash on Mac OS X 10.1 when Japanese Kotorei input method is enabled
+  if ( OnJaguarOrLater() )
   {
+    if (aCursor == eCursor_spinning)
+    {
       gCursorSpinner->StartSpinCursor();
-  }
-  else
-  {
+    }
+    else
+    {
       gCursorSpinner->StopSpinCursor();
       nsWindow::SetCursorResource(cursor);
+    }
+  } else {
+    nsWindow::SetCursorResource(cursor);
   }
- 
+
   return NS_OK;
   
 } // nsWindow::SetCursor
@@ -1698,14 +1718,9 @@ void nsWindow::UpdateWidget(nsRect& aRect, nsIRenderingContext* aContext)
 		return;
 
 	// initialize the paint event
-	nsPaintEvent paintEvent;
-	paintEvent.eventStructType  = NS_PAINT_EVENT;   // nsEvent
-	paintEvent.message          = NS_PAINT;
-	paintEvent.widget           = this;             // nsGUIEvent
-	paintEvent.nativeMsg        = NULL;
+	nsPaintEvent paintEvent(NS_PAINT, this);
 	paintEvent.renderingContext = aContext;         // nsPaintEvent
 	paintEvent.rect             = &aRect;
-  paintEvent.region           = nsnull;
 
 	// draw the widget
 	StartDraw(aContext);
@@ -2098,16 +2113,9 @@ PRBool nsWindow::DispatchMouseEvent(nsMouseEvent &aEvent)
 PRBool nsWindow::ReportDestroyEvent()
 {
 	// nsEvent
-	nsGUIEvent moveEvent;
-	moveEvent.eventStructType = NS_GUI_EVENT;
+	nsGUIEvent moveEvent(NS_DESTROY, this);
 	moveEvent.message			= NS_DESTROY;
-	moveEvent.point.x			= 0;
-	moveEvent.point.y			= 0;
 	moveEvent.time				= PR_IntervalNow();
-
-	// nsGUIEvent
-	moveEvent.widget			= this;
-	moveEvent.nativeMsg		= nsnull;
 
 	// dispatch event
 	return (DispatchWindowEvent(moveEvent));
@@ -2120,16 +2128,10 @@ PRBool nsWindow::ReportDestroyEvent()
 PRBool nsWindow::ReportMoveEvent()
 {
 	// nsEvent
-	nsGUIEvent moveEvent;
-	moveEvent.eventStructType = NS_GUI_EVENT;
-	moveEvent.message			= NS_MOVE;
+	nsGUIEvent moveEvent(NS_MOVE, this);
 	moveEvent.point.x			= mBounds.x;
 	moveEvent.point.y			= mBounds.y;
 	moveEvent.time				= PR_IntervalNow();
-
-	// nsGUIEvent
-	moveEvent.widget			= this;
-	moveEvent.nativeMsg		= nsnull;
 
 	// dispatch event
 	return (DispatchWindowEvent(moveEvent));
@@ -2142,16 +2144,8 @@ PRBool nsWindow::ReportMoveEvent()
 PRBool nsWindow::ReportSizeEvent()
 {
 	// nsEvent
-	nsSizeEvent sizeEvent;
-	sizeEvent.eventStructType = NS_SIZE_EVENT;
-	sizeEvent.message			= NS_SIZE;
-	sizeEvent.point.x			= 0;
-	sizeEvent.point.y			= 0;
+	nsSizeEvent sizeEvent(NS_SIZE, this);
 	sizeEvent.time				= PR_IntervalNow();
-
-	// nsGUIEvent
-	sizeEvent.widget			= this;
-	sizeEvent.nativeMsg		= nsnull;
 
 	// nsSizeEvent
 	sizeEvent.windowSize	= &mBounds;
@@ -2522,7 +2516,7 @@ NS_IMETHODIMP nsWindow::SetTitle(const nsString& title)
   return NS_OK;
 }
 
-NS_IMETHODIMP nsWindow::GetAttention()
+NS_IMETHODIMP nsWindow::GetAttention(PRInt32 aCycleCount)
 {
         // Since the Mac doesn't consider each window a separate process this call functions
 	// slightly different than on other platforms.  We first check to see if we're the

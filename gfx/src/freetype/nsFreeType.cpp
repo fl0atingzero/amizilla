@@ -115,9 +115,15 @@ FtFuncList nsFreeType2::FtFuncs [] = {
   {"FTC_Manager_Done",        NS_FT2_OFFSET(nsFTC_Manager_Done),        PR_TRUE},
   {"FTC_Manager_New",         NS_FT2_OFFSET(nsFTC_Manager_New),         PR_TRUE},
   {"FTC_Image_Cache_New",     NS_FT2_OFFSET(nsFTC_Image_Cache_New),     PR_TRUE},
+// #ifdef MOZ_SVG
+  {"FT_Glyph_Transform",      NS_FT2_OFFSET(nsFT_Glyph_Transform),      PR_TRUE},
+  {"FT_Get_Kerning",          NS_FT2_OFFSET(nsFT_Get_Kerning),          PR_TRUE},
+  {"FT_Glyph_Copy",           NS_FT2_OFFSET(nsFT_Glyph_Copy),           PR_TRUE},
+  {"FT_Glyph_To_Bitmap",      NS_FT2_OFFSET(nsFT_Glyph_To_Bitmap),      PR_TRUE},
+// #endif
   {"FT_Get_First_Char",       NS_FT2_OFFSET(nsFT_Get_First_Char),       PR_FALSE},
   {"FT_Get_Next_Char",        NS_FT2_OFFSET(nsFT_Get_Next_Char),        PR_FALSE},
-  {nsnull,                    0, 0},
+  {nsnull,                    0, 0}
 };
 
 nsTTFontEncoderInfo FEI_Adobe_Symbol_Encoding = {
@@ -164,7 +170,7 @@ nsTTFontEncoderInfo FEI_windows_1252 = {
 //
 ///////////////////////////////////////////////////////////////////////
 
-NS_IMPL_ISUPPORTS1(nsFreeType2, nsIFreeType2);
+NS_IMPL_ISUPPORTS1(nsFreeType2, nsIFreeType2)
 
 //
 // Since the Freetype2 library may not be available on the user's
@@ -320,6 +326,44 @@ nsFreeType2::ImageCacheNew(FTC_Manager manager, FTC_Image_Cache *cache)
   FT_Error error = nsFTC_Image_Cache_New(manager, cache);
   return error ? NS_ERROR_FAILURE : NS_OK;
 } 
+
+// #ifdef MOZ_SVG
+NS_IMETHODIMP
+nsFreeType2::GlyphTransform(FT_Glyph glyph, FT_Matrix * matrix, FT_Vector * delta)
+{
+  // call the FreeType2 function via the function pointer
+  FT_Error error = nsFT_Glyph_Transform(glyph, matrix, delta);
+  return error ? NS_ERROR_FAILURE : NS_OK;
+}
+
+NS_IMETHODIMP
+nsFreeType2::GetKerning(FT_Face face, FT_UInt left_glyph, FT_UInt right_glyph,
+                        FT_UInt kern_mode, FT_Vector *akerning)
+{
+  // call the FreeType2 function via the function pointer
+  FT_Error error = nsFT_Get_Kerning(face, left_glyph, right_glyph,
+                                    kern_mode, akerning);
+  return error ? NS_ERROR_FAILURE : NS_OK;
+}
+
+NS_IMETHODIMP
+nsFreeType2::GlyphCopy(FT_Glyph source, FT_Glyph *target)
+{
+  // call the FreeType2 function via the function pointer
+  FT_Error error = nsFT_Glyph_Copy(source, target);
+  return error ? NS_ERROR_FAILURE : NS_OK;
+}
+
+NS_IMETHODIMP
+nsFreeType2::GlyphToBitmap(FT_Glyph *the_glyph, FT_Render_Mode render_mode,
+                           FT_Vector * origin, FT_Bool destroy)
+{
+  // call the FreeType2 function via the function pointer
+  FT_Error error = nsFT_Glyph_To_Bitmap(the_glyph, render_mode, origin, destroy);
+  return error ? NS_ERROR_FAILURE : NS_OK;
+}
+
+// #endif
 
 NS_IMETHODIMP
 nsFreeType2::GetFirstChar(FT_Face face, FT_UInt *gindex, FT_ULong *charcode)
@@ -944,7 +988,7 @@ PRBool
 nsFreeTypeFace::FreeFace(nsHashKey* aKey, void* aData, void* aClosure)
 {
   nsFreeTypeFace *face = (nsFreeTypeFace*) aData;
-  delete face;
+  NS_RELEASE(face);
 
   return PR_TRUE;
 }
@@ -1037,9 +1081,12 @@ nsFreeTypeGetFaceID(nsFontCatalogEntry *aFce)
     NS_ASSERTION(face, "memory error while creating nsFreeTypeFace");
     if (!face)
       return nsnull;
+    NS_ADDREF(face);
     nsresult rv = face->Init(aFce);
-    if (NS_FAILED(rv))
+    if (NS_FAILED(rv)) {
+      NS_RELEASE(face);
       return nsnull;
+    }
     gFreeTypeFaces->Put(&key, face);
   }
   return face;

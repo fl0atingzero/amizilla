@@ -19,6 +19,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Darin Fisher <darin@meer.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -38,24 +39,45 @@
 #define nsCookiePermission_h__
 
 #include "nsICookiePermission.h"
-#include "nsIDOMWindow.h"
-#include "nsCOMPtr.h"
 #include "nsIPermissionManager.h"
+#include "nsIObserver.h"
+#include "nsCOMPtr.h"
+#include "nsInt64.h"
+#include "prlong.h"
 
-#include "nsIURI.h"
+class nsIPrefBranch;
 
 class nsCookiePermission : public nsICookiePermission
+                         , public nsIObserver
 {
 public:
-  nsCookiePermission();
-  virtual ~nsCookiePermission();
-  nsresult Init();
-
   NS_DECL_ISUPPORTS
   NS_DECL_NSICOOKIEPERMISSION
+  NS_DECL_NSIOBSERVER
+
+  nsCookiePermission() 
+    : mCookiesLifetimeSec(LL_MAXINT)
+    , mCookiesLifetimePolicy(LL_MAXINT)
+    , mCookiesAlwaysAcceptSession(PR_FALSE)
+#ifdef MOZ_MAIL_NEWS
+    , mCookiesDisabledForMailNews(PR_TRUE)
+#endif
+    {}
+  virtual ~nsCookiePermission() {}
+
+  nsresult Init();
+  void     PrefChanged(nsIPrefBranch *, const char *);
 
 private:
-  nsCOMPtr<nsIPermissionManager> mPermissionManager;
+  nsCOMPtr<nsIPermissionManager> mPermMgr;
+
+  nsInt64      mCookiesLifetimeSec;            // lifetime limit specified in seconds
+  PRUint8      mCookiesLifetimePolicy;         // pref for how long cookies are stored
+  PRPackedBool mCookiesAlwaysAcceptSession;    // don't prompt for session cookies
+#ifdef MOZ_MAIL_NEWS
+  PRPackedBool mCookiesDisabledForMailNews;
+#endif
+
 };
 
 // {CE002B28-92B7-4701-8621-CC925866FB87}

@@ -50,7 +50,7 @@
 #include "nsVoidArray.h"
 #include "nsHTMLReflowCommand.h"
 #include "nsHTMLContainerFrame.h"
-#include "nsIFrameManager.h"
+#include "nsFrameManager.h"
 #include "nsIPresShell.h"
 #include "nsCOMPtr.h"
 #include "nsLayoutAtoms.h"
@@ -63,8 +63,6 @@
 #include "nsTransform2D.h"
 #include "nsRegion.h"
 #include "nsLayoutErrors.h"
-
-static NS_DEFINE_CID(kRegionCID, NS_REGION_CID);
 
 #ifdef NS_DEBUG
 #undef NOISY
@@ -93,10 +91,8 @@ nsContainerFrame::Init(nsIPresContext*  aPresContext,
     // Make sure we copy bits from our prev-in-flow that will affect
     // us. A continuation for a container frame needs to know if it
     // has a child with a view so that we'll properly reposition it.
-    nsFrameState state;
-    aPrevInFlow->GetFrameState(&state);
-    if (state & NS_FRAME_HAS_CHILD_WITH_VIEW)
-      mState |= NS_FRAME_HAS_CHILD_WITH_VIEW;
+    if (aPrevInFlow->GetStateBits() & NS_FRAME_HAS_CHILD_WITH_VIEW)
+      AddStateBits(NS_FRAME_HAS_CHILD_WITH_VIEW);
   }
   return rv;
 }
@@ -126,14 +122,43 @@ nsContainerFrame::SetInitialChildList(nsIPresContext* aPresContext,
   return result;
 }
 
+static void
+CleanupGeneratedContentIn(nsIContent* aParent, nsIFrame* aRoot) {
+  nsIAtom* frameList = nsnull;
+  PRInt32 listIndex = 0;
+  do {
+    nsIFrame* child = aRoot->GetFirstChild(frameList);
+    while (child) {
+      nsIContent* content = child->GetContent();
+      if (content && content != aParent) {
+        content->SetParent(nsnull);
+        content->SetDocument(nsnull, PR_TRUE, PR_TRUE);
+      }
+      ::CleanupGeneratedContentIn(aParent, child);
+      child = child->GetNextSibling();
+    }
+    frameList = aRoot->GetAdditionalChildListName(listIndex++);
+  } while (frameList);
+}
+
 NS_IMETHODIMP
 nsContainerFrame::Destroy(nsIPresContext* aPresContext)
 {
   // Prevent event dispatch during destruction
   if (HasView()) {
-    GetView(aPresContext)->SetClientData(nsnull);
+    GetView()->SetClientData(nsnull);
   }
 
+  if (mState & NS_FRAME_GENERATED_CONTENT) {
+    // Make sure all the content nodes for the generated content inside
+    // this frame know it's going away.
+    // XXXbz would this be better done via a global structure in
+    // nsCSSFrameConstructor that could key off of
+    // GeneratedContentFrameRemoved or something?  The problem is that
+    // our kids are gone by the time that's called.
+    ::CleanupGeneratedContentIn(mContent, this);
+  }
+  
   // Delete the primary child list
   mFrames.DestroyFrames(aPresContext);
   
@@ -148,39 +173,28 @@ nsContainerFrame::Destroy(nsIPresContext* aPresContext)
 /////////////////////////////////////////////////////////////////////////////
 // Child frame enumeration
 
-NS_IMETHODIMP
-nsContainerFrame::FirstChild(nsIPresContext* aPresContext,
-                             nsIAtom*        aListName,
-                             nsIFrame**      aFirstChild) const
+nsIFrame*
+nsContainerFrame::GetFirstChild(nsIAtom* aListName) const
 {
-  NS_PRECONDITION(nsnull != aFirstChild, "null OUT parameter pointer");
   // We only know about the unnamed principal child list and the overflow
   // list
   if (nsnull == aListName) {
-    *aFirstChild = mFrames.FirstChild();
-    return NS_OK;
+    return mFrames.FirstChild();
   } else if (nsLayoutAtoms::overflowList == aListName) {
-    *aFirstChild = GetOverflowFrames(aPresContext, PR_FALSE);
-    return NS_OK;
+    return GetOverflowFrames(GetPresContext(), PR_FALSE);
   } else {
-    *aFirstChild = nsnull;
-    return NS_ERROR_INVALID_ARG;
+    return nsnull;
   }
 }
 
-NS_IMETHODIMP
-nsContainerFrame::GetAdditionalChildListName(PRInt32   aIndex,
-                                             nsIAtom** aListName) const
+nsIAtom*
+nsContainerFrame::GetAdditionalChildListName(PRInt32 aIndex) const
 {
-  NS_PRECONDITION(nsnull != aListName, "null OUT parameter pointer");
-  NS_ENSURE_TRUE(aIndex >= 0, NS_ERROR_INVALID_ARG);
   if (aIndex == 0) {
-    *aListName = nsLayoutAtoms::overflowList;
-    NS_ADDREF(*aListName);
+    return nsLayoutAtoms::overflowList;
   } else {
-    *aListName = nsnull;
+    return nsnull;
   }
-  return NS_OK;
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -211,9 +225,9 @@ nsContainerFrame::PaintChildren(nsIPresContext*      aPresContext,
                                 PRUint32             aFlags)
 {
   nsIFrame* kid = mFrames.FirstChild();
-  while (nsnull != kid) {
+  while (kid) {
     PaintChild(aPresContext, aRenderingContext, aDirtyRect, kid, aWhichLayer, aFlags);
-    kid->GetNextSibling(&kid);
+    kid = kid->GetNextSibling();
   }
 }
 
@@ -228,17 +242,14 @@ nsContainerFrame::PaintChild(nsIPresContext*      aPresContext,
 {
   NS_ASSERTION(aFrame, "no frame to paint!");
   if (!aFrame->HasView()) {
-    nsRect kidRect;
-    aFrame->GetRect(kidRect);
-    nsFrameState state;
-    aFrame->GetFrameState(&state);
+    nsRect kidRect = aFrame->GetRect();
 
     // Compute the constrained damage area; set the overlap flag to
     // PR_TRUE if any portion of the child frame intersects the
     // dirty rect.
     nsRect damageArea;
     PRBool overlap;
-    if (NS_FRAME_OUTSIDE_CHILDREN & state) {
+    if (NS_FRAME_OUTSIDE_CHILDREN & aFrame->GetStateBits()) {
       // If the child frame has children that leak out of our box
       // then we don't constrain the damageArea to just the childs
       // bounding rect.
@@ -322,7 +333,7 @@ nsContainerFrame::GetFrameForPointUsing(nsIPresContext* aPresContext,
                                         PRBool         aConsiderSelf,
                                         nsIFrame**     aFrame)
 {
-  nsIFrame *kid, *hit;
+  nsIFrame *hit;
   nsPoint tmp;
 
   PRBool inThisFrame = mRect.Contains(aPoint);
@@ -331,7 +342,7 @@ nsContainerFrame::GetFrameForPointUsing(nsIPresContext* aPresContext,
     return NS_ERROR_FAILURE;
   }
 
-  FirstChild(aPresContext, aList, &kid);
+  nsIFrame* kid = GetFirstChild(aList);
   *aFrame = nsnull;
   tmp.MoveTo(aPoint.x - mRect.x, aPoint.y - mRect.y);
 
@@ -342,13 +353,13 @@ nsContainerFrame::GetFrameForPointUsing(nsIPresContext* aPresContext,
   if (NS_SUCCEEDED(rv) && view)
     tmp += originOffset;
 
-  while (nsnull != kid) {
+  while (kid) {
     rv = kid->GetFrameForPoint(aPresContext, tmp, aWhichLayer, &hit);
 
     if (NS_SUCCEEDED(rv) && hit) {
       *aFrame = hit;
     }
-    kid->GetNextSibling(&kid);
+    kid = kid->GetNextSibling();
   }
 
   if (*aFrame) {
@@ -373,12 +384,10 @@ nsContainerFrame::ReplaceFrame(nsIPresContext* aPresContext,
                                nsIFrame*       aNewFrame)
 {
   nsIFrame* prevFrame;
-  nsIFrame* firstChild;
   nsresult  rv;
 
   // Get the old frame's previous sibling frame
-  FirstChild(aPresContext, aListName, &firstChild);
-  nsFrameList frames(firstChild);
+  nsFrameList frames(GetFirstChild(aListName));
   NS_ASSERTION(frames.ContainsFrame(aOldFrame), "frame is not a valid child frame");
   prevFrame = frames.GetPrevSiblingFor(aOldFrame);
 
@@ -414,12 +423,8 @@ static PRBool
 TranslatePointTo(nsPoint& aPoint, nsIView* aChildView, nsIView* aParentView)
 {
   do {
-    nscoord x, y;
-
-    aChildView->GetPosition(&x, &y);
-    aPoint.x += x;
-    aPoint.y += y;
-    aChildView->GetParent(aChildView);
+    aPoint += aChildView->GetPosition();
+    aChildView = aChildView->GetParent();
   } while (aChildView && (aChildView != aParentView));
 
   return aChildView == aParentView;
@@ -435,18 +440,16 @@ nsContainerFrame::PositionFrameView(nsIPresContext* aPresContext,
                                     nsIFrame*       aKidFrame)
 {
   if (aKidFrame->HasView()) {
-    nsIView* view = aKidFrame->GetView(aPresContext);
+    nsIView* view = aKidFrame->GetView();
     // Position view relative to its parent, not relative to aKidFrame's
     // frame which may not have a view
-    nsIView*        parentView;
-    view->GetParent(parentView);
+    nsIView*        parentView = view->GetParent();
 
     nsIView*        containingView;
     nsPoint         origin;
     aKidFrame->GetOffsetFromView(aPresContext, origin, &containingView);
 
-    nsCOMPtr<nsIViewManager> vm;
-    view->GetViewManager(*getter_AddRefs(vm));
+    nsIViewManager* vm = view->GetViewManager();
 
     // it's possible for the parentView to be nonnull but containingView to be
     // null, when the parent view doesn't belong to this frame tree but to
@@ -455,7 +458,7 @@ nsContainerFrame::PositionFrameView(nsIPresContext* aPresContext,
     if (nsnull != containingView && containingView != parentView) {
       NS_ERROR("This hack should not be needed now!!! See bug 126263.");
 
-      // XXX roc this is no longer needed; remove it!!
+      // XXX roc this should be no longer needed, but it still is for printing/print preview
 
       // it is possible for parent view not to have a frame attached to it
       // kind of an anonymous view. This happens with native scrollbars and
@@ -464,17 +467,13 @@ nsContainerFrame::PositionFrameView(nsIPresContext* aPresContext,
       // the HACK below. COMBO box code should NOT be in the container code!!!
       // And the case it looks from does not just happen for combo boxes. Native
       // scrollframes get in this situation too!! 
-      while(parentView) {
-        void *data = 0;
-        parentView->GetClientData(data);
+      while (parentView) {
+        void *data = parentView->GetClientData();
         if (data)
           break;
       
-        nscoord x, y;
-        parentView->GetPosition(&x, &y);
-        origin.x -= x;
-        origin.y -= y;
-        parentView->GetParent(parentView);
+        origin -= parentView->GetPosition();
+        parentView = parentView->GetParent();
       }
      
       if (containingView != parentView) 
@@ -550,8 +549,7 @@ SyncFrameViewGeometryDependentProperties(nsIPresContext*  aPresContext,
                                          nsIView*         aView,
                                          PRUint32         aFlags)
 {
-  nsCOMPtr<nsIViewManager> vm;
-  aView->GetViewManager(*getter_AddRefs(vm));
+  nsIViewManager* vm = aView->GetViewManager();
 
   PRBool isCanvas;
   const nsStyleBackground* bg;
@@ -566,42 +564,65 @@ SyncFrameViewGeometryDependentProperties(nsIPresContext*  aPresContext,
   // view's contents should be repainted and not bitblt'd
   vm->SetViewBitBltEnabled(aView, !fixedBackground);
 
+  // If the frame has a solid background color, 'background-clip:border',
+  // and it's a kind of frame that paints its background, and rounded borders aren't
+  // clipping the background, then it's opaque.
   PRBool  viewHasTransparentContent =
-    !hasBG ||
-    (bg->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT) ||
-    !aFrame->CanPaintBackground() ||
-    HasNonZeroBorderRadius(aStyleContext);
+    !(hasBG && !(bg->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT) &&
+      bg->mBackgroundClip == NS_STYLE_BG_CLIP_BORDER &&
+      aFrame->CanPaintBackground() &&
+      !HasNonZeroBorderRadius(aStyleContext));
+
+  PRBool drawnOnUniformField = PR_FALSE;
+  if (aStyleContext->GetPseudoType() == nsCSSAnonBoxes::scrolledContent) {
+    // If the nsGfxScrollFrame draws a solid unclipped background
+    // color, and nothing else, then tell the view system that we're
+    // drawn on a uniform field. Note that it's OK if the background
+    // is clipped to the padding area, since the scrollport is within
+    // the borders.
+    nsIFrame* scrollFrame = aFrame->GetParent();
+    while (scrollFrame->GetStyleContext()->GetPseudoType()
+           == nsCSSAnonBoxes::scrolledContent) {
+      scrollFrame = scrollFrame->GetParent();
+    }
+    PRBool scrollFrameIsCanvas;
+    const nsStyleBackground* scrollFrameBG;
+    PRBool scrollFrameHasBG =
+      nsCSSRendering::FindBackground(aPresContext, scrollFrame, &scrollFrameBG,
+                                     &scrollFrameIsCanvas);
+    const nsStyleDisplay* bgDisplay = scrollFrame->GetStyleDisplay();
+    drawnOnUniformField = scrollFrameHasBG &&
+      !(scrollFrameBG->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT) &&
+      (scrollFrameBG->mBackgroundFlags & NS_STYLE_BG_IMAGE_NONE) &&
+      !HasNonZeroBorderRadius(scrollFrame->GetStyleContext()) &&
+      !(bgDisplay->IsAbsolutelyPositioned()
+        && (bgDisplay->mClipFlags & NS_STYLE_CLIP_RECT));
+  }
+  aView->SetHasUniformBackground(drawnOnUniformField);
 
   if (isCanvas) {
     nsIView* rootView;
     vm->GetRootView(rootView);
-    nsIView* rootParent;
-    rootView->GetParent(rootParent);
+    nsIView* rootParent = rootView->GetParent();
     if (!rootParent) {
       // We're the root of a view manager hierarchy. We will have to
       // paint something. NOTE: this can be overridden below.
       viewHasTransparentContent = PR_FALSE;
     }
 
-    nsCOMPtr<nsIPresShell> shell;
-    aPresContext->GetShell(getter_AddRefs(shell));
     nsCOMPtr<nsIDocument> doc;
-    shell->GetDocument(getter_AddRefs(doc));
+    aPresContext->PresShell()->GetDocument(getter_AddRefs(doc));
     if (doc) {
-      nsCOMPtr<nsIDocument> parentDoc;
-      doc->GetParentDocument(getter_AddRefs(parentDoc));
-      nsCOMPtr<nsIContent> rootElem;
-      doc->GetRootContent(getter_AddRefs(rootElem));
-      if (!parentDoc && rootElem && rootElem->IsContentOfType(nsIContent::eXUL)) {
+      nsIContent *rootElem = doc->GetRootContent();
+      if (!doc->GetParentDocument() &&
+          rootElem && rootElem->IsContentOfType(nsIContent::eXUL)) {
         // we're XUL at the root of the document hierarchy. Try to make our
         // window translucent.
-        nsCOMPtr<nsIWidget> widget;
-        aView->GetWidget(*getter_AddRefs(widget));
         // don't proceed unless this is the root view
         // (sometimes the non-root-view is a canvas)
-        if (widget && aView == rootView) {
+        if (aView->HasWidget() && aView == rootView) {
           viewHasTransparentContent = hasBG && (bg->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT);
-          widget->SetWindowTranslucency(viewHasTransparentContent);
+          aView->GetWidget()->SetWindowTranslucency(viewHasTransparentContent);
         }
       }
     }
@@ -609,15 +630,12 @@ SyncFrameViewGeometryDependentProperties(nsIPresContext*  aPresContext,
   // XXX we should also set widget transparency for XUL popups
 
   const nsStyleDisplay* display = aStyleContext->GetStyleDisplay();
-  nsFrameState kidState;
-  aFrame->GetFrameState(&kidState);
+  nsFrameState kidState = aFrame->GetStateBits();
   
   if (!viewHasTransparentContent) {
     // If we're showing the view but the frame is hidden, then the view is transparent
-    nsViewVisibility visibility;
-    aView->GetVisibility(visibility);
     const nsStyleVisibility* vis = aStyleContext->GetStyleVisibility();
-    if ((nsViewVisibility_kShow == visibility
+    if ((nsViewVisibility_kShow == aView->GetVisibility()
          && NS_STYLE_VISIBILITY_HIDDEN == vis->mVisible)
         || (NS_STYLE_OVERFLOW_VISIBLE == display->mOverflow
             && (kidState & NS_FRAME_OUTSIDE_CHILDREN) != 0)) {
@@ -642,8 +660,7 @@ SyncFrameViewGeometryDependentProperties(nsIPresContext*  aPresContext,
   PRBool hasClip = display->IsAbsolutelyPositioned() && (display->mClipFlags & NS_STYLE_CLIP_RECT);
   PRBool hasOverflowClip = isBlockLevel && (display->mOverflow == NS_STYLE_OVERFLOW_HIDDEN);
   if (hasClip || hasOverflowClip) {
-    nsSize frameSize;
-    aFrame->GetSize(frameSize);
+    nsSize frameSize = aFrame->GetSize();
     nsRect  clipRect;
 
     if (hasClip) {
@@ -690,12 +707,8 @@ SyncFrameViewGeometryDependentProperties(nsIPresContext*  aPresContext,
       }
     }
   
-    nsRect newSize;
-    aView->GetBounds(newSize);
-    nscoord x, y;
-    aView->GetPosition(&x, &y);
-    newSize.x -= x;
-    newSize.y -= y;
+    nsRect newSize = aView->GetBounds();
+    newSize -= aView->GetPosition();
 
     // If part of the view is being clipped out, then mark it transparent
     if (clipRect.y > newSize.y
@@ -706,8 +719,7 @@ SyncFrameViewGeometryDependentProperties(nsIPresContext*  aPresContext,
     }
 
     // Set clipping of child views.
-    nsRegion region;
-    region.Copy(nsRectFast(clipRect));
+    nsRegion region(clipRect);
     vm->SetViewChildClipRegion(aView, &region);
   } else {
     // Remove clipping of child views.
@@ -734,21 +746,18 @@ nsContainerFrame::SyncFrameViewAfterReflow(nsIPresContext* aPresContext,
   }
 
   if (0 == (aFlags & NS_FRAME_NO_SIZE_VIEW)) {
-    nsCOMPtr<nsIViewManager> vm;
-    aView->GetViewManager(*getter_AddRefs(vm));
-    nsRect oldBounds;
-    aView->GetBounds(oldBounds);
-    nsFrameState kidState;
-    aFrame->GetFrameState(&kidState);
+    nsIViewManager* vm = aView->GetViewManager();
 
     // If the frame has child frames that stick outside the content
     // area, then size the view large enough to include those child
     // frames
-    if ((kidState & NS_FRAME_OUTSIDE_CHILDREN) && aCombinedArea) {
+    NS_ASSERTION(!(aFrame->GetStateBits() & NS_FRAME_OUTSIDE_CHILDREN) ||
+                 aCombinedArea,
+                 "resizing view for frame with overflow to the wrong size");
+    if ((aFrame->GetStateBits() & NS_FRAME_OUTSIDE_CHILDREN) && aCombinedArea) {
       vm->ResizeView(aView, *aCombinedArea, PR_TRUE);
     } else {
-      nsSize frameSize;
-      aFrame->GetSize(frameSize);
+      nsSize frameSize = aFrame->GetSize();
       nsRect newSize(0, 0, frameSize.width, frameSize.height);
       vm->ResizeView(aView, newSize, PR_TRUE);
     }
@@ -771,6 +780,9 @@ nsContainerFrame::SyncFrameViewAfterSizeChange(nsIPresContext*  aPresContext,
                                                nsIView*         aView,
                                                PRUint32         aFlags)
 {
+  NS_ASSERTION(!aStyleContext || aFrame->GetStyleContext() == aStyleContext,
+               "Wrong style context for frame?");
+
   if (!aView) {
     return;
   }
@@ -789,24 +801,28 @@ nsContainerFrame::SyncFrameViewProperties(nsIPresContext*  aPresContext,
                                           nsIView*         aView,
                                           PRUint32         aFlags)
 {
+  NS_ASSERTION(!aStyleContext || aFrame->GetStyleContext() == aStyleContext,
+               "Wrong style context for frame?");
+
   if (!aView) {
     return;
   }
 
-  nsCOMPtr<nsIViewManager> vm;
-  aView->GetViewManager(*getter_AddRefs(vm));
+  nsIViewManager* vm = aView->GetViewManager();
 
   if (nsnull == aStyleContext) {
     aStyleContext = aFrame->GetStyleContext();
   }
     
-  const nsStyleVisibility* vis = aStyleContext->GetStyleVisibility();
+  const nsStyleDisplay* display = aStyleContext->GetStyleDisplay();
 
   // Set the view's opacity
-  vm->SetViewOpacity(aView, vis->mOpacity);
+  vm->SetViewOpacity(aView, display->mOpacity);
 
   // Make sure visibility is correct
   if (0 == (aFlags & NS_FRAME_NO_VISIBILITY)) {
+    const nsStyleVisibility* vis = aStyleContext->GetStyleVisibility();
+
     // See if the view should be hidden or visible
     PRBool  viewIsVisible = PR_TRUE;
 
@@ -822,8 +838,7 @@ nsContainerFrame::SyncFrameViewProperties(nsIPresContext*  aPresContext,
       viewIsVisible = PR_FALSE;
     } else {
       // if the view is for a popup, don't show the view if the popup is closed
-      nsCOMPtr<nsIWidget> widget;
-      aView->GetWidget(*getter_AddRefs(widget));
+      nsIWidget* widget = aView->GetWidget();
       if (widget) {
         nsWindowType windowType;
         widget->GetWindowType(windowType);
@@ -837,7 +852,6 @@ nsContainerFrame::SyncFrameViewProperties(nsIPresContext*  aPresContext,
                           nsViewVisibility_kHide);
   }
 
-  const nsStyleDisplay* display = aStyleContext->GetStyleDisplay();
   // See if the frame is being relatively positioned or absolutely
   // positioned
   PRBool isTopMostView = display->IsPositioned();
@@ -860,13 +874,11 @@ nsContainerFrame::SyncFrameViewProperties(nsIPresContext*  aPresContext,
 }
 
 PRBool
-nsContainerFrame::FrameNeedsView(nsIPresContext* aPresContext,
-                                 nsIFrame* aFrame,
-                                 nsStyleContext* aStyleContext)
+nsContainerFrame::FrameNeedsView(nsIFrame* aFrame)
 {
-  const nsStyleVisibility* vis = aStyleContext->GetStyleVisibility();
-    
-  if (vis->mOpacity != 1.0f) {
+  nsStyleContext* sc = aFrame->GetStyleContext();
+  const nsStyleDisplay* display = sc->GetStyleDisplay();
+  if (display->mOpacity != 1.0f) {
     return PR_TRUE;
   }
 
@@ -874,22 +886,20 @@ nsContainerFrame::FrameNeedsView(nsIPresContext* aPresContext,
   const nsStyleBackground *color;
   PRBool isCanvas;
   PRBool hasBackground = 
-    nsCSSRendering::FindBackground(aPresContext, aFrame, &color, &isCanvas);
+    nsCSSRendering::FindBackground(aFrame->GetPresContext(),
+                                   aFrame, &color, &isCanvas);
   if (hasBackground &&
       NS_STYLE_BG_ATTACHMENT_FIXED == color->mBackgroundAttachment) {
     return PR_TRUE;
   }
     
-  const nsStyleDisplay* display = aStyleContext->GetStyleDisplay();
-
   if (NS_STYLE_POSITION_RELATIVE == display->mPosition) {
     return PR_TRUE;
   } else if (display->IsAbsolutelyPositioned()) {
     return PR_TRUE;
   } 
 
-  nsCOMPtr<nsIAtom>  pseudoTag = aStyleContext->GetPseudoType();
-  if (pseudoTag == nsCSSAnonBoxes::scrolledContent) {
+  if (sc->GetPseudoType() == nsCSSAnonBoxes::scrolledContent) {
     return PR_TRUE;
   }
 
@@ -903,9 +913,7 @@ nsContainerFrame::FrameNeedsView(nsIPresContext* aPresContext,
     // XXX Check for the frame being a block frame and only force a view
     // in that case, because adding a view for box frames seems to cause
     // problems for XUL...
-    nsCOMPtr<nsIAtom> frameType;
-    
-    aFrame->GetFrameType(getter_AddRefs(frameType));
+    nsIAtom* frameType = aFrame->GetType();
     if ((frameType == nsLayoutAtoms::blockFrame) ||
         (frameType == nsLayoutAtoms::areaFrame)) {
       return PR_TRUE;
@@ -947,7 +955,7 @@ nsContainerFrame::ReflowChild(nsIFrame*                aKidFrame,
   aKidFrame->WillReflow(aPresContext);
 
   if (0 == (aFlags & NS_FRAME_NO_MOVE_FRAME)) {
-    aKidFrame->MoveTo(aPresContext, aX, aY);
+    aKidFrame->SetPosition(nsPoint(aX, aY));
   }
 
   if (0 == (aFlags & NS_FRAME_NO_MOVE_VIEW)) {
@@ -978,9 +986,8 @@ nsContainerFrame::ReflowChild(nsIFrame*                aKidFrame,
       // Remove all of the childs next-in-flows. Make sure that we ask
       // the right parent to do the removal (it's possible that the
       // parent is not this because we are executing pullup code)
-      nsContainerFrame* parent;
-      kidNextInFlow->GetParent((nsIFrame**)&parent);
-      parent->DeleteNextInFlowChild(aPresContext, kidNextInFlow);
+      NS_STATIC_CAST(nsContainerFrame*, kidNextInFlow->GetParent())
+        ->DeleteNextInFlowChild(aPresContext, kidNextInFlow);
     }
   }
   return result;
@@ -995,9 +1002,7 @@ void
 nsContainerFrame::PositionChildViews(nsIPresContext* aPresContext,
                                      nsIFrame*       aFrame)
 {
-  nsFrameState frameState;
-  aFrame->GetFrameState(&frameState);
-  if (! ((frameState & NS_FRAME_HAS_CHILD_WITH_VIEW) == NS_FRAME_HAS_CHILD_WITH_VIEW)) {
+  if (!(aFrame->GetStateBits() & NS_FRAME_HAS_CHILD_WITH_VIEW)) {
     return;
   }
 
@@ -1006,21 +1011,22 @@ nsContainerFrame::PositionChildViews(nsIPresContext* aPresContext,
 
   do {
     // Recursively walk aFrame's child frames
-    nsIFrame* childFrame;
-    aFrame->FirstChild(aPresContext, childListName, &childFrame);
+    nsIFrame* childFrame = aFrame->GetFirstChild(childListName);
     while (childFrame) {
-      // Position the frame's view (if it has one) and recursively
+      // Position the frame's view (if it has one) otherwise recursively
       // process its children
-      PositionFrameView(aPresContext, childFrame);
-      PositionChildViews(aPresContext, childFrame);
+      if (childFrame->HasView()) {
+        PositionFrameView(aPresContext, childFrame);
+      } else {
+        PositionChildViews(aPresContext, childFrame);
+      }
 
       // Get the next sibling child frame
-      childFrame->GetNextSibling(&childFrame);
+      childFrame = childFrame->GetNextSibling();
     }
 
-    NS_IF_RELEASE(childListName);
-    aFrame->GetAdditionalChildListName(childListIndex++, &childListName);
-  } while (childListName); 
+    childListName = aFrame->GetAdditionalChildListName(childListIndex++);
+  } while (childListName);
 }
 
 /**
@@ -1049,25 +1055,34 @@ nsContainerFrame::FinishReflowChild(nsIFrame*                 aKidFrame,
                                     nscoord                   aY,
                                     PRUint32                  aFlags)
 {
-  nsPoint curOrigin;
+  nsPoint curOrigin = aKidFrame->GetPosition();
   nsRect  bounds(aX, aY, aDesiredSize.width, aDesiredSize.height);
 
-  aKidFrame->GetOrigin(curOrigin);
-  aKidFrame->SetRect(aPresContext, bounds);
+  aKidFrame->SetRect(bounds);
 
   if (aKidFrame->HasView()) {
-    nsIView* view = aKidFrame->GetView(aPresContext);
+    nsIView* view = aKidFrame->GetView();
     // Make sure the frame's view is properly sized and positioned and has
     // things like opacity correct
     SyncFrameViewAfterReflow(aPresContext, aKidFrame, view,
                              &aDesiredSize.mOverflowArea,
                              aFlags);
   }
-  else if (0 == (aFlags & NS_FRAME_NO_MOVE_VIEW) &&
-           ((curOrigin.x != aX) || (curOrigin.y != aY))) {
-    // If the frame has moved, then we need to make sure any child views are
-    // correctly positioned
-    PositionChildViews(aPresContext, aKidFrame);
+
+  if (!(aFlags & NS_FRAME_NO_MOVE_VIEW) &&
+      (curOrigin.x != aX || curOrigin.y != aY)) {
+    if (!aKidFrame->HasView()) {
+      // If the frame has moved, then we need to make sure any child views are
+      // correctly positioned
+      PositionChildViews(aPresContext, aKidFrame);
+    }
+
+    // We also need to redraw everything associated with the frame
+    // because if the frame's Reflow issued any invalidates, then they
+    // will be at the wrong offset ... note that this includes
+    // invalidates issued against the frame's children, so we need to
+    // invalidate the overflow area too.
+    aKidFrame->Invalidate(aDesiredSize.mOverflowArea);
   }
   
   return aKidFrame->DidReflow(aPresContext, aReflowState, NS_FRAME_REFLOW_FINISHED);
@@ -1091,9 +1106,8 @@ nsContainerFrame::DeleteNextInFlowChild(nsIPresContext* aPresContext,
   nsIFrame* nextNextInFlow;
   aNextInFlow->GetNextInFlow(&nextNextInFlow);
   if (nextNextInFlow) {
-    nsContainerFrame* parent;
-    nextNextInFlow->GetParent((nsIFrame**)&parent);
-    parent->DeleteNextInFlowChild(aPresContext, nextNextInFlow);
+    NS_STATIC_CAST(nsContainerFrame*, nextNextInFlow->GetParent())
+      ->DeleteNextInFlowChild(aPresContext, nextNextInFlow);
   }
 
 #ifdef IBMBIDI
@@ -1139,27 +1153,14 @@ nsIFrame*
 nsContainerFrame::GetOverflowFrames(nsIPresContext* aPresContext,
                                     PRBool          aRemoveProperty) const
 {
-  nsCOMPtr<nsIPresShell>     presShell;
-  aPresContext->GetShell(getter_AddRefs(presShell));
+  PRUint32  options = 0;
 
-  if (presShell) {
-    nsCOMPtr<nsIFrameManager>  frameManager;
-    presShell->GetFrameManager(getter_AddRefs(frameManager));
-  
-    if (frameManager) {
-      PRUint32  options = 0;
-      void*     value;
-  
-      if (aRemoveProperty) {
-        options |= NS_IFRAME_MGR_REMOVE_PROP;
-      }
-      frameManager->GetFrameProperty((nsIFrame*)this, nsLayoutAtoms::overflowProperty,
-                                     options, &value);
-      return (nsIFrame*)value;
-    }
+  if (aRemoveProperty) {
+    options |= NS_IFRAME_MGR_REMOVE_PROP;
   }
 
-  return nsnull;
+  return (nsIFrame*) aPresContext->FrameManager()->
+    GetFrameProperty(this, nsLayoutAtoms::overflowProperty, options);
 }
 
 // Destructor function for the overflow frame property
@@ -1180,23 +1181,12 @@ nsresult
 nsContainerFrame::SetOverflowFrames(nsIPresContext* aPresContext,
                                     nsIFrame*       aOverflowFrames)
 {
-  nsCOMPtr<nsIPresShell>     presShell;
-  nsresult                   rv = NS_ERROR_FAILURE;
+  nsresult rv = aPresContext->FrameManager()->
+    SetFrameProperty(this, nsLayoutAtoms::overflowProperty,
+                     aOverflowFrames, DestroyOverflowFrames);
 
-  aPresContext->GetShell(getter_AddRefs(presShell));
-  if (presShell) {
-    nsCOMPtr<nsIFrameManager>  frameManager;
-    presShell->GetFrameManager(getter_AddRefs(frameManager));
-  
-    if (frameManager) {
-      rv = frameManager->SetFrameProperty(this, nsLayoutAtoms::overflowProperty,
-                                          aOverflowFrames, DestroyOverflowFrames);
-
-      // Verify that we didn't overwrite an existing overflow list
-      NS_ASSERTION(rv != NS_IFRAME_MGR_PROP_OVERWRITTEN,
-                   "existing overflow list");
-    }
-  }
+  // Verify that we didn't overwrite an existing overflow list
+  NS_ASSERTION(rv != NS_IFRAME_MGR_PROP_OVERWRITTEN, "existing overflow list");
 
   return rv;
 }
@@ -1222,11 +1212,7 @@ nsContainerFrame::PushChildren(nsIPresContext* aPresContext,
 {
   NS_PRECONDITION(nsnull != aFromChild, "null pointer");
   NS_PRECONDITION(nsnull != aPrevSibling, "pushing first child");
-#ifdef NS_DEBUG
-  nsIFrame* prevNextSibling;
-  aPrevSibling->GetNextSibling(&prevNextSibling);
-  NS_PRECONDITION(prevNextSibling == aFromChild, "bad prev sibling");
-#endif
+  NS_PRECONDITION(aPrevSibling->GetNextSibling() == aFromChild, "bad prev sibling");
 
   // Disconnect aFromChild from its previous sibling
   aPrevSibling->SetNextSibling(nsnull);
@@ -1238,7 +1224,7 @@ nsContainerFrame::PushChildren(nsIPresContext* aPresContext,
     nsContainerFrame* nextInFlow = (nsContainerFrame*)mNextInFlow;
     // When pushing and pulling frames we need to check for whether any
     // views need to be reparented.
-    for (nsIFrame* f = aFromChild; f; f->GetNextSibling(&f)) {
+    for (nsIFrame* f = aFromChild; f; f = f->GetNextSibling()) {
       nsHTMLContainerFrame::ReparentFrameView(aPresContext, f, this, mNextInFlow);
     }
     nextInFlow->mFrames.InsertFrames(mNextInFlow, nsnull, aFromChild);
@@ -1271,7 +1257,7 @@ nsContainerFrame::MoveOverflowToChildList(nsIPresContext* aPresContext)
       NS_ASSERTION(mFrames.IsEmpty(), "bad overflow list");
       // When pushing and pulling frames we need to check for whether any
       // views need to be reparented.
-      for (nsIFrame* f = prevOverflowFrames; f; f->GetNextSibling(&f)) {
+      for (nsIFrame* f = prevOverflowFrames; f; f = f->GetNextSibling()) {
         nsHTMLContainerFrame::ReparentFrameView(aPresContext, f, prevInFlow, this);
       }
       mFrames.InsertFrames(this, nsnull, prevOverflowFrames);
@@ -1302,7 +1288,7 @@ nsContainerFrame::List(nsIPresContext* aPresContext, FILE* out, PRInt32 aIndent)
   fprintf(out, " [parent=%p]", NS_STATIC_CAST(void*, mParent));
 #endif
   if (HasView()) {
-    fprintf(out, " [view=%p]", NS_STATIC_CAST(void*, GetView(aPresContext)));
+    fprintf(out, " [view=%p]", NS_STATIC_CAST(void*, GetView()));
   }
   if (nsnull != mNextSibling) {
     fprintf(out, " next=%p", NS_STATIC_CAST(void*, mNextSibling));
@@ -1325,8 +1311,7 @@ nsContainerFrame::List(nsIPresContext* aPresContext, FILE* out, PRInt32 aIndent)
   PRInt32 listIndex = 0;
   PRBool outputOneList = PR_FALSE;
   do {
-    nsIFrame* kid;
-    FirstChild(aPresContext, listName, &kid);
+    nsIFrame* kid = GetFirstChild(listName);
     if (nsnull != kid) {
       if (outputOneList) {
         IndentBy(out, aIndent);
@@ -1340,22 +1325,19 @@ nsContainerFrame::List(nsIPresContext* aPresContext, FILE* out, PRInt32 aIndent)
       fputs("<\n", out);
       while (nsnull != kid) {
         // Verify the child frame's parent frame pointer is correct
-        nsIFrame* parentFrame;
-        kid->GetParent(&parentFrame);
-        NS_ASSERTION(parentFrame == (nsIFrame*)this, "bad parent frame pointer");
+        NS_ASSERTION(kid->GetParent() == (nsIFrame*)this, "bad parent frame pointer");
 
         // Have the child frame list
         nsIFrameDebug*  frameDebug;
         if (NS_SUCCEEDED(kid->QueryInterface(NS_GET_IID(nsIFrameDebug), (void**)&frameDebug))) {
           frameDebug->List(aPresContext, out, aIndent + 1);
         }
-        kid->GetNextSibling(&kid);
+        kid = kid->GetNextSibling();
       }
       IndentBy(out, aIndent);
       fputs(">\n", out);
     }
-    NS_IF_RELEASE(listName);
-    GetAdditionalChildListName(listIndex++, &listName);
+    listName = GetAdditionalChildListName(listIndex++);
   } while(nsnull != listName);
 
   if (!outputOneList) {

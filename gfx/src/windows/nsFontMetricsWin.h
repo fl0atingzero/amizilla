@@ -34,21 +34,17 @@
 #include "nsVoidArray.h"
 #include "nsICharRepresentable.h"
 #include "nsCompressedCharMap.h"
+#include "nsUnicharUtils.h"
 
 #ifdef ADD_GLYPH
 #undef ADD_GLYPH
 #endif
 #define ADD_GLYPH(map, g) SET_REPRESENTABLE(map, g)
 
-#ifdef IS_IN_BMP
-#undef IS_IN_BMP
-#endif
-#define IS_IN_BMP(ucs4)   ((ucs4) < 0x10000)
-
 enum eFontType {
  eFontType_UNKNOWN = -1,
  eFontType_Unicode,
- eFontType_NonUnicode,
+ eFontType_NonUnicode
 };
 
 struct nsCharacterMap {
@@ -82,14 +78,26 @@ public:
   nsFontWin(LOGFONT* aLogFont, HFONT aFont, PRUint16* aCCMap);
   virtual ~nsFontWin();
 
+  virtual PRInt32 GetWidth(HDC aDC, const char* aString,
+                           PRUint32 aLength);
+
   virtual PRInt32 GetWidth(HDC aDC, const PRUnichar* aString,
                            PRUint32 aLength) = 0;
+
+  virtual void DrawString(HDC aDC, PRInt32 aX, PRInt32 aY,
+                          const char* aString, PRUint32 aLength, INT* aDx0);
 
   virtual void DrawString(HDC aDC, PRInt32 aX, PRInt32 aY,
                           const PRUnichar* aString, PRUint32 aLength) = 0;
 
   virtual PRBool HasGlyph(PRUint32 ch) {return CCMAP_HAS_CHAR_EXT(mCCMap, ch);};
 #ifdef MOZ_MATHML
+  virtual nsresult
+  GetBoundingMetrics(HDC                aDC, 
+                     const char*        aString,
+                     PRUint32           aLength,
+                     nsBoundingMetrics& aBoundingMetrics);
+
   virtual nsresult
   GetBoundingMetrics(HDC                aDC, 
                      const PRUnichar*   aString,
@@ -109,6 +117,14 @@ public:
 
   nscoord         mMaxAscent;
   nscoord         mMaxDescent;
+
+  // Note: these are in device units (pixels) -- not twips like the others
+  LONG            mOverhangCorrection;
+  LONG            mMaxCharWidthMetric;
+  LONG            mMaxHeightMetric;
+  BYTE            mPitchAndFamily;
+
+  PRBool FillClipRect(PRInt32 aX, PRInt32 aY, UINT aLength, UINT uOptions, RECT& clipRect);
 };
 
 // A "substitute font" to deal with missing glyphs -- see bug 6585
@@ -118,9 +134,12 @@ class nsFontWinSubstitute : public nsFontWin
 {
 public:
   nsFontWinSubstitute(LOGFONT* aLogFont, HFONT aFont, PRUint16* aCCMap, PRBool aDisplayUnicode);
+  nsFontWinSubstitute(PRUint16* aCCMap);
   virtual ~nsFontWinSubstitute();
 
-  virtual PRBool HasGlyph(PRUint32 ch) {return IS_IN_BMP(ch) && IS_REPRESENTABLE(mRepresentableCharMap, ch);};
+  virtual PRBool HasGlyph(PRUint32 ch) {
+	  return mIsForIgnorable ? CCMAP_HAS_CHAR_EXT(mCCMap, ch) :
+		  IS_IN_BMP(ch) && IS_REPRESENTABLE(mRepresentableCharMap, ch);};
   virtual void SetRepresentable(PRUint32 ch) { if (IS_IN_BMP(ch)) SET_REPRESENTABLE(mRepresentableCharMap, ch); };
   virtual PRInt32 GetWidth(HDC aDC, const PRUnichar* aString, PRUint32 aLength);
   virtual void DrawString(HDC aDC, PRInt32 aX, PRInt32 aY,
@@ -137,6 +156,7 @@ public:
 #endif
 private:
   PRBool mDisplayUnicode;
+  PRBool mIsForIgnorable; 
 
   //We need to have a easily operatable charmap for substitute font
   PRUint32 mRepresentableCharMap[UCS2_MAP_LEN];
@@ -227,7 +247,7 @@ public:
   virtual nsFontWin* FindGlobalFont(HDC aDC, PRUint32 aChar);
   virtual nsFontWin* FindSubstituteFont(HDC aDC, PRUint32 aChar);
 
-  virtual nsFontWin* LoadFont(HDC aDC, const nsString& aName);
+  virtual nsFontWin* LoadFont(HDC aDC, const nsString& aName, PRBool aNameQuirks=PR_FALSE);
   virtual nsFontWin* LoadGenericFont(HDC aDC, PRUint32 aChar, const nsString& aName);
   virtual nsFontWin* LoadGlobalFont(HDC aDC, nsGlobalFont* aGlobalFontItem);
   virtual nsFontWin* LoadSubstituteFont(HDC aDC, const nsString& aName);
@@ -260,8 +280,10 @@ public:
   static void SetFontWeight(PRInt32 aWeight, PRUint16* aWeightTable);
   static PRBool IsFontWeightAvailable(PRInt32 aWeight, PRUint16 aWeightTable);
 
-  static PRUint16* GetFontCCMAP(HDC aDC, const char* aShortName, eFontType& aFontType, PRUint8& aCharset);
-  static PRUint16* GetCCMAP(HDC aDC, const char* aShortName, eFontType* aFontType, PRUint8* aCharset);
+  static PRUint16* GetFontCCMAP(HDC aDC, const char* aShortName, 
+    PRBool aNameQuirks, eFontType& aFontType, PRUint8& aCharset);
+  static PRUint16* GetCCMAP(HDC aDC, const char* aShortName,
+    PRBool* aNameQuirks, eFontType* aFontType, PRUint8* aCharset);
 
   static int SameAsPreviousMap(int aIndex);
 
@@ -392,7 +414,7 @@ public:
   virtual nsFontWin* FindGlobalFont(HDC aDC, PRUint32 aChar);
   virtual nsFontWin* FindSubstituteFont(HDC aDC, PRUint32 aChar);
 
-  virtual nsFontWin* LoadFont(HDC aDC, const nsString& aName);
+  virtual nsFontWin* LoadFont(HDC aDC, const nsString& aName, PRBool aNameQuirks=PR_FALSE);
   virtual nsFontWin* LoadGlobalFont(HDC aDC, nsGlobalFont* aGlobalFontItem);
   virtual nsFontWin* LoadSubstituteFont(HDC aDC, const nsString& aName);
 

@@ -39,6 +39,7 @@
 
 #include "nscore.h"
 #include "nsHTMLContainerFrame.h"
+#include "nsTablePainter.h"
 
 class  nsTableFrame;
 class  nsTableCellFrame;
@@ -72,9 +73,6 @@ public:
                   nsStyleContext*  aContext,
                   nsIFrame*        aPrevInFlow);
 
-  NS_IMETHOD SetInitialChildList(nsIPresContext* aPresContext,
-                                 nsIAtom*        aListName,
-                                 nsIFrame*       aChildList);
   NS_IMETHOD AppendFrames(nsIPresContext* aPresContext,
                           nsIPresShell&   aPresShell,
                           nsIAtom*        aListName,
@@ -106,15 +104,8 @@ public:
                    nsFramePaintLayer    aWhichLayer,
                    PRUint32             aFlags = 0);
 
-
-  /** ask all children to paint themselves, without clipping (for cells with rowspan>1)
-    * @see nsIFrame::Paint 
-    */
-  virtual void PaintChildren(nsIPresContext*      aPresContext,
-                             nsIRenderingContext& aRenderingContext,
-                             const nsRect&        aDirtyRect,
-                             nsFramePaintLayer    aWhichLayer,
-                             PRUint32             aFlags = 0);
+  // rows don't paint their own background -- the cells do
+  virtual PRBool CanPaintBackground() { return PR_FALSE; }
 
   NS_IMETHOD GetFrameForPoint(nsIPresContext*   aPresContext,
                               const nsPoint&    aPoint, 
@@ -141,15 +132,15 @@ public:
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
 
-  virtual void DidResize(nsIPresContext*          aPresContext,
-                         const nsHTMLReflowState& aReflowState);
+  void DidResize(nsIPresContext*          aPresContext,
+                 const nsHTMLReflowState& aReflowState);
 
   /**
    * Get the "type" of the frame
    *
    * @see nsLayoutAtoms::tableRowFrame
    */
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
 
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
@@ -181,8 +172,6 @@ public:
 
   /** set this row's starting row index */
   void SetRowIndex (int aRowIndex);
-
-  virtual PRBool Contains(nsIPresContext* aPresContext, const nsPoint& aPoint);
 
   /** used by row group frame code */
   nscoord ReflowCellFrame(nsIPresContext*          aPresContext,
@@ -238,11 +227,31 @@ public:
   void    SetUnpaginatedHeight(nsIPresContext* aPresContext, nscoord aValue);
 
   nscoord GetTopBCBorderWidth(float* aPixelsToTwips = nsnull);
-  void    SetTopBCBorderWidth(nscoord aWidth);
+  void    SetTopBCBorderWidth(BCPixelSize aWidth);
   nscoord GetBottomBCBorderWidth(float* aPixelsToTwips = nsnull);
-  void    SetBottomBCBorderWidth(nscoord aWidth);
+  void    SetBottomBCBorderWidth(BCPixelSize aWidth);
   nsMargin* GetBCBorderWidth(float     aPixelsToTwips,
                              nsMargin& aBorder);
+                             
+  /**
+   * Gets inner border widths before collapsing with cell borders
+   * Caller must get bottom border from next row or from table
+   * GetContinuousBCBorderWidth will not overwrite aBorder.bottom
+   * see nsTablePainter about continuous borders
+   */
+  void GetContinuousBCBorderWidth(float     aPixelsToTwips,
+                                  nsMargin& aBorder);
+  /**
+   * @returns outer top bc border == prev row's bottom inner
+   */
+  nscoord GetOuterTopContBCBorderWidth(float aPixelsToTwips);
+  /**
+   * Sets full border widths before collapsing with cell borders
+   * @param aForSide - side to set; only accepts right, left, and top
+   */
+  void SetContinuousBCBorderWidth(PRUint8     aForSide,
+                                  BCPixelSize aPixelValue);
+
 protected:
 
   /** protected constructor.
@@ -250,7 +259,7 @@ protected:
     */
   nsTableRowFrame();
 
-  void InitChildReflowState(nsIPresContext&         aPresContext, 
+  void InitChildReflowState(nsIPresContext&         aPresContext,
                             const nsSize&           aAvailSize,
                             PRBool                  aBorderCollapse,
                             float                   aPixelsToTwips,
@@ -330,8 +339,11 @@ private:
   nscoord mMaxCellDescent; // does *not* include cells with rowspan > 1
 
   // border widths in pixels in the collapsing border model
-  unsigned mTopBorderWidth:8;
-  unsigned mBottomBorderWidth:8;
+  BCPixelSize mTopBorderWidth;
+  BCPixelSize mBottomBorderWidth;
+  BCPixelSize mRightContBorderWidth;
+  BCPixelSize mTopContBorderWidth;
+  BCPixelSize mLeftContBorderWidth;
 
 #ifdef DEBUG_TABLE_REFLOW_TIMING
 public:
@@ -445,7 +457,7 @@ inline nscoord nsTableRowFrame::GetTopBCBorderWidth(float*  aPixelsToTwips)
   return width;
 }
 
-inline void nsTableRowFrame::SetTopBCBorderWidth(nscoord aWidth)
+inline void nsTableRowFrame::SetTopBCBorderWidth(BCPixelSize aWidth)
 {
   mTopBorderWidth = aWidth;
 }
@@ -456,7 +468,7 @@ inline nscoord nsTableRowFrame::GetBottomBCBorderWidth(float*  aPixelsToTwips)
   return width;
 }
 
-inline void nsTableRowFrame::SetBottomBCBorderWidth(nscoord aWidth)
+inline void nsTableRowFrame::SetBottomBCBorderWidth(BCPixelSize aWidth)
 {
   mBottomBorderWidth = aWidth;
 }
@@ -470,6 +482,23 @@ inline nsMargin* nsTableRowFrame::GetBCBorderWidth(float     aPixelsToTwips,
   aBorder.bottom = NSToCoordRound(aPixelsToTwips * mBottomBorderWidth);
 
   return &aBorder;
+}
+
+inline void
+nsTableRowFrame::GetContinuousBCBorderWidth(float     aPixelsToTwips,
+                                            nsMargin& aBorder)
+{
+  aBorder.right = BC_BORDER_LEFT_HALF_COORD(aPixelsToTwips,
+                                            mLeftContBorderWidth);
+  aBorder.top = BC_BORDER_BOTTOM_HALF_COORD(aPixelsToTwips,
+                                            mTopContBorderWidth);
+  aBorder.left = BC_BORDER_RIGHT_HALF_COORD(aPixelsToTwips,
+                                            mRightContBorderWidth);
+}
+
+inline nscoord nsTableRowFrame::GetOuterTopContBCBorderWidth(float aPixelsToTwips)
+{
+  return BC_BORDER_TOP_HALF_COORD(aPixelsToTwips, mTopContBorderWidth);
 }
 
 #endif

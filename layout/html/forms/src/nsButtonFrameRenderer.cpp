@@ -43,6 +43,7 @@
 #include "nsHTMLAtoms.h"
 #include "nsCSSPseudoElements.h"
 #include "nsINameSpaceManager.h"
+#include "nsStyleSet.h"
 
 #define ACTIVE   "active"
 #define HOVER    "hover"
@@ -76,39 +77,23 @@ nsButtonFrameRenderer::GetFrame()
 void
 nsButtonFrameRenderer::SetDisabled(PRBool aDisabled, PRBool notify)
 {
-  // get the content
-  nsCOMPtr<nsIContent> content;
-  mFrame->GetContent(getter_AddRefs(content));
-
   if (aDisabled)
-    content->SetAttr(kNameSpaceID_None, nsHTMLAtoms::disabled, nsString(),
-                     notify);
+    mFrame->GetContent()->SetAttr(kNameSpaceID_None, nsHTMLAtoms::disabled, nsString(),
+                                  notify);
   else
-    content->UnsetAttr(kNameSpaceID_None, nsHTMLAtoms::disabled, notify);
-
+    mFrame->GetContent()->UnsetAttr(kNameSpaceID_None, nsHTMLAtoms::disabled, notify);
 }
 
 PRBool
 nsButtonFrameRenderer::isDisabled() 
 {
   // get the content
-  nsCOMPtr<nsIContent> content;
-  mFrame->GetContent(getter_AddRefs(content));
   nsAutoString value;
-  if (NS_CONTENT_ATTR_HAS_VALUE == content->GetAttr(kNameSpaceID_None, nsHTMLAtoms::disabled, value))
+  if (NS_CONTENT_ATTR_HAS_VALUE ==
+      mFrame->GetContent()->GetAttr(kNameSpaceID_None, nsHTMLAtoms::disabled, value))
     return PR_TRUE;
 
   return PR_FALSE;
-}
-
-void
-nsButtonFrameRenderer::Redraw(nsIPresContext* aPresContext)
-{
-  nsRect rect;
-  mFrame->GetRect(rect);
-  rect.x = 0;
-  rect.y = 0;
-  mFrame->Invalidate(aPresContext, rect, PR_FALSE);
 }
 
 void 
@@ -314,23 +299,19 @@ nsButtonFrameRenderer::GetAddedButtonBorderAndPadding()
 void 
 nsButtonFrameRenderer::ReResolveStyles(nsIPresContext* aPresContext)
 {
-
   // get all the styles
-  nsCOMPtr<nsIContent> content;
-  mFrame->GetContent(getter_AddRefs(content));
   nsStyleContext* context = mFrame->GetStyleContext();
-
+  nsStyleSet *styleSet = aPresContext->StyleSet();
 
   // style for the inner such as a dotted line (Windows)
-  mInnerFocusStyle = aPresContext->ProbePseudoStyleContextFor(content,
-                                                              nsCSSPseudoElements::mozFocusInner,
-                                                              context);
+  mInnerFocusStyle = styleSet->ProbePseudoStyleFor(mFrame->GetContent(),
+                                                   nsCSSPseudoElements::mozFocusInner,
+                                                   context);
 
   // style for outer focus like a ridged border (MAC).
-  mOuterFocusStyle = aPresContext->ProbePseudoStyleContextFor(content,
-                                                              nsCSSPseudoElements::mozFocusOuter,
-                                                              context);
-
+  mOuterFocusStyle = styleSet->ProbePseudoStyleFor(mFrame->GetContent(),
+                                                   nsCSSPseudoElements::mozFocusOuter,
+                                                   context);
 }
 
 nsStyleContext*

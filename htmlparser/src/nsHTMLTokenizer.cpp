@@ -311,9 +311,13 @@ void nsHTMLTokenizer::PrependTokens(nsDeque& aDeque){
 NS_IMETHODIMP
 nsHTMLTokenizer::CopyState(nsITokenizer* aTokenizer)
 {
-  if (aTokenizer)
-     mPreserveTarget =
-       NS_STATIC_CAST(nsHTMLTokenizer*, aTokenizer)->mPreserveTarget;
+  if (aTokenizer) {
+    mFlags &= ~NS_IPARSER_FLAG_PRESERVE_CONTENT;
+    mPreserveTarget =
+      NS_STATIC_CAST(nsHTMLTokenizer*, aTokenizer)->mPreserveTarget;
+    if (mPreserveTarget != eHTMLTag_unknown)
+      mFlags |= NS_IPARSER_FLAG_PRESERVE_CONTENT;
+  }
   return NS_OK;
 }
 
@@ -700,7 +704,7 @@ nsresult nsHTMLTokenizer::ConsumeStartTag(PRUnichar aChar,CToken*& aToken,nsScan
   
   if(aToken) {
     // Save the position after '<' for use in recording traling contents. Ref: Bug. 15204.
-    nsReadingIterator<PRUnichar> origin;
+    nsScannerIterator origin;
     aScanner.CurrentPosition(origin);
 
     result= aToken->Consume(aChar,aScanner,mFlags);     //tell new token to finish consuming text...    
@@ -732,16 +736,19 @@ nsresult nsHTMLTokenizer::ConsumeStartTag(PRUnichar aChar,CToken*& aToken,nsScan
         CStartToken* theStartToken = NS_STATIC_CAST(CStartToken*,aToken);
         //XXX - Find a better soution to record content
         //Added _plaintext to fix bug 46054.
-        if(mPreserveTarget == eHTMLTag_unknown && 
+        if(!(mFlags & NS_IPARSER_FLAG_PRESERVE_CONTENT) &&
            (theTag == eHTMLTag_textarea  ||
             theTag == eHTMLTag_xmp       || 
             theTag == eHTMLTag_plaintext || 
             theTag == eHTMLTag_noscript  ||
             theTag == eHTMLTag_noframes)) {
+          NS_ASSERTION(mPreserveTarget == eHTMLTag_unknown,
+                       "mPreserveTarget set but not preserving content?");
           mPreserveTarget = theTag;
+          mFlags |= NS_IPARSER_FLAG_PRESERVE_CONTENT;
         }
           
-        if (mPreserveTarget != eHTMLTag_unknown) 
+        if (mFlags & NS_IPARSER_FLAG_PRESERVE_CONTENT) 
           PreserveToken(theStartToken, aScanner, origin);
         
         //if((eHTMLTag_style==theTag) || (eHTMLTag_script==theTag)) {
@@ -756,7 +763,12 @@ nsresult nsHTMLTokenizer::ConsumeStartTag(PRUnichar aChar,CToken*& aToken,nsScan
           // Fix bug 44186
           // Support XML like syntax, i.e., <script src="external.js"/> == <script src="external.js"></script>
           // Note: if aFlushTokens is TRUE then we have seen an </script>
-          if(!theStartToken->IsEmpty() || aFlushTokens) {
+          // We do NOT want to output the end token if we didn't see a
+          // </script> and have a preserve target.  If that happens, then we'd
+          // be messing up the text inside the <textarea> or <xmp> or whatever
+          // it is.
+          if((!(mFlags & NS_IPARSER_FLAG_PRESERVE_CONTENT) &&
+              !theStartToken->IsEmpty()) || aFlushTokens) {
             theStartToken->SetEmpty(PR_FALSE); // Setting this would make cases like <script/>d.w("text");</script> work.
             CToken* endToken=theAllocator->CreateTokenOfType(eToken_end,theTag,endTagName);
             AddToken(text,result,&mTokenDeque,theAllocator);
@@ -822,6 +834,7 @@ nsresult nsHTMLTokenizer::ConsumeEndTag(PRUnichar aChar,CToken*& aToken,nsScanne
       if (mPreserveTarget == theTag) {
         // Target reached. Stop preserving content.
         mPreserveTarget = eHTMLTag_unknown;
+        mFlags &= ~NS_IPARSER_FLAG_PRESERVE_CONTENT;
       }
     }
   } //if
@@ -970,10 +983,10 @@ nsresult nsHTMLTokenizer::ConsumeSpecialMarkup(PRUnichar aChar,CToken*& aToken,n
   if(theIndex==kNotFound) {
     if('['==theBufCopy.CharAt(0)) {
       aToken = theAllocator->CreateTokenOfType(eToken_cdatasection,eHTMLTag_comment);  
-    } else if (Substring(theBufCopy, 0, 7).Equals(NS_LITERAL_STRING("ELEMENT")) || 
-      Substring(theBufCopy, 0, 7).Equals(NS_LITERAL_STRING("ATTLIST")) || 
-      Substring(theBufCopy, 0, 6).Equals(NS_LITERAL_STRING("ENTITY")) || 
-      Substring(theBufCopy, 0, 8).Equals(NS_LITERAL_STRING("NOTATION"))) {
+    } else if (StringBeginsWith(theBufCopy, NS_LITERAL_STRING("ELEMENT")) ||
+               StringBeginsWith(theBufCopy, NS_LITERAL_STRING("ATTLIST")) || 
+               StringBeginsWith(theBufCopy, NS_LITERAL_STRING("ENTITY")) || 
+               StringBeginsWith(theBufCopy, NS_LITERAL_STRING("NOTATION"))) {
       aToken = theAllocator->CreateTokenOfType(eToken_markupDecl,eHTMLTag_markupDecl);
     } else {
       aToken = theAllocator->CreateTokenOfType(eToken_comment,eHTMLTag_comment);
@@ -1050,9 +1063,9 @@ nsresult nsHTMLTokenizer::ConsumeProcessingInstruction(PRUnichar aChar,CToken*& 
 
 void nsHTMLTokenizer::PreserveToken(CStartToken* aStartToken, 
                                     nsScanner& aScanner, 
-                                    nsReadingIterator<PRUnichar> aOrigin) {
+                                    nsScannerIterator aOrigin) {
   if(aStartToken) {
-    nsReadingIterator<PRUnichar> theCurrentPosition;
+    nsScannerIterator theCurrentPosition;
     aScanner.CurrentPosition(theCurrentPosition);
 
     nsString& trailingContent = aStartToken->mTrailingContent;

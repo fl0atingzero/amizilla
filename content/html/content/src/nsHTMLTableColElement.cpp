@@ -39,7 +39,7 @@
 #include "nsIHTMLTableColElement.h"
 #include "nsIDOMEventReceiver.h"
 #include "nsIHTMLContent.h"
-#include "nsHTMLAttributes.h"
+#include "nsMappedAttributes.h"
 #include "nsGenericHTMLElement.h"
 #include "nsHTMLAtoms.h"
 #include "nsStyleConsts.h"
@@ -50,7 +50,7 @@
 // http://lxr.mozilla.org/classic/source/lib/layout/laytable.c#46
 #define MAX_COLSPAN 1000
 
-class nsHTMLTableColElement : public nsGenericHTMLContainerElement,
+class nsHTMLTableColElement : public nsGenericHTMLElement,
                               public nsIDOMHTMLTableColElement,
                               public nsIHTMLTableColElement
 {
@@ -62,13 +62,13 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLElement::)
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLTableColElement
   NS_DECL_NSIDOMHTMLTABLECOLELEMENT
@@ -76,20 +76,19 @@ public:
   // nsIHTMLTableColElement
   NS_IMETHOD GetSpanValue(PRInt32* aSpan);
 
-  NS_IMETHOD StringToAttribute(nsIAtom* aAttribute,
-                               const nsAString& aValue,
-                               nsHTMLValue& aResult);
+  virtual PRBool ParseAttribute(nsIAtom* aAttribute,
+                                const nsAString& aValue,
+                                nsAttrValue& aResult);
   NS_IMETHOD AttributeToString(nsIAtom* aAttribute,
                                const nsHTMLValue& aValue,
                                nsAString& aResult) const;
   NS_IMETHOD GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const;
-  NS_IMETHOD GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                      nsChangeHint& aHint) const;
+  NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
 };
 
 nsresult
 NS_NewHTMLTableColElement(nsIHTMLContent** aInstancePtrResult,
-                          nsINodeInfo *aNodeInfo)
+                          nsINodeInfo *aNodeInfo, PRBool aFromParser)
 {
   NS_ENSURE_ARG_POINTER(aInstancePtrResult);
 
@@ -129,7 +128,7 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLTableColElement, nsGenericElement)
 
 // QueryInterface implementation for nsHTMLTableColElement
 NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLTableColElement,
-                                    nsGenericHTMLContainerElement)
+                                    nsGenericHTMLElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLTableColElement)
   NS_INTERFACE_MAP_ENTRY_IF_TAG(nsIHTMLTableColElement, col) // for col only
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLTableColElement)
@@ -155,7 +154,7 @@ nsHTMLTableColElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   if (NS_FAILED(rv))
     return rv;
 
-  CopyInnerTo(this, it, aDeep);
+  CopyInnerTo(it, aDeep);
 
   *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
 
@@ -173,45 +172,30 @@ NS_IMPL_STRING_ATTR_DEFAULT_VALUE(nsHTMLTableColElement, VAlign, valign, "middle
 NS_IMPL_STRING_ATTR(nsHTMLTableColElement, Width, width)
 
 
-NS_IMETHODIMP
-nsHTMLTableColElement::StringToAttribute(nsIAtom* aAttribute,
-                                         const nsAString& aValue,
-                                         nsHTMLValue& aResult)
+PRBool
+nsHTMLTableColElement::ParseAttribute(nsIAtom* aAttribute,
+                                      const nsAString& aValue,
+                                      nsAttrValue& aResult)
 {
   /* ignore these attributes, stored simply as strings ch */
-  /* attributes that resolve to integers */
   if (aAttribute == nsHTMLAtoms::charoff) {
-    if (aResult.ParseIntWithBounds(aValue, eHTMLUnit_Integer, 0)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+    return aResult.ParseSpecialIntValue(aValue, PR_TRUE, PR_FALSE);
   }
-  else if (aAttribute == nsHTMLAtoms::span) {
+  if (aAttribute == nsHTMLAtoms::span) {
     /* protection from unrealistic large colspan values */
-    if (aResult.ParseIntWithBounds(aValue, eHTMLUnit_Integer, 1, MAX_COLSPAN)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+    return aResult.ParseIntWithBounds(aValue, 1, MAX_COLSPAN);
   }
-  else if (aAttribute == nsHTMLAtoms::width) {
-    /* attributes that resolve to integers or percents or proportions */
-
-    if (aResult.ParseSpecialIntValue(aValue, eHTMLUnit_Pixel, PR_TRUE, PR_TRUE)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+  if (aAttribute == nsHTMLAtoms::width) {
+    return aResult.ParseSpecialIntValue(aValue, PR_TRUE, PR_TRUE);
   }
-  else if (aAttribute == nsHTMLAtoms::align) {
-    /* other attributes */
-
-    if (ParseTableCellHAlignValue(aValue, aResult)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+  if (aAttribute == nsHTMLAtoms::align) {
+    return ParseTableCellHAlignValue(aValue, aResult);
   }
-  else if (aAttribute == nsHTMLAtoms::valign) {
-    if (ParseTableVAlignValue(aValue, aResult)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+  if (aAttribute == nsHTMLAtoms::valign) {
+    return ParseTableVAlignValue(aValue, aResult);
   }
 
-  return NS_CONTENT_ATTR_NOT_THERE;
+  return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
 }
 
 NS_IMETHODIMP
@@ -235,35 +219,26 @@ nsHTMLTableColElement::AttributeToString(nsIAtom* aAttribute,
       return NS_CONTENT_ATTR_HAS_VALUE;
     }
   }
-  else if (aAttribute == nsHTMLAtoms::width) {
-    if (aValue.ToString(aResult)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
-  }
 
-  return nsGenericHTMLContainerElement::AttributeToString(aAttribute, aValue,
-                                                          aResult);
+  return nsGenericHTMLElement::AttributeToString(aAttribute, aValue, aResult);
 }
 
 static 
-void MapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes, nsRuleData* aData)
+void MapAttributesIntoRule(const nsMappedAttributes* aAttributes, nsRuleData* aData)
 {
-  if (!aAttributes || !aData)
-    return;
-
-  nsHTMLValue value;
-  
-  if (aData->mPositionData && aData->mPositionData->mWidth.GetUnit() == eCSSUnit_Null) {
+  if (aData->mSID == eStyleStruct_Position &&
+      aData->mPositionData->mWidth.GetUnit() == eCSSUnit_Null) {
     // width
-    aAttributes->GetAttribute(nsHTMLAtoms::width, value);
-    if (value.GetUnit() != eHTMLUnit_Null) {
+    nsHTMLValue value;
+    if (aAttributes->GetAttribute(nsHTMLAtoms::width, value) !=
+        NS_CONTENT_ATTR_NOT_THERE) {
       switch (value.GetUnit()) {
       case eHTMLUnit_Percent: {
         aData->mPositionData->mWidth.SetPercentValue(value.GetPercentValue());
         break;
       }
-      case eHTMLUnit_Pixel: {
-        aData->mPositionData->mWidth.SetFloatValue((float)value.GetPixelValue(), eCSSUnit_Pixel);
+      case eHTMLUnit_Integer: {
+        aData->mPositionData->mWidth.SetFloatValue((float)value.GetIntValue(), eCSSUnit_Pixel);
         break;
       }
       case eHTMLUnit_Proportional: {
@@ -275,24 +250,22 @@ void MapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes, nsRuleDat
       }
     }
   }
-  else if (aData->mTextData) {
-    if (aData->mSID == eStyleStruct_Text) {
-      if (aData->mTextData->mTextAlign.GetUnit() == eCSSUnit_Null) {
-        // align: enum
-        nsHTMLValue value;
-        aAttributes->GetAttribute(nsHTMLAtoms::align, value);
-        if (value.GetUnit() == eHTMLUnit_Enumerated)
-          aData->mTextData->mTextAlign.SetIntValue(value.GetIntValue(), eCSSUnit_Enumerated);
-      }
+  else if (aData->mSID == eStyleStruct_Text) {
+    if (aData->mTextData->mTextAlign.GetUnit() == eCSSUnit_Null) {
+      // align: enum
+      nsHTMLValue value;
+      aAttributes->GetAttribute(nsHTMLAtoms::align, value);
+      if (value.GetUnit() == eHTMLUnit_Enumerated)
+        aData->mTextData->mTextAlign.SetIntValue(value.GetIntValue(), eCSSUnit_Enumerated);
     }
-    else {
-      if (aData->mTextData->mVerticalAlign.GetUnit() == eCSSUnit_Null) {
-        // valign: enum
-        nsHTMLValue value;
-        aAttributes->GetAttribute(nsHTMLAtoms::valign, value);
-        if (value.GetUnit() == eHTMLUnit_Enumerated) 
-          aData->mTextData->mVerticalAlign.SetIntValue(value.GetIntValue(), eCSSUnit_Enumerated);
-      }
+  }
+  else if (aData->mSID == eStyleStruct_TextReset) {
+    if (aData->mTextData->mVerticalAlign.GetUnit() == eCSSUnit_Null) {
+      // valign: enum
+      nsHTMLValue value;
+      aAttributes->GetAttribute(nsHTMLAtoms::valign, value);
+      if (value.GetUnit() == eHTMLUnit_Enumerated) 
+        aData->mTextData->mVerticalAlign.SetIntValue(value.GetIntValue(), eCSSUnit_Enumerated);
     }
   }
 
@@ -300,16 +273,10 @@ void MapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes, nsRuleDat
 }
 
 static 
-void ColMapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes,
+void ColMapAttributesIntoRule(const nsMappedAttributes* aAttributes,
                               nsRuleData* aData)
 {
-  if (!aAttributes || !aData)
-    return;
-
-  nsHTMLValue value;
-  
   if (aData->mSID == eStyleStruct_Table && 
-      aData->mTableData &&
       aData->mTableData->mSpan.GetUnit() == eCSSUnit_Null) {
     // span: int
     nsHTMLValue value;
@@ -322,31 +289,39 @@ void ColMapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes,
   MapAttributesIntoRule(aAttributes, aData);
 }
 
-NS_IMETHODIMP
-nsHTMLTableColElement::GetMappedAttributeImpact(const nsIAtom* aAttribute,
-                                                PRInt32 aModType,
-                                                nsChangeHint& aHint) const
+NS_IMETHODIMP_(PRBool)
+nsHTMLTableColElement::IsAttributeMapped(const nsIAtom* aAttribute) const
 {
-  // we don't match "span" if we're a <col>
-  nsIAtom** matchSpan = mNodeInfo->Equals(nsHTMLAtoms::col) ?
-    nsnull : &nsHTMLAtoms::span;
-  
-  const AttributeImpactEntry attributes[] = {
-    { &nsHTMLAtoms::width, NS_STYLE_HINT_REFLOW },
-    { &nsHTMLAtoms::align, NS_STYLE_HINT_REFLOW },
-    { &nsHTMLAtoms::valign, NS_STYLE_HINT_REFLOW },
-    { matchSpan, NS_STYLE_HINT_REFLOW },
-    { nsnull, NS_STYLE_HINT_NONE }
+  static const MappedAttributeEntry attributes[] = {
+    { &nsHTMLAtoms::width },
+    { &nsHTMLAtoms::align },
+    { &nsHTMLAtoms::valign },
+    { nsnull }
   };
 
-  const AttributeImpactEntry* const map[] = {
+  static const MappedAttributeEntry span_attribute[] = {
+    { &nsHTMLAtoms::span },
+    { nsnull }
+  };
+
+  static const MappedAttributeEntry* const col_map[] = {
     attributes,
     sCommonAttributeMap,
   };
 
-  FindAttributeImpact(aAttribute, aHint, map, NS_ARRAY_LENGTH(map));
+  static const MappedAttributeEntry* const colspan_map[] = {
+    attributes,
+    span_attribute,
+    sCommonAttributeMap,
+  };
 
-  return NS_OK;
+  // we don't match "span" if we're a <col>
+  // XXXldb Should this be reflected in the mapping function?
+  if (mNodeInfo->Equals(nsHTMLAtoms::col))
+    return FindAttributeDependence(aAttribute, col_map,
+                                   NS_ARRAY_LENGTH(col_map));
+  return FindAttributeDependence(aAttribute, colspan_map,
+                                 NS_ARRAY_LENGTH(colspan_map));
 }
 
 

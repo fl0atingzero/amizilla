@@ -45,8 +45,6 @@
 #include "nsCOMPtr.h"
 #include "prlog.h"
 
-static NS_DEFINE_CID(kStreamTransportServiceCID, NS_STREAMTRANSPORTSERVICE_CID);
-static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 
 #if defined(PR_LOGGING)
 //
@@ -240,6 +238,9 @@ nsInputStreamChannel::GetContentType(nsACString &aContentType)
 NS_IMETHODIMP
 nsInputStreamChannel::SetContentType(const nsACString &aContentType)
 {
+    // If someone gives us a type hint we should just use that type.
+    // So we don't care when this is being called.
+
     // mContentCharset is unchanged if not parsed
     NS_ParseContentType(aContentType, mContentType, mContentCharset);
     return NS_OK;
@@ -255,6 +256,8 @@ nsInputStreamChannel::GetContentCharset(nsACString &aContentCharset)
 NS_IMETHODIMP
 nsInputStreamChannel::SetContentCharset(const nsACString &aContentCharset)
 {
+    // If someone gives us a charset hint we should just use that charset.
+    // So we don't care when this is being called.
     mContentCharset = aContentCharset;
     return NS_OK;
 }
@@ -280,6 +283,8 @@ nsInputStreamChannel::Open(nsIInputStream **result)
     NS_ENSURE_TRUE(mContentStream, NS_ERROR_NOT_INITIALIZED);
     NS_ENSURE_TRUE(!mPump, NS_ERROR_IN_PROGRESS);
 
+    // XXX this won't work if mContentStream is non-blocking.
+
     NS_ADDREF(*result = mContentStream);
     return NS_OK;
 }
@@ -290,6 +295,11 @@ nsInputStreamChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctxt)
     NS_ENSURE_TRUE(mContentStream, NS_ERROR_NOT_INITIALIZED);
     NS_ENSURE_TRUE(!mPump, NS_ERROR_IN_PROGRESS);
 
+    // if content length is unknown, then we must guess... in this case, we
+    // assume the stream can tell us.  if the stream is a pipe, then this will
+    // not work.  in that case, we hope that the user of this interface would
+    // have set our content length to PR_UINT32_MAX to cause us to read until
+    // end of stream.
     if (mContentLength == -1)
         mContentStream->Available((PRUint32 *) &mContentLength);
 

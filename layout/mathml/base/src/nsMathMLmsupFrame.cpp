@@ -137,12 +137,11 @@ nsMathMLmsupFrame::PlaceSuperScript(nsIPresContext*      aPresContext,
   nsHTMLReflowMetrics baseSize (nsnull);
   nsHTMLReflowMetrics supScriptSize (nsnull);
   nsBoundingMetrics bmBase, bmSupScript;
-  nsIFrame* baseFrame = nsnull;
   nsIFrame* supScriptFrame = nsnull;
-  aFrame->FirstChild(aPresContext, nsnull, &baseFrame);
+  nsIFrame* baseFrame = aFrame->GetFirstChild(nsnull);
   if (baseFrame)
-    baseFrame->GetNextSibling(&supScriptFrame);
-  if (!baseFrame || !supScriptFrame || HasNextSibling(supScriptFrame)) {
+    supScriptFrame = baseFrame->GetNextSibling();
+  if (!baseFrame || !supScriptFrame || supScriptFrame->GetNextSibling()) {
     // report an error, encourage people to get their markups in order
     NS_WARNING("invalid markup");
     return NS_STATIC_CAST(nsMathMLContainerFrame*, 

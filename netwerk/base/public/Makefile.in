@@ -54,11 +54,9 @@ XPIDLSRCS	= \
 		nsIInputStreamPump.idl \
 		nsIInputStreamChannel.idl \
 		nsIMIMEInputStream.idl \
-		nsINetModRegEntry.idl \
-		nsINetModuleMgr.idl \
-		nsINetNotify.idl \
 		nsIPasswordManager.idl \
 		nsIPasswordManagerInternal.idl \
+		nsIPermissionManager.idl \
 		nsIProgressEventSink.idl \
 		nsIPrompt.idl \
 		nsIProtocolProxyService.idl \
@@ -69,6 +67,7 @@ XPIDLSRCS	= \
 		nsITransport.idl \
 		nsISocketTransport.idl \
 		nsISocketTransportService.idl \
+		nsIServerSocket.idl \
 		nsIResumableChannel.idl \
 		nsIResumableEntityID.idl \
 		nsIRequestObserverProxy.idl \
@@ -77,6 +76,7 @@ XPIDLSRCS	= \
 		nsISimpleStreamListener.idl \
 		nsIStreamTransportService.idl \
 		nsIStreamLoader.idl \
+		nsISyncStreamListener.idl \
 		nsIUnicharStreamLoader.idl \
 		nsIStandardURL.idl \
 		nsIURLParser.idl \
@@ -89,6 +89,7 @@ XPIDLSRCS	= \
 		nsIByteRangeRequest.idl \
 		nsIMultiPartChannel.idl \
 		nsIExternalProtocolHandler.idl \
+		nsIAuthModule.idl \
 		$(NULL)
 
 EXPORTS		= \
@@ -96,6 +97,7 @@ EXPORTS		= \
 		nsNetError.h \
 		nsNetUtil.h \
 		nsUnixColorPrintf.h \
+		nsURIHashKey.h \
 		nsReadLine.h \
 		nsCPasswordManager.h \
 		nsCPasswordManagerInternal.h \

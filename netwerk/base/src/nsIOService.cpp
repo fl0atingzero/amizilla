@@ -1,3 +1,4 @@
+/* vim:set ts=4 sw=4 cindent et: */
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: NPL 1.1/GPL 2.0/LGPL 2.1
@@ -76,7 +77,6 @@ static NS_DEFINE_CID(kSocketTransportServiceCID, NS_SOCKETTRANSPORTSERVICE_CID);
 static NS_DEFINE_CID(kDNSServiceCID, NS_DNSSERVICE_CID);
 static NS_DEFINE_CID(kErrorServiceCID, NS_ERRORSERVICE_CID);
 static NS_DEFINE_CID(kProtocolProxyServiceCID, NS_PROTOCOLPROXYSERVICE_CID);
-static NS_DEFINE_CID(kStdURLParserCID, NS_STDURLPARSER_CID);
 
 // A general port blacklist.  Connections to these ports will not be avoided unless 
 // the protocol overrides.
@@ -135,7 +135,6 @@ PRInt16 gBadPortList[] = {
   556,  // remotefs    
   587,  //
   601,  //       
-  1080, // SOCKS
   2049, // nfs
   4045, // lockd
   6000, // x11        
@@ -193,10 +192,6 @@ nsIOService::Init()
     if (NS_FAILED(rv))
         NS_WARNING("failed to get socket transport service");
 
-    mStreamTransportService = do_GetService(kStreamTransportServiceCID, &rv);
-    if (NS_FAILED(rv))
-        NS_WARNING("failed to get stream transport service");
-
     mDNSService = do_GetService(kDNSServiceCID, &rv);
     if (NS_FAILED(rv))
         NS_WARNING("failed to get DNS service");
@@ -224,14 +219,11 @@ nsIOService::Init()
         mRestrictedPortList.AppendElement(NS_REINTERPRET_CAST(void *, gBadPortList[i]));
 
     // Further modifications to the port list come from prefs
-    nsCOMPtr<nsIPrefBranch> prefBranch;
+    nsCOMPtr<nsIPrefBranchInternal> prefBranch;
     GetPrefBranch(getter_AddRefs(prefBranch));
     if (prefBranch) {
-        nsCOMPtr<nsIPrefBranchInternal> pbi = do_QueryInterface(prefBranch);
-        if (pbi) {
-            pbi->AddObserver(PORT_PREF_PREFIX, this, PR_TRUE);
-            pbi->AddObserver(AUTODIAL_PREF, this, PR_TRUE);
-        }
+        prefBranch->AddObserver(PORT_PREF_PREFIX, this, PR_TRUE);
+        prefBranch->AddObserver(AUTODIAL_PREF, this, PR_TRUE);
         PrefsChanged(prefBranch);
     }
     
@@ -257,7 +249,7 @@ nsIOService::~nsIOService()
 NS_IMPL_THREADSAFE_ISUPPORTS3(nsIOService,
                               nsIIOService,
                               nsIObserver,
-                              nsISupportsWeakReference);
+                              nsISupportsWeakReference)
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -281,7 +273,7 @@ nsIOService::CacheProtocolHandler(const char *scheme, nsIProtocolHandler *handle
 #endif /* DEBUG_dp */
                 return NS_ERROR_FAILURE;
             }
-            mWeakHandler[i] = getter_AddRefs(NS_GetWeakReference(handler));
+            mWeakHandler[i] = do_GetWeakReference(handler);
             return NS_OK;
         }
     }
@@ -324,7 +316,7 @@ nsIOService::GetProtocolHandler(const char* scheme, nsIProtocolHandler* *result)
 
     PRBool externalProtocol = PR_FALSE;
     PRBool listedProtocol   = PR_TRUE;
-    nsCOMPtr<nsIPrefBranch> prefBranch;
+    nsCOMPtr<nsIPrefBranchInternal> prefBranch;
     GetPrefBranch(getter_AddRefs(prefBranch));
     if (prefBranch) {
         nsCAutoString externalProtocolPref("network.protocol-handler.external.");
@@ -350,6 +342,30 @@ nsIOService::GetProtocolHandler(const char* scheme, nsIProtocolHandler* *result)
     }
     
     if (externalProtocol || NS_FAILED(rv)) {
+#ifdef MOZ_X11
+
+      // check to see if GnomeVFS can handle this URI scheme.  if it can create
+      // a nsIURI for the "scheme:", then we assume it has support for the
+      // requested protocol.  otherwise, we failover to using the default
+      // protocol handler.
+
+      // XXX should this be generalized into something that searches a category?
+      // (see bug 234714)
+
+      rv = CallGetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"moz-gnomevfs",
+                          result);
+      if (NS_SUCCEEDED(rv)) {
+          nsCAutoString spec(scheme);
+          spec.Append(':');
+          nsCOMPtr<nsIURI> uri;
+          rv = (*result)->NewURI(spec, nsnull, nsnull, getter_AddRefs(uri));
+          if (NS_SUCCEEDED(rv))
+              return NS_OK;
+          NS_RELEASE(*result);
+      }
+
+#endif
+
       // okay we don't have a protocol handler to handle this url type, so use the default protocol handler.
       // this will cause urls to get dispatched out to the OS ('cause we can't do anything with them) when 
       // we try to read from a channel created by the default protocol handler.
@@ -489,7 +505,7 @@ nsIOService::SetOffline(PRBool offline)
     nsresult rv;
     if (offline) {
         NS_NAMED_LITERAL_STRING(offlineString, "offline");
-    	mOffline = PR_TRUE; // indicate we're trying to shutdown
+        mOffline = PR_TRUE; // indicate we're trying to shutdown
 
         // don't care if notification fails
         // this allows users to attempt a little cleanup before dns and socket transport are shut down.
@@ -580,14 +596,14 @@ nsIOService::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     if (!prefs) return;
 
     // Look for extra ports to block
-    if (!pref || PL_strcmp(pref, PORT_PREF("banned")) == 0)
+    if (!pref || strcmp(pref, PORT_PREF("banned")) == 0)
         ParsePortList(prefs, PORT_PREF("banned"), PR_FALSE);
 
     // ...as well as previous blocks to remove.
-    if (!pref || PL_strcmp(pref, PORT_PREF("banned.override")) == 0)
+    if (!pref || strcmp(pref, PORT_PREF("banned.override")) == 0)
         ParsePortList(prefs, PORT_PREF("banned.override"), PR_TRUE);
 
-    if (!pref || PL_strcmp(pref, AUTODIAL_PREF) == 0) {
+    if (!pref || strcmp(pref, AUTODIAL_PREF) == 0) {
         PRBool enableAutodial = PR_FALSE;
         nsresult rv = prefs->GetBoolPref(AUTODIAL_PREF, &enableAutodial);
         // If pref not found, default to disabled.
@@ -639,13 +655,10 @@ nsIOService::ParsePortList(nsIPrefBranch *prefBranch, const char *pref, PRBool r
 }
 
 void
-nsIOService::GetPrefBranch(nsIPrefBranch **result)
+nsIOService::GetPrefBranch(nsIPrefBranchInternal **result)
 {
     *result = nsnull;
-    nsCOMPtr<nsIPrefService> prefService =
-        do_GetService(NS_PREFSERVICE_CONTRACTID);
-    if (prefService)
-        prefService->GetBranch(nsnull, result);
+    CallGetService(NS_PREFSERVICE_CONTRACTID, result);
 }
 
 // nsIObserver interface
@@ -673,9 +686,6 @@ nsIOService::Observe(nsISupports *subject,
     }
     else if (!strcmp(topic, NS_XPCOM_SHUTDOWN_OBSERVER_ID)) {
         SetOffline(PR_TRUE);
-
-        if (mStreamTransportService)
-            mStreamTransportService->Shutdown();
 
         // Break circular reference.
         mProxyService = 0;

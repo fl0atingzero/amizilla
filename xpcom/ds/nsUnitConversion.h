@@ -40,13 +40,18 @@
 #include "nscore.h"
 #include "nsCoord.h"
 #include <math.h>
+#include <float.h>
 
+#ifndef FLT_EPSILON
+// Not an ANSI compiler... oh, well.  Use an IEEE value.
+#define FLT_EPSILON 1.19209290e-7f
+#endif
 /// handy constants
 #define TWIPS_PER_POINT_INT           20
 #define TWIPS_PER_POINT_FLOAT         20.0f
-#define ROUND_EXCLUSIVE_CONST_FLOAT   0.4999999999999999f   // XXX this should be derived from platform FLOAT_MIN
+#define CEIL_CONST_FLOAT              (1.0f - 0.5f*FLT_EPSILON)
+#define ROUND_EXCLUSIVE_CONST_FLOAT   (0.5f*CEIL_CONST_FLOAT)
 #define ROUND_CONST_FLOAT             0.5f
-#define CEIL_CONST_FLOAT              0.9999999999999999f   // XXX this should be derived from platform FLOAT_MIN
 
 
 /*

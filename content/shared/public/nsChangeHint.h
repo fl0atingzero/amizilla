@@ -42,20 +42,11 @@
 // Defines for various style related constants
 
 enum nsChangeHint {
-  nsChangeHint_None = 0,          // change has no impact
-  nsChangeHint_Unknown = 0x01,    // change has unknown impact
-  nsChangeHint_AttrChange = 0x02, // change should cause notification to frame but nothing else
-  nsChangeHint_Aural = 0x04,      // change was aural
-  nsChangeHint_Content = 0x08,    // change was contentual (e.g., SRC=)
-  nsChangeHint_RepaintFrame = 0x10,  // change was visual only (e.g., COLOR=)
-  nsChangeHint_ReflowFrame = 0x20,   // change requires reflow (e.g., WIDTH=)
-  nsChangeHint_SyncFrameView = 0x40, // change requires view to be updated, if there is one (e.g., clip:)
-  nsChangeHint_ReconstructFrame = 0x80,   // change requires frame change (e.g., display:)
+  nsChangeHint_RepaintFrame = 0x01,  // change was visual only (e.g., COLOR=)
+  nsChangeHint_ReflowFrame = 0x02,   // change requires reflow (e.g., WIDTH=)
+  nsChangeHint_SyncFrameView = 0x04, // change requires view to be updated, if there is one (e.g., clip:)
+  nsChangeHint_ReconstructFrame = 0x08   // change requires frame change (e.g., display:)
                                          // This subsumes all the above
-  nsChangeHint_ReconstructDoc = 0x100
-  // change requires reconstruction of entire document (e.g., style sheet change)
-  // This subsumes all the above
-
   // TBD: add nsChangeHint_ForceFrameView to force frame reconstruction if the frame doesn't yet
   // have a view
 };
@@ -99,25 +90,25 @@ inline PRBool NS_IsHintSubset(nsChangeHint aSubset, nsChangeHint aSuperSet) {
 }
 
 // Redefine the old NS_STYLE_HINT constants in terms of the new hint structure
-const nsChangeHint NS_STYLE_HINT_UNKNOWN = nsChangeHint_Unknown;
-const nsChangeHint NS_STYLE_HINT_NONE = nsChangeHint_None;
-const nsChangeHint NS_STYLE_HINT_ATTRCHANGE = nsChangeHint_AttrChange;
-const nsChangeHint NS_STYLE_HINT_AURAL = (nsChangeHint)
-  (nsChangeHint_AttrChange | nsChangeHint_Aural);
-const nsChangeHint NS_STYLE_HINT_CONTENT = (nsChangeHint)
-  (nsChangeHint_AttrChange | nsChangeHint_Aural | nsChangeHint_Content);
-const nsChangeHint NS_STYLE_HINT_VISUAL = (nsChangeHint)
-  (nsChangeHint_AttrChange | nsChangeHint_Aural | nsChangeHint_Content | nsChangeHint_RepaintFrame
-   | nsChangeHint_SyncFrameView);
-const nsChangeHint NS_STYLE_HINT_REFLOW = (nsChangeHint)
-  (nsChangeHint_AttrChange | nsChangeHint_Aural | nsChangeHint_Content | nsChangeHint_RepaintFrame
-   | nsChangeHint_SyncFrameView | nsChangeHint_ReflowFrame);
-const nsChangeHint NS_STYLE_HINT_FRAMECHANGE = (nsChangeHint)
-  (nsChangeHint_AttrChange | nsChangeHint_Aural | nsChangeHint_Content | nsChangeHint_RepaintFrame
-   | nsChangeHint_SyncFrameView | nsChangeHint_ReflowFrame | nsChangeHint_ReconstructFrame);
-const nsChangeHint NS_STYLE_HINT_RECONSTRUCT_ALL = (nsChangeHint)
-  (nsChangeHint_AttrChange | nsChangeHint_Aural | nsChangeHint_Content | nsChangeHint_RepaintFrame
-   | nsChangeHint_SyncFrameView | nsChangeHint_ReflowFrame | nsChangeHint_ReconstructFrame
-   | nsChangeHint_ReconstructDoc);
+#define NS_STYLE_HINT_NONE \
+  nsChangeHint(0)
+#define NS_STYLE_HINT_VISUAL \
+  nsChangeHint(nsChangeHint_RepaintFrame | nsChangeHint_SyncFrameView)
+#define NS_STYLE_HINT_REFLOW \
+  nsChangeHint(NS_STYLE_HINT_VISUAL | nsChangeHint_ReflowFrame)
+#define NS_STYLE_HINT_FRAMECHANGE \
+  nsChangeHint(NS_STYLE_HINT_REFLOW | nsChangeHint_ReconstructFrame)
+
+
+/**
+ * |nsReStyleHint| is a bitfield for the result of |HasStateDependentStyle|
+ * and |HasAttributeDependentStyle|.  All values have an implied "and
+ * descendants."  When no restyling is necesary, use |nsReStyleHint(0)|.
+ */
+enum nsReStyleHint {
+  eReStyle_Self = 0x1,
+  eReStyle_LaterSiblings = 0x2
+};
+
 
 #endif /* nsChangeHint_h___ */

@@ -38,13 +38,12 @@
 #define INCL_WIN
 #include <os2.h>
 #include <string.h>
+#include <assert.h>
 
 #include "npnulos2.h"
 
 #include "plugin.h"
 #include "utils.h"
-
-static char szDefaultPluginFinderURL[] = DEFAULT_PLUGINFINDER_URL;
 
 static void onCommand(HWND hWnd, int id, HWND hWndCtl, UINT codeNotify)
 {

@@ -41,6 +41,7 @@
 #include "nsHTMLContainerFrame.h"
 #include "nsIAtom.h"
 #include "nsILineIterator.h"
+#include "nsTablePainter.h"
 
 class nsTableFrame;
 class nsTableRowFrame;
@@ -143,6 +144,9 @@ public:
                    nsFramePaintLayer    aWhichLayer,
                    PRUint32             aFlags = 0);
 
+  // row groups don't paint their own background -- the cells do
+  virtual PRBool CanPaintBackground() { return PR_FALSE; }
+
   /** ask all children to paint themselves, without clipping (for cells with rowspan>1)
     * @see nsIFrame::Paint 
     */
@@ -178,9 +182,9 @@ public:
    *
    * @see nsLayoutAtoms::tableRowGroupFrame
    */
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
 
-  NS_IMETHOD IsPercentageBase(PRBool& aBase) const;
+  virtual PRBool IsContainingBlock() const;
 
   nsTableRowFrame* GetFirstRow();
 
@@ -212,11 +216,27 @@ public:
   /**
    * Get the total height of all the row rects
    */
-  nscoord GetHeightOfRows(nsIPresContext* aPresContext);
+  nscoord GetHeightOfRows();
   nscoord GetHeightBasis(const nsHTMLReflowState& aReflowState);
   
   nsMargin* GetBCBorderWidth(float     aPixelsToTwips,
                              nsMargin& aBorder);
+
+  /**
+   * Gets inner border widths before collapsing with cell borders
+   * Caller must get top border from previous row group or from table
+   * GetContinuousBCBorderWidth will not overwrite aBorder.top
+   * see nsTablePainter about continuous borders
+   */
+  void GetContinuousBCBorderWidth(float     aPixelsToTwips,
+                                  nsMargin& aBorder);
+  /**
+   * Sets full border widths before collapsing with cell borders
+   * @param aForSide - side to set; only right, left, and bottom valid
+   */
+  void SetContinuousBCBorderWidth(PRUint8     aForSide,
+                                  BCPixelSize aPixelValue);
+
 // nsILineIterator methods
 public:
   NS_IMETHOD GetNumLines(PRInt32* aResult);
@@ -272,6 +292,7 @@ protected:
 
   void DidResizeRows(nsIPresContext&          aPresContext,
                      const nsHTMLReflowState& aReflowState,
+                     nsHTMLReflowMetrics&     aDesiredSize,
                      nsTableRowFrame*         aStartRowFrameIn = nsnull);
 
   /** Incremental Reflow attempts to do column balancing with the minimum number of reflow
@@ -335,7 +356,6 @@ protected:
 
   void SplitSpanningCells(nsIPresContext&          aPresContext,
                           const nsHTMLReflowState& aReflowState,
-                          nsIStyleSet&             aStyleSet,                                         
                           nsTableFrame&            aTableFrame,
                           nsTableRowFrame&         aFirstRow, 
                           nsTableRowFrame&         aLastRow,  
@@ -346,7 +366,6 @@ protected:
                           nscoord&                 aDesiredHeight);
 
   void CreateContinuingRowFrame(nsIPresContext& aPresContext,
-                                nsIStyleSet&    aStyleSet,
                                 nsIFrame&       aRowFrame,
                                 nsIFrame**      aContRowFrame);
 
@@ -357,11 +376,18 @@ protected:
 
   void UndoContinuedRow(nsIPresContext*  aPresContext,
                         nsTableRowFrame* aRow);
+                        
+private:
+  // border widths in pixels in the collapsing border model
+  BCPixelSize mRightContBorderWidth;
+  BCPixelSize mBottomContBorderWidth;
+  BCPixelSize mLeftContBorderWidth;
+
 public:
   virtual nsIFrame* GetFirstFrame() { return mFrames.FirstChild(); };
   virtual nsIFrame* GetLastFrame() { return mFrames.LastChild(); };
   virtual void GetNextFrame(nsIFrame*  aFrame, 
-                            nsIFrame** aResult) { aFrame->GetNextSibling(aResult); };
+                            nsIFrame** aResult) { *aResult = aFrame->GetNextSibling(); };
   PRBool IsRepeatable() const;
   void   SetRepeatable(PRBool aRepeatable);
   PRBool HasStyleHeight() const;
@@ -416,5 +442,18 @@ inline void nsTableRowGroupFrame::SetHasStyleHeight(PRBool aValue)
   } else {
     mState &= ~NS_ROWGROUP_HAS_STYLE_HEIGHT;
   }
+}
+
+inline void
+nsTableRowGroupFrame::GetContinuousBCBorderWidth(float     aPixelsToTwips,
+                                                 nsMargin& aBorder)
+{
+  aBorder.right = BC_BORDER_LEFT_HALF_COORD(aPixelsToTwips,
+                                            mRightContBorderWidth);
+  aBorder.bottom = BC_BORDER_TOP_HALF_COORD(aPixelsToTwips,
+                                            mBottomContBorderWidth);
+  aBorder.left = BC_BORDER_RIGHT_HALF_COORD(aPixelsToTwips,
+                                            mLeftContBorderWidth);
+  return;
 }
 #endif

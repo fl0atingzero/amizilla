@@ -21,7 +21,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Brian Ryner <bryner@netscape.com>
+ *  Brian Ryner <bryner@brianryner.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -105,7 +105,7 @@ EmbedPrompter::Create(PromptType aType, GtkWindow* aParentWindow)
                                           NULL);
 
     // gtk will resize this for us as necessary
-    gtk_window_set_default_size(GTK_WINDOW(mWindow), 200, 100);
+    gtk_window_set_default_size(GTK_WINDOW(mWindow), 100, 50);
 
     // this HBox will contain the icon, and a vbox which contains the
     // dialog text and other widgets.
@@ -133,6 +133,7 @@ EmbedPrompter::Create(PromptType aType, GtkWindow* aParentWindow)
     // now pack the label into the vbox
     GtkWidget* label = gtk_label_new(mMessageText.get());
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_selectable(GTK_LABEL(label), TRUE);
     gtk_box_pack_start(GTK_BOX(contentsVBox), label, FALSE, FALSE, 0);
 
     int widgetFlags = DialogTable[aType].flags;
@@ -225,16 +226,17 @@ EmbedPrompter::Create(PromptType aType, GtkWindow* aParentWindow)
 
     if (aType == TYPE_UNIVERSAL) {
         // Create buttons based on the flags passed in.
-        for (int i = 0; i < EMBED_MAX_BUTTONS; ++i) {
+        for (int i = EMBED_MAX_BUTTONS; i >= 0; --i) {
             if (!mButtonLabels[i].IsEmpty())
                 gtk_dialog_add_button(GTK_DIALOG(mWindow),
                                       mButtonLabels[i].get(), i);
         }
+        gtk_dialog_set_default_response(GTK_DIALOG(mWindow), 0);
     } else {
         // Create standard ok and cancel buttons
         if (widgetFlags & INCLUDE_CANCEL)
             gtk_dialog_add_button(GTK_DIALOG(mWindow), GTK_STOCK_CANCEL,
-                                  GTK_RESPONSE_REJECT);
+                                  GTK_RESPONSE_CANCEL);
 
         GtkWidget* okButton = gtk_dialog_add_button(GTK_DIALOG(mWindow),
                                                     GTK_STOCK_OK,
@@ -363,7 +365,7 @@ EmbedPrompter::Run(void)
     gint response = gtk_dialog_run(GTK_DIALOG(mWindow));
     switch (response) {
     case GTK_RESPONSE_NONE:
-    case GTK_RESPONSE_REJECT:
+    case GTK_RESPONSE_CANCEL:
     case GTK_RESPONSE_DELETE_EVENT:
         mConfirmResult = PR_FALSE;
         break;

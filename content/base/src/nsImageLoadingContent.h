@@ -120,14 +120,6 @@ private:
   void CancelImageRequests(nsresult aReason);
 
   /**
-   * Method to do security and content policy checks on the image URI
-   *
-   * @param aURI uri of the image to be loaded
-   * @param aDocument the document we belong to
-   */
-  nsresult CanLoadImage(nsIURI* aURI, nsIDocument* aDocument);
-
-  /**
    * helper to get the document for this content (from the nodeinfo
    * and such).  Not named GetDocument to prevent ambiguous method
    * names in subclasses (though why this private method leads to
@@ -135,7 +127,7 @@ private:
    *
    * @return the document we belong to
    */
-  nsresult GetOurDocument(nsIDocument** aDocument);
+  nsIDocument* GetOurDocument();
 
   /**
    * Method to create an nsIURI object from the given string (will
@@ -177,6 +169,7 @@ private:
 
   PRPackedBool mLoadingEnabled;
   PRPackedBool mImageIsBlocked;
+  PRPackedBool mHaveHadObserver;
 };
 
 #endif // nsImageLoadingContent_h__

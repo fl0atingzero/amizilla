@@ -67,7 +67,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 /* The OS/2 version of Netscape uses RC_DATA to define the
-   mime types, file extentions, etc that are required.
+   mime types, file extensions, etc that are required.
    Use a vertical bar to separate types, end types with \0.
    FileVersion and ProductVersion are 32bit ints, all other
    entries are strings the MUST be terminated wwith a \0.
@@ -188,7 +188,8 @@ enum nsPluginVariable {
 
 enum nsPluginManagerVariable {
     nsPluginManagerVariable_XDisplay                 = 1,
-    nsPluginManagerVariable_XtAppContext             = 2
+    nsPluginManagerVariable_XtAppContext             = 2,
+    nsPluginManagerVariable_SupportsXEmbed            = 14
 };
 
 enum nsPluginInstancePeerVariable {
@@ -203,7 +204,8 @@ enum nsPluginInstanceVariable {
     nsPluginInstanceVariable_DoCacheBool             = 5,
     nsPluginInstanceVariable_CallSetWindowAfterDestroyBool = 6,
     nsPluginInstanceVariable_ScriptableInstance      = 10,
-    nsPluginInstanceVariable_ScriptableIID           = 11
+    nsPluginInstanceVariable_ScriptableIID           = 11,
+    nsPluginInstanceVariable_NeedsXEmbed             = 14
 };
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -39,10 +39,9 @@
 #define nsCSS1Parser_h___
 
 #include "nsISupports.h"
-#include "nsChangeHint.h"
 #include "nsAString.h"
 
-class nsIStyleRule;
+class nsICSSStyleRule;
 class nsICSSStyleSheet;
 class nsIUnicharInputStream;
 class nsIURI;
@@ -85,13 +84,13 @@ public:
   // the declaration.
   NS_IMETHOD ParseStyleAttribute(const nsAString&         aAttributeValue,
                                  nsIURI*                  aBaseURL,
-                                 nsIStyleRule**           aResult) = 0;
+                                 nsICSSStyleRule**        aResult) = 0;
 
   NS_IMETHOD ParseAndAppendDeclaration(const nsAString&         aBuffer,
                                        nsIURI*                  aBaseURL,
                                        nsCSSDeclaration*        aDeclaration,
                                        PRBool                   aParseOnlyOneDecl,
-                                       nsChangeHint*            aHint,
+                                       PRBool*                  aChanged,
                                        PRBool                   aClearOldDecl) = 0;
 
   NS_IMETHOD ParseRule(const nsAString&   aRule,
@@ -102,7 +101,7 @@ public:
                            const nsAString& aPropValue,
                            nsIURI* aBaseURL,
                            nsCSSDeclaration* aDeclaration,
-                           nsChangeHint* aHint) = 0;
+                           PRBool* aChanged) = 0;
 };
 
 nsresult

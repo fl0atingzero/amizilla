@@ -22,13 +22,12 @@
 #include "nsMimeTypes.h"
 #include "nsNetUtil.h"
 
-#include "nsScriptSecurityManager.h"
-#include "nsIAggregatePrincipal.h"
+#include "nsIScriptSecurityManager.h"
+#include "nsIPrincipal.h"
 #include "nsIFileURL.h"
 #include "nsIJAR.h"
 
-static NS_DEFINE_CID(kScriptSecurityManagerCID, NS_SCRIPTSECURITYMANAGER_CID);
-static NS_DEFINE_CID(kInputStreamChannelCID, NS_INPUTSTREAMCHANNEL_CID);
+static NS_DEFINE_CID(kZipReaderCID, NS_ZIPREADER_CID);
 
 //-----------------------------------------------------------------------------
 
@@ -63,7 +62,12 @@ public:
     {
         NS_ASSERTION(mJarFile, "no jar file");
     }
-    virtual ~nsJARInputThunk() {}
+
+    virtual ~nsJARInputThunk()
+    {
+        if (!mJarCache && mJarReader)
+            mJarReader->Close();
+    }
 
     void GetJarReader(nsIZipReader **result)
     {
@@ -96,19 +100,26 @@ nsJARInputThunk::EnsureJarStream()
         return NS_OK;
 
     nsresult rv;
-    
-    rv = mJarCache->GetZip(mJarFile, getter_AddRefs(mJarReader));
+    if (mJarCache)
+        rv = mJarCache->GetZip(mJarFile, getter_AddRefs(mJarReader));
+    else {
+        // create an uncached jar reader
+        mJarReader = do_CreateInstance(kZipReaderCID, &rv);
+        if (NS_FAILED(rv)) return rv;
+
+        rv = mJarReader->Init(mJarFile);
+        if (NS_FAILED(rv)) return rv;
+
+        rv = mJarReader->Open();
+    }
     if (NS_FAILED(rv)) return rv;
 
     rv = mJarReader->GetInputStream(mJarEntry.get(),
                                     getter_AddRefs(mJarStream));
     if (NS_FAILED(rv)) return rv;
 
-    // ask the zip entry for the content length
-    nsCOMPtr<nsIZipEntry> entry;
-    mJarReader->GetEntry(mJarEntry.get(), getter_AddRefs(entry));
-    if (entry)
-        entry->GetRealSize((PRUint32 *) &mContentLength);
+    // ask the JarStream for the content length
+    mJarStream->Available((PRUint32 *) &mContentLength);
 
     return NS_OK;
 }
@@ -205,7 +216,7 @@ nsJARChannel::Init(nsIURI *uri)
 }
 
 nsresult
-nsJARChannel::CreateJarInput()
+nsJARChannel::CreateJarInput(nsIZipReaderCache *jarCache)
 {
     // important to pass a clone of the file since the nsIFile impl is not
     // necessarily MT-safe
@@ -213,7 +224,7 @@ nsJARChannel::CreateJarInput()
     nsresult rv = mJarFile->Clone(getter_AddRefs(clonedFile));
     if (NS_FAILED(rv)) return rv;
 
-    mJarInput = new nsJARInputThunk(clonedFile, mJarEntry, gJarHandler->JarCache());
+    mJarInput = new nsJARInputThunk(clonedFile, mJarEntry, jarCache);
     if (!mJarInput)
         return NS_ERROR_OUT_OF_MEMORY;
     NS_ADDREF(mJarInput);
@@ -242,7 +253,9 @@ nsJARChannel::EnsureJarInput(PRBool blocking)
     }
 
     if (mJarFile) {
-        rv = CreateJarInput();
+        // NOTE: we do not need to deal with mSecurityInfo here,
+        // because we're loading from a local file
+        rv = CreateJarInput(gJarHandler->JarCache());
     }
     else if (blocking) {
         NS_NOTREACHED("need sync downloader");
@@ -250,9 +263,11 @@ nsJARChannel::EnsureJarInput(PRBool blocking)
     }
     else {
         // kick off an async download of the base URI...
-        rv = NS_NewDownloader(getter_AddRefs(mDownloader),
-                              mJarBaseURI, this, nsnull, PR_FALSE,
-                              mLoadGroup, mCallbacks, mLoadFlags);
+        rv = NS_NewDownloader(getter_AddRefs(mDownloader), this);
+        if (NS_SUCCEEDED(rv))
+            rv = NS_OpenURI(mDownloader, nsnull, mJarBaseURI, nsnull,
+                            mLoadGroup, mCallbacks,
+                            mLoadFlags & ~LOAD_DOCUMENT_URI);
     }
     return rv;
 
@@ -405,24 +420,26 @@ nsJARChannel::GetOwner(nsISupports **result)
     if (NS_FAILED(rv)) return rv;
 
     if (cert) {
-        // Get the codebase principal
+        nsXPIDLCString certID;
+        rv = cert->GetCertificateID(getter_Copies(certID));
+        if (NS_FAILED(rv)) return rv;
+
+        nsXPIDLCString commonName;
+        rv = cert->GetCommonName(getter_Copies(commonName));
+        if (NS_FAILED(rv)) return rv;
+
         nsCOMPtr<nsIScriptSecurityManager> secMan = 
-                 do_GetService(kScriptSecurityManagerCID, &rv);
+                 do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
         if (NS_FAILED(rv)) return rv;
 
-        nsCOMPtr<nsIPrincipal> codebase;
-        rv = secMan->GetCodebasePrincipal(mJarBaseURI, 
-                                          getter_AddRefs(codebase));
-        if (NS_FAILED(rv)) return rv;
-    
-        // Join the certificate and the codebase
-        nsCOMPtr<nsIAggregatePrincipal> agg = do_QueryInterface(cert, &rv);
+        rv = secMan->GetCertificatePrincipal(certID, mJarBaseURI,
+                                             getter_AddRefs(cert));
         if (NS_FAILED(rv)) return rv;
 
-        rv = agg->SetCodebase(codebase);
+        rv = cert->SetCommonName(commonName);
         if (NS_FAILED(rv)) return rv;
-
-        mOwner = do_QueryInterface(agg, &rv);
+        
+        mOwner = do_QueryInterface(cert, &rv);
         if (NS_FAILED(rv)) return rv;
 
         NS_ADDREF(*result = mOwner);
@@ -455,51 +472,43 @@ nsJARChannel::SetNotificationCallbacks(nsIInterfaceRequestor *aCallbacks)
 NS_IMETHODIMP 
 nsJARChannel::GetSecurityInfo(nsISupports **aSecurityInfo)
 {
-    *aSecurityInfo = nsnull;
+    NS_PRECONDITION(aSecurityInfo, "Null out param");
+    NS_IF_ADDREF(*aSecurityInfo = mSecurityInfo);
     return NS_OK;
 }
 
 NS_IMETHODIMP
 nsJARChannel::GetContentType(nsACString &result)
 {
-    nsresult rv;
-
-    if (!mContentType.IsEmpty()) {
-        result = mContentType;
-        return NS_OK;
-    }
-
-    //
-    // generate content type and set it
-    //
-    if (mJarEntry.IsEmpty()) {
-        LOG(("mJarEntry is empty!\n"));
-        return NS_ERROR_NOT_AVAILABLE;
-    }
-
-    const char *ext = nsnull, *fileName = mJarEntry.get();
-    PRInt32 len = mJarEntry.Length();
-    for (PRInt32 i = len-1; i >= 0; i--) {
-        if (fileName[i] == '.') {
-            ext = &fileName[i + 1];
-            break;
+    if (mContentType.IsEmpty()) {
+        //
+        // generate content type and set it
+        //
+        if (mJarEntry.IsEmpty()) {
+            LOG(("mJarEntry is empty!\n"));
+            return NS_ERROR_NOT_AVAILABLE;
         }
-    }
-    if (ext) {
-        nsIMIMEService *mimeServ = gJarHandler->MimeService();
-        if (mimeServ) {
-            nsXPIDLCString mimeType;
-            rv = mimeServ->GetTypeFromExtension(ext, getter_Copies(mimeType));
-            if (NS_SUCCEEDED(rv))
-                mContentType = mimeType;
+    
+        const char *ext = nsnull, *fileName = mJarEntry.get();
+        PRInt32 len = mJarEntry.Length();
+        for (PRInt32 i = len-1; i >= 0; i--) {
+            if (fileName[i] == '.') {
+                ext = &fileName[i + 1];
+                break;
+            }
         }
+        if (ext) {
+            nsIMIMEService *mimeServ = gJarHandler->MimeService();
+            if (mimeServ) {
+                nsXPIDLCString mimeType;
+                nsresult rv = mimeServ->GetTypeFromExtension(ext, getter_Copies(mimeType));
+                if (NS_SUCCEEDED(rv))
+                    mContentType = mimeType;
+            }
+        }
+        if (mContentType.IsEmpty())
+            mContentType = NS_LITERAL_CSTRING(UNKNOWN_CONTENT_TYPE);
     }
-    else
-        rv = NS_ERROR_NOT_AVAILABLE;
-
-    if (NS_FAILED(rv) || mContentType.IsEmpty())
-        mContentType = NS_LITERAL_CSTRING(UNKNOWN_CONTENT_TYPE);
-
     result = mContentType;
     return NS_OK;
 }
@@ -507,6 +516,9 @@ nsJARChannel::GetContentType(nsACString &result)
 NS_IMETHODIMP
 nsJARChannel::SetContentType(const nsACString &aContentType)
 {
+    // If someone gives us a type hint we should just use that type instead of
+    // doing our guessing.  So we don't care when this is being called.
+
     // mContentCharset is unchanged if not parsed
     NS_ParseContentType(aContentType, mContentType, mContentCharset);
     return NS_OK;
@@ -515,6 +527,8 @@ nsJARChannel::SetContentType(const nsACString &aContentType)
 NS_IMETHODIMP
 nsJARChannel::GetContentCharset(nsACString &aContentCharset)
 {
+    // If someone gives us a charset hint we should just use that charset.
+    // So we don't care when this is being called.
     aContentCharset = mContentCharset;
     return NS_OK;
 }
@@ -601,14 +615,20 @@ nsJARChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
 
 NS_IMETHODIMP
 nsJARChannel::OnDownloadComplete(nsIDownloader *downloader,
-                                 nsISupports *closure,
-                                 nsresult status,
-                                 nsIFile *file)
+                                 nsIRequest    *request,
+                                 nsISupports   *context,
+                                 nsresult       status,
+                                 nsIFile       *file)
 {
+    // Grab the security info from our base channel
+    nsCOMPtr<nsIChannel> channel(do_QueryInterface(request));
+    if (channel)
+        channel->GetSecurityInfo(getter_AddRefs(mSecurityInfo));
+    
     if (NS_SUCCEEDED(status)) {
         mJarFile = file;
     
-        nsresult rv = CreateJarInput();
+        nsresult rv = CreateJarInput(nsnull);
         if (NS_SUCCEEDED(rv)) {
             // create input stream pump
             rv = NS_NewInputStreamPump(getter_AddRefs(mPump), mJarInput);
@@ -623,7 +643,6 @@ nsJARChannel::OnDownloadComplete(nsIDownloader *downloader,
         OnStopRequest(nsnull, nsnull, status);
     }
 
-    mDownloader = 0;
     return NS_OK;
 }
 
@@ -660,6 +679,7 @@ nsJARChannel::OnStopRequest(nsIRequest *req, nsISupports *ctx, nsresult status)
     mPump = 0;
     NS_IF_RELEASE(mJarInput);
     mIsPending = PR_FALSE;
+    mDownloader = 0; // this may delete the underlying jar file
     return NS_OK;
 }
 

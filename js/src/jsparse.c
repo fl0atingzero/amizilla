@@ -1,36 +1,41 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * JS parser.
@@ -117,6 +122,16 @@ static JSParser PrimaryExpr;
     JS_BEGIN_MACRO                                                            \
         if (js_GetToken(cx, ts) != tt) {                                      \
             js_ReportCompileErrorNumber(cx, ts, NULL, JSREPORT_ERROR, errno); \
+            return NULL;                                                      \
+        }                                                                     \
+    JS_END_MACRO
+
+#define CHECK_RECURSION()                                                     \
+    JS_BEGIN_MACRO                                                            \
+        int stackDummy;                                                       \
+        if (!JS_CHECK_STACK_SIZE(cx, stackDummy)) {                           \
+            js_ReportCompileErrorNumber(cx, ts, NULL, JSREPORT_ERROR,         \
+                                        JSMSG_OVER_RECURSED);                 \
             return NULL;                                                      \
         }                                                                     \
     JS_END_MACRO
@@ -294,33 +309,6 @@ NewBinary(JSContext *cx, JSTokenType tt,
     return pn;
 }
 
-static JSBool
-WellTerminated(JSContext *cx, JSTokenStream *ts, JSTokenType lastExprType)
-{
-    JSTokenType tt;
-
-    tt = js_PeekTokenSameLine(cx, ts);
-    if (tt == TOK_ERROR)
-        return JS_FALSE;
-    if (tt != TOK_EOF && tt != TOK_EOL && tt != TOK_SEMI && tt != TOK_RC) {
-#if JS_HAS_LEXICAL_CLOSURE
-        if ((tt == TOK_FUNCTION || lastExprType == TOK_FUNCTION) &&
-            cx->version < JSVERSION_1_2) {
-            /*
-             * Checking against version < 1.2 and version >= 1.0
-             * in the above line breaks old javascript, so we keep it
-             * this way for now... XXX warning needed?
-             */
-            return JS_TRUE;
-        }
-#endif
-        js_ReportCompileErrorNumber(cx, ts, NULL, JSREPORT_ERROR,
-                                    JSMSG_SEMI_BEFORE_STMNT);
-        return JS_FALSE;
-    }
-    return JS_TRUE;
-}
-
 #if JS_HAS_GETTER_SETTER
 static JSTokenType
 CheckGetterOrSetter(JSContext *cx, JSTokenStream *ts, JSTokenType tt)
@@ -328,6 +316,7 @@ CheckGetterOrSetter(JSContext *cx, JSTokenStream *ts, JSTokenType tt)
     JSAtom *atom;
     JSRuntime *rt;
     JSOp op;
+    const char *name;
 
     JS_ASSERT(CURRENT_TOKEN(ts).type == TOK_NAME);
     atom = CURRENT_TOKEN(ts).t_atom;
@@ -350,11 +339,13 @@ CheckGetterOrSetter(JSContext *cx, JSTokenStream *ts, JSTokenType tt)
         return TOK_ERROR;
     }
     CURRENT_TOKEN(ts).t_op = op;
-    if (!js_ReportCompileErrorNumber(cx, ts, NULL,
+    name = js_AtomToPrintableString(cx, atom);
+    if (!name ||
+        !js_ReportCompileErrorNumber(cx, ts, NULL,
                                      JSREPORT_WARNING |
                                      JSREPORT_STRICT,
                                      JSMSG_DEPRECATED_USAGE,
-                                     ATOM_BYTES(atom))) {
+                                     name)) {
         return TOK_ERROR;
     }
     return tt;
@@ -389,12 +380,14 @@ js_ParseTokenStream(JSContext *cx, JSObject *chain, JSTokenStream *ts)
     }
 
     /*
-     * Prevent GC activation (possible if out of memory when atomizing,
-     * or from pre-ECMAv2 switch case expr eval in the unlikely case of a
-     * branch-callback -- unlikely because it means the switch case must
-     * have called a function).
+     * Protect atoms from being collected by a GC activation, which might
+     * - nest on this thread due to out of memory (the so-called "last ditch"
+     *   GC attempted within js_AllocGCThing), or
+     * - run for any reason on another thread if this thread is suspended on
+     *   an object lock before it finishes generating bytecode into a script
+     *   protected from the GC by a root or a stack frame reference.
      */
-    JS_DISABLE_GC(cx->runtime);
+    JS_KEEP_ATOMS(cx->runtime);
     TREE_CONTEXT_INIT(&tc);
     pn = Statements(cx, ts, &tc);
     if (pn) {
@@ -410,7 +403,7 @@ js_ParseTokenStream(JSContext *cx, JSObject *chain, JSTokenStream *ts)
     }
 
     TREE_CONTEXT_FINISH(&tc);
-    JS_ENABLE_GC(cx->runtime);
+    JS_UNKEEP_ATOMS(cx->runtime);
     cx->fp = fp;
     return pn;
 }
@@ -423,6 +416,7 @@ js_CompileTokenStream(JSContext *cx, JSObject *chain, JSTokenStream *ts,
                       JSCodeGenerator *cg)
 {
     JSStackFrame *fp, frame;
+    uint32 flags;
     JSParseNode *pn;
     JSBool ok;
 #ifdef METER_PARSENODES
@@ -445,9 +439,14 @@ js_CompileTokenStream(JSContext *cx, JSObject *chain, JSTokenStream *ts,
         frame.down = fp;
         cx->fp = &frame;
     }
+    flags = cx->fp->flags;
+    cx->fp->flags = flags |
+                    (JS_HAS_COMPILE_N_GO_OPTION(cx)
+                     ? JSFRAME_COMPILING | JSFRAME_COMPILE_N_GO
+                     : JSFRAME_COMPILING);
 
     /* Prevent GC activation while compiling. */
-    JS_DISABLE_GC(cx->runtime);
+    JS_KEEP_ATOMS(cx->runtime);
 
     pn = Statements(cx, ts, &cg->treeContext);
     if (!pn) {
@@ -484,7 +483,8 @@ js_CompileTokenStream(JSContext *cx, JSObject *chain, JSTokenStream *ts,
 #ifdef JS_ARENAMETER
     JS_DumpArenaStats(stdout);
 #endif
-    JS_ENABLE_GC(cx->runtime);
+    JS_UNKEEP_ATOMS(cx->runtime);
+    cx->fp->flags = flags;
     cx->fp = fp;
     return ok;
 }
@@ -494,71 +494,87 @@ js_CompileTokenStream(JSContext *cx, JSObject *chain, JSTokenStream *ts,
  * smart about loops (do {...; return e2;} while(0) at the end of a function
  * that contains an early return e1 will get a strict-option-only warning).
  */
-static JSBool
+#define ENDS_IN_OTHER   0
+#define ENDS_IN_RETURN  1
+#define ENDS_IN_BREAK   2
+
+static int
 HasFinalReturn(JSParseNode *pn)
 {
-    JSBool ok, hasDefault;
+    uintN rv, rv2, hasDefault;
     JSParseNode *pn2, *pn3;
 
     switch (pn->pn_type) {
       case TOK_LC:
         if (!pn->pn_head)
-            return JS_FALSE;
+            return ENDS_IN_OTHER;
         return HasFinalReturn(PN_LAST(pn));
 
       case TOK_IF:
-        ok = HasFinalReturn(pn->pn_kid2);
-        ok &= pn->pn_kid3 && HasFinalReturn(pn->pn_kid3);
-        return ok;
+        rv = HasFinalReturn(pn->pn_kid2);
+        if (pn->pn_kid3)
+            rv &= HasFinalReturn(pn->pn_kid3);
+        return rv;
 
 #if JS_HAS_SWITCH_STATEMENT
       case TOK_SWITCH:
-        ok = JS_TRUE;
-        hasDefault = JS_FALSE;
-        for (pn2 = pn->pn_kid2->pn_head; ok && pn2; pn2 = pn2->pn_next) {
+        rv = ENDS_IN_RETURN;
+        hasDefault = ENDS_IN_OTHER;
+        for (pn2 = pn->pn_kid2->pn_head; rv && pn2; pn2 = pn2->pn_next) {
             if (pn2->pn_type == TOK_DEFAULT)
-                hasDefault = JS_TRUE;
+                hasDefault = ENDS_IN_RETURN;
             pn3 = pn2->pn_right;
             JS_ASSERT(pn3->pn_type == TOK_LC);
-            if (pn3->pn_head)
-                ok &= HasFinalReturn(PN_LAST(pn3));
+            if (pn3->pn_head) {
+                rv2 = HasFinalReturn(PN_LAST(pn3));
+                if (rv2 == ENDS_IN_OTHER && pn2->pn_next)
+                    /* Falling through to next case or default. */;
+                else
+                    rv &= rv2;
+            }
         }
         /* If a final switch has no default case, we judge it harshly. */
-        ok &= hasDefault;
-        return ok;
+        rv &= hasDefault;
+        return rv;
 #endif /* JS_HAS_SWITCH_STATEMENT */
+
+      case TOK_BREAK:
+        return ENDS_IN_BREAK;
 
       case TOK_WITH:
         return HasFinalReturn(pn->pn_right);
 
       case TOK_RETURN:
-        return JS_TRUE;
+        return ENDS_IN_RETURN;
 
 #if JS_HAS_EXCEPTIONS
       case TOK_THROW:
-        return JS_TRUE;
+        return ENDS_IN_RETURN;
 
       case TOK_TRY:
         /* If we have a finally block that returns, we are done. */
-        if (pn->pn_kid3 && HasFinalReturn(pn->pn_kid3))
-            return JS_TRUE;
+        if (pn->pn_kid3) {
+            rv = HasFinalReturn(pn->pn_kid3);
+            if (rv == ENDS_IN_RETURN)
+                return rv;
+        }
 
         /* Else check the try block and any and all catch statements. */
-        ok = HasFinalReturn(pn->pn_kid1);
+        rv = HasFinalReturn(pn->pn_kid1);
         if (pn->pn_kid2)
-            ok &= HasFinalReturn(pn->pn_kid2);
-        return ok;
+            rv &= HasFinalReturn(pn->pn_kid2);
+        return rv;
 
       case TOK_CATCH:
         /* Check this block's code and iterate over further catch blocks. */
-        ok = HasFinalReturn(pn->pn_kid3);
+        rv = HasFinalReturn(pn->pn_kid3);
         for (pn2 = pn->pn_kid2; pn2; pn2 = pn2->pn_kid2)
-            ok &= HasFinalReturn(pn2->pn_kid3);
-        return ok;
+            rv &= HasFinalReturn(pn2->pn_kid3);
+        return rv;
 #endif
 
       default:
-        return JS_FALSE;
+        return ENDS_IN_OTHER;
     }
 }
 
@@ -587,7 +603,7 @@ ReportNoReturnValue(JSContext *cx, JSTokenStream *ts)
 static JSBool
 CheckFinalReturn(JSContext *cx, JSTokenStream *ts, JSParseNode *pn)
 {
-    return HasFinalReturn(pn) || ReportNoReturnValue(cx, ts);
+    return HasFinalReturn(pn) == ENDS_IN_RETURN || ReportNoReturnValue(cx, ts);
 }
 
 static JSParseNode *
@@ -633,29 +649,36 @@ FunctionBody(JSContext *cx, JSTokenStream *ts, JSFunction *fun,
 JSBool
 js_CompileFunctionBody(JSContext *cx, JSTokenStream *ts, JSFunction *fun)
 {
+    JSArenaPool codePool, notePool;
     JSCodeGenerator funcg;
     JSStackFrame *fp, frame;
     JSObject *funobj;
     JSParseNode *pn;
     JSBool ok;
 
-    if (!js_InitCodeGenerator(cx, &funcg, ts->filename, ts->lineno,
+    JS_InitArenaPool(&codePool, "code", 1024, sizeof(jsbytecode));
+    JS_InitArenaPool(&notePool, "note", 1024, sizeof(jssrcnote));
+    if (!js_InitCodeGenerator(cx, &funcg, &codePool, &notePool,
+                              ts->filename, ts->lineno,
                               ts->principals)) {
         return JS_FALSE;
     }
 
     /* Prevent GC activation while compiling. */
-    JS_DISABLE_GC(cx->runtime);
+    JS_KEEP_ATOMS(cx->runtime);
 
-    /* Push a JSStackFrame for use by FunctionBody and js_EmitFunctionBody. */
+    /* Push a JSStackFrame for use by FunctionBody. */
     fp = cx->fp;
     funobj = fun->object;
-    JS_ASSERT(!fp || fp->fun != fun || fp->varobj != funobj ||
-              fp->scopeChain != funobj);
+    JS_ASSERT(!fp || (fp->fun != fun && fp->varobj != funobj &&
+                      fp->scopeChain != funobj));
     memset(&frame, 0, sizeof frame);
     frame.fun = fun;
     frame.varobj = frame.scopeChain = funobj;
     frame.down = fp;
+    frame.flags = JS_HAS_COMPILE_N_GO_OPTION(cx)
+                  ? JSFRAME_COMPILING | JSFRAME_COMPILE_N_GO
+                  : JSFRAME_COMPILING;
     cx->fp = &frame;
 
     /* Ensure that the body looks like a block statement to js_EmitTree. */
@@ -680,8 +703,10 @@ js_CompileFunctionBody(JSContext *cx, JSTokenStream *ts, JSFunction *fun)
 
     /* Restore saved state and release code generation arenas. */
     cx->fp = fp;
-    JS_ENABLE_GC(cx->runtime);
+    JS_UNKEEP_ATOMS(cx->runtime);
     js_FinishCodeGenerator(cx, &funcg);
+    JS_FinishArenaPool(&codePool);
+    JS_FinishArenaPool(&notePool);
     return ok;
 }
 
@@ -695,7 +720,7 @@ FunctionDef(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc,
     JSFunction *fun;
     JSObject *parent;
     JSObject *pobj;
-    JSScopeProperty *sprop;
+    JSProperty *prop;
     uintN dupflag;
     JSBool ok;
     JSTreeContext funtc;
@@ -705,7 +730,9 @@ FunctionDef(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc,
     pn = NewParseNode(cx, &CURRENT_TOKEN(ts), PN_FUNC, tc);
     if (!pn)
         return NULL;
+#if JS_HAS_GETTER_SETTER
     op = CURRENT_TOKEN(ts).t_op;
+#endif
 
     /* Scan the optional function name into funAtom. */
     if (js_MatchToken(cx, ts, TOK_NAME))
@@ -733,32 +760,35 @@ FunctionDef(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc,
             argAtom = CURRENT_TOKEN(ts).t_atom;
             pobj = NULL;
             if (!js_LookupProperty(cx, fun->object, (jsid)argAtom, &pobj,
-                                   (JSProperty **)&sprop)) {
+                                   &prop)) {
                 return NULL;
             }
             dupflag = 0;
-            if (sprop) {
+            if (prop) {
                 ok = JS_TRUE;
                 if (pobj == fun->object &&
-                    sprop->getter == js_GetArgument) {
+                    ((JSScopeProperty *) prop)->getter == js_GetArgument) {
+                    const char *name = js_AtomToPrintableString(cx, argAtom);
+
                     /*
                      * A duplicate parameter name. We force a duplicate node
                      * on the SCOPE_LAST_PROP(scope) list with the same id,
                      * distinguished by the SPROP_IS_DUPLICATE flag, and not
                      * mapped by an entry in scope.
                      */
-                    ok = js_ReportCompileErrorNumber(cx, ts, NULL,
+                    ok = name &&
+                         js_ReportCompileErrorNumber(cx, ts, NULL,
                                                      JSREPORT_WARNING |
                                                      JSREPORT_STRICT,
                                                      JSMSG_DUPLICATE_FORMAL,
-                                                     ATOM_BYTES(argAtom));
+                                                     name);
 
                     dupflag = SPROP_IS_DUPLICATE;
                 }
-                OBJ_DROP_PROPERTY(cx, pobj, (JSProperty *)sprop);
+                OBJ_DROP_PROPERTY(cx, pobj, prop);
                 if (!ok)
                     return NULL;
-                sprop = NULL;
+                prop = NULL;
             }
             if (!js_AddNativeProperty(cx, fun->object, (jsid)argAtom,
                                       js_GetArgument, js_SetArgument,
@@ -819,20 +849,24 @@ FunctionDef(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc,
         ATOM_LIST_SEARCH(ale, &tc->decls, funAtom);
         if (ale) {
             prevop = ALE_JSOP(ale);
-            if ((JS_HAS_STRICT_OPTION(cx) || prevop == JSOP_DEFCONST) &&
-                !js_ReportCompileErrorNumber(cx, ts, NULL,
-                                             (prevop != JSOP_DEFCONST)
-                                             ? JSREPORT_WARNING|JSREPORT_STRICT
-                                             : JSREPORT_ERROR,
-                                             JSMSG_REDECLARED_VAR,
-                                             (prevop == JSOP_DEFFUN ||
-                                              prevop == JSOP_CLOSURE)
-                                             ? js_function_str
-                                             : (prevop == JSOP_DEFCONST)
-                                             ? js_const_str
-                                             : js_var_str,
-                                             ATOM_BYTES(funAtom))) {
-                return NULL;
+            if (JS_HAS_STRICT_OPTION(cx) || prevop == JSOP_DEFCONST) {
+                const char *name = js_AtomToPrintableString(cx, funAtom);
+                if (!name ||
+                    !js_ReportCompileErrorNumber(cx, ts, NULL,
+                                                 (prevop != JSOP_DEFCONST)
+                                                 ? JSREPORT_WARNING |
+                                                   JSREPORT_STRICT
+                                                 : JSREPORT_ERROR,
+                                                 JSMSG_REDECLARED_VAR,
+                                                 (prevop == JSOP_DEFFUN ||
+                                                  prevop == JSOP_CLOSURE)
+                                                 ? js_function_str
+                                                 : (prevop == JSOP_DEFCONST)
+                                                 ? js_const_str
+                                                 : js_var_str,
+                                                 name)) {
+                    return NULL;
+                }
             }
             if (tc->topStmt && prevop == JSOP_DEFVAR)
                 tc->flags |= TCF_FUN_CLOSURE_VS_VAR;
@@ -868,16 +902,22 @@ FunctionDef(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc,
             varobj = fp->varobj;
             JS_ASSERT(OBJ_GET_CLASS(cx, varobj) == &js_FunctionClass);
             JS_ASSERT(fp->fun == (JSFunction *) JS_GetPrivate(cx, varobj));
-            if (!js_DefineNativeProperty(cx, varobj, (jsid)funAtom,
-                                         OBJECT_TO_JSVAL(fun->object),
-                                         js_GetLocalVariable,
-                                         js_SetLocalVariable,
-                                         JSPROP_ENUMERATE,
-                                         SPROP_HAS_SHORTID, fp->fun->nvars,
-                                         NULL)) {
+            if (!js_LookupProperty(cx, varobj, (jsid)funAtom, &pobj, &prop))
                 return NULL;
+            if (prop)
+                OBJ_DROP_PROPERTY(cx, pobj, prop);
+            if (!prop || pobj != varobj) {
+                if (!js_DefineNativeProperty(cx, varobj, (jsid)funAtom,
+                                             OBJECT_TO_JSVAL(fun->object),
+                                             js_GetLocalVariable,
+                                             js_SetLocalVariable,
+                                             JSPROP_ENUMERATE,
+                                             SPROP_HAS_SHORTID, fp->fun->nvars,
+                                             NULL)) {
+                    return NULL;
+                }
+                fp->fun->nvars++;
             }
-            fp->fun->nvars++;
         }
 #endif
     }
@@ -902,8 +942,16 @@ FunctionDef(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc,
 #endif
         op = JSOP_NOP;
 
+    /*
+     * Pending a better automatic GC root management scheme (see Mozilla bug
+     * 40757, http://bugzilla.mozilla.org/show_bug.cgi?id=40757), we need to
+     * atomize here to protect against a GC activation.
+     */
+    pn->pn_funAtom = js_AtomizeObject(cx, fun->object, 0);
+    if (!pn->pn_funAtom)
+        return NULL;
+
     pn->pn_op = op;
-    pn->pn_fun = fun;
     pn->pn_body = body;
     pn->pn_flags = funtc.flags & TCF_FUN_FLAGS;
     pn->pn_tryCount = funtc.tryCount;
@@ -935,6 +983,8 @@ Statements(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
 {
     JSParseNode *pn, *pn2;
     JSTokenType tt;
+
+    CHECK_RECURSION();
 
     pn = NewParseNode(cx, &CURRENT_TOKEN(ts), PN_LIST, tc);
     if (!pn)
@@ -1061,8 +1111,6 @@ MatchLabel(JSContext *cx, JSTokenStream *ts, JSParseNode *pn)
     label = NULL;
 #endif
     pn->pn_atom = label;
-    if (pn->pn_pos.end.lineno == ts->lineno)
-        return WellTerminated(cx, ts, TOK_ERROR);
     return JS_TRUE;
 }
 
@@ -1157,7 +1205,7 @@ extern const char js_with_statement_str[];
 static JSParseNode *
 Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
 {
-    JSTokenType tt, lastExprType;
+    JSTokenType tt;
     JSParseNode *pn, *pn1, *pn2, *pn3, *pn4;
     JSStmtInfo stmtInfo, *stmt, *stmt2;
     JSAtom *label;
@@ -1201,10 +1249,6 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
             } while (js_MatchToken(cx, ts, TOK_COMMA));
         }
         pn->pn_pos.end = PN_LAST(pn)->pn_pos.end;
-        if (pn->pn_pos.end.lineno == ts->lineno &&
-            !WellTerminated(cx, ts, TOK_ERROR)) {
-            return NULL;
-        }
         tc->flags |= TCF_FUN_HEAVYWEIGHT;
         break;
 
@@ -1220,23 +1264,12 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
             PN_APPEND(pn, pn2);
         } while (js_MatchToken(cx, ts, TOK_COMMA));
         pn->pn_pos.end = PN_LAST(pn)->pn_pos.end;
-        if (pn->pn_pos.end.lineno == ts->lineno &&
-            !WellTerminated(cx, ts, TOK_ERROR)) {
-            return NULL;
-        }
         tc->flags |= TCF_FUN_HEAVYWEIGHT;
         break;
 #endif /* JS_HAS_EXPORT_IMPORT */
 
       case TOK_FUNCTION:
-        pn = FunctionStmt(cx, ts, tc);
-        if (!pn)
-            return NULL;
-        if (pn->pn_pos.end.lineno == ts->lineno &&
-            !WellTerminated(cx, ts, TOK_FUNCTION)) {
-            return NULL;
-        }
-        break;
+        return FunctionStmt(cx, ts, tc);
 
       case TOK_IF:
         /* An IF node has three kids: condition, then, and optional else. */
@@ -1339,7 +1372,7 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
             pn4->pn_type = TOK_LC;
             PN_INIT_LIST(pn4);
             while ((tt = js_PeekToken(cx, ts)) != TOK_RC &&
-                    tt != TOK_CASE && tt != TOK_DEFAULT) {
+                   tt != TOK_CASE && tt != TOK_DEFAULT) {
                 if (tt == TOK_ERROR)
                     return NULL;
                 pn5 = Statement(cx, ts, tc);
@@ -1399,6 +1432,15 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
         js_PopStatement(tc);
         pn->pn_pos.end = pn2->pn_pos.end;
         pn->pn_right = pn2;
+        if (cx->version != JSVERSION_ECMA_3) {
+            /*
+             * All legacy and extended versions must do automatic semicolon
+             * insertion after do-while.  See the testcase and discussion in
+             * http://bugzilla.mozilla.org/show_bug.cgi?id=238945.
+             */
+            (void) js_MatchToken(cx, ts, TOK_SEMI);
+            return pn;
+        }
         break;
 #endif /* JS_HAS_DO_WHILE_LOOP */
 
@@ -1410,7 +1452,9 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
         js_PushStatement(tc, &stmtInfo, STMT_FOR_LOOP, -1);
 
         MUST_MATCH_TOKEN(TOK_LP, JSMSG_PAREN_AFTER_FOR);
+        ts->flags |= TSF_REGEXP;
         tt = js_PeekToken(cx, ts);
+        ts->flags &= ~TSF_REGEXP;
         if (tt == TOK_SEMI) {
             /* No initializer -- set first kid of left sub-node to null. */
             pn1 = NULL;
@@ -1461,8 +1505,15 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
                 return NULL;
             }
 
+            if (pn1->pn_type == TOK_VAR) {
+                /* Tell js_EmitTree(TOK_VAR) to generate a final POP. */
+                pn1->pn_extra = JS_TRUE;
+                pn2 = pn1->pn_head;
+            } else {
+                pn2 = pn1;
+            }
+
             /* Beware 'for (arguments in ...)' with or without a 'var'. */
-            pn2 = (pn1->pn_type == TOK_VAR) ? pn1->pn_head : pn1;
             if (pn2->pn_type == TOK_NAME &&
                 pn2->pn_atom == cx->runtime->atomState.argumentsAtom) {
                 tc->flags |= TCF_FUN_HEAVYWEIGHT;
@@ -1476,7 +1527,10 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
         } else {
             /* Parse the loop condition or null into pn2. */
             MUST_MATCH_TOKEN(TOK_SEMI, JSMSG_SEMI_AFTER_FOR_INIT);
-            if (js_PeekToken(cx, ts) == TOK_SEMI) {
+            ts->flags |= TSF_REGEXP;
+            tt = js_PeekToken(cx, ts);
+            ts->flags &= ~TSF_REGEXP;
+            if (tt == TOK_SEMI) {
                 pn2 = NULL;
             } else {
                 pn2 = Expr(cx, ts, tc);
@@ -1486,7 +1540,10 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
 
             /* Parse the update expression or null into pn3. */
             MUST_MATCH_TOKEN(TOK_SEMI, JSMSG_SEMI_AFTER_FOR_COND);
-            if (js_PeekToken(cx, ts) == TOK_RP) {
+            ts->flags |= TSF_REGEXP;
+            tt = js_PeekToken(cx, ts);
+            ts->flags &= ~TSF_REGEXP;
+            if (tt == TOK_RP) {
                 pn3 = NULL;
             } else {
                 pn3 = Expr(cx, ts, tc);
@@ -1641,10 +1698,6 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
         if (!pn2)
             return NULL;
         pn->pn_pos.end = pn2->pn_pos.end;
-        if (pn->pn_pos.end.lineno == ts->lineno &&
-            !WellTerminated(cx, ts, TOK_ERROR)) {
-            return NULL;
-        }
         pn->pn_op = JSOP_THROW;
         pn->pn_kid = pn2;
         break;
@@ -1773,10 +1826,7 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
         pn = Variables(cx, ts, tc);
         if (!pn)
             return NULL;
-        if (pn->pn_pos.end.lineno == ts->lineno &&
-            !WellTerminated(cx, ts, TOK_ERROR)) {
-            return NULL;
-        }
+
         /* Tell js_EmitTree to generate a final POP. */
         pn->pn_extra = JS_TRUE;
         break;
@@ -1802,10 +1852,6 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
             pn2 = Expr(cx, ts, tc);
             if (!pn2)
                 return NULL;
-            if (pn2->pn_pos.end.lineno == ts->lineno &&
-                !WellTerminated(cx, ts, TOK_ERROR)) {
-                return NULL;
-            }
             tc->flags |= TCF_RETURN_EXPR;
             pn->pn_pos.end = pn2->pn_pos.end;
             pn->pn_kid = pn2;
@@ -1846,21 +1892,18 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
 
 #if JS_HAS_DEBUGGER_KEYWORD
       case TOK_DEBUGGER:
-        if (!WellTerminated(cx, ts, TOK_ERROR))
-            return NULL;
         pn = NewParseNode(cx, &CURRENT_TOKEN(ts), PN_NULLARY, tc);
         if (!pn)
             return NULL;
         pn->pn_type = TOK_DEBUGGER;
         tc->flags |= TCF_FUN_HEAVYWEIGHT;
-        return pn;
+        break;
 #endif /* JS_HAS_DEBUGGER_KEYWORD */
 
       case TOK_ERROR:
         return NULL;
 
       default:
-        lastExprType = CURRENT_TOKEN(ts).type;
         js_UngetToken(ts);
         pn2 = Expr(cx, ts, tc);
         if (!pn2)
@@ -1897,12 +1940,6 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
             return pn2;
         }
 
-        /* Check termination of (possibly multi-line) function expression. */
-        if (pn2->pn_pos.end.lineno == ts->lineno &&
-            !WellTerminated(cx, ts, lastExprType)) {
-            return NULL;
-        }
-
         pn = NewParseNode(cx, &CURRENT_TOKEN(ts), PN_UNARY, tc);
         if (!pn)
             return NULL;
@@ -1910,6 +1947,18 @@ Statement(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
         pn->pn_pos = pn2->pn_pos;
         pn->pn_kid = pn2;
         break;
+    }
+
+    /* Check termination of this primitive statement. */
+    if (ON_CURRENT_LINE(ts, pn->pn_pos)) {
+        tt = js_PeekTokenSameLine(cx, ts);
+        if (tt == TOK_ERROR)
+            return NULL;
+        if (tt != TOK_EOF && tt != TOK_EOL && tt != TOK_SEMI && tt != TOK_RC) {
+            js_ReportCompileErrorNumber(cx, ts, NULL, JSREPORT_ERROR,
+                                        JSMSG_SEMI_BEFORE_STMNT);
+            return NULL;
+        }
     }
 
     (void) js_MatchToken(cx, ts, TOK_SEMI);
@@ -1988,23 +2037,27 @@ Variables(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
         ATOM_LIST_SEARCH(ale, &tc->decls, atom);
         if (ale) {
             prevop = ALE_JSOP(ale);
-            if ((JS_HAS_STRICT_OPTION(cx) ||
-                 pn->pn_op == JSOP_DEFCONST ||
-                 prevop == JSOP_DEFCONST) &&
-                !js_ReportCompileErrorNumber(cx, ts, NULL,
-                                             (pn->pn_op != JSOP_DEFCONST &&
-                                              prevop != JSOP_DEFCONST)
-                                             ? JSREPORT_WARNING|JSREPORT_STRICT
-                                             : JSREPORT_ERROR,
-                                             JSMSG_REDECLARED_VAR,
-                                             (prevop == JSOP_DEFFUN ||
-                                              prevop == JSOP_CLOSURE)
-                                             ? js_function_str
-                                             : (prevop == JSOP_DEFCONST)
-                                             ? js_const_str
-                                             : js_var_str,
-                                             ATOM_BYTES(atom))) {
-                return NULL;
+            if (JS_HAS_STRICT_OPTION(cx) ||
+                pn->pn_op == JSOP_DEFCONST ||
+                prevop == JSOP_DEFCONST) {
+                const char *name = js_AtomToPrintableString(cx, atom);
+                if (!name ||
+                    !js_ReportCompileErrorNumber(cx, ts, NULL,
+                                                 (pn->pn_op != JSOP_DEFCONST &&
+                                                  prevop != JSOP_DEFCONST)
+                                                 ? JSREPORT_WARNING |
+                                                   JSREPORT_STRICT
+                                                 : JSREPORT_ERROR,
+                                                 JSMSG_REDECLARED_VAR,
+                                                 (prevop == JSOP_DEFFUN ||
+                                                  prevop == JSOP_CLOSURE)
+                                                 ? js_function_str
+                                                 : (prevop == JSOP_DEFCONST)
+                                                 ? js_const_str
+                                                 : js_var_str,
+                                                 name)) {
+                    return NULL;
+                }
             }
             if (pn->pn_op == JSOP_DEFVAR && prevop == JSOP_CLOSURE)
                 tc->flags |= TCF_FUN_CLOSURE_VS_VAR;
@@ -2030,14 +2083,16 @@ Variables(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
 
         if (!OBJ_LOOKUP_PROPERTY(cx, obj, (jsid)atom, &pobj, &prop))
             return NULL;
-        if (pobj == obj &&
-            OBJ_IS_NATIVE(pobj) &&
-            (sprop = (JSScopeProperty *)prop) != NULL) {
+        if (prop && pobj == obj && OBJ_IS_NATIVE(pobj)) {
+            sprop = (JSScopeProperty *)prop;
             if (sprop->getter == js_GetArgument) {
-                if (pn->pn_op == JSOP_DEFCONST) {
+                const char *name = js_AtomToPrintableString(cx, atom);
+                if (!name) {
+                    ok = JS_FALSE;
+                } else if (pn->pn_op == JSOP_DEFCONST) {
                     js_ReportCompileErrorNumber(cx, ts, NULL, JSREPORT_ERROR,
                                                 JSMSG_REDECLARED_PARAM,
-                                                ATOM_BYTES(atom));
+                                                name);
                     ok = JS_FALSE;
                 } else {
                     currentGetter = js_GetArgument;
@@ -2046,7 +2101,7 @@ Variables(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
                                                      JSREPORT_WARNING |
                                                      JSREPORT_STRICT,
                                                      JSMSG_VAR_HIDES_ARG,
-                                                     ATOM_BYTES(atom));
+                                                     name);
                 }
             } else {
                 if (fun) {
@@ -2177,6 +2232,8 @@ AssignExpr(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
     JSParseNode *pn, *pn2;
     JSTokenType tt;
     JSOp op;
+
+    CHECK_RECURSION();
 
     pn = CondExpr(cx, ts, tc);
     if (!pn)
@@ -2347,9 +2404,8 @@ RelExpr(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
     JSTokenType tt;
     JSOp op;
 #if JS_HAS_IN_OPERATOR
-    uintN inForInitFlag;
+    uintN inForInitFlag = tc->flags & TCF_IN_FOR_INIT;
 
-    inForInitFlag = tc->flags & TCF_IN_FOR_INIT;
     /*
      * Uses of the in operator in ShiftExprs are always unambiguous,
      * so unset the flag that prohibits recognizing it.
@@ -2565,7 +2621,7 @@ UnaryExpr(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
             return NULL;
 
         /* Don't look across a newline boundary for a postfix incop. */
-        if (pn->pn_pos.end.lineno == ts->lineno) {
+        if (ON_CURRENT_LINE(ts, pn->pn_pos)) {
             tt = js_PeekTokenSameLine(cx, ts);
             if (tt == TOK_INC || tt == TOK_DEC) {
                 (void) js_GetToken(cx, ts);
@@ -2616,6 +2672,8 @@ MemberExpr(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc,
     JSParseNode *pn, *pn2, *pn3;
     JSTokenType tt;
 
+    CHECK_RECURSION();
+
     /* Check for new expression first. */
     ts->flags |= TSF_REGEXP;
     tt = js_PeekToken(cx, ts);
@@ -2635,7 +2693,7 @@ MemberExpr(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc,
 
         if (js_MatchToken(cx, ts, TOK_LP) && !ArgumentList(cx, ts, tc, pn))
             return NULL;
-        if (pn->pn_count - 1 >= ARGC_LIMIT) {
+        if (pn->pn_count > ARGC_LIMIT) {
             JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
                                  JSMSG_TOO_MANY_CON_ARGS);
             return NULL;
@@ -2700,7 +2758,7 @@ MemberExpr(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc,
 
             if (!ArgumentList(cx, ts, tc, pn2))
                 return NULL;
-            if (pn2->pn_count - 1 >= ARGC_LIMIT) {
+            if (pn2->pn_count > ARGC_LIMIT) {
                 JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
                                      JSMSG_TOO_MANY_FUN_ARGS);
                 return NULL;
@@ -2742,6 +2800,8 @@ PrimaryExpr(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
      * should set notsharp.
      */
 #endif
+
+    CHECK_RECURSION();
 
     ts->flags |= TSF_REGEXP;
     tt = js_GetToken(cx, ts);
@@ -2801,8 +2861,9 @@ PrimaryExpr(JSContext *cx, JSTokenStream *ts, JSTreeContext *tc)
                     /* So CURRENT_TOKEN gets TOK_COMMA and not TOK_LB. */
                     js_MatchToken(cx, ts, TOK_COMMA);
                     pn2 = NewParseNode(cx, &CURRENT_TOKEN(ts), PN_NULLARY, tc);
-                } else
+                } else {
                     pn2 = AssignExpr(cx, ts, tc);
+                }
                 if (!pn2)
                     return NULL;
                 PN_APPEND(pn, pn2);
@@ -3184,7 +3245,7 @@ FoldBinaryNumeric(JSContext *cx, JSOp op, JSParseNode *pn1, JSParseNode *pn2,
 
       case JSOP_DIV:
         if (d2 == 0) {
-#if defined(XP_WIN) || defined(XP_OS2)
+#if defined(XP_WIN)
             /* XXX MSVC miscompiles such that (NaN == 0) */
             if (JSDOUBLE_IS_NaN(d2))
                 d = *cx->runtime->jsNaN;
@@ -3205,7 +3266,7 @@ FoldBinaryNumeric(JSContext *cx, JSOp op, JSParseNode *pn1, JSParseNode *pn2,
         if (d2 == 0) {
             d = *cx->runtime->jsNaN;
         } else {
-#if defined(XP_WIN) || defined(XP_OS2)
+#if defined(XP_WIN)
           /* Workaround MS fmod bug where 42 % (1/0) => NaN, not 42. */
           if (!(JSDOUBLE_IS_FINITE(d) && JSDOUBLE_IS_INFINITE(d2)))
 #endif
@@ -3232,6 +3293,12 @@ JSBool
 js_FoldConstants(JSContext *cx, JSParseNode *pn, JSTreeContext *tc)
 {
     JSParseNode *pn1 = NULL, *pn2 = NULL, *pn3 = NULL;
+    int stackDummy;
+
+    if (!JS_CHECK_STACK_SIZE(cx, stackDummy)) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_OVER_RECURSED);
+        return JS_FALSE;
+    }
 
     switch (pn->pn_arity) {
       case PN_FUNC:

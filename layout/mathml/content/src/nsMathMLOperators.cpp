@@ -27,7 +27,6 @@
 #include "nsIComponentManager.h"
 #include "nsIPersistentProperties2.h"
 #include "nsNetUtil.h"
-#include "nsIURI.h"
 #include "nsCRT.h"
 
 #include "nsMathMLOperators.h"
@@ -233,7 +232,7 @@ SetOperator(OperatorData*   aOperatorData,
 #endif
   // Loop over the space-delimited list of attributes to get the name:value pairs
   aAttributes.Append(kNullCh);  // put an extra null at the end
-  PRUnichar* start = (PRUnichar*)(const PRUnichar*)aAttributes.get();
+  PRUnichar* start = aAttributes.BeginWriting();
   PRUnichar* end   = start;
   while ((kNullCh != *start) && (kDashCh != *start)) {
     name.SetLength(0);
@@ -279,21 +278,9 @@ InitOperators(void)
 {
   // Load the property file containing the Operator Dictionary
   nsresult rv;
-  nsAutoString uriStr;
-  nsCOMPtr<nsIURI> uri;
-  uriStr.Assign(NS_LITERAL_STRING("resource:/res/fonts/mathfont.properties"));
-  rv = NS_NewURI(getter_AddRefs(uri), uriStr);
-  if (NS_FAILED(rv)) return rv;
-  nsCOMPtr<nsIInputStream> in;
-  rv = NS_OpenURI(getter_AddRefs(in), uri);
-  if (NS_FAILED(rv)) return rv;
   nsCOMPtr<nsIPersistentProperties> mathfontProp;
-  rv = nsComponentManager::
-       CreateInstance(NS_PERSISTENTPROPERTIES_CONTRACTID, nsnull,
-                      NS_GET_IID(nsIPersistentProperties),
-                      getter_AddRefs(mathfontProp));
-  if NS_FAILED(rv) return rv;
-  rv = mathfontProp->Load(in);
+  rv = NS_LoadPersistentPropertiesFromURISpec(getter_AddRefs(mathfontProp),
+       NS_LITERAL_CSTRING("resource://gre/res/fonts/mathfont.properties"));
   if NS_FAILED(rv) return rv;
 
   // Get the list of invariant chars

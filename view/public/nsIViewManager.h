@@ -51,13 +51,6 @@ class nsRegion;
 class nsIDeviceContext;
 class nsIViewObserver;
 
-enum nsContentQuality {
-  nsContentQuality_kGood = 0,
-  nsContentQuality_kFair,
-  nsContentQuality_kPoor,
-  nsContentQuality_kUnknown
-};
-
 enum nsRectVisibility { 
   nsRectVisibility_kVisible, 
   nsRectVisibility_kAboveViewport, 
@@ -264,17 +257,21 @@ public:
                          PRBool aRepaintExposedAreaOnly = PR_FALSE) = 0;
 
   /**
-   * Set the region to which a view's children are clipped.
-   * The view itself is not clipped to this region; this allows for effects where part of the view is
-   * drawn outside the clip region (e.g., its borders and background).
-   * The view manager generates the appropriate dirty regions.
+   * Set the region to which a view's descendants are clipped.  The view
+   * itself is not clipped to this region; this allows for effects
+   * where part of the view is drawn outside the clip region (e.g.,
+   * its borders and background).  The view manager generates the
+   * appropriate dirty regions.
+   * 
    * @param aView view to set clipping for
    * @param aRegion
-   *     if null then no clipping is required; everything the view paints is guaranteed
-   *     to be inside its bounds, and all child views will also be inside this view's bounds.
-   *     if non-null, then we will clip this view's child views to the region.
-   *     The child views need not be within the bounds of this view, but the
-   *     region must lie entirely inside this view's bounds. The view manager copies the region.
+   *     if null then no clipping is required. In this case all descendant
+   * views (but not descendants through placeholder edges) must have their
+   * bounds inside the bounds of this view
+   *     if non-null, then we will clip this view's descendant views
+   * to the region. The region's bounds must be within the bounds of
+   * this view. The descendant views' bounds need not be inside the bounds
+   * of this view (because we're going to clip them anyway).
    *
    * XXX Currently we only support regions consisting of a single rectangle.
    */
@@ -359,24 +356,6 @@ public:
    * @result device context
    */
   NS_IMETHOD  GetDeviceContext(nsIDeviceContext *&aContext) = 0;
-
-  /**
-   * Select whether quality level should be displayed in root view
-   * @param aShow if PR_TRUE, quality level will be displayed, else hidden
-   */
-  NS_IMETHOD  ShowQuality(PRBool aShow) = 0;
-
-  /**
-   * Query whether quality level should be displayed in view frame
-   * @return if PR_TRUE, quality level will be displayed, else hidden
-   */
-  NS_IMETHOD  GetShowQuality(PRBool &aResult) = 0;
-
-  /**
-   * Select quality level
-   * @param aShow if PR_TRUE, quality level will be displayed, else hidden
-   */
-  NS_IMETHOD  SetQuality(nsContentQuality aQuality) = 0;
 
   /**
    * prevent the view manager from refreshing.

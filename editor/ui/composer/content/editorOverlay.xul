@@ -22,15 +22,23 @@
    -   Ryan Cassin (rcassin@supernova.org)
    -   Daniel Glazman (glazman@netscape.com)
    -   Aaron Kaluszka (ask@swva.net)
+   -   Stephen Donner (technutz@netscape.net)
 -->
 
-<!DOCTYPE overlay SYSTEM "chrome://editor/locale/editorOverlay.dtd">
+<!DOCTYPE overlay [
+<!ENTITY % editorOverlayDTD SYSTEM "chrome://editor/locale/editorOverlay.dtd">
+%editorOverlayDTD;
+<!ENTITY % platformCommunicatorDTD SYSTEM
+  "chrome://communicator-platform/locale/platformCommunicatorOverlay.dtd">
+%platformCommunicatorDTD;
+]>
 
 <overlay id="editorOverlay"
          xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
 
 <script type="application/x-javascript" src="chrome://editor/content/editorUtilities.js"/>
 <script type="application/x-javascript" src="chrome://editor/content/ComposerCommands.js"/>
+<script type="application/x-javascript" src="chrome://communicator/content/XPCNativeWrapper.js"/>
 
   <keyset id="editorKeys">
     <!-- defined in globalOverlay -->
@@ -57,7 +65,15 @@
     <key id="findprevkb"        key="&editfindprev.keybinding;"        observes="cmd_findPrev"  modifiers="accel,shift"/>
     <key keycode="&editfindnext.keybinding2;" observes="cmd_findNext"/>
     <key keycode="&editfindprev.keybinding2;" observes="cmd_findPrev" modifiers="shift"/>
-    <key id="checkspellingkb"   key="&editcheckspelling.keybinding;"   observes="cmd_spelling"  modifiers="accel" disabled="true"/>
+#ifdef MOZ_X11
+    <key keycode="&editfind.keybinding2;" observes="cmd_find"/>
+#endif
+    <key id="checkspellingkb"
+         key="&editcheckspelling.keybinding;"
+         observes="cmd_spelling"
+         modifiers="&accel.emacs_conflict;"
+         disabled="true"
+    />
 
     <key id="boldkb"         key="&stylebold.keybinding;"       observes="cmd_bold" modifiers="accel"/>
     <key id="italickb"       key="&styleitalic.keybinding;"     observes="cmd_italic" modifiers="accel"/>
@@ -146,7 +162,7 @@
     <command id="cmd_save"           label="&saveCmd.label;"           oncommand="goDoCommand('cmd_save')"/>
     <command id="cmd_saveAs"         label="&saveAsCmd.label;"         oncommand="goDoCommand('cmd_saveAs')"/>
     <command id="cmd_exportToText"   label="&exportToTextCmd.label;"   oncommand="goDoCommand('cmd_exportToText')"/>
-    <command id="cmd_saveAsCharset"  label="&saveAsCharsetCmd.label;"  oncommand="goDoCommand('cmd_saveAsCharset')"/>
+    <command id="cmd_saveAndChangeEncoding"  label="&saveAsChangeEncodingCmd.label;"  oncommand="goDoCommand('cmd_saveAndChangeEncoding')"/>
     <command id="cmd_publish"        label="&publishCmd.label;"        oncommand="goDoCommand('cmd_publish')"/>
     <command id="cmd_publishAs"      label="&publishAsCmd.label;"      oncommand="goDoCommand('cmd_publishAs')"/>
     <command id="cmd_revert"         label="&fileRevert.label;"        oncommand="goDoCommand('cmd_revert')"/>
@@ -225,7 +241,11 @@
 
     <command id="cmd_fontSize"                         oncommand="goDoCommand('cmd_fontSize')"/>
     <command id="cmd_align"           state=""/>
-    
+
+    <command id="cmd_absPos"          state=""        oncommand="goDoCommand('cmd_absPos')"/>
+    <command id="cmd_increaseZIndex"  state=""        oncommand="goDoCommand('cmd_increaseZIndex')"/>
+    <command id="cmd_decreaseZIndex"  state=""        oncommand="goDoCommand('cmd_decreaseZIndex')"/>
+
     <command id="cmd_advancedProperties"              oncommand="goDoCommand('cmd_advancedProperties')"/>
 
     <command id="cmd_increaseFont"                    oncommand="goDoCommand('cmd_increaseFont')"/>
@@ -323,7 +343,7 @@
       <menuseparator/>
       <menuitem id="saveMenuitem" accesskey="&filesave.accesskey;" key="savekb" observes="cmd_save"/>
       <menuitem accesskey="&filesaveas.accesskey;" observes="cmd_saveAs"/>
-      <menuitem accesskey="&filesaveascharset.accesskey;" observes="cmd_saveAsCharset"/>
+      <menuitem accesskey="&filesaveandchangeencoding.accesskey;" observes="cmd_saveAndChangeEncoding"/>
       <menuseparator/>
       <menuitem id="publishMenuitem" accesskey="&publishcmd.accesskey;" key="publishkb" observes="cmd_publish"/>
       <menuitem accesskey="&publishas.accesskey;" observes="cmd_publishAs"/>
@@ -334,7 +354,7 @@
       <menuitem id="previewInBrowser" label="&previewCmd.label;"  accesskey="&filepreview.accesskey;" observes="cmd_preview"/>
       <!-- menuitem id="menu_SendPage" is merged here from mailEditorOverlay.xul,
            where "position" is assumed to be just after 'previewInBrowser'  -->
-      <!--Page setup gets overlaid here from platformGlobalOverlay.xul / -->
+      <menuitem id="printSetupMenuItem" accesskey="&fileprintsetup.accesskey;" label="&printSetupCmd.label;" command="cmd_printSetup"/>
       <menuitem id="printMenuItem" accesskey="&fileprint.accesskey;" key="printkb" observes="cmd_print" label="&printCmd.label;"/>
       <!-- The Exit/Quit item is merged from platformGlobalOverlay.xul -->
     </menupopup>
@@ -405,7 +425,7 @@
       <menuitem id="insertLink" accesskey="&insertlink.accesskey;"       observes="cmd_link"        label="&insertLinkCmd.label;"   key="insertlinkkb"/>
       <menuitem id="insertAnchor" accesskey="&insertanchor.accesskey;"     observes="cmd_anchor"      label="&insertAnchorCmd.label;"/>
       <menuitem id="insertHline" accesskey="&inserthline.accesskey;"      observes="cmd_hline"       label="&insertHLineCmd.label;"/>
-      <menuitem id="insertHTMLSource" accesskey="&HTMLSourceMode.accesskey;"   observes="cmd_insertHTMLWithDialog"  key="inserthtmlkb"/>
+      <menuitem id="insertHTMLSource" accesskey="&insertHTMLCmd.accesskey;"   observes="cmd_insertHTMLWithDialog"  key="inserthtmlkb"/>
       <menuitem accesskey="&insertchars.accesskey;"      observes="cmd_insertChars" id="insertChars"/>
       <menu id="insertTOC" label="&tocMenu.label;" accesskey="&tocMenu.accesskey;">
         <menupopup onpopupshowing="InitTOCMenu()">
@@ -583,6 +603,9 @@
     <!-- Merge Table Menu and separator in Messenger Composer here -->
     <!-- Merge property items here -->
   </menupopup>
+
+  <menuitem id="snapToGrid" label="&grid.label;" accesskey="&grid.accesskey;"
+            oncommand="goDoCommand('cmd_grid')"   observes="cmd_renderedHTMLEnabler"/>
 
   <!-- Next 3 are items to append at the bottom of the formatMenuPopup -->
   <!-- label and accesskey filled in during menu creation -->
@@ -852,6 +875,14 @@
               onbroadcast="onStateButtonUpdate(this.parentNode, 'cmd_align', 'justify')"/>
   </toolbarbutton>
   
+  <toolbarbutton id="absolutePositionButton" type="checkbox" tooltiptext="&layer.tooltip;" observes="cmd_absPos">
+    <observes element="cmd_absPos" attribute="state" onbroadcast="onStateButtonUpdate(this.parentNode, 'cmd_absPos', 'absolute')"/>
+  </toolbarbutton>
+  <toolbarbutton id="decreaseZIndexButton" observes="cmd_decreaseZIndex"
+                 tooltiptext="&layerSendToBack.tooltip;"/>
+  <toolbarbutton id="increaseZIndexButton" observes="cmd_increaseZIndex"
+                 tooltiptext="&layerBringToFront.tooltip;"/>
+
   <!-- Edit Mode toolbar -->
   <tab id="NormalModeButton"   class="tab-bottom edit-mode _plain" type="text" selected="1" label="&NormalModeTab.label;"  oncommand="goDoCommand('cmd_NormalMode');"
           tooltiptext="&NormalMode.tooltip;"/>
@@ -865,9 +896,10 @@
   <!-- Paste as quotation is used by mail compose,
        but in composer it has to go in the debug menu
    -->
-  <menuitem id="menu_pasteQuote" accesskey="&editpastequotation.accesskey;" observes="cmd_pasteQuote"/>
+  <menuitem id="menu_pasteQuote" accesskey="&editpastequotation.accesskey;" command="cmd_pasteQuote" key="pastequotationkb"/>
 
   <!-- DEBUG only -->
+  <!--
   <menu id="debugMenu" label="&debugMenu.label;">
   <menupopup>
     <menuitem label="&newEditorTestPage.label;" oncommand="window.openDialog('chrome://editor/content','_blank','chrome,all,dialog=no','chrome://editor/content/EditorInitPage.html')"/>
@@ -938,6 +970,7 @@
             oncommand="window.focus()"/>
   </menupopup>
   </menu>
+  -->
   <!-- end DEBUG only -->
 
 </overlay>

@@ -467,16 +467,56 @@ RRT_HEADER:
   }
 
 
-  nsCOMPtr<nsIHttpProtocolHandler> pHTTPHandler = 
-           do_GetService(kHTTPHandlerCID, &rv); 
+  nsCOMPtr<nsIHttpProtocolHandler> pHTTPHandler = do_GetService(kHTTPHandlerCID, &rv); 
   if (NS_SUCCEEDED(rv) && pHTTPHandler)
   {
         nsCAutoString userAgentString;
+#ifdef MOZ_THUNDERBIRD
+
+    nsXPIDLCString userAgentOverride;
+    prefs->GetCharPref("general.useragent.override", getter_Copies(userAgentOverride));
+
+    // allow a user to override the default UA
+    if (!userAgentOverride)
+    {
+    nsCOMPtr<nsIStringBundleService> stringService = do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
+    if (NS_SUCCEEDED(rv)) 
+	{
+      nsCOMPtr<nsIStringBundle> brandSringBundle;
+      rv = stringService->CreateBundle("chrome://global/locale/brand.properties", getter_AddRefs(brandSringBundle));
+      if (NS_SUCCEEDED(rv)) 
+	  {
+        nsXPIDLString brandName;
+        rv = brandSringBundle->GetStringFromName(NS_LITERAL_STRING("brandShortName").get(), getter_Copies(brandName));
+
+		nsCAutoString vendorSub;
+		pHTTPHandler->GetVendorSub(vendorSub);
+
+		nsCAutoString productSub;
+		pHTTPHandler->GetProductSub(productSub);
+
+		nsCAutoString platform;
+		pHTTPHandler->GetPlatform(platform);
+
+		userAgentString.AssignWithConversion(brandName.get());
+		userAgentString += ' ';
+		userAgentString += vendorSub;
+		userAgentString += " (";
+		userAgentString += platform;
+		userAgentString += "/";
+		userAgentString += productSub;
+		userAgentString += ")";
+	  }
+	}
+    } 
+    else
+      userAgentString = userAgentOverride;
+#else
         pHTTPHandler->GetUserAgent(userAgentString);
+#endif
 
     if (!userAgentString.IsEmpty())
     {
-      // PUSH_STRING ("X-Mailer: ");  // To be more standards compliant
       PUSH_STRING ("User-Agent: ");  
       PUSH_STRING(userAgentString.get());
       PUSH_NEWLINE ();
@@ -618,7 +658,10 @@ RRT_HEADER:
 
   // If we don't have disclosed recipient (only Bcc), address the message to
   // undisclosed-recipients to prevent problem with some servers
-  if (!hasDisclosedRecipient) {
+
+  // If we are saving the message as a draft, don't bother inserting the undisclosed recipients field. We'll take care of that when we
+  // really send the message.
+  if (!hasDisclosedRecipient && !isDraft) {
     PRBool bAddUndisclosedRecipients = PR_TRUE;
     prefs->GetBoolPref("mail.compose.add_undisclosed_recipients", &bAddUndisclosedRecipients);
     if (bAddUndisclosedRecipients) {
@@ -1703,7 +1746,7 @@ nsMsgNewURL(nsIURI** aInstancePtrResult, const char * aSpec)
   nsCOMPtr<nsIIOService> pNetService(do_GetService(kIOServiceCID, &rv)); 
   if (NS_SUCCEEDED(rv) && pNetService)
   {
-    if (PL_strstr(aSpec, "://") == nsnull)
+    if (PL_strstr(aSpec, "://") == nsnull && strncmp(aSpec, "data:", 5))
     {
       //XXXjag Temporary fix for bug 139362 until the real problem(bug 70083) get fixed
       nsCAutoString uri(NS_LITERAL_CSTRING("http://") + nsDependentCString(aSpec));

@@ -95,30 +95,6 @@ nsFormControlHelper::~nsFormControlHelper()
   MOZ_COUNT_DTOR(nsFormControlHelper);
 }
 
-void nsFormControlHelper::ForceDrawFrame(nsIPresContext* aPresContext, nsIFrame * aFrame)
-{
-
-  if (aFrame == nsnull) {
-    return;
-  }
-  nsRect    rect;
-  nsIView * view;
-  nsPoint   pnt;
-  aFrame->GetOffsetFromView(aPresContext, pnt, &view);
-  aFrame->GetRect(rect);
-  rect.x = pnt.x;
-  rect.y = pnt.y;
-  if (view != nsnull) {
-    nsIViewManager * viewMgr;
-    view->GetViewManager(viewMgr);
-    if (viewMgr != nsnull) {
-      viewMgr->UpdateView(view, rect, NS_VMREFRESH_NO_SYNC);
-      NS_RELEASE(viewMgr);
-    }
-  }
-  
-}
-
 void nsFormControlHelper::PlatformToDOMLineBreaks(nsString &aString)
 {
   // Windows linebreaks: Map CRLF to LF:
@@ -151,11 +127,8 @@ nsresult nsFormControlHelper::GetFrameFontFM(nsIPresContext* aPresContext,
   const nsFont * font = nsnull;
   // Get frame font
   if (NS_SUCCEEDED(aFrame->GetFont(aPresContext, font))) {
-    nsCOMPtr<nsIDeviceContext> deviceContext;
-    aPresContext->GetDeviceContext(getter_AddRefs(deviceContext));
-    NS_ASSERTION(deviceContext, "Couldn't get the device context"); 
-    if (font != nsnull) { // Get font metrics
-      return deviceContext->GetMetricsFor(*font, *aFontMet);
+    if (font) { // Get font metrics
+      return aPresContext->DeviceContext()->GetMetricsFor(*font, *aFontMet);
     }
   }
   return NS_ERROR_FAILURE;
@@ -499,10 +472,7 @@ nsFormControlHelper::GetLocalizedString(const char * aPropFileName, const PRUnic
 nsresult
 nsFormControlHelper::Reset(nsIFrame* aFrame, nsIPresContext* aPresContext)
 {
-  nsCOMPtr<nsIContent> controlContent;
-  aFrame->GetContent(getter_AddRefs(controlContent));
-
-  nsCOMPtr<nsIFormControl> control = do_QueryInterface(controlContent);
+  nsCOMPtr<nsIFormControl> control = do_QueryInterface(aFrame->GetContent());
   if (control) {
     control->Reset();
     return NS_OK;
@@ -515,14 +485,11 @@ void
 nsFormControlHelper::StyleChangeReflow(nsIPresContext* aPresContext,
                                        nsIFrame* aFrame)
 {
-  nsCOMPtr<nsIPresShell> shell;
-  aPresContext->GetShell(getter_AddRefs(shell));
-
   nsHTMLReflowCommand* reflowCmd;
   nsresult rv = NS_NewHTMLReflowCommand(&reflowCmd, aFrame,
                                         eReflowType_StyleChanged);
   if (NS_SUCCEEDED(rv)) {
-    shell->AppendReflowCommand(reflowCmd);
+    aPresContext->PresShell()->AppendReflowCommand(reflowCmd);
   }
 }
 

@@ -47,20 +47,22 @@ var gActionTargetElement;
 var gActionValueDeck;
 var gActionPriority;
 var gActionLabel;
+var gActionJunkScore;
 var gFilterBundle;
 var gPreFillName;
 var nsMsgSearchScope = Components.interfaces.nsMsgSearchScope;
-var gPref;
 var gPrefBranch;
 var gMailSession = null;
 var gMoveToFolderCheckbox;
 var gChangePriorityCheckbox;
 var gLabelCheckbox;
+var gJunkScoreCheckbox;
 var gMarkReadCheckbox;
 var gMarkFlaggedCheckbox;
 var gDeleteCheckbox;
 var gKillCheckbox;
 var gWatchCheckbox;
+var gDeleteFromServerCheckbox;
 var gFilterActionList;
 
 var nsMsgFilterAction = Components.interfaces.nsMsgFilterAction;
@@ -72,8 +74,7 @@ function filterEditorOnLoad()
     initializeSearchWidgets();
     initializeFilterWidgets();
 
-    gPref = Components.classes["@mozilla.org/preferences;1"].getService(Components.interfaces.nsIPref);
-    gPrefBranch = gPref.getDefaultBranch(null);
+    gPrefBranch = Components.classes["@mozilla.org/preferences-service;1"].getService(Components.interfaces.nsIPrefService).getBranch(null);
     gFilterBundle = document.getElementById("bundle_filter");
     InitMessageLabel();
     if ("arguments" in window && window.arguments[0]) {
@@ -251,7 +252,7 @@ function setLabelAttributes(labelID, menuItemID)
     try
     {
         color = gPrefBranch.getCharPref("mailnews.labels.color." + labelID);
-        prefString = gPref.getComplexValue("mailnews.labels.description." + labelID,
+        prefString = gPrefBranch.getComplexValue("mailnews.labels.description." + labelID,
                                            Components.interfaces.nsIPrefLocalizedString);
     }
     catch(ex)
@@ -272,15 +273,19 @@ function initializeFilterWidgets()
     gActionTargetElement = document.getElementById("actionTargetFolder");
     gActionValueDeck = document.getElementById("actionValueDeck");
     gActionPriority = document.getElementById("actionValuePriority");
+    gActionJunkScore = document.getElementById("actionValueJunkScore");
     gActionLabel = document.getElementById("actionValueLabel");
     gMoveToFolderCheckbox = document.getElementById("moveToFolder");
     gChangePriorityCheckbox = document.getElementById("changePriority");
+    gChangeJunkScoreCheckbox = document.getElementById("setJunkScore");
     gLabelCheckbox = document.getElementById("label");
+    gJunkScoreCheckbox = document.getElementById("setJunkScore");
     gMarkReadCheckbox = document.getElementById("markRead");
     gMarkFlaggedCheckbox = document.getElementById("markFlagged");
     gDeleteCheckbox = document.getElementById("delete");
     gKillCheckbox = document.getElementById("kill");
     gWatchCheckbox = document.getElementById("watch");
+    gDeleteFromServerCheckbox = document.getElementById("deleteFromServer");
     gFilterActionList = document.getElementById("filterActionList");
 }
 
@@ -324,6 +329,18 @@ function initializeDialog(filter)
           gActionLabel.selectedItem = selectedLabel;
         }
       }
+      else if (filterAction.type == nsMsgFilterAction.JunkScore) 
+      {
+        gChangeJunkScoreCheckbox.checked = true;
+        // initialize junk score
+        var selectedJunkScore = gActionJunkScore.getElementsByAttribute("value", filterAction.junkScore);
+
+        if (selectedJunkScore && selectedJunkScore.length > 0) 
+        {
+          selectedJunkScore = selectedJunkScore[0];
+          gActionJunkScore.selectedItem = selectedJunkScore;
+        }
+      }
       else if (filterAction.type == nsMsgFilterAction.MarkRead)
         gMarkReadCheckbox.checked = true;
       else if (filterAction.type == nsMsgFilterAction.MarkFlagged)
@@ -334,6 +351,8 @@ function initializeDialog(filter)
         gWatchCheckbox.checked = true;
       else if (filterAction.type == nsMsgFilterAction.KillThread)
         gKillCheckbox.checked = true;
+      else if (filterAction.type == nsMsgFilterAction.DeleteFromPop3Server)
+        gDeleteFromServerCheckbox.checked = true;
 
       SetUpFilterActionList(getScope(filter));
     }
@@ -453,6 +472,14 @@ function saveFilter()
     gFilter.appendAction(filterAction);
   }
 
+  if (gJunkScoreCheckbox.checked) 
+  {
+    filterAction = gFilter.createAction();
+    filterAction.type = nsMsgFilterAction.JunkScore;
+    filterAction.junkScore = gActionJunkScore.selectedItem.getAttribute("value");
+    gFilter.appendAction(filterAction);
+  }
+
   if (gMarkReadCheckbox.checked) 
   {
     filterAction = gFilter.createAction();
@@ -485,6 +512,13 @@ function saveFilter()
   {
     filterAction = gFilter.createAction();
     filterAction.type = nsMsgFilterAction.KillThread;
+    gFilter.appendAction(filterAction);
+  }
+
+  if (gDeleteFromServerCheckbox.checked)
+  {
+    filterAction = gFilter.createAction();
+    filterAction.type = nsMsgFilterAction.DeleteFromPop3Server;
     gFilter.appendAction(filterAction);
   }
 
@@ -544,6 +578,17 @@ function SetUpFilterActionList(aScope)
     element = elements[i];
 
     if (aScope != Components.interfaces.nsMsgSearchScope.newsFilter)
+      element.removeAttribute("disabled");
+    else
+      element.setAttribute("disabled", "true");
+  }
+
+  elements = gFilterActionList.getElementsByAttribute("enableforpop3","true");
+  for (i=0;i<elements.length;i++) 
+  {
+    element = elements[i];
+
+    if (aScope == Components.interfaces.nsMsgSearchScope.offlineMailFilter)
       element.removeAttribute("disabled");
     else
       element.setAttribute("disabled", "true");
@@ -631,7 +676,7 @@ function SearchNewFolderOkCallback(name,uri)
   
   if (!imapFolder)
   {
-    var curFolder = uri+"/"+escape(name);
+    var curFolder = uri+"/"+encodeURIComponent(name);
     SetFolderPicker(curFolder, gActionTargetElement.id);
   }
 }

@@ -76,6 +76,13 @@ public:
 
   void SetMemberList(nsXBLProtoImplMember* aMemberList) { delete mMembers; mMembers = aMemberList; };
 
+protected:
+  // Function to call if compilation of a member fails.  When this is called,
+  // all members before aBrokenMember are compiled, compilation of
+  // aBrokenMember failed, and members after aBrokenMember are uncompiled.
+  // This function assumes that aBrokenMember is _not_ compiled.
+  void DestroyMembers(nsXBLProtoImplMember* aBrokenMember);
+  
 public:
   nsCString mClassName; // The name of the class. 
   void* mClassObject;   // The class object for the binding. We'll use this to pre-compile properties 
@@ -87,20 +94,9 @@ public:
   nsXBLPrototypeHandler* mDestructor;  // Our class destructor.
 };
 
-static nsresult
+nsresult
 NS_NewXBLProtoImpl(nsXBLPrototypeBinding* aBinding, 
                    const PRUnichar* aClassName, 
-                   nsXBLProtoImpl** aResult) {
-  nsXBLProtoImpl* impl = new nsXBLProtoImpl();
-  if (!impl)
-    return NS_ERROR_OUT_OF_MEMORY;
-  if (aClassName)
-    impl->mClassName.AssignWithConversion(aClassName);
-  else
-    aBinding->GetBindingURI(impl->mClassName);
-  aBinding->SetImplementation(impl);
-  *aResult = impl;
-  return NS_OK;
-}
+                   nsXBLProtoImpl** aResult);
 
 #endif // nsXBLProtoImpl_h__

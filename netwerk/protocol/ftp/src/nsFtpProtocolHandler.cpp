@@ -43,7 +43,6 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIProgressEventSink.h"
 #include "prlog.h"
-#include "nsIPref.h"
 #include "nsNetUtil.h"
 #include "nsIErrorService.h" 
 #include "nsIPrefService.h"
@@ -73,7 +72,6 @@ PRLogModuleInfo* gFTPLog = nsnull;
 #define IDLE_TIMEOUT_PREF     "network.ftp.idleConnectionTimeout"
 #define IDLE_CONNECTION_LIMIT 8 /* XXX pref me */
 
-static NS_DEFINE_IID(kIOServiceCID, NS_IOSERVICE_CID);
 static NS_DEFINE_CID(kStandardURLCID, NS_STANDARDURL_CID);
 static NS_DEFINE_CID(kErrorServiceCID, NS_ERRORSERVICE_CID);
 static NS_DEFINE_CID(kCacheServiceCID, NS_CACHESERVICE_CID);
@@ -106,7 +104,7 @@ NS_IMPL_THREADSAFE_ISUPPORTS4(nsFtpProtocolHandler,
                               nsIProtocolHandler,
                               nsIProxiedProtocolHandler,
                               nsIObserver,
-                              nsISupportsWeakReference);
+                              nsISupportsWeakReference)
 
 nsresult
 nsFtpProtocolHandler::Init()
@@ -123,18 +121,14 @@ nsFtpProtocolHandler::Init()
     }
 
     if (mIdleTimeout == -1) {
-        nsCOMPtr<nsIPrefService> prefSrv = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+        nsCOMPtr<nsIPrefBranchInternal> branch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
         if (NS_FAILED(rv)) return rv;
-        nsCOMPtr<nsIPrefBranch> branch;
-        // I have to get the root pref branch because of bug 107617
-        rv = prefSrv->GetBranch(nsnull, getter_AddRefs(branch));
-        if (NS_FAILED(rv)) return rv;
+
         rv = branch->GetIntPref(IDLE_TIMEOUT_PREF, &mIdleTimeout);
         if (NS_FAILED(rv))
             mIdleTimeout = 5*60; // 5 minute default
-        prefSrv->GetBranch(nsnull, getter_AddRefs(branch));
-        nsCOMPtr<nsIPrefBranchInternal> pbi = do_QueryInterface(branch);
-        rv = pbi->AddObserver(IDLE_TIMEOUT_PREF, this, PR_TRUE);
+
+        rv = branch->AddObserver(IDLE_TIMEOUT_PREF, this, PR_TRUE);
         if (NS_FAILED(rv)) return rv;
     }
 

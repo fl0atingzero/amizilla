@@ -32,19 +32,21 @@
 /**************************************************************************/
 
 math {
+  direction: ltr;
+  unicode-bidi: embed;
   display: inline;
   font-size: inherit;
   font-style: normal;
   font-family: CMSY10, Symbol, Times, Lucida Sans Unicode, MT Extra, Math1, Math2, Math3, Math4, Math5, serif;
 }
-math[mode="inline"], math[display="inline"] {
-  display: inline;
-}
 math[mode="display"], math[display="block"] {
   display: block;
   text-align: -moz-center;
 }
-:-moz-math-inline {
+math[display="inline"] {
+  display: inline;
+}
+::-moz-math-inline {
   display: inline;
 }
 
@@ -390,19 +392,19 @@ mtd[-moz-math-columnline="dashed"] {
 
    To request the use of TeX fonts, you can add a <style>...</style> with:
    <mo myfonts="tex">...</mo> with the associated CSS declaration
-   mo[myfonts="tex"]:-moz-math-font-style-stretchy {
+   mo[myfonts="tex"]::-moz-math-stretchy {
      font-family: CMSY10, CMEX10;
    }
 
    To request the use of Mathematica fonts, you can add a <style>...</style> with:
    <mo myfonts="mathematica">...</mo> with the associated CSS declaration
-   mo[myfonts="mathematica"]:-moz-math-font-style-stretchy {
+   mo[myfonts="mathematica"]::-moz-math-stretchy {
      font-family: Math1, Math2, Math4;
    }
 
    Of course, if you just want all of the stretchy characters in your
    document to be stretched with your preferred list, you can just do:
-   :-moz-math-font-style-stretchy {
+   ::-moz-math-stretchy {
      font-family: [your-particular-list]
    }
 
@@ -410,12 +412,12 @@ mtd[-moz-math-columnline="dashed"] {
    clicking the pref to override document fonts.
 /**************************************************************************/
 
-:-moz-math-font-style-stretchy {
+::-moz-math-stretchy {
   font-style: normal;
   font-family: serif;
 /*  background-color: #3C6; */
 }
-:-moz-math-font-style-anonymous {
+::-moz-math-anonymous {
 }
 
 /**********************************************************************/

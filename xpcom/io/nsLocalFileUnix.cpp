@@ -98,7 +98,6 @@ nsDirEnumeratorUnix : public nsISimpleEnumerator
 {
     public:
     nsDirEnumeratorUnix();
-    virtual ~nsDirEnumeratorUnix();
 
     // nsISupports interface
     NS_DECL_ISUPPORTS
@@ -107,6 +106,9 @@ nsDirEnumeratorUnix : public nsISimpleEnumerator
     NS_DECL_NSISIMPLEENUMERATOR
 
     NS_IMETHOD Init(nsLocalFile *parent, PRBool ignored);
+
+    private:
+    ~nsDirEnumeratorUnix();
 
     protected:
     NS_IMETHOD GetNextEntry();
@@ -201,7 +203,10 @@ nsLocalFile::nsLocalFile() :
 {
 }
 
-nsLocalFile::~nsLocalFile()
+nsLocalFile::nsLocalFile(const nsLocalFile& other)
+  : mCachedStat(other.mCachedStat)
+  , mPath(other.mPath)
+  , mHaveCachedStat(other.mHaveCachedStat)
 {
 }
 
@@ -240,18 +245,13 @@ nsLocalFile::FillStatCache() {
 NS_IMETHODIMP
 nsLocalFile::Clone(nsIFile **file)
 {
-    NS_ENSURE_ARG(file);
+    // Just copy-construct ourselves
+    *file = new nsLocalFile(*this);
+    if (!*file)
+      return NS_ERROR_OUT_OF_MEMORY;
 
-    nsLocalFile* localFile = new nsLocalFile();
-    if (!localFile)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    nsresult rv = localFile->InitWithNativePath(mPath);
-    if (NS_FAILED(rv))
-        return rv;
-
-    *file = NS_STATIC_CAST(nsIFile *, localFile);
     NS_ADDREF(*file);
+    
     return NS_OK;
 }
 
@@ -268,6 +268,9 @@ nsLocalFile::InitWithNativePath(const nsACString &filePath)
         }
         
         mPath = homePath + Substring(filePath, 1, filePath.Length() - 1);
+    } else if (filePath.IsEmpty() || filePath.First() != '/') {
+      NS_ERROR("Relative paths not allowed");
+      return NS_ERROR_FILE_UNRECOGNIZED_PATH;
     } else {
         mPath = filePath;
     }
@@ -286,7 +289,7 @@ NS_IMETHODIMP
 nsLocalFile::CreateAllAncestors(PRUint32 permissions)
 {
     // <jband> I promise to play nice
-    char *buffer = NS_CONST_CAST(char *, mPath.get()),
+    char *buffer = mPath.BeginWriting(),
          *slashp = buffer;
 
 #ifdef DEBUG_NSIFILE
@@ -742,9 +745,11 @@ nsLocalFile::CopyToNative(nsIFile *newParent, const nsACString &newName)
 #endif
 
         // actually create the file.
-        nsCOMPtr<nsLocalFile> newFile = new nsLocalFile();
+        nsLocalFile *newFile = new nsLocalFile();
         if (!newFile)
             return NS_ERROR_OUT_OF_MEMORY;
+
+        nsCOMPtr<nsILocalFile> fileRef(newFile); // release on exit
 
         rv = newFile->InitWithNativePath(newPathName);
         if (NS_FAILED(rv))
@@ -888,9 +893,11 @@ nsLocalFile::Remove(PRBool recursive)
     InvalidateCache();
     if (isDir) {
         if (recursive) {
-            nsCOMPtr<nsDirEnumeratorUnix> dir = new nsDirEnumeratorUnix();
+            nsDirEnumeratorUnix *dir = new nsDirEnumeratorUnix();
             if (!dir)
                 return NS_ERROR_OUT_OF_MEMORY;
+
+            nsCOMPtr<nsISimpleEnumerator> dirRef(dir); // release on exit
 
             rv = dir->Init(this, PR_FALSE);
             if (NS_FAILED(rv))
@@ -1166,7 +1173,7 @@ nsLocalFile::GetParent(nsIFile **aParent)
         return  NS_OK;
  
     // <brendan, after jband> I promise to play nice
-    char *buffer   = NS_CONST_CAST(char *, mPath.get()),
+    char *buffer   = mPath.BeginWriting(),
          *slashp   = buffer;
 
     // find the last significant slash in buffer
@@ -1493,17 +1500,20 @@ nsLocalFile::SetFollowLinks(PRBool aFollowLinks)
 NS_IMETHODIMP
 nsLocalFile::GetDirectoryEntries(nsISimpleEnumerator **entries)
 {
-    nsCOMPtr<nsDirEnumeratorUnix> dir = new nsDirEnumeratorUnix();
+    nsDirEnumeratorUnix *dir = new nsDirEnumeratorUnix();
     if (!dir)
         return NS_ERROR_OUT_OF_MEMORY;
 
+    NS_ADDREF(dir);
     nsresult rv = dir->Init(this, PR_FALSE);
-    if (NS_FAILED(rv))
-        return rv;
+    if (NS_FAILED(rv)) {
+        *entries = nsnull;
+        NS_RELEASE(dir);
+    } else {
+        *entries = dir; // transfer reference
+    }
 
-    /* QI needed? If not, need to ADDREF. */
-    return dir->QueryInterface(NS_GET_IID(nsISimpleEnumerator),
-                                 (void **)entries);
+    return rv;
 }
 
 NS_IMETHODIMP

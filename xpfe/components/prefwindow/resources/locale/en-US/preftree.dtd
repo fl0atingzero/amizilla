@@ -17,7 +17,7 @@
 <!ENTITY compose.label "Composer">
 <!ENTITY editing.label "New Page Settings">
 <!ENTITY publish.label "Publish">
-<!ENTITY offline.label "Offline &amp; Disk Space">
+<!ENTITY offline.label "Offline">
 <!ENTITY security.label "Privacy &amp; Security">
 <!ENTITY advance.label "Advanced">
 <!ENTITY down.label "Download">
@@ -33,4 +33,4 @@
 <!ENTITY search.label "Internet Search">
 <!ENTITY policies.label "Security Policies">
 <!ENTITY mousewheel.label "Mouse Wheel">
-<!ENTITY scriptsAndWindows.label "Scripts &amp; Plugins">
+<!ENTITY scriptsAndWindows.label "Scripts &amp; Plug-ins">

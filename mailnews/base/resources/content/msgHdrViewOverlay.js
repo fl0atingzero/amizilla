@@ -93,7 +93,7 @@ var gCollapsedHeaderList = [ {name:"subject", outputFunction:updateHeaderValueIn
 // We also have an expanded header view. This shows many of your more common (and useful) headers.
 var gExpandedHeaderList = [ {name:"subject"}, 
                             {name:"from", outputFunction:OutputEmailAddresses},
-                            {name:"reply-to", isEmailAddress:true, outputFunction:OutputEmailAddresses},
+                            {name:"reply-to", outputFunction:OutputEmailAddresses},
                             {name:"date"},
                             {name:"to", useToggle:true, outputFunction:OutputEmailAddresses},
                             {name:"cc", useToggle:true, outputFunction:OutputEmailAddresses},
@@ -104,8 +104,8 @@ var gExpandedHeaderList = [ {name:"subject"},
 // Now, for each view the message pane can generate, we need a global table of headerEntries. These
 // header entry objects are generated dynamically based on the static date in the header lists (see above)
 // and elements we find in the DOM based on properties in the header lists. 
-var gCollapsedHeaderView = new Array;
-var gExpandedHeaderView = new Array;
+var gCollapsedHeaderView = {};
+var gExpandedHeaderView  = {};
 
 // currentHeaderData --> this is an array of header name and value pairs for the currently displayed message.
 //                       it's purely a data object and has no view information. View information is contained in the view objects.
@@ -167,34 +167,30 @@ function initializeHeaderViewTables()
 {
   // iterate over each header in our header list arrays and create header entries 
   // for each one. These header entries are then stored in the appropriate header table
-
-  if (!gCollapsedHeaderView.length) // if we haven't already initialized the collapsed view...
-    for (var index = 0; index < gCollapsedHeaderList.length; index++)
-    {
-      gCollapsedHeaderView[gCollapsedHeaderList[index].name] = 
-        new createHeaderEntry('collapsed', gCollapsedHeaderList[index]);
-    }
-
-  if (!gExpandedHeaderView.length)
+  var index;
+  for (index = 0; index < gCollapsedHeaderList.length; index++)
   {
-    for (index = 0; index < gExpandedHeaderList.length; index++)
-    {
-      var headerName = gExpandedHeaderList[index].name;
-      gExpandedHeaderView[headerName] = new createHeaderEntry('expanded', gExpandedHeaderList[index]);
-    }
-    
-    if (gShowOrganization)
-    {
-      var organizationEntry = {name:"organization", outputFunction:updateHeaderValue};
-      gExpandedHeaderView[organizationEntry.name] = new createHeaderEntry('expanded', organizationEntry);
-    }
-    
-    if (gShowUserAgent)
-    {
-      var userAgentEntry = {name:"user-agent", outputFunction:updateHeaderValue};
-      gExpandedHeaderView[userAgentEntry.name] = new createHeaderEntry('expanded', userAgentEntry);
-    }
-  } // if we need to initialize the expanded header view...
+    gCollapsedHeaderView[gCollapsedHeaderList[index].name] = 
+      new createHeaderEntry('collapsed', gCollapsedHeaderList[index]);
+  }
+
+  for (index = 0; index < gExpandedHeaderList.length; index++)
+  {
+    var headerName = gExpandedHeaderList[index].name;
+    gExpandedHeaderView[headerName] = new createHeaderEntry('expanded', gExpandedHeaderList[index]);
+  }
+  
+  if (gShowOrganization)
+  {
+    var organizationEntry = {name:"organization", outputFunction:updateHeaderValue};
+    gExpandedHeaderView[organizationEntry.name] = new createHeaderEntry('expanded', organizationEntry);
+  }
+  
+  if (gShowUserAgent)
+  {
+    var userAgentEntry = {name:"user-agent", outputFunction:updateHeaderValue};
+    gExpandedHeaderView[userAgentEntry.name] = new createHeaderEntry('expanded', userAgentEntry);
+  }
 }
 
 function OnLoadMsgHeaderPane()
@@ -308,6 +304,11 @@ var messageHeaderSink = {
         // for consistancy sake, let's force all header names to be lower case so
         // we don't have to worry about looking for: Cc and CC, etc.
         var lowerCaseHeaderName = headerNames[index].toLowerCase();
+
+        // if we have an x-mailer string, put it in the user-agent slot which we know how to handle
+        // already. 
+        if (lowerCaseHeaderName == "x-mailer")
+          lowerCaseHeaderName = "user-agent";          
         
         var foo = new Object;        
         foo.headerValue = headerValues[index];
@@ -413,7 +414,7 @@ function EnsureSubjectValue()
 
 function CheckNotify()
 {
-  if (this.NotifyClearAddresses != undefined)
+  if ("NotifyClearAddresses" in this)
     NotifyClearAddresses();
 }
 
@@ -557,7 +558,7 @@ function UpdateMessageHeaders()
   for (headerName in currentHeaderData)
   {
     var headerField = currentHeaderData[headerName];
-    var headerEntry;
+    var headerEntry = null;
 
     if (headerName == "subject")
     {
@@ -574,30 +575,28 @@ function UpdateMessageHeaders()
     
     if (gCollapsedHeaderViewMode && !gBuiltCollapsedView)
     { 
-      headerEntry = gCollapsedHeaderView[headerName];
-      if (headerEntry != undefined && headerEntry)
-      {  
-        headerEntry.outputFunction(headerEntry, headerField.headerValue);
-        headerEntry.valid = true;    
-      }
+      if (headerName in gCollapsedHeaderView)
+        headerEntry = gCollapsedHeaderView[headerName];
     }
     else if (!gCollapsedHeaderViewMode && !gBuiltExpandedView)
     {
-      headerEntry = gExpandedHeaderView[headerName];
-      if (headerEntry == undefined && gViewAllHeaders)
+      if (headerName in gExpandedHeaderView)
+        headerEntry = gExpandedHeaderView[headerName];
+
+      if (!headerEntry && gViewAllHeaders)
       {
         // for view all headers, if we don't have a header field for this value....cheat and create one....then
         // fill in a headerEntry
         gExpandedHeaderView[headerName] = new createNewHeaderView(headerName);
         headerEntry = gExpandedHeaderView[headerName];
       }
-
-      if (headerEntry != undefined && headerEntry)
-      {
-        headerEntry.outputFunction(headerEntry, headerField.headerValue);
-        headerEntry.valid = true;
-      }
     } // if we are in expanded view....
+
+    if (headerEntry)
+    {  
+      headerEntry.outputFunction(headerEntry, headerField.headerValue);
+      headerEntry.valid = true;    
+    }
   }
 
   if (gCollapsedHeaderViewMode)
@@ -608,7 +607,7 @@ function UpdateMessageHeaders()
   // now update the view to make sure the right elements are visible
   updateHeaderViews();
   
-  if (this.FinishEmailProcessing != undefined)
+  if ("FinishEmailProcessing" in this)
     FinishEmailProcessing();
 }
 
@@ -768,7 +767,7 @@ function updateEmailAddressNode(emailAddressNode, emailAddress, fullAddress, dis
   emailAddressNode.setTextAttribute("fullAddress", fullAddress);  
   emailAddressNode.setTextAttribute("displayName", displayName);  
   
-  if (this.AddExtraAddressProcessing != undefined)
+  if ("AddExtraAddressProcessing" in this)
     AddExtraAddressProcessing(emailAddress, emailAddressNode);
 }
 
@@ -780,7 +779,7 @@ function AddNodeToAddressBook (emailAddressNode)
     var displayName = emailAddressNode.getAttribute("displayName");
     window.openDialog("chrome://messenger/content/addressbook/abNewCardDialog.xul",
                       "",
-                      "chrome,titlebar,resizable=no", 
+                      "chrome,resizable=no,titlebar,modal,centerscreen", 
                       {primaryEmail:primaryEmail, displayName:displayName });
   }
 }
@@ -843,39 +842,29 @@ function createNewAttachmentInfo(contentType, url, displayName, uri, notDownload
   this.notDownloaded = notDownloaded;
 }
 
-function dofunc(aFunctionName, aFunctionArg)
+createNewAttachmentInfo.prototype.saveAttachment = function saveAttachment()
 {
-  if (aFunctionName == "saveAttachment") 
-    saveAttachment(aFunctionArg); 
-  else if (aFunctionName == "openAttachment") 
-    openAttachment(aFunctionArg); 
-  else if (aFunctionName == "printAttachment") 
-    printAttachment(aFunctionArg);
+  messenger.saveAttachment(this.contentType, 
+                           this.url, 
+                           encodeURIComponent(this.displayName), 
+                           this.uri);
 }
 
-function saveAttachment(aAttachment)
+createNewAttachmentInfo.prototype.openAttachment = function openAttachment()
 {
-  messenger.saveAttachment(aAttachment.contentType, 
-                           aAttachment.url, 
-                           escape(aAttachment.displayName), 
-                           aAttachment.messageUri);
+  messenger.openAttachment(this.contentType, 
+                           this.url, 
+                           encodeURIComponent(this.displayName), 
+                           this.uri);
 }
 
-function openAttachment(aAttachment)
-{
-  messenger.openAttachment(aAttachment.contentType, 
-                           aAttachment.url, 
-                           escape(aAttachment.displayName), 
-                           aAttachment.messageUri);
-}
-
-function printAttachment(aAttachment)
+createNewAttachmentInfo.prototype.printAttachment = function printAttachment()
 {
   /* we haven't implemented the ability to print attachments yet...
-  messenger.printAttachment(aAttachment.contentType, 
-                            aAttachment.url, 
-                            escape(aAttachment.displayName), 
-                            aAttachment.messageUri);
+  messenger.printAttachment(this.contentType, 
+                            this.url, 
+                            encodeURIComponent(this.displayName), 
+                            this.uri);
   */
 }
 
@@ -910,7 +899,7 @@ function attachmentListClick(event)
       var target = event.target;
       if (target.localName == "listitem")
       {
-	dofunc("openAttachment", target.attachment);
+	target.attachment.openAttachment();
       }
     }
 }
@@ -924,17 +913,7 @@ function handleAttachmentSelection(commandPrefix)
   var selectedAttachments = attachmentList.selectedItems;
   var listItem = selectedAttachments[0];
 
-  dofunc(commandPrefix, listItem.attachment);
-}
-
-function cloneAttachment(aAttachment)
-{
-  var obj = new Object();
-  obj.contentType = aAttachment.contentType;
-  obj.url = aAttachment.url;
-  obj.displayName = aAttachment.displayName;
-  obj.messageUri = aAttachment.uri;
-  return obj;
+  listItem.attachment[commandPrefix]();
 }
 
 function displayAttachmentsForExpandedView()
@@ -943,28 +922,26 @@ function displayAttachmentsForExpandedView()
   if (numAttachments > 0 && !gBuildAttachmentsForCurrentMsg)
   {
     var attachmentList = document.getElementById('attachmentList');
+
     for (index in currentAttachments)
     {
       var attachment = currentAttachments[index];
 
       // we need to create a listitem to insert the attachment
       // into the attachment list..
-      var item = document.createElement("listitem");
+      var item = attachmentList.appendItem(attachment.displayName,"");
       item.setAttribute("class", "listitem-iconic"); 
-      item.setAttribute("label", attachment.displayName);
       item.setAttribute("tooltip", "attachmentListTooltip");
-
-      item.attachment = cloneAttachment(attachment);
-
+      item.attachment = attachment;
       item.setAttribute("attachmentUrl", attachment.url);
       item.setAttribute("attachmentContentType", attachment.contentType);
       item.setAttribute("attachmentUri", attachment.uri);
       setApplicationIconForAttachment(attachment, item);
-      attachmentList.appendChild(item);
-    } // for each attachment
+    } // for each attachment   
+
     gBuildAttachmentsForCurrentMsg = true;
   }
-
+   
   var expandedAttachmentBox = document.getElementById('expandedAttachmentBox');
   expandedAttachmentBox.collapsed = numAttachments <= 0;
 }
@@ -1061,8 +1038,8 @@ function addAttachmentToPopup(popup, attachment, attachmentIndex)
 
       var menuitementry = document.createElement('menuitem');     
 
-      menuitementry.attachment = cloneAttachment(attachment);
-      menuitementry.setAttribute('oncommand', 'openAttachment(this.attachment)'); 
+      menuitementry.attachment = attachment;
+      menuitementry.setAttribute('oncommand', 'this.attachment.openAttachment()'); 
 
       if (!gSaveLabel)
         gSaveLabel = gMessengerBundle.getString("saveLabel");
@@ -1081,8 +1058,8 @@ function addAttachmentToPopup(popup, attachment, attachmentIndex)
       openpopup.appendChild(menuseparator);
       
       menuitementry = document.createElement('menuitem');
-      menuitementry.attachment = cloneAttachment(attachment);
-      menuitementry.setAttribute('oncommand', 'saveAttachment(this.attachment)'); 
+      menuitementry.attachment = attachment;
+      menuitementry.setAttribute('oncommand', 'this.attachment.saveAttachment()'); 
       menuitementry.setAttribute('label', gSaveLabel); 
       menuitementry.setAttribute('accesskey', gSaveLabelAccesskey); 
       menuitementry = openpopup.appendChild(menuitementry);
@@ -1106,7 +1083,7 @@ function SaveAllAttachments()
      var attachment = currentAttachments[index];
      attachmentContentTypeArray[index] = attachment.contentType;
      attachmentUrlArray[index] = attachment.url;
-     attachmentDisplayNameArray[index] = escape(attachment.displayName);
+     attachmentDisplayNameArray[index] = encodeURI(attachment.displayName);
      attachmentMessageUriArray[index] = attachment.uri;
    }
 
@@ -1128,7 +1105,7 @@ function ClearAttachmentList()
   list.clearSelection();
 
   while (list.childNodes.length) 
-    list.removeChild(list.firstChild);
+    list.removeItemAt(list.childNodes.length - 1);
 }
 
 function ShowEditMessageButton() 
@@ -1145,6 +1122,7 @@ function ClearEditMessageButton()
     editBox.collapsed = true;
 }
 
+
 var attachmentAreaDNDObserver = {
   onDragStart: function (aEvent, aAttachmentData, aDragAction)
   {
@@ -1155,14 +1133,75 @@ var attachmentAreaDNDObserver = {
       var attachmentDisplayName = target.getAttribute("label");
       var attachmentContentType = target.getAttribute("attachmentContentType");
       var tmpurl = attachmentUrl;
-      tmpurl = tmpurl + "&type=" + attachmentContentType + "&filename=" + attachmentDisplayName;
+      var tmpurlWithExtraInfo = tmpurl + "&type=" + attachmentContentType + "&filename=" + attachmentDisplayName;
       aAttachmentData.data = new TransferData();
       if (attachmentUrl && attachmentDisplayName)
       {
-        aAttachmentData.data.addDataForFlavour("text/x-moz-url", tmpurl + "\n" + attachmentDisplayName);
+        aAttachmentData.data.addDataForFlavour("text/x-moz-url", tmpurlWithExtraInfo + "\n" + attachmentDisplayName);
+        aAttachmentData.data.addDataForFlavour("text/x-moz-url-data", tmpurl);
+        aAttachmentData.data.addDataForFlavour("text/x-moz-url-desc", attachmentDisplayName);
+        
+        aAttachmentData.data.addDataForFlavour("application/x-moz-file-promise-url", tmpurl);   
+        aAttachmentData.data.addDataForFlavour("application/x-moz-file-promise", new nsFlavorDataProvider(), 0, Components.interfaces.nsISupports);     
       }
     }
   }
 };
+
+function nsFlavorDataProvider()
+{
+}
+
+nsFlavorDataProvider.prototype =
+{
+  QueryInterface : function(iid)
+  {
+      if (iid.equals(Components.interfaces.nsIFlavorDataProvider) ||
+          iid.equals(Components.interfaces.nsISupports))
+        return this;
+      throw Components.results.NS_NOINTERFACE;
+  },
+  
+  getFlavorData : function(aTransferable, aFlavor, aData, aDataLen)
+  {
+
+    // get the url for the attachment
+    if (aFlavor == "application/x-moz-file-promise")
+    {
+      var urlPrimitive = { };
+      var dataSize = { };
+      aTransferable.getTransferData("application/x-moz-file-promise-url", urlPrimitive, dataSize);
+
+      var srcUrlPrimitive = urlPrimitive.value.QueryInterface(Components.interfaces.nsISupportsString);
+
+      // now get the destination file location from kFilePromiseDirectoryMime
+      var dirPrimitive = {};
+      aTransferable.getTransferData("application/x-moz-file-promise-dir", dirPrimitive, dataSize);
+      var destDirectory = dirPrimitive.value.QueryInterface(Components.interfaces.nsILocalFile);
+
+      // now save the attachment to the specified location
+      // XXX: we need more information than just the attachment url to save it, fortunately, we have an array
+      // of all the current attachments so we can cheat and scan through them
+
+      var attachment = null;
+      for (index in currentAttachments)
+      {
+        attachment = currentAttachments[index];
+        if (attachment.url == srcUrlPrimitive)
+          break;
+      }
+
+      // call our code for saving attachments
+      if (attachment)
+      {
+        var destFilePath = messenger.saveAttachmentToFolder(attachment.contentType, attachment.url, attachment.displayName, attachment.uri, destDirectory);
+        aData.value = destFilePath.QueryInterface(Components.interfaces.nsISupports);
+        aDataLen.value = 4;
+      }
+    }
+  }
+
+}
+
 
 

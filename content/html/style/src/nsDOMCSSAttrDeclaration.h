@@ -45,15 +45,19 @@
 #include "nsString.h"
 
 class nsIContent;
-class nsIHTMLContent;
+class nsIStyledContent;
 class nsICSSLoader;
 class nsICSSParser;
 
 class nsDOMCSSAttributeDeclaration : public nsDOMCSSDeclaration
 {
 public:
-  nsDOMCSSAttributeDeclaration(nsIHTMLContent *aContent);
+  nsDOMCSSAttributeDeclaration(nsIStyledContent *aContent);
   ~nsDOMCSSAttributeDeclaration();
+
+  // impl AddRef/Release; QI is implemented by our parent class
+  NS_IMETHOD_(nsrefcnt) AddRef(void);
+  NS_IMETHOD_(nsrefcnt) Release(void);
 
   virtual void DropReference();
   // If GetCSSDeclaration returns non-null, then the decl it returns
@@ -63,12 +67,15 @@ public:
   virtual nsresult GetCSSParsingEnvironment(nsIURI** aBaseURI,
                                             nsICSSLoader** aCSSLoader,
                                             nsICSSParser** aCSSParser);
-  virtual nsresult GetParent(nsISupports **aParent);
+  NS_IMETHOD GetParentRule(nsIDOMCSSRule **aParent);
 
 protected:
   virtual nsresult DeclarationChanged();
   
-  nsIHTMLContent *mContent;
+  nsAutoRefCnt mRefCnt;
+  NS_DECL_OWNINGTHREAD
+
+  nsIStyledContent *mContent;
 };
 
 #endif /* nsDOMCSSAttributeDeclaration_h___ */

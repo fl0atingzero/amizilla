@@ -36,6 +36,7 @@
  * ***** END LICENSE BLOCK ***** */
 #include "nsCOMPtr.h"
 #include "nsStyleConsts.h"
+#include "nsCSSAnonBoxes.h"
 #include "nsFrame.h"
 #include "nsIContent.h"
 #include "nsHTMLAtoms.h"
@@ -55,9 +56,6 @@
 #include "nsBidiUtils.h"
 #endif
 
-#define IS_TABLE_CELL(frameType)\
-((nsLayoutAtoms::tableCellFrame == frameType) || (nsLayoutAtoms::bcTableCellFrame == frameType))
-
 #ifdef NS_DEBUG
 #undef NOISY_VERTICAL_ALIGN
 #else
@@ -74,7 +72,10 @@ enum eNormalLineHeightControl {
   eIncludeExternalLeading,  // use whatever value font vendor provides
   eCompensateLeading        // compensate leading if leading provided by font vendor is not enough
 };
+
+#ifdef FONT_LEADING_APIS_V2
 static eNormalLineHeightControl sNormalLineHeightControl = eUninitialized;
+#endif
 
 #ifdef DEBUG
 const char*
@@ -131,7 +132,6 @@ nsHTMLReflowState::nsHTMLReflowState(nsIPresContext*      aPresContext,
   mSpaceManager = nsnull;
   mLineLayout = nsnull;
   mFlags.mSpecialHeightReflow = PR_FALSE;
-  mFlags.mTableDerivedComputedWidth = PR_FALSE;
   mFlags.mIsTopOfPage = PR_FALSE;
   mFlags.mUnused = 0;
   mPercentHeightObserver = nsnull;
@@ -164,7 +164,6 @@ nsHTMLReflowState::nsHTMLReflowState(nsIPresContext*      aPresContext,
   mSpaceManager = nsnull;
   mLineLayout = nsnull;
   mFlags.mSpecialHeightReflow = PR_FALSE;
-  mFlags.mTableDerivedComputedWidth = PR_FALSE;
   mFlags.mIsTopOfPage = PR_FALSE;
   mFlags.mUnused = 0;
   mPercentHeightObserver = nsnull;
@@ -332,25 +331,18 @@ nsHTMLReflowState::Init(nsIPresContext* aPresContext,
   mStylePadding = frame->GetStylePadding();
   mStyleText = frame->GetStyleText();
 
-  mFrameType = DetermineFrameType(frame, mStyleDisplay);
+  InitFrameType();
   InitCBReflowState();
   InitConstraints(aPresContext, aContainingBlockWidth, aContainingBlockHeight, aBorder, aPadding);
 }
 
 void nsHTMLReflowState::InitCBReflowState()
 {
-  PRBool isContainingBlock;
-  nsresult rv = frame->IsPercentageBase(isContainingBlock);
-  if (NS_SUCCEEDED(rv) && isContainingBlock) {
+  if (frame->IsContainingBlock()) {
     // a block inside a table cell needs to use the table cell
     if (parentReflowState) {
-      nsCOMPtr<nsIAtom> fType;
-      parentReflowState->frame->GetFrameType(getter_AddRefs(fType));
-      if (IS_TABLE_CELL(fType.get())) {
+      if (IS_TABLE_CELL(parentReflowState->frame->GetType())) {
         mCBReflowState = parentReflowState;
-        // Set mFlags.mTableDerivedComputedWidth to true for a cell block. Its default 
-        // value was set to what the parent reflow state has. 
-        mFlags.mTableDerivedComputedWidth = PR_TRUE;
         return;
       }
     }
@@ -376,38 +368,29 @@ nsHTMLReflowState::GetContainingBlockContentWidth(const nsHTMLReflowState* aPare
   return rs->mComputedWidth;
 }
 
-nsCSSFrameType
-nsHTMLReflowState::DetermineFrameType(nsIFrame* aFrame)
+void
+nsHTMLReflowState::InitFrameType()
 {
-  const nsStyleDisplay* styleDisplay = aFrame->GetStyleDisplay();
-  return DetermineFrameType(aFrame, styleDisplay);
-}
-
-nsCSSFrameType
-nsHTMLReflowState::DetermineFrameType(nsIFrame* aFrame,
-                                      const nsStyleDisplay* aDisplay)
-{
+  const nsStyleDisplay *disp = mStyleDisplay;
   nsCSSFrameType frameType;
 
-  // Get the frame state
-  nsFrameState  frameState;
-  aFrame->GetFrameState(&frameState);
-  
   // Section 9.7 of the CSS2 spec indicates that absolute position
   // takes precedence over float which takes precedence over display.
   // Make sure the frame was actually moved out of the flow, and don't
   // just assume what the style says
-  if (frameState & NS_FRAME_OUT_OF_FLOW) {
-    if (aDisplay->IsAbsolutelyPositioned()) {
+  // XXXldb nsRuleNode::ComputeDisplayData should take care of this, right?
+  if (frame->GetStateBits() & NS_FRAME_OUT_OF_FLOW) {
+    if (disp->IsAbsolutelyPositioned()) {
       frameType = NS_CSS_FRAME_TYPE_ABSOLUTE;
     }
-    else if (NS_STYLE_FLOAT_NONE != aDisplay->mFloats) {
+    else {
+      NS_ASSERTION(NS_STYLE_FLOAT_NONE != disp->mFloats,
+                   "unknown out of flow frame type");
       frameType = NS_CSS_FRAME_TYPE_FLOATING;
     }
-    // XXXldb UMR in this case (else, else) we don't initialize frameType
   }
   else {
-    switch (aDisplay->mDisplay) {
+    switch (disp->mDisplay) {
     case NS_STYLE_DISPLAY_BLOCK:
     case NS_STYLE_DISPLAY_LIST_ITEM:
     case NS_STYLE_DISPLAY_TABLE:
@@ -448,11 +431,11 @@ nsHTMLReflowState::DetermineFrameType(nsIFrame* aFrame,
   }
 
   // See if the frame is replaced
-  if (frameState & NS_FRAME_REPLACED_ELEMENT) {
+  if (frame->GetStateBits() & NS_FRAME_REPLACED_ELEMENT) {
     frameType = NS_FRAME_REPLACED(frameType);
   }
 
-  return frameType;
+  mFrameType = frameType;
 }
 
 void
@@ -497,13 +480,10 @@ nsHTMLReflowState::ComputeRelativeOffsets(const nsHTMLReflowState* cbrs,
       mComputedOffsets.left = mComputedOffsets.right = 0;
     } else {
       // 'Right' isn't 'auto' so compute its value
-      if (eStyleUnit_Inherit == mStylePosition->mOffset.GetRightUnit()) {
-        mComputedOffsets.right = cbrs->mComputedOffsets.right;
-      } else {
-        ComputeHorizontalValue(aContainingBlockWidth, mStylePosition->mOffset.GetRightUnit(),
-                               mStylePosition->mOffset.GetRight(coord),
-                               mComputedOffsets.right);
-      }
+      ComputeHorizontalValue(aContainingBlockWidth,
+                             mStylePosition->mOffset.GetRightUnit(),
+                             mStylePosition->mOffset.GetRight(coord),
+                             mComputedOffsets.right);
       
       // Computed value for 'left' is minus the value of 'right'
       mComputedOffsets.left = -mComputedOffsets.right;
@@ -513,13 +493,10 @@ nsHTMLReflowState::ComputeRelativeOffsets(const nsHTMLReflowState* cbrs,
     NS_ASSERTION(rightIsAuto, "unexpected specified constraint");
     
     // 'Left' isn't 'auto' so compute its value
-    if (eStyleUnit_Inherit == mStylePosition->mOffset.GetLeftUnit()) {
-      mComputedOffsets.left = cbrs->mComputedOffsets.left;
-    } else {
-      ComputeHorizontalValue(aContainingBlockWidth, mStylePosition->mOffset.GetLeftUnit(),
-                             mStylePosition->mOffset.GetLeft(coord),
-                             mComputedOffsets.left);
-    }
+    ComputeHorizontalValue(aContainingBlockWidth,
+                           mStylePosition->mOffset.GetLeftUnit(),
+                           mStylePosition->mOffset.GetLeft(coord),
+                           mComputedOffsets.left);
 
     // Computed value for 'right' is minus the value of 'left'
     mComputedOffsets.right = -mComputedOffsets.left;
@@ -553,13 +530,10 @@ nsHTMLReflowState::ComputeRelativeOffsets(const nsHTMLReflowState* cbrs,
       mComputedOffsets.top = mComputedOffsets.bottom = 0;
     } else {
       // 'Bottom' isn't 'auto' so compute its value
-      if (eStyleUnit_Inherit == mStylePosition->mOffset.GetBottomUnit()) {
-        mComputedOffsets.bottom = cbrs->mComputedOffsets.bottom;
-      } else {
-        ComputeVerticalValue(aContainingBlockHeight, mStylePosition->mOffset.GetBottomUnit(),
-                               mStylePosition->mOffset.GetBottom(coord),
-                               mComputedOffsets.bottom);
-      }
+      ComputeVerticalValue(aContainingBlockHeight,
+                           mStylePosition->mOffset.GetBottomUnit(),
+                           mStylePosition->mOffset.GetBottom(coord),
+                           mComputedOffsets.bottom);
       
       // Computed value for 'top' is minus the value of 'bottom'
       mComputedOffsets.top = -mComputedOffsets.bottom;
@@ -569,13 +543,10 @@ nsHTMLReflowState::ComputeRelativeOffsets(const nsHTMLReflowState* cbrs,
     NS_ASSERTION(bottomIsAuto, "unexpected specified constraint");
     
     // 'Top' isn't 'auto' so compute its value
-    if (eStyleUnit_Inherit == mStylePosition->mOffset.GetTopUnit()) {
-      mComputedOffsets.top = cbrs->mComputedOffsets.top;
-    } else {
-      ComputeVerticalValue(aContainingBlockHeight, mStylePosition->mOffset.GetTopUnit(),
-                             mStylePosition->mOffset.GetTop(coord),
-                             mComputedOffsets.top);
-    }
+    ComputeVerticalValue(aContainingBlockHeight,
+                         mStylePosition->mOffset.GetTopUnit(),
+                         mStylePosition->mOffset.GetTop(coord),
+                         mComputedOffsets.top);
 
     // Computed value for 'bottom' is minus the value of 'top'
     mComputedOffsets.bottom = -mComputedOffsets.top;
@@ -589,26 +560,22 @@ nsHTMLReflowState::ComputeRelativeOffsets(const nsHTMLReflowState* cbrs,
 static nsIFrame*
 GetNearestContainingBlock(nsIFrame* aFrame, nsMargin& aContentArea)
 {
-  aFrame->GetParent(&aFrame);
+  aFrame = aFrame->GetParent();
   while (aFrame) {
-    nsIAtom*  frameType;
-    PRBool    isBlock;
-
-    aFrame->GetFrameType(&frameType);
-    isBlock = (frameType == nsLayoutAtoms::blockFrame) ||
-              (frameType == nsLayoutAtoms::areaFrame);
-    NS_IF_RELEASE(frameType);
+    nsIAtom*  frameType = aFrame->GetType();
+    PRBool    isBlock =
+      (frameType == nsLayoutAtoms::blockFrame) ||
+      (frameType == nsLayoutAtoms::areaFrame);
 
     if (isBlock) {
       break;
     }
-    aFrame->GetParent(&aFrame);
+    aFrame = aFrame->GetParent();
   }
 
   if (aFrame) {
-    nsSize  size;
-  
-    aFrame->GetSize(size);
+    nsSize  size = aFrame->GetSize();
+
     aContentArea.left = 0;
     aContentArea.top = 0;
     aContentArea.right = size.width;
@@ -651,22 +618,18 @@ static PRBool
 GetIntrinsicSizeFor(nsIFrame* aFrame, nsSize& aIntrinsicSize)
 {
   // See if it is an image frame
-  nsIAtom*  frameType;
   PRBool    result = PR_FALSE;
 
   // Currently the only type of replaced frame that we can get the intrinsic
   // size for is an image frame
   // XXX We should add back the GetReflowMetrics() function and one of the
   // things should be the intrinsic size...
-  aFrame->GetFrameType(&frameType);
-  if (frameType == nsLayoutAtoms::imageFrame) {
+  if (aFrame->GetType() == nsLayoutAtoms::imageFrame) {
     nsImageFrame* imageFrame = (nsImageFrame*)aFrame;
 
     imageFrame->GetIntrinsicImageSize(aIntrinsicSize);
     result = (aIntrinsicSize != nsSize(0, 0));
   }
-  
-  NS_IF_RELEASE(frameType);
   return result;
 }
 
@@ -686,22 +649,14 @@ nsHTMLReflowState::CalculateHorizBorderPaddingMargin(nscoord aContainingBlockWid
     nsStyleCoord left, right;
 
     // We have to compute the left and right values
-    if (eStyleUnit_Inherit == mStylePadding->mPadding.GetLeftUnit()) {
-      padding.left = 0;  // just ignore
-    } else {
-      ComputeHorizontalValue(aContainingBlockWidth,
-                             mStylePadding->mPadding.GetLeftUnit(),
-                             mStylePadding->mPadding.GetLeft(left),
-                             padding.left);
-    }
-    if (eStyleUnit_Inherit == mStylePadding->mPadding.GetRightUnit()) {
-      padding.right = 0;  // just ignore
-    } else {
-      ComputeHorizontalValue(aContainingBlockWidth,
-                             mStylePadding->mPadding.GetRightUnit(),
-                             mStylePadding->mPadding.GetRight(right),
-                             padding.right);
-    }
+    ComputeHorizontalValue(aContainingBlockWidth,
+                           mStylePadding->mPadding.GetLeftUnit(),
+                           mStylePadding->mPadding.GetLeft(left),
+                           padding.left);
+    ComputeHorizontalValue(aContainingBlockWidth,
+                           mStylePadding->mPadding.GetRightUnit(),
+                           mStylePadding->mPadding.GetRight(right),
+                           padding.right);
   }
 
   // See if the style system can provide us the margin directly
@@ -709,8 +664,7 @@ nsHTMLReflowState::CalculateHorizBorderPaddingMargin(nscoord aContainingBlockWid
     nsStyleCoord left, right;
 
     // We have to compute the left and right values
-    if ((eStyleUnit_Auto == mStyleMargin->mMargin.GetLeftUnit()) ||
-        (eStyleUnit_Inherit == mStyleMargin->mMargin.GetLeftUnit())) {
+    if (eStyleUnit_Auto == mStyleMargin->mMargin.GetLeftUnit()) {
       margin.left = 0;  // just ignore
     } else {
       ComputeHorizontalValue(aContainingBlockWidth,
@@ -718,8 +672,7 @@ nsHTMLReflowState::CalculateHorizBorderPaddingMargin(nscoord aContainingBlockWid
                              mStyleMargin->mMargin.GetLeft(left),
                              margin.left);
     }
-    if ((eStyleUnit_Auto == mStyleMargin->mMargin.GetRightUnit()) ||
-        (eStyleUnit_Inherit == mStyleMargin->mMargin.GetRightUnit())) {
+    if (eStyleUnit_Auto == mStyleMargin->mMargin.GetRightUnit()) {
       margin.right = 0;  // just ignore
     } else {
       ComputeHorizontalValue(aContainingBlockWidth,
@@ -738,18 +691,14 @@ GetPlaceholderOffset(nsIFrame* aPlaceholderFrame,
                      nsIFrame* aBlockFrame,
                      nsPoint&  aOffset)
 {
-  aPlaceholderFrame->GetOrigin(aOffset);
+  aOffset = aPlaceholderFrame->GetPosition();
 
   // Convert the placeholder position to the coordinate space of the block
   // frame that contains it
-  nsIFrame* parent;
-  aPlaceholderFrame->GetParent(&parent);
+  nsIFrame* parent = aPlaceholderFrame->GetParent();
   while (parent && (parent != aBlockFrame)) {
-    nsPoint origin;
-
-    parent->GetOrigin(origin);
-    aOffset += origin;
-    parent->GetParent(&parent);
+    aOffset += parent->GetPosition();
+    parent = parent->GetParent();
   }
 }
 
@@ -759,9 +708,7 @@ FindImmediateChildOf(nsIFrame* aParent, nsIFrame* aDescendantFrame)
   nsIFrame* result = aDescendantFrame;
 
   while (result) {
-    nsIFrame* parent;
-    
-    result->GetParent(&parent);
+    nsIFrame* parent = result->GetParent();
     if (parent == aParent) {
       break;
     }
@@ -825,7 +772,7 @@ nsHTMLReflowState::CalculateHypotheticalBox(nsIPresContext*    aPresContext,
         knowBoxWidth = PR_TRUE;
       }
 
-    } else if ((eStyleUnit_Inherit == widthUnit) || (eStyleUnit_Auto == widthUnit)) {
+    } else if (eStyleUnit_Auto == widthUnit) {
       // The box width is the containing block width
       boxWidth = aBlockContentArea.right - aBlockContentArea.left;
       knowBoxWidth = PR_TRUE;
@@ -865,11 +812,32 @@ nsHTMLReflowState::CalculateHypotheticalBox(nsIPresContext*    aPresContext,
       aHypotheticalBox.mTop = lineBox->mBounds.y;
     } else {
       // The element would have been block-level which means it would be below
-      // the line containing the placeholder frame
+      // the line containing the placeholder frame, unless all the frames
+      // before it are empty.  In that case, it would have been just before
+      // this line.      
+      // XXXbz why the special-casing if we are the last line box?
       if (lineBox != blockFrame->end_lines()) {
-        // The top of the hypothetical box is just below the line containing
-        // the placeholder
-        aHypotheticalBox.mTop = lineBox->mBounds.YMost();
+        nsIFrame * firstFrame = lineBox->mFirstChild;
+        while (firstFrame != aPlaceholderFrame) {
+          NS_ASSERTION(firstFrame, "Must reach our placeholder before end of list!");
+          if (!firstFrame)   // This can be removed when we split out-of-flow
+            break;           // frames correctly,  see bug 223064
+          if (!firstFrame->IsEmpty()) {
+            break;
+          }
+            
+          firstFrame = firstFrame->GetNextSibling();
+        }
+        if (firstFrame == aPlaceholderFrame) {
+          // The top of the hypothetical box is the top of the line containing
+          // the placeholder, since there is nothing in the line before our
+          // placeholder except empty frames.
+          aHypotheticalBox.mTop = lineBox->mBounds.y;
+        } else {
+          // The top of the hypothetical box is just below the line containing
+          // the placeholder.
+          aHypotheticalBox.mTop = lineBox->mBounds.YMost();
+        }
       } else {
         // Just use the placeholder's y-offset
         aHypotheticalBox.mTop = placeholderOffset.y;
@@ -928,15 +896,14 @@ nsHTMLReflowState::CalculateHypotheticalBox(nsIPresContext*    aPresContext,
   if (aBlockFrame != aAbsoluteContainingBlockFrame) {
     nsIFrame* parent = aBlockFrame;
     do {
-      nsPoint origin;
+      nsPoint origin = parent->GetPosition();
 
-      parent->GetOrigin(origin);
       aHypotheticalBox.mLeft += origin.x;
       aHypotheticalBox.mRight += origin.x;
       aHypotheticalBox.mTop += origin.y;
 
       // Move up the tree one level
-      parent->GetParent(&parent);
+      parent = parent->GetParent();
     } while (parent && (parent != aAbsoluteContainingBlockFrame));
   }
 
@@ -964,10 +931,8 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsIPresContext* aPresContext,
 
   // Get the placeholder frame
   nsIFrame*     placeholderFrame;
-  nsCOMPtr<nsIPresShell> presShell;
-  aPresContext->GetShell(getter_AddRefs(presShell));
 
-  presShell->GetPlaceholderFrameFor(frame, &placeholderFrame);
+  aPresContext->PresShell()->GetPlaceholderFrameFor(frame, &placeholderFrame);
   NS_ASSERTION(nsnull != placeholderFrame, "no placeholder frame");
 
   // Find the nearest containing block frame to the placeholder frame,
@@ -993,9 +958,7 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsIPresContext* aPresContext,
   // XXX Handle new 'static-position' value...
   PRBool        leftIsAuto = PR_FALSE, rightIsAuto = PR_FALSE;
   nsStyleCoord  coord;
-  if (eStyleUnit_Inherit == mStylePosition->mOffset.GetLeftUnit()) {
-    mComputedOffsets.left = cbrs->mComputedOffsets.left;
-  } else if (eStyleUnit_Auto == mStylePosition->mOffset.GetLeftUnit()) {
+  if (eStyleUnit_Auto == mStylePosition->mOffset.GetLeftUnit()) {
     mComputedOffsets.left = 0;
     leftIsAuto = PR_TRUE;
   } else {
@@ -1003,9 +966,7 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsIPresContext* aPresContext,
                            mStylePosition->mOffset.GetLeft(coord),
                            mComputedOffsets.left);
   }
-  if (eStyleUnit_Inherit == mStylePosition->mOffset.GetRightUnit()) {
-    mComputedOffsets.right = cbrs->mComputedOffsets.right;
-  } else if (eStyleUnit_Auto == mStylePosition->mOffset.GetRightUnit()) {
+  if (eStyleUnit_Auto == mStylePosition->mOffset.GetRightUnit()) {
     mComputedOffsets.right = 0;
     rightIsAuto = PR_TRUE;
   } else {
@@ -1022,18 +983,11 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsIPresContext* aPresContext,
   nsStyleUnit widthUnit = mStylePosition->mWidth.GetUnit();
   PRBool      widthIsAuto = (eStyleUnit_Auto == widthUnit);
   if (!widthIsAuto) {
-    if (eStyleUnit_Inherit == widthUnit) {
-      // The inherited value comes from the parent and not the absolute
-      // containing block
-      mComputedWidth = blockContentArea.right - blockContentArea.left;
+    // Use the specified value for the computed width
+    ComputeHorizontalValue(containingBlockWidth, widthUnit,
+                           mStylePosition->mWidth, mComputedWidth);
 
-    } else {
-      // Use the specified value for the computed width
-      ComputeHorizontalValue(containingBlockWidth, widthUnit,
-                             mStylePosition->mWidth, mComputedWidth);
-    }
-
-    AdjustComputedWidth();
+    AdjustComputedWidth(PR_TRUE);
   }
 
   // See if none of 'left', 'width', and 'right', is 'auto'
@@ -1143,7 +1097,7 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsIPresContext* aPresContext,
           mComputedBorderPadding.right -
           mComputedMargin.right - mComputedOffsets.right;
 
-        AdjustComputedWidth();
+        AdjustComputedWidth(PR_FALSE);
 
         // XXX If the direction is rtl then we need to reevaluate left...
       }
@@ -1194,9 +1148,7 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsIPresContext* aPresContext,
   // Initialize the 'top' and 'bottom' computed offsets
   nsStyleUnit heightUnit = mStylePosition->mHeight.GetUnit();
   PRBool      topIsAuto = PR_FALSE, bottomIsAuto = PR_FALSE;
-  if (eStyleUnit_Inherit == mStylePosition->mOffset.GetTopUnit()) {
-    mComputedOffsets.top = cbrs->mComputedOffsets.top;
-  } else if (eStyleUnit_Auto == mStylePosition->mOffset.GetTopUnit()) {
+  if (eStyleUnit_Auto == mStylePosition->mOffset.GetTopUnit()) {
     mComputedOffsets.top = 0;
     topIsAuto = PR_TRUE;
   } else {
@@ -1206,9 +1158,7 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsIPresContext* aPresContext,
                          mStylePosition->mOffset.GetTop(c),
                          mComputedOffsets.top);
   }
-  if (eStyleUnit_Inherit == mStylePosition->mOffset.GetBottomUnit()) {
-    mComputedOffsets.bottom = cbrs->mComputedOffsets.bottom;
-  } else if (eStyleUnit_Auto == mStylePosition->mOffset.GetBottomUnit()) {
+  if (eStyleUnit_Auto == mStylePosition->mOffset.GetBottomUnit()) {
     mComputedOffsets.bottom = 0;        
     bottomIsAuto = PR_TRUE;
   } else {
@@ -1222,20 +1172,11 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsIPresContext* aPresContext,
   // Initialize the 'height' computed value
   PRBool  heightIsAuto = (eStyleUnit_Auto == heightUnit);
   if (!heightIsAuto) {
-    if (eStyleUnit_Inherit == heightUnit) {
-      // The inherited value comes from the parent and not the absolute
-      // containing block
-      mComputedHeight = blockContentArea.bottom - blockContentArea.top;
+    // Use the specified value for the computed height
+    ComputeVerticalValue(containingBlockHeight, heightUnit,
+                         mStylePosition->mHeight, mComputedHeight);
 
-    } else {
-      // Use the specified value for the computed height
-      // XXX Handle 'inherit'. The inherited value comes from the parent
-      // and not the containing block
-      ComputeVerticalValue(containingBlockHeight, heightUnit,
-                           mStylePosition->mHeight, mComputedHeight);
-    }
-
-    AdjustComputedHeight();
+    AdjustComputedHeight(PR_TRUE);
   }
 
   // See if none of 'top', 'height', and 'bottom', is 'auto'
@@ -1305,7 +1246,7 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsIPresContext* aPresContext,
           mComputedBorderPadding.bottom -
           mComputedMargin.bottom - mComputedOffsets.bottom;
 
-        AdjustComputedHeight();
+        AdjustComputedHeight(PR_FALSE);
       }
 
     } else {
@@ -1335,21 +1276,14 @@ nsHTMLReflowState::InitAbsoluteConstraints(nsIPresContext* aPresContext,
 static PRBool
 IsInitialContainingBlock(nsIFrame* aFrame)
 {
-  nsCOMPtr<nsIContent> content;
-  PRBool      result = PR_FALSE;
+  nsIContent* content = aFrame->GetContent();
 
-  aFrame->GetContent(getter_AddRefs(content));
-  if (content) {
-    nsCOMPtr<nsIContent> parentContent;
-
-    content->GetParent(getter_AddRefs(parentContent));
-    if (!parentContent) {
-      // The containing block corresponds to the document element so it's
-      // the initial containing block
-      result = PR_TRUE;
-    }
+  if (content && !content->GetParent()) {
+    // The containing block corresponds to the document element so it's
+    // the initial containing block
+    return PR_TRUE;
   }
-  return result;
+  return PR_FALSE;
 }
 
 nscoord 
@@ -1375,20 +1309,16 @@ GetVerticalMarginBorderPadding(const nsHTMLReflowState* aReflowState)
 /* Get the height based on the viewport of the containing block specified 
  * in aReflowState when the containing block has mComputedHeight == NS_AUTOHEIGHT
  * This will walk up the chain of containing blocks looking for a computed height
- * until it finds the canvas frame, or it encounters a frame that is not a block
- * or and area frame. This handles compatibility with IE (see bug 85016)
+ * until it finds the canvas frame, or it encounters a frame that is not a block,
+ * area, or scroll frame. This handles compatibility with IE (see bug 85016 and bug 219693)
  *
- *  When the argument aRestrictToFirstLevel is TRUE, we stop looking after the first parent 
- *  block or area frame. When FALSE, we look all the way up the frame tree, through nested 
- *  blocks and area frames, and always find a real height. This is needed for percentage-height
- *  images in unconstrained blocks, like DIVs (see bugzilla bug 85016)
+ *  When we encounter scrolledContent area frames, we skip over them, since they are guaranteed to not be useful for computing the containing block.
  */
 nscoord
-CalcQuirkContainingBlockHeight(const nsHTMLReflowState& aReflowState,
-                               PRBool aRestrictToFirstLevel)
+CalcQuirkContainingBlockHeight(const nsHTMLReflowState& aReflowState)
 {
-  nsHTMLReflowState* firstBlockRS = nsnull; // a candidate for body frame
-  nsHTMLReflowState* firstAreaRS  = nsnull; // a candidate for html frame
+  nsHTMLReflowState* firstAncestorRS = nsnull; // a candidate for html frame
+  nsHTMLReflowState* secondAncestorRS = nsnull; // a candidate for body frame
   
   // initialize the default to NS_AUTOHEIGHT as this is the containings block
   // computed height when this function is called. It is possible that we 
@@ -1397,39 +1327,45 @@ CalcQuirkContainingBlockHeight(const nsHTMLReflowState& aReflowState,
                              
   const nsHTMLReflowState* rs = &aReflowState;
   for (; rs && rs->frame; rs = (nsHTMLReflowState *)(rs->parentReflowState)) { 
-    nsCOMPtr<nsIAtom> frameType;
-    rs->frame->GetFrameType(getter_AddRefs(frameType));
+    nsIAtom* frameType = rs->frame->GetType();
     // if the ancestor is auto height then skip it and continue up if it 
     // is the first block/area frame and possibly the body/html
-    if (nsLayoutAtoms::blockFrame == frameType.get()) {
-      if (aRestrictToFirstLevel && firstBlockRS) {
-        break;
+    if (nsLayoutAtoms::blockFrame == frameType ||
+        nsLayoutAtoms::areaFrame == frameType ||
+        nsLayoutAtoms::scrollFrame == frameType) {
+      
+      if (nsLayoutAtoms::areaFrame == frameType) {
+        // Skip over scrolled-content area frames
+        if (rs->frame->GetStyleContext()->GetPseudoType() ==
+            nsCSSAnonBoxes::scrolledContent) {
+          continue;
+        }
       }
-      firstBlockRS = (nsHTMLReflowState*)rs;
+
+      secondAncestorRS = firstAncestorRS;
+      firstAncestorRS = (nsHTMLReflowState*)rs;
+
+      // If the current frame we're looking at is positioned, we don't want to
+      // go any further (see bug 221784).  The behavior we want here is: 1) If
+      // not auto-height, use this as the percentage base.  2) If auto-height,
+      // keep looking, unless the frame is positioned.
       if (NS_AUTOHEIGHT == rs->mComputedHeight) {
-        continue;
+        if (rs->frame->GetStyleDisplay()->IsAbsolutelyPositioned()) {
+          break;
+        } else {
+          continue;
+        }
       }
     }
-    else if (nsLayoutAtoms::areaFrame == frameType.get()) {
-      if (aRestrictToFirstLevel && firstAreaRS) {
-        break;
-      }
-      firstAreaRS = (nsHTMLReflowState*)rs;
-      if (NS_AUTOHEIGHT == rs->mComputedHeight) {
-        continue;
-      }
-    }
-    else if (nsLayoutAtoms::canvasFrame == frameType.get()) {
+    else if (nsLayoutAtoms::canvasFrame == frameType) {
       // Use scroll frames' computed height if we have one, this will
       // allow us to get viewport height for native scrollbars.
       nsHTMLReflowState* scrollState = (nsHTMLReflowState *)rs->parentReflowState;
-      nsCOMPtr<nsIAtom> scrollFrameType;
-      scrollState->frame->GetFrameType(getter_AddRefs(scrollFrameType));
-      if (nsLayoutAtoms::scrollFrame == scrollFrameType.get()) {
+      if (nsLayoutAtoms::scrollFrame == scrollState->frame->GetType()) {
         rs = scrollState;
       }
     }
-    else if (nsLayoutAtoms::pageContentFrame == frameType.get()) {
+    else if (nsLayoutAtoms::pageContentFrame == frameType) {
       nsIFrame* prevInFlow;
       rs->frame->GetPrevInFlow(&prevInFlow);
       // only use the page content frame for a height basis if it is the first in flow
@@ -1442,35 +1378,33 @@ CalcQuirkContainingBlockHeight(const nsHTMLReflowState& aReflowState,
 
     // if the ancestor is the page content frame then the percent base is 
     // the avail height, otherwise it is the computed height
-    result = (nsLayoutAtoms::pageContentFrame == frameType.get())
+    result = (nsLayoutAtoms::pageContentFrame == frameType)
              ? rs->availableHeight : rs->mComputedHeight;
     // if unconstrained - don't sutract borders - would result in huge height
     if (NS_AUTOHEIGHT == result) return result;
 
     // if we got to the canvas or page content frame, then subtract out 
     // margin/border/padding for the BODY and HTML elements
-    if ((nsLayoutAtoms::canvasFrame == frameType.get()) || 
-        (nsLayoutAtoms::pageContentFrame == frameType.get())) {
+    if ((nsLayoutAtoms::canvasFrame == frameType) || 
+        (nsLayoutAtoms::pageContentFrame == frameType)) {
 
-      result -= GetVerticalMarginBorderPadding(firstBlockRS); 
-      result -= GetVerticalMarginBorderPadding(firstAreaRS); 
+      result -= GetVerticalMarginBorderPadding(firstAncestorRS); 
+      result -= GetVerticalMarginBorderPadding(secondAncestorRS); 
 
 #ifdef DEBUG
-      // make sure the Area is the HTML and the Block is the BODY
-      nsCOMPtr<nsIContent> frameContent;
-      nsCOMPtr<nsIAtom> contentTag;
-      if(firstBlockRS) {
-        firstBlockRS->frame->GetContent(getter_AddRefs(frameContent));
+      // make sure the first ancestor is the HTML and the second is the BODY
+      if (firstAncestorRS) {
+        nsIContent* frameContent = firstAncestorRS->frame->GetContent();
         if (frameContent) {
-          frameContent->GetTag(getter_AddRefs(contentTag));
-          NS_ASSERTION(contentTag.get() == nsHTMLAtoms::body, "block is not BODY");
+          nsIAtom *contentTag = frameContent->Tag();
+          NS_ASSERTION(contentTag == nsHTMLAtoms::html, "First ancestor is not HTML");
         }
       }
-      if(firstAreaRS) {
-        firstAreaRS->frame->GetContent(getter_AddRefs(frameContent));
+      if (secondAncestorRS) {
+        nsIContent* frameContent = secondAncestorRS->frame->GetContent();
         if (frameContent) {
-          frameContent->GetTag(getter_AddRefs(contentTag));
-          NS_ASSERTION(contentTag.get() == nsHTMLAtoms::html, "Area frame is not HTML element");
+          nsIAtom *contentTag = frameContent->Tag();
+          NS_ASSERTION(contentTag == nsHTMLAtoms::body, "Second ancestor is not BODY");
         }
       }
 #endif
@@ -1478,12 +1412,10 @@ CalcQuirkContainingBlockHeight(const nsHTMLReflowState& aReflowState,
     }
     // if we got to the html frame, then subtract out 
     // margin/border/padding for the BODY element
-    else if (nsLayoutAtoms::areaFrame == frameType.get()) {
+    else if (nsLayoutAtoms::areaFrame == frameType) {
       // make sure it is the body
-      nsCOMPtr<nsIAtom> fType;
-      rs->parentReflowState->frame->GetFrameType(getter_AddRefs(fType));
-      if (nsLayoutAtoms::canvasFrame == fType.get()) {
-        result -= GetVerticalMarginBorderPadding(firstBlockRS);
+      if (nsLayoutAtoms::canvasFrame == rs->parentReflowState->frame->GetType()) {
+        result -= GetVerticalMarginBorderPadding(secondAncestorRS);
       }
     }
     break;
@@ -1570,19 +1502,12 @@ nsHTMLReflowState::ComputeContainingBlockRectangle(nsIPresContext*          aPre
     if (NS_UNCONSTRAINEDSIZE == availableWidth) {
       aContainingBlockWidth = NS_UNCONSTRAINEDSIZE;
     }
-    // an element in quirks mode gets a containing block based on the viewport (less  
-    // body margins, border, padding) if the element is a child of the body.
+    // an element in quirks mode gets a containing block based on looking for a
+    // parent with a non-auto height if the element has a percent height
     if (NS_AUTOHEIGHT == aContainingBlockHeight) {
-      nsCompatibility mode;
-      aPresContext->GetCompatibilityMode(&mode);
-      if (eCompatibility_NavQuirks == mode) {
-        aContainingBlockHeight = CalcQuirkContainingBlockHeight(*aContainingBlockRS, PR_TRUE);
-        // NOTE: passing PR_TRUE for the aRestrictToFirstLevel argument, to restrict the search
-        //       for the containing block height to only the immediate parent block or area
-        //       frame. In the case that we need to go further, we would need to pass PR_TRUE
-        //       and take the performance hit. This is generally only needed if the frame being reflowed
-        //       has percentage height and is in a shrink-wrapping container 
-        //       (see the special-case call in InitConstraints)
+      if (eCompatibility_NavQuirks == aPresContext->CompatibilityMode() &&
+          mStylePosition->mHeight.GetUnit() == eStyleUnit_Percent) {
+        aContainingBlockHeight = CalcQuirkContainingBlockHeight(*aContainingBlockRS);
       }
     }
   }
@@ -1618,6 +1543,7 @@ static PRBool BlinkIsAllowed(void)
   return sBlinkIsAllowed;
 }
 
+#ifdef FONT_LEADING_APIS_V2
 static eNormalLineHeightControl GetNormalLineHeightCalcControl(void)
 {
   if (sNormalLineHeightControl == eUninitialized) {
@@ -1633,36 +1559,8 @@ static eNormalLineHeightControl GetNormalLineHeightCalcControl(void)
   }
   return sNormalLineHeightControl;
 }
+#endif
 
-// Reset mFlags.mTableDerivedComputedWidth if there is a non percent style width
-// or if there is a percent style width and the parent has a style width.
-// This function assumes that aWidthUnit is never Auto or Inherit and that aState's
-// mFlags.mTableDerivedComputedWidth is set.
-static void
-CheckResetTableDerivedComputedWidth(nsHTMLReflowState& aState,
-                                    nsStyleUnit        aWidthUnit)
-{
-  if (eStyleUnit_Percent == aWidthUnit) {
-    // If the parent isn't a table cell and has a style width reset the flag
-    if (aState.parentReflowState) {
-      nsCOMPtr<nsIAtom> parentType;
-      aState.parentReflowState->frame->GetFrameType(getter_AddRefs(parentType));
-      if (!IS_TABLE_CELL(parentType)) {
-        nsStyleUnit parentUnit = aState.parentReflowState->mStylePosition->mWidth.GetUnit();
-        if ((eStyleUnit_Inherit != parentUnit) &&
-            (eStyleUnit_Auto    != parentUnit)) {
-          aState.mFlags.mTableDerivedComputedWidth = PR_FALSE;
-        }
-      }
-    }
-  }
-  else {
-    // always reset the flag if there is a fixed width
-    aState.mFlags.mTableDerivedComputedWidth = PR_FALSE;
-  }
-}
-
-        
 // XXX refactor this code to have methods for each set of properties
 // we are computing: width,height,line-height; margin; offsets
 
@@ -1696,14 +1594,6 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
                                       aContainingBlockHeight);
     }
 
-    // See if the element is relatively positioned
-    if (NS_STYLE_POSITION_RELATIVE == mStyleDisplay->mPosition) {
-      ComputeRelativeOffsets(cbrs, aContainingBlockWidth, aContainingBlockHeight);
-    } else {
-      // Initialize offsets to 0
-      mComputedOffsets.SizeTo(0, 0, 0, 0);
-    }
-
 #if 0
     nsFrame::ListTag(stdout, frame); printf(": cb=");
     nsFrame::ListTag(stdout, cbrs->frame); printf(" size=%d,%d\n", aContainingBlockWidth, aContainingBlockHeight);
@@ -1711,7 +1601,7 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
 
     // See if the containing block height is based on the size of its
     // content
-    nsCOMPtr<nsIAtom>  fType;
+    nsIAtom* fType;
     if (NS_AUTOHEIGHT == aContainingBlockHeight) {
       // See if the containing block is (1) a scrolled frame, i.e. its
       // parent is a scroll frame. The presence of the intervening
@@ -1720,18 +1610,16 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
       // to use the mComputedHeight of the cell instead of what the cell block passed in.
       if (cbrs->parentReflowState) {
         nsIFrame* f = cbrs->parentReflowState->frame;
-        f->GetFrameType(getter_AddRefs(fType));
-        if (nsLayoutAtoms::scrollFrame == fType.get()) {
+        fType = f->GetType();
+        if (nsLayoutAtoms::scrollFrame == fType) {
           // Use the scroll frame's computed height instead
-          aContainingBlockHeight =
-            ((nsHTMLReflowState*)cbrs->parentReflowState)->mComputedHeight;
+          aContainingBlockHeight = cbrs->parentReflowState->mComputedHeight;
         }
         else {
-          cbrs->frame->GetFrameType(getter_AddRefs(fType));
-          if (IS_TABLE_CELL(fType.get())) {
+          fType = cbrs->frame->GetType();
+          if (IS_TABLE_CELL(fType)) {
             // use the cell's computed height 
-            aContainingBlockHeight =
-              ((nsHTMLReflowState*)cbrs)->mComputedHeight;
+            aContainingBlockHeight = cbrs->mComputedHeight;
           }
         }
       }
@@ -1768,9 +1656,6 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
     nsStyleUnit widthUnit = mStylePosition->mWidth.GetUnit();
     nsStyleUnit heightUnit = mStylePosition->mHeight.GetUnit();
 
-    nsCOMPtr<nsIAtom>  frameType;
-    frame->GetFrameType(getter_AddRefs(frameType));
-
     // Check for a percentage based width and an unconstrained containing
     // block width
     if (eStyleUnit_Percent == widthUnit) {
@@ -1787,24 +1672,18 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
         // used to be called exclusively.
         if (NS_FRAME_REPLACED(NS_CSS_FRAME_TYPE_INLINE) == mFrameType) {
           // Get the containing block reflow state
-          const nsHTMLReflowState* cbrs = parentReflowState->mCBReflowState;
           NS_ASSERTION(nsnull != cbrs, "no containing block");
-          nsCompatibility mode;
-          aPresContext->GetCompatibilityMode(&mode);
           // in quirks mode, get the cb height using the special quirk method
-          if (eCompatibility_NavQuirks == mode) {
+          if (eCompatibility_NavQuirks == aPresContext->CompatibilityMode()) {
             if (!IS_TABLE_CELL(fType)) {
-              aContainingBlockHeight = CalcQuirkContainingBlockHeight(*cbrs, PR_FALSE);
+              aContainingBlockHeight = CalcQuirkContainingBlockHeight(*cbrs);
+              if (aContainingBlockHeight == NS_AUTOHEIGHT) {
+                heightUnit = eStyleUnit_Auto;
+              }
             }
             else {
               heightUnit = eStyleUnit_Auto;
             }
-            // NOTE: since here we really do NEED the computed height of the containing block,
-            //       we pass PR_FALSE for the aRestrictToFirstLevel argument, allowing the method
-            //       to walk up the frame tree arbitrarily far to find a real height. This is NOT
-            //       default behavior, since it is an additional performance hit and is not usually 
-            //       necessary (see other call in ComputeContainingBlockRectangle). 
-            //       This is an IE emulation for %-height images - see bug 85016
           }
           // in standard mode, use the cb height.  if it's "auto", as will be the case
           // by default in BODY, use auto height as per CSS2 spec.
@@ -1823,6 +1702,16 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
       }
     }
 
+    // Compute our offsets if the element is relatively positioned.  We need
+    // the correct containing block width and height here, which is why we need
+    // to do it after all the quirks-n-such above.
+    if (NS_STYLE_POSITION_RELATIVE == mStyleDisplay->mPosition) {
+      ComputeRelativeOffsets(cbrs, aContainingBlockWidth, aContainingBlockHeight);
+    } else {
+      // Initialize offsets to 0
+      mComputedOffsets.SizeTo(0, 0, 0, 0);
+    }
+
     // Calculate the computed values for min and max properties
     ComputeMinMaxValues(aContainingBlockWidth, aContainingBlockHeight, cbrs);
 
@@ -1831,24 +1720,18 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
         (NS_FRAME_REPLACED(NS_CSS_FRAME_TYPE_FLOATING) == mFrameType)) {
       // Inline replaced element and floating replaced element are basically
       // treated the same. First calculate the computed width
-      if (eStyleUnit_Inherit == widthUnit) {
-        mComputedWidth = aContainingBlockWidth;
-      } else if (eStyleUnit_Auto == widthUnit) {
+      if (eStyleUnit_Auto == widthUnit) {
         // A specified value of 'auto' uses the element's intrinsic width
         mComputedWidth = NS_INTRINSICSIZE;
       } else {
-        if (mFlags.mTableDerivedComputedWidth)
-          CheckResetTableDerivedComputedWidth(*this, widthUnit);
         ComputeHorizontalValue(aContainingBlockWidth, widthUnit,
                                mStylePosition->mWidth, mComputedWidth);
       }
 
-      AdjustComputedWidth();
+      AdjustComputedWidth(PR_TRUE);
 
       // Now calculate the computed height
-      if (eStyleUnit_Inherit == heightUnit) {
-        mComputedHeight = aContainingBlockHeight;
-      } else if (eStyleUnit_Auto == heightUnit) {
+      if (eStyleUnit_Auto == heightUnit) {
         // A specified value of 'auto' uses the element's intrinsic height
         mComputedHeight = NS_INTRINSICSIZE;
       } else {
@@ -1857,13 +1740,11 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
                              mComputedHeight);
       }
 
-      AdjustComputedHeight();
+      AdjustComputedHeight(PR_TRUE);
 
     } else if (NS_CSS_FRAME_TYPE_FLOATING == mFrameType) {
       // Floating non-replaced element. First calculate the computed width
-      if (eStyleUnit_Inherit == widthUnit) {
-        mComputedWidth = aContainingBlockWidth;
-      } else if (eStyleUnit_Auto == widthUnit) {
+      if (eStyleUnit_Auto == widthUnit) {
         if ((NS_UNCONSTRAINEDSIZE == aContainingBlockWidth) &&
             (eStyleUnit_Percent == mStylePosition->mWidth.GetUnit())) {
           // The element has a percentage width, but since the containing
@@ -1896,19 +1777,15 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
         }
 
       } else {
-        if (mFlags.mTableDerivedComputedWidth)
-          CheckResetTableDerivedComputedWidth(*this, widthUnit);
         ComputeHorizontalValue(aContainingBlockWidth, widthUnit,
                                mStylePosition->mWidth, mComputedWidth);
       }
 
       // Take into account minimum and maximum sizes
-      AdjustComputedWidth();
+      AdjustComputedWidth(PR_TRUE);
 
       // Now calculate the computed height
-      if (eStyleUnit_Inherit == heightUnit) {
-        mComputedHeight = aContainingBlockHeight;
-      } else if (eStyleUnit_Auto == heightUnit) {
+      if (eStyleUnit_Auto == heightUnit) {
         mComputedHeight = NS_AUTOHEIGHT;  // let it choose its height
       } else {
         ComputeVerticalValue(aContainingBlockHeight, heightUnit,
@@ -1916,7 +1793,7 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
                              mComputedHeight);
       }
 
-      AdjustComputedHeight();
+      AdjustComputedHeight(PR_TRUE);
     
     } else if (NS_CSS_FRAME_TYPE_INTERNAL_TABLE == mFrameType) {
       // Internal table elements. The rules vary depending on the type.
@@ -1929,9 +1806,7 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
         rowOrRowGroup = PR_TRUE;
       }
 
-      if (eStyleUnit_Inherit == widthUnit) {
-        mComputedWidth = aContainingBlockWidth;
-      } else if (eStyleUnit_Auto == widthUnit) {
+      if (eStyleUnit_Auto == widthUnit) {
         mComputedWidth = availableWidth;
 
         if ((mComputedWidth != NS_UNCONSTRAINEDSIZE) && !rowOrRowGroup){
@@ -1942,8 +1817,6 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
         }
       
       } else {
-        if (mFlags.mTableDerivedComputedWidth)
-          CheckResetTableDerivedComputedWidth(*this, widthUnit);
         ComputeHorizontalValue(aContainingBlockWidth, widthUnit,
                                mStylePosition->mWidth, mComputedWidth);
       }
@@ -1954,9 +1827,7 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
         // 'height' property doesn't apply to table columns and column groups
         heightUnit = eStyleUnit_Auto;
       }
-      if (eStyleUnit_Inherit == heightUnit) {
-        mComputedHeight = aContainingBlockHeight;
-      } else if (eStyleUnit_Auto == heightUnit) {
+      if (eStyleUnit_Auto == heightUnit) {
         mComputedHeight = NS_AUTOHEIGHT;
       } else {
         ComputeVerticalValue(aContainingBlockHeight, heightUnit,
@@ -1970,14 +1841,8 @@ nsHTMLReflowState::InitConstraints(nsIPresContext* aPresContext,
 
     } else if (NS_FRAME_GET_TYPE(mFrameType) == NS_CSS_FRAME_TYPE_ABSOLUTE) {
       // XXX not sure if this belongs here or somewhere else - cwk
-      // an nsHTMLFrameInnerFrame doesn't get a placeholder frame, the nsHTMLFrameOuterFrame does
-      nsIAtom* targetFrameType;
-      frame->GetFrameType(&targetFrameType);
-      if (nsLayoutAtoms::htmlFrameInnerFrame != targetFrameType) {
-        InitAbsoluteConstraints(aPresContext, cbrs, aContainingBlockWidth,
-                                aContainingBlockHeight);
-      }
-      NS_IF_RELEASE(targetFrameType);
+      InitAbsoluteConstraints(aPresContext, cbrs, aContainingBlockWidth,
+                              aContainingBlockHeight);
     } else if (NS_CSS_FRAME_TYPE_INLINE == mFrameType) {
       // Inline non-replaced elements do not have computed widths or heights
       // XXX add this check to HaveFixedContentHeight/Width too
@@ -2045,12 +1910,11 @@ nsHTMLReflowState::ComputeBlockBoxData(nsIPresContext* aPresContext,
 
       } else {
         // tables act like replaced elements regarding mComputedWidth 
-        nsCOMPtr<nsIAtom> fType;
-        frame->GetFrameType(getter_AddRefs(fType));
-        if (nsLayoutAtoms::tableOuterFrame == fType.get()) {
+        nsIAtom* fType = frame->GetType();
+        if (nsLayoutAtoms::tableOuterFrame == fType) {
           mComputedWidth = 0; // XXX temp fix for trees
-        } else if ((nsLayoutAtoms::tableFrame == fType.get()) ||
-                   (nsLayoutAtoms::tableCaptionFrame == fType.get())) {
+        } else if ((nsLayoutAtoms::tableFrame == fType) ||
+                   (nsLayoutAtoms::tableCaptionFrame == fType)) {
           mComputedWidth = NS_SHRINKWRAPWIDTH;
           if (eStyleUnit_Auto == mStyleMargin->mMargin.GetLeftUnit()) {
             mComputedMargin.left = NS_AUTOMARGIN;
@@ -2062,63 +1926,25 @@ nsHTMLReflowState::ComputeBlockBoxData(nsIPresContext* aPresContext,
           mComputedWidth = availableWidth - mComputedMargin.left -
             mComputedMargin.right - mComputedBorderPadding.left -
             mComputedBorderPadding.right;
+          mComputedWidth = PR_MAX(mComputedWidth, 0);
         }
 
-        // Take into account any min and max values
-        if (mComputedWidth > mComputedMaxWidth) {
-          // Use 'max-width' as the value for 'width'
-          mComputedWidth = mComputedMaxWidth;
-        } else if (mComputedWidth < mComputedMinWidth) {
-          // Use 'min-width' as the value for 'width'
-          mComputedWidth = mComputedMinWidth;
-        }
-
+        AdjustComputedWidth(PR_FALSE);
+        CalculateBlockSideMargins(cbrs->mComputedWidth, mComputedWidth);
       }
     }
   } else {
-    if (eStyleUnit_Inherit == aWidthUnit) {
-      // Use parent element's width. Note that if its width was
-      // 'inherit', then it already did this so we don't need to
-      // recurse upwards.
-      //
-      // We use the containing block's width here for the "parent"
-      // elements width, because we want to skip over any intervening
-      // inline elements (since width doesn't apply to them).
-      if (NS_UNCONSTRAINEDSIZE != aContainingBlockWidth) {
-        mComputedWidth = aContainingBlockWidth;
-      }
-      else {
-        mComputedWidth = NS_UNCONSTRAINEDSIZE;
-      }
-    }
-    else {
-        if (mFlags.mTableDerivedComputedWidth)
-          CheckResetTableDerivedComputedWidth(*this, aWidthUnit);
-      ComputeHorizontalValue(aContainingBlockWidth, aWidthUnit,
-                             mStylePosition->mWidth, mComputedWidth);
-    }
+    ComputeHorizontalValue(aContainingBlockWidth, aWidthUnit,
+                           mStylePosition->mWidth, mComputedWidth);
 
-    AdjustComputedWidth(); 
+    AdjustComputedWidth(PR_TRUE); 
 
     // Now that we have the computed-width, compute the side margins
     CalculateBlockSideMargins(cbrs->mComputedWidth, mComputedWidth);
   }
 
   // Compute the content height
-  if (eStyleUnit_Inherit == aHeightUnit) {
-    // Use parent elements height (note that if its height was inherit
-    // then it already did this so we don't need to recurse upwards).
-    //
-    // We use the containing blocks height here for the "parent"
-    // elements height because we want to skip over any interveening
-    // inline elements (since height doesn't apply to them).
-    if (NS_UNCONSTRAINEDSIZE != aContainingBlockHeight) {
-      mComputedHeight = aContainingBlockHeight;
-    }
-    else {
-      mComputedHeight = NS_UNCONSTRAINEDSIZE;
-    }
-  } else if (eStyleUnit_Auto == aHeightUnit) {
+  if (eStyleUnit_Auto == aHeightUnit) {
     if (NS_FRAME_IS_REPLACED(mFrameType)) {
       // For replaced elements use the intrinsic size for "auto"
       mComputedHeight = NS_INTRINSICSIZE;
@@ -2130,7 +1956,7 @@ nsHTMLReflowState::ComputeBlockBoxData(nsIPresContext* aPresContext,
     ComputeVerticalValue(aContainingBlockHeight, aHeightUnit,
                          mStylePosition->mHeight, mComputedHeight);
   }
-  AdjustComputedHeight();
+  AdjustComputedHeight(PR_TRUE);
 }
 
 // This code enforces section 10.3.3 of the CSS2 spec for this formula:
@@ -2144,91 +1970,87 @@ void
 nsHTMLReflowState::CalculateBlockSideMargins(nscoord aAvailWidth,
                                              nscoord aComputedWidth)
 {
+  // Because of the ugly way we do intrinsic sizing within Reflow, this method
+  // doesn't necessarily produce the right results.  The results will be
+  // adjusted in nsBlockReflowContext::AlignBlockHorizontally after reflow.
+  // The code for tables is particularly sensitive to regressions; the
+  // numerous |isTable| checks are technically incorrect, but necessary
+  // for basic testcases.
+
   // We can only provide values for auto side margins in a constrained
   // reflow. For unconstrained reflow there is no effective width to
   // compute against...
-  if ((NS_UNCONSTRAINEDSIZE == aComputedWidth) ||
-      (NS_UNCONSTRAINEDSIZE == aAvailWidth)) {
+  if (NS_UNCONSTRAINEDSIZE == aComputedWidth ||
+      NS_UNCONSTRAINEDSIZE == aAvailWidth)
     return;
-  }
 
   nscoord sum = mComputedMargin.left + mComputedBorderPadding.left +
     aComputedWidth + mComputedBorderPadding.right + mComputedMargin.right;
-  if (sum == aAvailWidth) {
+  if (sum == aAvailWidth)
     // The sum is already correct
     return;
-  }
 
   // Determine the left and right margin values. The width value
   // remains constant while we do this.
+
+  PRBool isTable = mStyleDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE ||
+                   mStyleDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE_CAPTION;
+
+  // Calculate how much space is available for margins
+  nscoord availMarginSpace = aAvailWidth - sum;
+
+  // XXXldb Should this be quirks-mode only?  And why captions?
+  if (isTable)
+    // XXXldb Why does this break things so badly if this is changed to
+    // availMarginSpace += mComputedBorderPadding.left +
+    //                     mComputedBorderPadding.right;
+    availMarginSpace = aAvailWidth - aComputedWidth;
+
+  // If the available margin space is negative, then don't follow the
+  // usual overconstraint rules.
+  if (availMarginSpace < 0) {
+    if (!isTable) {
+      if (mStyleVisibility->mDirection == NS_STYLE_DIRECTION_LTR) {
+        mComputedMargin.right += availMarginSpace;
+      } else {
+        mComputedMargin.left += availMarginSpace;
+      }
+    } else {
+      mComputedMargin.left = 0;
+      mComputedMargin.right = 0;
+      if (mStyleVisibility->mDirection == NS_STYLE_DIRECTION_RTL) {
+        mComputedMargin.left = availMarginSpace;
+      }
+    }
+    return;
+  }
+
+  // The css2 spec clearly defines how block elements should behave
+  // in section 10.3.3.
   PRBool isAutoLeftMargin =
     eStyleUnit_Auto == mStyleMargin->mMargin.GetLeftUnit();
   PRBool isAutoRightMargin =
     eStyleUnit_Auto == mStyleMargin->mMargin.GetRightUnit();
-
-  // Calculate how much space is available for margins
-  nscoord availMarginSpace = aAvailWidth - aComputedWidth -
-    mComputedBorderPadding.left - mComputedBorderPadding.right;
-
-  if ((mStyleDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE) ||
-      (mStyleDisplay->mDisplay == NS_STYLE_DISPLAY_TABLE_CAPTION))  {
-    // Special rules for tables. In general, tables will stick to the
-    // left edge when they are too large otherwise they behave like
-    // blocks.
-
-    // the borderpadding should not influence the margin relative to the 
-    // outertable frame  
-    availMarginSpace = aAvailWidth - aComputedWidth;
-
-    if (availMarginSpace < 0) {
-      // Whoops - the TABLE element is too large for the available
-      // space. In this case use the "direction" property to pin the
-      // element to the left or right side. Note that we look at the
-      // parent's direction since the parent will be placing this
-      // element.
-      mComputedMargin.left = 0;
-      mComputedMargin.right = 0;
-      const nsHTMLReflowState* prs = (const nsHTMLReflowState*)
-        parentReflowState;
-      if (prs && (NS_STYLE_DIRECTION_RTL == prs->mStyleVisibility->mDirection)) {
-        mComputedMargin.left = availMarginSpace;
-      }
-      isAutoLeftMargin = isAutoRightMargin = PR_FALSE;
+  if (!isAutoLeftMargin && !isAutoRightMargin && !isTable) {
+    // Neither margin is 'auto' so we're over constrained. Use the
+    // 'direction' property of the parent to tell which margin to
+    // ignore
+    // First check if there is an HTML alignment that we should honor
+    const nsHTMLReflowState* prs = parentReflowState;
+    if (prs &&
+        (prs->mStyleText->mTextAlign == NS_STYLE_TEXT_ALIGN_MOZ_CENTER ||
+         prs->mStyleText->mTextAlign == NS_STYLE_TEXT_ALIGN_MOZ_RIGHT)) {
+      isAutoLeftMargin = PR_TRUE;
+      isAutoRightMargin =
+        prs->mStyleText->mTextAlign == NS_STYLE_TEXT_ALIGN_MOZ_CENTER;
     }
-  }
-  else {
-    // The css2 spec clearly defines how block elements should be have
-    // in section 10.3.3.
-    if (!isAutoLeftMargin && !isAutoRightMargin) {
-      // Neither margin is 'auto' so we're over constrained. Use the
-      // 'direction' property of the parent to tell which margin to
-      // ignore
-      const nsHTMLReflowState* prs = (const nsHTMLReflowState*)
-        parentReflowState;
-      if (prs) {
-
-        // First check if there is an HTML alignment that we should honor
-        if ((prs->mStyleText->mTextAlign == NS_STYLE_TEXT_ALIGN_MOZ_CENTER) ||
-            (prs->mStyleText->mTextAlign == NS_STYLE_TEXT_ALIGN_MOZ_RIGHT))
-        {
-          isAutoLeftMargin = PR_TRUE;
-          isAutoRightMargin =
-            (prs->mStyleText->mTextAlign == NS_STYLE_TEXT_ALIGN_MOZ_CENTER);
-        } else
-        // Otherwise apply the CSS rules
-        if (NS_STYLE_DIRECTION_LTR == prs->mStyleVisibility->mDirection) {
-          // The specified value of margin-right is ignored (== forced
-          // to auto)
-          isAutoRightMargin = PR_TRUE;
-        }
-        else {
-          isAutoLeftMargin = PR_TRUE;
-        }
-      }
-      else {
-        // No parent reflow state -- assume direction is ltr
-        isAutoRightMargin = PR_TRUE;
-      }
+    // Otherwise apply the CSS rules, and ignore one margin by forcing
+    // it to 'auto', depending on 'direction'.
+    else if (NS_STYLE_DIRECTION_LTR == mStyleVisibility->mDirection) {
+      isAutoRightMargin = PR_TRUE;
+    }
+    else {
+      isAutoLeftMargin = PR_TRUE;
     }
   }
 
@@ -2239,10 +2061,10 @@ nsHTMLReflowState::CalculateBlockSideMargins(nscoord aAvailWidth,
       mComputedMargin.left = availMarginSpace / 2;
       mComputedMargin.right = availMarginSpace - mComputedMargin.left;
     } else {
-      mComputedMargin.left = availMarginSpace - mComputedMargin.right;
+      mComputedMargin.left = availMarginSpace;
     }
   } else if (isAutoRightMargin) {
-    mComputedMargin.right = availMarginSpace - mComputedMargin.left;
+    mComputedMargin.right = availMarginSpace;
   }
 }
 
@@ -2393,7 +2215,6 @@ nsHTMLReflowState::ComputeHorizontalValue(nscoord aContainingBlockWidth,
                                           const nsStyleCoord& aCoord,
                                           nscoord& aResult)
 {
-  NS_PRECONDITION(eStyleUnit_Inherit != aUnit, "unexpected unit");
   aResult = 0;
   if (eStyleUnit_Percent == aUnit) {
     if (NS_UNCONSTRAINEDSIZE == aContainingBlockWidth) {
@@ -2427,7 +2248,6 @@ nsHTMLReflowState::ComputeVerticalValue(nscoord aContainingBlockHeight,
                                         const nsStyleCoord& aCoord,
                                         nscoord& aResult)
 {
-  NS_PRECONDITION(eStyleUnit_Inherit != aUnit, "unexpected unit");
   aResult = 0;
   if (eStyleUnit_Percent == aUnit) {
     // Verify no one is trying to calculate a percentage based height against
@@ -2475,22 +2295,14 @@ nsHTMLReflowState::ComputeMargin(nscoord aContainingBlockWidth,
     } else {
       nsStyleCoord left, right;
 
-      if (eStyleUnit_Inherit == mStyleMargin->mMargin.GetLeftUnit()) {
-        mComputedMargin.left = aContainingBlockRS->mComputedMargin.left;
-      } else {
-        ComputeHorizontalValue(aContainingBlockWidth,
-                               mStyleMargin->mMargin.GetLeftUnit(),
-                               mStyleMargin->mMargin.GetLeft(left),
-                               mComputedMargin.left);
-      }
-      if (eStyleUnit_Inherit == mStyleMargin->mMargin.GetRightUnit()) {
-        mComputedMargin.right = aContainingBlockRS->mComputedMargin.right;
-      } else {
-        ComputeHorizontalValue(aContainingBlockWidth,
-                               mStyleMargin->mMargin.GetRightUnit(),
-                               mStyleMargin->mMargin.GetRight(right),
-                               mComputedMargin.right);
-      }
+      ComputeHorizontalValue(aContainingBlockWidth,
+                             mStyleMargin->mMargin.GetLeftUnit(),
+                             mStyleMargin->mMargin.GetLeft(left),
+                             mComputedMargin.left);
+      ComputeHorizontalValue(aContainingBlockWidth,
+                             mStyleMargin->mMargin.GetRightUnit(),
+                             mStyleMargin->mMargin.GetRight(right),
+                             mComputedMargin.right);
     }
 
     const nsHTMLReflowState* rs2 = GetPageBoxReflowState(parentReflowState);
@@ -2499,49 +2311,27 @@ nsHTMLReflowState::ComputeMargin(nscoord aContainingBlockWidth,
       // According to the CSS2 spec, margin percentages are
       // calculated with respect to the *height* of the containing
       // block when in a paginated context.
-      if (eStyleUnit_Inherit == mStyleMargin->mMargin.GetTopUnit()) {
-        mComputedMargin.top = aContainingBlockRS->mComputedMargin.top;
-      } else {
-        ComputeVerticalValue(rs2->mComputedHeight,
-                             mStyleMargin->mMargin.GetTopUnit(),
-                             mStyleMargin->mMargin.GetTop(top),
-                             mComputedMargin.top);
-      }
-      if (eStyleUnit_Inherit == mStyleMargin->mMargin.GetBottomUnit()) {
-        mComputedMargin.bottom = aContainingBlockRS->mComputedMargin.bottom;
-      } else {
-        ComputeVerticalValue(rs2->mComputedHeight,
-                             mStyleMargin->mMargin.GetBottomUnit(),
-                             mStyleMargin->mMargin.GetBottom(bottom),
-                             mComputedMargin.bottom);
-      }
+      ComputeVerticalValue(rs2->mComputedHeight,
+                           mStyleMargin->mMargin.GetTopUnit(),
+                           mStyleMargin->mMargin.GetTop(top),
+                           mComputedMargin.top);
+      ComputeVerticalValue(rs2->mComputedHeight,
+                           mStyleMargin->mMargin.GetBottomUnit(),
+                           mStyleMargin->mMargin.GetBottom(bottom),
+                           mComputedMargin.bottom);
     }
     else {
       // According to the CSS2 spec, margin percentages are
       // calculated with respect to the *width* of the containing
       // block, even for margin-top and margin-bottom.
-      if (NS_UNCONSTRAINEDSIZE == aContainingBlockWidth) {
-        mComputedMargin.top = 0;
-        mComputedMargin.bottom = 0;
-
-      } else {
-        if (eStyleUnit_Inherit == mStyleMargin->mMargin.GetTopUnit()) {
-          mComputedMargin.top = aContainingBlockRS->mComputedMargin.top;
-        } else {
-          ComputeHorizontalValue(aContainingBlockWidth,
-                                 mStyleMargin->mMargin.GetTopUnit(),
-                                 mStyleMargin->mMargin.GetTop(top),
-                                 mComputedMargin.top);
-        }
-        if (eStyleUnit_Inherit == mStyleMargin->mMargin.GetBottomUnit()) {
-          mComputedMargin.bottom = aContainingBlockRS->mComputedMargin.bottom;
-        } else {
-          ComputeHorizontalValue(aContainingBlockWidth,
-                                 mStyleMargin->mMargin.GetBottomUnit(),
-                                 mStyleMargin->mMargin.GetBottom(bottom),
-                                 mComputedMargin.bottom);
-        }
-      }
+      ComputeHorizontalValue(aContainingBlockWidth,
+                             mStyleMargin->mMargin.GetTopUnit(),
+                             mStyleMargin->mMargin.GetTop(top),
+                             mComputedMargin.top);
+      ComputeHorizontalValue(aContainingBlockWidth,
+                             mStyleMargin->mMargin.GetBottomUnit(),
+                             mStyleMargin->mMargin.GetBottom(bottom),
+                             mComputedMargin.bottom);
     }
   }
 }
@@ -2556,50 +2346,33 @@ nsHTMLReflowState::ComputePadding(nscoord aContainingBlockWidth,
     // We have to compute the value
     nsStyleCoord left, right, top, bottom;
 
-    if (eStyleUnit_Inherit == mStylePadding->mPadding.GetLeftUnit()) {
-      mComputedPadding.left = aContainingBlockRS->mComputedPadding.left;
-    } else {
-      ComputeHorizontalValue(aContainingBlockWidth,
-                             mStylePadding->mPadding.GetLeftUnit(),
-                             mStylePadding->mPadding.GetLeft(left),
-                             mComputedPadding.left);
-    }
-    if (eStyleUnit_Inherit == mStylePadding->mPadding.GetRightUnit()) {
-      mComputedPadding.right = aContainingBlockRS->mComputedPadding.right;
-    } else {
-      ComputeHorizontalValue(aContainingBlockWidth,
-                             mStylePadding->mPadding.GetRightUnit(),
-                             mStylePadding->mPadding.GetRight(right),
-                             mComputedPadding.right);
-    }
+    ComputeHorizontalValue(aContainingBlockWidth,
+                           mStylePadding->mPadding.GetLeftUnit(),
+                           mStylePadding->mPadding.GetLeft(left),
+                           mComputedPadding.left);
+    ComputeHorizontalValue(aContainingBlockWidth,
+                           mStylePadding->mPadding.GetRightUnit(),
+                           mStylePadding->mPadding.GetRight(right),
+                           mComputedPadding.right);
 
     // According to the CSS2 spec, percentages are calculated with respect to
     // containing block width for padding-top and padding-bottom
-    if (eStyleUnit_Inherit == mStylePadding->mPadding.GetTopUnit()) {
-      mComputedPadding.top = aContainingBlockRS->mComputedPadding.top;
-    } else {
-      ComputeHorizontalValue(aContainingBlockWidth,
-                             mStylePadding->mPadding.GetTopUnit(),
-                             mStylePadding->mPadding.GetTop(top),
-                             mComputedPadding.top);
-    }
-    if (eStyleUnit_Inherit == mStylePadding->mPadding.GetBottomUnit()) {
-      mComputedPadding.bottom = aContainingBlockRS->mComputedPadding.bottom;
-    } else {
-      ComputeHorizontalValue(aContainingBlockWidth,
-                             mStylePadding->mPadding.GetBottomUnit(),
-                             mStylePadding->mPadding.GetBottom(bottom),
-                             mComputedPadding.bottom);
-    }
+    ComputeHorizontalValue(aContainingBlockWidth,
+                           mStylePadding->mPadding.GetTopUnit(),
+                           mStylePadding->mPadding.GetTop(top),
+                           mComputedPadding.top);
+    ComputeHorizontalValue(aContainingBlockWidth,
+                           mStylePadding->mPadding.GetBottomUnit(),
+                           mStylePadding->mPadding.GetBottom(bottom),
+                           mComputedPadding.bottom);
   }
   // a table row/col group, row/col doesn't have padding
   if (frame) {
-    nsCOMPtr<nsIAtom> frameType;
-    frame->GetFrameType(getter_AddRefs(frameType));
-    if ((nsLayoutAtoms::tableRowGroupFrame == frameType.get()) ||
-        (nsLayoutAtoms::tableColGroupFrame == frameType.get()) ||
-        (nsLayoutAtoms::tableRowFrame      == frameType.get()) ||
-        (nsLayoutAtoms::tableColFrame      == frameType.get())) {
+    nsIAtom* frameType = frame->GetType();
+    if ((nsLayoutAtoms::tableRowGroupFrame == frameType) ||
+        (nsLayoutAtoms::tableColGroupFrame == frameType) ||
+        (nsLayoutAtoms::tableRowFrame      == frameType) ||
+        (nsLayoutAtoms::tableColFrame      == frameType)) {
       mComputedPadding.top    = 0;
       mComputedPadding.right  = 0;
       mComputedPadding.bottom = 0;
@@ -2614,16 +2387,10 @@ nsHTMLReflowState::ComputeMinMaxValues(nscoord aContainingBlockWidth,
                                        const nsHTMLReflowState* aContainingBlockRS)
 {
   nsStyleUnit minWidthUnit = mStylePosition->mMinWidth.GetUnit();
-  if (eStyleUnit_Inherit == minWidthUnit) {
-    mComputedMinWidth = aContainingBlockRS->mComputedMinWidth;
-  } else {
-    ComputeHorizontalValue(aContainingBlockWidth, minWidthUnit,
-                           mStylePosition->mMinWidth, mComputedMinWidth);
-  }
+  ComputeHorizontalValue(aContainingBlockWidth, minWidthUnit,
+                         mStylePosition->mMinWidth, mComputedMinWidth);
   nsStyleUnit maxWidthUnit = mStylePosition->mMaxWidth.GetUnit();
-  if (eStyleUnit_Inherit == maxWidthUnit) {
-    mComputedMaxWidth = aContainingBlockRS->mComputedMaxWidth;
-  } else if (eStyleUnit_Null == maxWidthUnit) {
+  if (eStyleUnit_Null == maxWidthUnit) {
     // Specified value of 'none'
     mComputedMaxWidth = NS_UNCONSTRAINEDSIZE;  // no limit
   } else {
@@ -2638,23 +2405,17 @@ nsHTMLReflowState::ComputeMinMaxValues(nscoord aContainingBlockWidth,
   }
 
   nsStyleUnit minHeightUnit = mStylePosition->mMinHeight.GetUnit();
-  if (eStyleUnit_Inherit == minHeightUnit) {
-    mComputedMinHeight = aContainingBlockRS->mComputedMinHeight;
+  // Check for percentage based values and a containing block height that
+  // depends on the content height. Treat them like 'auto'
+  if ((NS_AUTOHEIGHT == aContainingBlockHeight) &&
+      (eStyleUnit_Percent == minHeightUnit)) {
+    mComputedMinHeight = 0;
   } else {
-    // Check for percentage based values and a containing block height that
-    // depends on the content height. Treat them like 'auto'
-    if ((NS_AUTOHEIGHT == aContainingBlockHeight) &&
-        (eStyleUnit_Percent == minHeightUnit)) {
-      mComputedMinHeight = 0;
-    } else {
-      ComputeVerticalValue(aContainingBlockHeight, minHeightUnit,
-                           mStylePosition->mMinHeight, mComputedMinHeight);
-    }
+    ComputeVerticalValue(aContainingBlockHeight, minHeightUnit,
+                         mStylePosition->mMinHeight, mComputedMinHeight);
   }
   nsStyleUnit maxHeightUnit = mStylePosition->mMaxHeight.GetUnit();
-  if (eStyleUnit_Inherit == maxHeightUnit) {
-    mComputedMaxHeight = aContainingBlockRS->mComputedMaxHeight;
-  } else if (eStyleUnit_Null == maxHeightUnit) {
+  if (eStyleUnit_Null == maxHeightUnit) {
     // Specified value of 'none'
     mComputedMaxHeight = NS_UNCONSTRAINEDSIZE;  // no limit
   } else {
@@ -2677,85 +2438,71 @@ nsHTMLReflowState::ComputeMinMaxValues(nscoord aContainingBlockWidth,
 }
 
 
-void nsHTMLReflowState::AdjustComputedHeight(void)
+void nsHTMLReflowState::AdjustComputedHeight(PRBool aAdjustForBoxSizing)
 {
   // only do the math if the height  is not a symbolic value
-  if (mComputedHeight != NS_UNCONSTRAINEDSIZE) {
-    NS_ASSERTION(mComputedHeight>=0, "Negative Height Input - very bad");
-
-    // Factor in any minimum and maximum size information
-    if (mComputedHeight > mComputedMaxHeight) {
-      mComputedHeight = mComputedMaxHeight;
-    } else if (mComputedHeight < mComputedMinHeight) {
-      mComputedHeight = mComputedMinHeight;
-    }
-
-    if (mComputedHeight > 0) {
-      NS_ASSERTION(mComputedHeight>0, "Negative Height Input - very bad");
-      // remove extra padding/border if box-sizing property is set
-      switch (mStylePosition->mBoxSizing) {
-        case NS_STYLE_BOX_SIZING_PADDING : {
-          mComputedHeight -= mComputedPadding.top + mComputedPadding.bottom;
-          break;
-        }
-        case NS_STYLE_BOX_SIZING_BORDER : {
-          mComputedHeight -= mComputedBorderPadding.top + mComputedBorderPadding.bottom;
-        }
-        default : break;
-      }
-    }
-    // NOTE: this next assertion was firing for HR frames sometimes - why?
-    // NS_ASSERTION(mComputedHeight>=0, "Negative Height Result- very bad");
-    // if it did go bozo, set to 0
-    if(mComputedHeight<0) mComputedHeight = 0;
+  if (mComputedHeight == NS_UNCONSTRAINEDSIZE) {
+    return;
   }
+  
+  NS_ASSERTION(mComputedHeight >= 0, "Negative Height Input - very bad");
+
+  // Factor in any minimum and maximum size information
+  if (mComputedHeight > mComputedMaxHeight) {
+    mComputedHeight = mComputedMaxHeight;
+  } else if (mComputedHeight < mComputedMinHeight) {
+    mComputedHeight = mComputedMinHeight;
+  }
+
+  if (aAdjustForBoxSizing) {
+    // remove extra padding/border if box-sizing property is set
+    switch (mStylePosition->mBoxSizing) {
+    case NS_STYLE_BOX_SIZING_PADDING : {
+      mComputedHeight -= mComputedPadding.top + mComputedPadding.bottom;
+      break;
+    }
+    case NS_STYLE_BOX_SIZING_BORDER : {
+      mComputedHeight -= mComputedBorderPadding.top + mComputedBorderPadding.bottom;
+    }
+    default : break;
+    }
+    
+    // If it did go bozo because of too much border or padding, set to 0
+    if(mComputedHeight < 0) mComputedHeight = 0;
+  }  
 }
 
-void nsHTMLReflowState::AdjustComputedWidth(void)
+void nsHTMLReflowState::AdjustComputedWidth(PRBool aAdjustForBoxSizing)
 {
   // only do the math if the width is not a symbolic value
-  if (mComputedWidth != NS_UNCONSTRAINEDSIZE) {
-    NS_ASSERTION(mComputedWidth>=0, "Negative Width Input - very bad");
+  if (mComputedWidth == NS_UNCONSTRAINEDSIZE) {
+    return;
+  }
+  
+  NS_ASSERTION(mComputedWidth >= 0, "Negative Width Input - very bad");
 
-    // Factor in any minimum and maximum size information
-    if (mComputedWidth > mComputedMaxWidth) {
-      mComputedWidth = mComputedMaxWidth;
-    } else if (mComputedWidth < mComputedMinWidth) {
-      mComputedWidth = mComputedMinWidth;
+  // Factor in any minimum and maximum size information
+  if (mComputedWidth > mComputedMaxWidth) {
+    mComputedWidth = mComputedMaxWidth;
+  } else if (mComputedWidth < mComputedMinWidth) {
+    mComputedWidth = mComputedMinWidth;
+  }
+  
+  if (aAdjustForBoxSizing) {
+    // remove extra padding/border if box-sizing property is set
+    switch (mStylePosition->mBoxSizing) {
+    case NS_STYLE_BOX_SIZING_PADDING : {
+      mComputedWidth -= mComputedPadding.left + mComputedPadding.right;
+      break;
     }
-    NS_ASSERTION(mComputedWidth>=0, "Negative Width Result - very bad");
-    // if it did go bozo, set to 0
-    if(mComputedWidth<0) mComputedWidth = 0;
+    case NS_STYLE_BOX_SIZING_BORDER : {
+      mComputedWidth -= mComputedBorderPadding.left + mComputedBorderPadding.right;
+    }
+    default : break;
+    }
 
-    if (mComputedWidth > 0) {
-      NS_ASSERTION(mComputedWidth>=0, "Negative Width Input - very bad");
-      // remove extra padding/border if box-sizing property is set
-      switch (mStylePosition->mBoxSizing) {
-        case NS_STYLE_BOX_SIZING_PADDING : {
-          mComputedWidth -= mComputedPadding.left + mComputedPadding.right;
-          break;
-        }
-        case NS_STYLE_BOX_SIZING_BORDER : {
-          mComputedWidth -= mComputedBorderPadding.left + mComputedBorderPadding.right;
-        }
-        default : break;
-      }
-    }
-    // NOTE: the next assertion was firing in the table regression tests - why? 
-    //       need to look into this
-    // NS_ASSERTION(mComputedWidth>=0, "Negative Width Result - very bad");
-    // if it did go bozo, set to 0
-    if(mComputedWidth<0) mComputedWidth = 0;
-
-    // Tables allow enough width for cells without considering percent based constraints 
-    // of content within the cells. Since such content could exceed the available width, 
-    // we don't allow that to happen.
-    if (mFlags.mTableDerivedComputedWidth) {
-      nscoord borderPadding = mComputedBorderPadding.left + mComputedBorderPadding.right;
-      if (borderPadding + mComputedWidth > availableWidth) {
-        mComputedWidth = PR_MAX(0, availableWidth - borderPadding);
-      }
-    }
+    // If it did go bozo because of too much border or padding, set to 0
+    if(mComputedWidth < 0) mComputedWidth = 0;
   }
 }
 #ifdef IBMBIDI
@@ -2773,9 +2520,7 @@ nsHTMLReflowState::IsBidiFormControl(nsIPresContext* aPresContext)
     return PR_FALSE;
   }
 
-  PRBool isVisual;
-  aPresContext->IsVisualMode(isVisual);
-  if (!isVisual) {
+  if (!aPresContext->IsVisualMode()) {
     return PR_FALSE;
   }
 
@@ -2785,11 +2530,7 @@ nsHTMLReflowState::IsBidiFormControl(nsIPresContext* aPresContext)
     return PR_FALSE;
   }
 
-  nsCOMPtr<nsIContent> content, parent;
-  nsresult rv = frame->GetContent(getter_AddRefs(content) );
-  if (NS_FAILED(rv)) {
-    return PR_FALSE;
-  }
+  nsIContent* content = frame->GetContent();
   if (!content) {
     return PR_FALSE;
   }
@@ -2798,12 +2539,10 @@ nsHTMLReflowState::IsBidiFormControl(nsIPresContext* aPresContext)
   // find out if the reflow root is a descendant of a form control.
   // Otherwise, just test this content node
   if (mReflowDepth == 0) {
-    while (content) {
-      if  (content->IsContentOfType(nsIContent::eHTML_FORM_CONTROL)) {
+    for ( ; content; content = content->GetParent()) {
+      if (content->IsContentOfType(nsIContent::eHTML_FORM_CONTROL)) {
         return PR_TRUE;
       }
-      content->GetParent(getter_AddRefs(parent));
-      content = parent;
     }
   } else {
     return (content->IsContentOfType(nsIContent::eHTML_FORM_CONTROL));

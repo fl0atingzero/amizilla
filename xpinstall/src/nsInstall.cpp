@@ -170,8 +170,6 @@ nsInstallInfo::~nsInstallInfo()
 static NS_DEFINE_IID(kISoftwareUpdateIID, NS_ISOFTWAREUPDATE_IID);
 static NS_DEFINE_IID(kSoftwareUpdateCID,  NS_SoftwareUpdate_CID);
 
-static NS_DEFINE_IID(kIZipReaderIID, NS_IZIPREADER_IID);
-static NS_DEFINE_IID(kZipReaderCID,  NS_ZIPREADER_CID);
 
 MOZ_DECL_CTOR_COUNTER(nsInstall)
 
@@ -1258,7 +1256,7 @@ nsInstall::LoadResources(JSContext* cx, const nsString& aBaseName, jsval* aRetur
             JSString* propValJSStr = JS_NewUCStringCopyZ(cx, NS_REINTERPRET_CAST(const jschar*, pVal.get()));
             jsval propValJSVal = STRING_TO_JSVAL(propValJSStr);
             nsString UCKey = NS_ConvertUTF8toUCS2(pKey);
-            JS_SetUCProperty(cx, res, UCKey.get(), UCKey.Length(), &propValJSVal);
+            JS_SetUCProperty(cx, res, (jschar*)UCKey.get(), UCKey.Length(), &propValJSVal);
         }
     }
 
@@ -2236,10 +2234,10 @@ nsInstall::FileOpWinRegisterServer(nsInstallFolder& aTarget, PRInt32* aReturn)
 }
 
 void
-nsInstall::LogComment(nsString& aComment)
+nsInstall::LogComment(const nsAString& aComment)
 {
   if(mListener)
-    mListener->OnLogComment(aComment.get());
+    mListener->OnLogComment(PromiseFlatString(aComment).get());
 }
 
 /////////////////////////////////////////////////////////////////////////
@@ -2385,29 +2383,20 @@ nsInstall::GetQualifiedRegName(const nsString& name, nsString& qualifiedRegName 
     nsString startOfName;
     name.Left(startOfName, 7);
 
-    nsString usr ();
-
     if ( startOfName.Equals(NS_LITERAL_STRING("=COMM=/")) || startOfName.Equals(NS_LITERAL_STRING("=USER=/")))
     {
-        qualifiedRegName = name;
-        qualifiedRegName.Cut( 0, 7 );
+        qualifiedRegName = startOfName;
     }
-    else if ( name.CharAt(0) != '/' )
+    else if (name.CharAt(0) != '/' &&
+             !mRegistryPackageName.IsEmpty())
     {
-        if (!mRegistryPackageName.IsEmpty())
-        {
-            qualifiedRegName = mRegistryPackageName;
-            qualifiedRegName.Append(NS_LITERAL_STRING("/"));
-            qualifiedRegName += name;
-        }
-        else
-        {
-            qualifiedRegName = name;
-        }
+        qualifiedRegName = mRegistryPackageName
+                         + NS_LITERAL_STRING("/")
+                         + name;
     }
     else
     {
-       qualifiedRegName = name;
+        qualifiedRegName = name;
     }
 
     if (BadRegName(qualifiedRegName))

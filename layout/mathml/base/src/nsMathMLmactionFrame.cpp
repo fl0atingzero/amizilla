@@ -45,6 +45,7 @@
 
 #include "nsMathMLmactionFrame.h"
 #include "nsAutoPtr.h"
+#include "nsStyleSet.h"
 
 //
 // <maction> -- bind actions to a subexpression - implementation
@@ -142,8 +143,9 @@ nsMathMLmactionFrame::Init(nsIPresContext*  aPresContext,
 
         // then, re-resolve our style
         nsStyleContext* parentStyleContext = aParent->GetStyleContext();
-        newStyleContext = aPresContext->ResolveStyleContextFor(aContent,
-							       parentStyleContext);
+        newStyleContext = aPresContext->StyleSet()->
+          ResolveStyleFor(aContent, parentStyleContext);
+
         if (!newStyleContext) 
           mRestyle.Truncate();
         else {
@@ -194,7 +196,7 @@ nsMathMLmactionFrame::GetSelectedFrame()
     if (++count == selection) 
       mSelectedFrame = childFrame;
 
-    childFrame->GetNextSibling(&childFrame);
+    childFrame = childFrame->GetNextSibling();
   }
   // cater for invalid user-supplied selection
   if (selection > count || selection < 1) 
@@ -243,8 +245,7 @@ nsMathMLmactionFrame::GetFrameForPoint(nsIPresContext*   aPresContext,
 {
   nsIFrame* childFrame = GetSelectedFrame();
   if (childFrame) {
-    nsPoint pt;
-    pt.MoveTo(aPoint.x - mRect.x, aPoint.y - mRect.y);
+    nsPoint pt(aPoint.x - mRect.x, aPoint.y - mRect.y);
     return childFrame->GetFrameForPoint(aPresContext, pt, aWhichLayer, aFrame);
   }
   return nsFrame::GetFrameForPoint(aPresContext, aPoint, aWhichLayer, aFrame);
@@ -314,8 +315,7 @@ nsMathMLmactionFrame::Reflow(nsIPresContext*          aPresContext,
                                        childFrame, availSize, reason);
     rv = ReflowChild(childFrame, aPresContext, aDesiredSize,
                      childReflowState, aStatus);
-    childFrame->SetRect(aPresContext,
-                        nsRect(aDesiredSize.descent,aDesiredSize.ascent,
+    childFrame->SetRect(nsRect(aDesiredSize.descent,aDesiredSize.ascent,
                         aDesiredSize.width,aDesiredSize.height));
     mBoundingMetrics = aDesiredSize.mBoundingMetrics;
     FinalizeReflow(aPresContext, *aReflowState.rendContext, aDesiredSize);
@@ -357,9 +357,8 @@ nsresult
 nsMathMLmactionFrame::ShowStatus(nsIPresContext* aPresContext,
                                  nsString&       aStatusMsg)
 {
-  nsCOMPtr<nsISupports> cont;
-  nsresult rv = aPresContext->GetContainer(getter_AddRefs(cont));
-  if (NS_SUCCEEDED(rv) && cont) {
+  nsCOMPtr<nsISupports> cont = aPresContext->GetContainer();
+  if (cont) {
     nsCOMPtr<nsIDocShellTreeItem> docShellItem(do_QueryInterface(cont));
     if (docShellItem) {
       nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
@@ -372,7 +371,7 @@ nsMathMLmactionFrame::ShowStatus(nsIPresContext* aPresContext,
       }
     }
   }
-  return rv;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -419,9 +418,7 @@ nsMathMLmactionFrame::MouseClick(nsIDOMEvent* aMouseEvent)
       mContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::selection_, value, notify);
 
       // Now trigger a content-changed reflow...
-      nsCOMPtr<nsIPresShell> presShell;
-      mPresContext->GetShell(getter_AddRefs(presShell));
-      ReflowDirtyChild(presShell, mSelectedFrame);
+      ReflowDirtyChild(mPresContext->PresShell(), mSelectedFrame);
     }
   }
   else if (NS_MATHML_ACTION_TYPE_RESTYLE == mActionType) {
@@ -440,8 +437,7 @@ nsMathMLmactionFrame::MouseClick(nsIDOMEvent* aMouseEvent)
         // Cancel the reflow command that the change of attribute has
         // caused, and post a style changed reflow request that is instead
         // targeted at our selected frame
-        nsCOMPtr<nsIPresShell> presShell;
-        mPresContext->GetShell(getter_AddRefs(presShell));
+        nsIPresShell *presShell = mPresContext->PresShell();
         presShell->CancelReflowCommand(this, nsnull);
         nsFrame::CreateAndPostReflowCommand(presShell, mSelectedFrame, 
           eReflowType_StyleChanged, nsnull, nsnull, nsnull);

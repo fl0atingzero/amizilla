@@ -1,3 +1,4 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /*
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -22,21 +23,23 @@
 #include "nsINameSpaceManager.h"
 #include "nsMathMLFrame.h"
 #include "nsMathMLChar.h"
+#include "nsCSSAnonBoxes.h"
 
 // used to map attributes into CSS rules
 #include "nsIDocument.h"
-#include "nsIStyleSet.h"
+#include "nsStyleSet.h"
 #include "nsIStyleSheet.h"
 #include "nsICSSStyleSheet.h"
 #include "nsIDOMCSSStyleSheet.h"
 #include "nsICSSRule.h"
-#include "nsIDOMCSSStyleRule.h"
+#include "nsICSSStyleRule.h"
 #include "nsStyleChangeList.h"
-#include "nsIFrameManager.h"
+#include "nsFrameManager.h"
 #include "nsNetUtil.h"
 #include "nsIURI.h"
 #include "nsContentCID.h"
 #include "nsAutoPtr.h"
+#include "nsStyleSet.h"
 static NS_DEFINE_CID(kCSSStyleSheetCID, NS_CSS_STYLESHEET_CID);
 
 
@@ -112,12 +115,13 @@ nsMathMLFrame::ResolveMathMLCharStyle(nsIPresContext*  aPresContext,
                                       nsMathMLChar*    aMathMLChar,
                                       PRBool           aIsMutableChar)
 {
-  nsIAtom* fontAtom = (aIsMutableChar) ?
-    nsMathMLAtoms::fontstyle_stretchy :
-    nsMathMLAtoms::fontstyle_anonymous; // savings
+  nsIAtom* pseudoStyle = (aIsMutableChar) ?
+    nsCSSAnonBoxes::mozMathStretchy :
+    nsCSSAnonBoxes::mozMathAnonymous; // savings
   nsRefPtr<nsStyleContext> newStyleContext;
-  newStyleContext = aPresContext->ResolvePseudoStyleContextFor(aContent, fontAtom, 
-							       aParentStyleContext);
+  newStyleContext = aPresContext->StyleSet()->
+    ResolvePseudoStyleFor(aContent, pseudoStyle, aParentStyleContext);
+
   if (newStyleContext)
     aMathMLChar->SetStyleContext(newStyleContext);
 }
@@ -168,34 +172,21 @@ nsMathMLFrame::GetPresentationDataFrom(nsIFrame*           aFrame,
       break;
     }
     // stop if we reach the root <math> tag
-    nsCOMPtr<nsIAtom> tag;
-    nsCOMPtr<nsIContent> content;
-    frame->GetContent(getter_AddRefs(content));
+    nsIContent* content = frame->GetContent();
     NS_ASSERTION(content, "dangling frame without a content node");
     if (!content)
       break;
-    content->GetTag(getter_AddRefs(tag));
-    if (tag.get() == nsMathMLAtoms::math) {
+
+    if (content->Tag() == nsMathMLAtoms::math) {
       const nsStyleDisplay* display = frame->GetStyleDisplay();
       if (display->mDisplay == NS_STYLE_DISPLAY_BLOCK) {
         aPresentationData.flags |= NS_MATHML_DISPLAYSTYLE;
       }
       break;
     }
-    frame->GetParent(&frame);
+    frame = frame->GetParent();
   }
   NS_ASSERTION(frame, "bad MathML markup - could not find the top <math> element");
-}
-
-/* static */ PRBool
-nsMathMLFrame::HasNextSibling(nsIFrame* aFrame)
-{
-  if (aFrame) {
-    nsIFrame* sibling;
-    aFrame->GetNextSibling(&sibling);
-    return sibling != nsnull;
-  }
-  return PR_FALSE;
 }
 
 // helper to get an attribute from the content or the surrounding <mstyle> hierarchy
@@ -215,11 +206,7 @@ nsMathMLFrame::GetAttribute(nsIContent* aContent,
   if (NS_CONTENT_ATTR_NOT_THERE == rv) {
     // see if we can get the attribute from the mstyle frame
     if (aMathMLmstyleFrame) {
-      nsCOMPtr<nsIContent> mstyleContent;
-      aMathMLmstyleFrame->GetContent(getter_AddRefs(mstyleContent));
-
-      nsIFrame* mstyleParent;
-      aMathMLmstyleFrame->GetParent(&mstyleParent);
+      nsIFrame* mstyleParent = aMathMLmstyleFrame->GetParent();
 
       nsPresentationData mstyleParentData;
       mstyleParentData.mstyle = nsnull;
@@ -233,7 +220,8 @@ nsMathMLFrame::GetAttribute(nsIContent* aContent,
       }
 
       // recurse all the way up into the <mstyle> hierarchy
-      rv = GetAttribute(mstyleContent, mstyleParentData.mstyle, aAttributeAtom, aValue);
+      rv = GetAttribute(aMathMLmstyleFrame->GetContent(),
+			mstyleParentData.mstyle, aAttributeAtom, aValue);
     }
   }
   return rv;
@@ -520,15 +508,13 @@ GetMathMLAttributeStyleSheet(nsIPresContext* aPresContext,
   *aSheet = nsnull;
 
   // first, look if the attribute stylesheet is already there
-  nsCOMPtr<nsIPresShell> presShell;
-  aPresContext->GetShell(getter_AddRefs(presShell));
-  nsCOMPtr<nsIStyleSet> styleSet;
-  presShell->GetStyleSet(getter_AddRefs(styleSet));
-  if (!styleSet)
-    return;
+  nsStyleSet *styleSet = aPresContext->StyleSet();
+  NS_ASSERTION(styleSet, "no style set");
+
   nsAutoString title;
-  for (PRInt32 i = styleSet->GetNumberOfAgentStyleSheets() - 1; i >= 0; --i) {
-    nsCOMPtr<nsIStyleSheet> sheet = getter_AddRefs(styleSet->GetAgentStyleSheetAt(i));
+  for (PRInt32 i = styleSet->SheetCount(nsStyleSet::eAgentSheet) - 1;
+       i >= 0; --i) {
+    nsIStyleSheet *sheet = styleSet->StyleSheetAt(nsStyleSet::eAgentSheet, i);
     nsCOMPtr<nsICSSStyleSheet> cssSheet(do_QueryInterface(sheet));
     if (cssSheet) {
       cssSheet->GetTitle(title);
@@ -548,17 +534,21 @@ GetMathMLAttributeStyleSheet(nsIPresContext* aPresContext,
   nsCOMPtr<nsICSSStyleSheet> cssSheet(do_CreateInstance(kCSSStyleSheetCID));
   if (!cssSheet)
     return;
-  cssSheet->Init(uri);
+  cssSheet->SetURL(uri);
+  nsCOMPtr<nsIDOMCSSStyleSheet> domSheet(do_QueryInterface(cssSheet));
+  if (domSheet) {
+    PRUint32 index;
+    domSheet->InsertRule(NS_LITERAL_STRING("@namespace url(http://www.w3.org/1998/Math/MathML);"),
+                                           0, &index);
+  }
   cssSheet->SetTitle(NS_ConvertASCIItoUCS2(kTitle));
-  cssSheet->SetDefaultNameSpaceID(kNameSpaceID_MathML);
-  nsCOMPtr<nsIStyleSheet> sheet(do_QueryInterface(cssSheet));
 
   // all done, no further activity from the net involved, so we better do this
-  sheet->SetComplete();
+  cssSheet->SetComplete();
 
   // insert the stylesheet into the styleset without notifying observers
-  styleSet->AppendAgentStyleSheet(sheet);
-  *aSheet = sheet;
+  styleSet->AppendStyleSheet(nsStyleSet::eAgentSheet, cssSheet);
+  *aSheet = cssSheet;
   NS_ADDREF(*aSheet);
 }
 
@@ -568,9 +558,9 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
 {
   // normal case, quick return if there are no attributes
   NS_ASSERTION(aContent, "null arg");
-  PRInt32 attrCount = 0;
+  PRUint32 attrCount = 0;
   if (aContent)
-    aContent->GetAttrCount(attrCount);
+    attrCount = aContent->GetAttrCount();
   if (!attrCount)
     return 0;
 
@@ -596,7 +586,7 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
   nsCOMPtr<nsIAtom> prefix;
   nsCOMPtr<nsIAtom> attrAtom;
   PRInt32 ruleCount = 0;
-  for (PRInt32 i = 0; i < attrCount; ++i) {
+  for (PRUint32 i = 0; i < attrCount; ++i) {
     aContent->GetAttrNameAt(i, &nameSpaceID,
                             getter_AddRefs(attrAtom),
                             getter_AddRefs(prefix));
@@ -640,7 +630,7 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
     if (!sheet) {
       // first time... we do this to defer the lookup up to the
       // point where we encounter attributes that actually matter
-      aContent->GetDocument(getter_AddRefs(doc));
+      doc = aContent->GetDocument();
       if (!doc) 
         return 0;
       GetMathMLAttributeStyleSheet(aPresContext, getter_AddRefs(sheet));
@@ -670,7 +660,7 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
       nsAutoString tmpSelector;
       nsCOMPtr<nsICSSRule> tmpRule;
       cssSheet->GetStyleRuleAt(k, *getter_AddRefs(tmpRule));
-      nsCOMPtr<nsIDOMCSSStyleRule> tmpStyleRule(do_QueryInterface(tmpRule));
+      nsCOMPtr<nsICSSStyleRule> tmpStyleRule = do_QueryInterface(tmpRule);
       tmpStyleRule->GetSelectorText(tmpSelector);
       if (tmpSelector.Equals(selector)) {
         k = -1;
@@ -681,7 +671,7 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
       // insert the rule (note: when the sheet already has @namespace and
       // friends, insert after them, e.g., at the end, otherwise it won't work)
       // For MathML 2, insert at the end to give it precedence
-      PRInt32 pos = (map->compatibility == kMathMLversion2) ? count : 0;
+      PRInt32 pos = (map->compatibility == kMathMLversion2) ? count : 1;
       PRUint32 index;
       domSheet->InsertRule(cssRule, pos, &index);
       ++ruleCount;
@@ -699,31 +689,19 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
 nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
                                     nsIFrame*       aFrame)
 {
-  nsCOMPtr<nsIContent> content;
-  aFrame->GetContent(getter_AddRefs(content));
-  PRInt32 ruleCount = MapAttributesIntoCSS(aPresContext, content);
+  PRInt32 ruleCount = MapAttributesIntoCSS(aPresContext, aFrame->GetContent());
   if (!ruleCount)
     return 0;
 
   // now, re-resolve the style contexts in our subtree
-  nsCOMPtr<nsIPresShell> presShell;
-  aPresContext->GetShell(getter_AddRefs(presShell));
-  if (presShell) {
-    nsCOMPtr<nsIFrameManager> fm;
-    presShell->GetFrameManager(getter_AddRefs(fm));
-    if (fm) {
-      nsChangeHint maxChange = NS_STYLE_HINT_NONE, minChange = NS_STYLE_HINT_NONE;
-      nsStyleChangeList changeList;
-      fm->ComputeStyleChangeFor(aFrame, kNameSpaceID_None, nsnull,
-                                changeList, minChange, maxChange);
+  nsFrameManager *fm = aPresContext->FrameManager();
+  nsStyleChangeList changeList;
+  fm->ComputeStyleChangeFor(aFrame, &changeList, NS_STYLE_HINT_NONE);
 #ifdef DEBUG
-      // Use the parent frame to make sure we catch in-flows and such
-      nsIFrame* parentFrame;
-      aFrame->GetParent(&parentFrame);
-      fm->DebugVerifyStyleTree(parentFrame ? parentFrame : aFrame);
+  // Use the parent frame to make sure we catch in-flows and such
+  nsIFrame* parentFrame = aFrame->GetParent();
+  fm->DebugVerifyStyleTree(parentFrame ? parentFrame : aFrame);
 #endif
-    }
-  }
 
   return ruleCount;
 }

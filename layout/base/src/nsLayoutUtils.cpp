@@ -43,6 +43,7 @@
 #include "nsLayoutAtoms.h"
 #include "nsIAtom.h"
 #include "nsCSSPseudoElements.h"
+#include "nsIView.h"
 
 /**
  * A namespace class for static layout utilities.
@@ -63,10 +64,8 @@ GetFirstChildFrame(nsIPresContext* aPresContext,
 {
   NS_PRECONDITION(aFrame, "NULL frame pointer");
 
-  nsIFrame* childFrame;
-
   // Get the first child frame
-  aFrame->FirstChild(aPresContext, nsnull, &childFrame);
+  nsIFrame* childFrame = aFrame->GetFirstChild(nsnull);
 
   // If the child frame is a pseudo-frame, then return its first child.
   // Note that the frame we create for the generated content is also a
@@ -99,8 +98,7 @@ GetLastChildFrame(nsIPresContext* aPresContext,
   nsIFrame* lastInFlow = aFrame->GetLastInFlow();
 
   // Get the last child frame
-  nsIFrame* firstChildFrame;
-  lastInFlow->FirstChild(aPresContext, nsnull, &firstChildFrame);
+  nsIFrame* firstChildFrame = lastInFlow->GetFirstChild(nsnull);
   if (firstChildFrame) {
     nsFrameList frameList(firstChildFrame);
     nsIFrame*   lastChildFrame = frameList.LastChild();
@@ -137,9 +135,7 @@ nsLayoutUtils::GetBeforeFrame(nsIFrame* aFrame, nsIPresContext* aPresContext)
   NS_ASSERTION(!prevInFlow, "aFrame must be first-in-flow");
 #endif
   
-  nsCOMPtr<nsIContent> content;
-  aFrame->GetContent(getter_AddRefs(content));
-  nsIFrame* firstFrame = GetFirstChildFrame(aPresContext, aFrame, content);
+  nsIFrame* firstFrame = GetFirstChildFrame(aPresContext, aFrame, aFrame->GetContent());
 
   if (firstFrame && IsGeneratedContentFor(nsnull, firstFrame,
                                           nsCSSPseudoElements::before)) {
@@ -155,9 +151,7 @@ nsLayoutUtils::GetAfterFrame(nsIFrame* aFrame, nsIPresContext* aPresContext)
 {
   NS_PRECONDITION(aFrame, "NULL frame pointer");
 
-  nsCOMPtr<nsIContent> content;
-  aFrame->GetContent(getter_AddRefs(content));
-  nsIFrame* lastFrame = GetLastChildFrame(aPresContext, aFrame, content);
+  nsIFrame* lastFrame = GetLastChildFrame(aPresContext, aFrame, aFrame->GetContent());
 
   if (lastFrame && IsGeneratedContentFor(nsnull, lastFrame,
                                          nsCSSPseudoElements::after)) {
@@ -171,14 +165,10 @@ nsLayoutUtils::GetAfterFrame(nsIFrame* aFrame, nsIPresContext* aPresContext)
 nsIFrame*
 nsLayoutUtils::GetPageFrame(nsIFrame* aFrame)
 {
-  nsIFrame* frame = aFrame;
-  while (frame) {
-    nsCOMPtr<nsIAtom> type;
-    frame->GetFrameType(getter_AddRefs(type));
-    if (type.get() == nsLayoutAtoms::pageFrame) {
+  for (nsIFrame* frame = aFrame; frame; frame = frame->GetParent()) {
+    if (frame->GetType() == nsLayoutAtoms::pageFrame) {
       return frame;
     }
-    frame->GetParent(&frame);
   }
   return nsnull;
 }
@@ -195,17 +185,145 @@ nsLayoutUtils::IsGeneratedContentFor(nsIContent* aContent,
   if (!aFrame->IsGeneratedContentFrame()) {
     return PR_FALSE;
   }
-
-  if (aContent) {
-    nsCOMPtr<nsIContent> content;
-    aFrame->GetContent(getter_AddRefs(content));
-    if (content != aContent) {
-      return PR_FALSE;
-    }
+  
+  if (aContent && aFrame->GetContent() != aContent) {
+    return PR_FALSE;
   }
 
-  nsStyleContext* styleContext = aFrame->GetStyleContext();
-  nsCOMPtr<nsIAtom> pseudoType = styleContext->GetPseudoType();
-  return pseudoType == aPseudoElement;
+  return aFrame->GetStyleContext()->GetPseudoType() == aPseudoElement;
 }
 
+// static
+PRBool
+nsLayoutUtils::IsProperAncestorFrame(nsIFrame* aAncestorFrame, nsIFrame* aFrame,
+                                     nsIFrame* aCommonAncestor)
+{
+  if (aFrame == aCommonAncestor) {
+    return PR_FALSE;
+  }
+  
+  nsIFrame* parentFrame = aFrame->GetParent();
+
+  while (parentFrame != aCommonAncestor) {
+    if (parentFrame == aAncestorFrame) {
+      return PR_TRUE;
+    }
+
+    parentFrame = parentFrame->GetParent();
+  }
+
+  return PR_FALSE;
+}
+
+// static
+PRInt32
+nsLayoutUtils::CompareTreePosition(nsIContent* aContent1, nsIContent* aContent2,
+                                   nsIContent* aCommonAncestor) {
+  NS_PRECONDITION(aContent1, "aContent1 must not be null");
+  NS_PRECONDITION(aContent2, "aContent2 must not be null");
+
+  nsAutoVoidArray content1Ancestors;
+  nsIContent* c1;
+  for (c1 = aContent1; c1 && c1 != aCommonAncestor; c1 = c1->GetParent()) {
+    content1Ancestors.AppendElement(c1);
+  }
+  if (!c1 && aCommonAncestor) {
+    // So, it turns out aCommonAncestor was not an ancestor of c1. Oops.
+    // Never mind. We can continue as if aCommonAncestor was null.
+    aCommonAncestor = nsnull;
+  }
+
+  nsAutoVoidArray content2Ancestors;
+  nsIContent* c2;
+  for (c2 = aContent2; c2 && c2 != aCommonAncestor; c2 = c2->GetParent()) {
+    content2Ancestors.AppendElement(c2);
+  }
+  if (!c2 && aCommonAncestor) {
+    // So, it turns out aCommonAncestor was not an ancestor of c2.
+    // We need to retry with no common ancestor hint.
+    return CompareTreePosition(aContent1, aContent2, nsnull);
+  }
+  
+  int last1 = content1Ancestors.Count() - 1;
+  int last2 = content2Ancestors.Count() - 1;
+  nsIContent* content1Ancestor = nsnull;
+  nsIContent* content2Ancestor = nsnull;
+  while (last1 >= 0 && last2 >= 0
+         && ((content1Ancestor = NS_STATIC_CAST(nsIContent*, content1Ancestors.ElementAt(last1)))
+             == (content2Ancestor = NS_STATIC_CAST(nsIContent*, content2Ancestors.ElementAt(last2))))) {
+    last1--;
+    last2--;
+  }
+
+  if (last1 < 0) {
+    if (last2 < 0) {
+      NS_ASSERTION(aContent1 == aContent2, "internal error?");
+      return 0;
+    } else {
+      // aContent1 is an ancestor of aContent2
+      return -1;
+    }
+  } else {
+    if (last2 < 0) {
+      // aContent2 is an ancestor of aContent1
+      return 1;
+    } else {
+      // content1Ancestor != content2Ancestor, so they must be siblings with the same parent
+      nsIContent* parent = content1Ancestor->GetParent();
+      NS_ASSERTION(parent, "no common ancestor at all???");
+      if (!parent) { // different documents??
+        return 0;
+      }
+
+      PRInt32 index1 = parent->IndexOf(content1Ancestor);
+      PRInt32 index2 = parent->IndexOf(content2Ancestor);
+      if (index1 < 0 || index2 < 0) {
+        // one of them must be anonymous; we can't determine the order
+        return 0;
+      }
+
+      return index1 - index2;
+    }
+  }
+}
+
+// static
+nsIFrame* nsLayoutUtils::GetLastSibling(nsIFrame* aFrame) {
+  if (!aFrame) {
+    return nsnull;
+  }
+
+  nsIFrame* next;
+  while ((next = aFrame->GetNextSibling()) != nsnull) {
+    aFrame = next;
+  }
+  return aFrame;
+}
+
+// static
+nsIView*
+nsLayoutUtils::FindSiblingViewFor(nsIView* aParentView, nsIFrame* aFrame) {
+  nsIFrame* parentViewFrame = NS_STATIC_CAST(nsIFrame*, aParentView->GetClientData());
+  nsIContent* parentViewContent = parentViewFrame ? parentViewFrame->GetContent() : nsnull;
+  for (nsIView* insertBefore = aParentView->GetFirstChild(); insertBefore;
+       insertBefore = insertBefore->GetNextSibling()) {
+    nsIFrame* f = NS_STATIC_CAST(nsIFrame*, insertBefore->GetClientData());
+    if (!f) {
+      // this view could be some anonymous view attached to a meaningful parent
+      for (nsIView* searchView = insertBefore->GetParent(); searchView;
+           searchView = searchView->GetParent()) {
+        f = NS_STATIC_CAST(nsIFrame*, searchView->GetClientData());
+        if (f) {
+          break;
+        }
+      }
+      NS_ASSERTION(f, "Can't find a frame anywhere!");
+    }
+    if (f && CompareTreePosition(aFrame->GetContent(),
+                                 f->GetContent(), parentViewContent) > 0) {
+      // aFrame's content is after f's content, so put our view before f's view
+      return insertBefore;
+    }
+  }
+  return nsnull;
+}

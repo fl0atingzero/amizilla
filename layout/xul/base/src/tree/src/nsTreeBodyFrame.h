@@ -23,7 +23,7 @@
  *
  * Contributor(s):
  *  Dean Tessman <dean_tessman@hotmail.com>
- *  Brian Ryner <bryner@netscape.com>
+ *  Brian Ryner <bryner@brianryner.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or 
@@ -408,6 +408,9 @@ protected:
   // Update the curpos of the scrollbar.
   void UpdateScrollbar();
 
+  // Update the maxpos of the scrollbar.
+  void InvalidateScrollbar();
+
   // Check vertical overflow.
   nsresult CheckVerticalOverflow();
 
@@ -526,8 +529,6 @@ protected: // Data Members
 
   PRPackedBool mVerticalOverflow;
 
-  PRInt16 mUpdateBatchNest;
-
   // A guard that prevents us from recursive painting.
   PRPackedBool mImageGuard;
 
@@ -550,6 +551,9 @@ protected: // Data Members
   // A value array used to keep track of all spring loaded folders.
   nsValueArray mValueArray;
 
-  PRInt32 mCountBeforeUpdate;
+  PRInt32 mUpdateBatchNest;
+
+  // Cached row count.
+  PRInt32 mRowCount;
 
 }; // class nsTreeBodyFrame

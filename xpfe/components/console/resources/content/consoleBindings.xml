@@ -75,8 +75,8 @@
             observe : function(aObject) { this.console.appendItem(aObject); }
           };
           
-          this.mConsoleRowBox = this.getAnonElByAttr("role", "console-rows");
-          this.mStrBundle = this.getAnonElByAttr("role", "string-bundle");
+          this.mConsoleRowBox = document.getAnonymousElementByAttribute(this, "role", "console-rows");
+          this.mStrBundle = document.getAnonymousElementByAttribute(this, "role", "string-bundle");
           
           try {
             var isupports = Components.classes['@mozilla.org/consoleservice;1'].getService();
@@ -248,26 +248,6 @@
           --this.mCount;
         ]]></body>
       </method>
-            
-      <!-- UTILITY FUNCTIONS -->
-      
-      <!-- We need this method only because document.getAnonymousElementByAttribute 
-          is crashing (as of 2/26/2001) -->
-      <method name="getAnonElByAttr">
-        <parameter name="aAttr"/>
-        <parameter name="aVal"/>
-        <body><![CDATA[
-          var kids = document.getAnonymousNodes(this);
-          for (var i = 0; i < kids.length; ++i) {
-            if (kids[i].getAttribute(aAttr) == aVal)
-              return kids[i];
-            var kids2 = kids[i].getElementsByAttribute(aAttr, aVal);
-            if (kids2.length > 0)
-              return kids2[0];
-          }
-          return null;
-        ]]></body>
-      </method>
 
       <method name="repeatChar">
         <parameter name="aChar"/>
@@ -310,7 +290,7 @@
         <xul:vbox class="console-row-content" xbl:inherits="selected" flex="1">
           <xul:box class="console-row-msg" align="start">
             <xul:label class="label" xbl:inherits="value=typetext"/>
-            <xul:description class="console-error-msg" xbl:inherits="value=msg" flex="1"/>
+            <xul:description class="console-error-msg" xbl:inherits="xbl:text=msg" flex="1"/>
           </xul:box>
           <xul:box class="console-row-file" xbl:inherits="hidden=hideSource">
             <xul:label class="label" value="&errFile.label;"/>
@@ -320,7 +300,7 @@
             <xul:label class="label" xbl:inherits="value=line" flex="1"/>
           </xul:box>
           <xul:vbox class="console-row-code" xbl:inherits="selected,hidden=hideCode">
-            <xul:label class="monospace console-code" xbl:inherits="value=code"/>
+            <xul:label class="monospace console-code" xbl:inherits="value=code" crop="end"/>
             <xul:box xbl:inherits="hidden=hideCaret">
               <xul:label class="monospace console-dots" xbl:inherits="value=errorDots"/>
               <xul:label class="monospace console-caret" xbl:inherits="value=errorCaret"/>
@@ -368,7 +348,7 @@
         </xul:box>
         <xul:vbox class="console-row-content" xbl:inherits="selected" flex="1">
           <xul:vbox class="console-row-msg" flex="1">
-            <xul:description class="console-msg-text" xbl:inherits="value=msg" flex="1"/>
+            <xul:description class="console-msg-text" xbl:inherits="xbl:text=msg"/>
           </xul:vbox>
         </xul:vbox>
       </xul:box>
@@ -394,7 +374,7 @@
           var line = getAttribute("line");  
           window.openDialog(
             "chrome://navigator/content/viewSource.xul", "_blank", 
-            "scrollbars,resizable,chrome,dialog=no", url, null, null, line);
+            "all,dialog=no", url, null, null, line);
       ]]></handler>
     </handlers>
   </binding>

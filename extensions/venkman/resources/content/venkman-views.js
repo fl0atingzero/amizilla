@@ -156,7 +156,8 @@ function syncTreeView (treeContent, treeView, cb)
 
     if (!treeView)
     {
-        if (treeContent._listenersInstalled)
+        if ("_listenersInstalled" in treeContent &&
+            treeContent._listenersInstalled)
         {
             treeContent._listenersInstalled = false;
         
@@ -166,7 +167,8 @@ function syncTreeView (treeContent, treeView, cb)
             treeContent.removeEventListener("blur", onblur, false);
         }
     }
-    else if (!treeContent._listenersInstalled)
+    else if (!("_listenersInstalled" in treeContent) ||
+             !treeContent._listenersInstalled)
     {
         try
         {
@@ -271,7 +273,7 @@ function initContextMenu (document, id)
 console.viewDragProxy = new Object();
 
 console.viewDragProxy.onDragStart =
-Prophylactic(console.viewProxyTitle, vpxy_dragstart);
+Prophylactic(console.viewDragProxy, vpxy_dragstart);
 function vpxy_dragstart (event, transferData, action)
 {
     console.viewManager.onDragStart (event, transferData, action);
@@ -314,7 +316,7 @@ console.views = new Object();
 
 /*******************************************************************************
  * Breakpoints View
- *******************************************************************************/
+ ******************************************************************************/
 
 console.views.breaks = new XULTreeView();
 
@@ -500,7 +502,7 @@ function bv_cellprops (index, colID, properties)
 
 /*******************************************************************************
  * Locals View
- *******************************************************************************/
+ ******************************************************************************/
 
 console.views.locals = new XULTreeView();
 
@@ -518,12 +520,18 @@ function lv_init ()
     
     console.prefManager.addPrefs(prefs);
 
+    this.cmdary =
+        [
+         ["copy-qual-name", cmdCopyQualName, 0]
+        ];
+
     console.menuSpecs["context:locals"] = {
         getContext: this.getContext,
         items:
         [
          ["change-value", {enabledif: "cx.parentValue"}],
          ["watch-expr"],
+         ["copy-qual-name", {enabledif: "has('expression')"}],
          ["-"],
          ["set-eval-obj", {type: "checkbox",
                            checkedif: "has('jsdValue') && " +
@@ -555,6 +563,17 @@ function lv_init ()
     this.jsdFrame = null;
     this.savedStates = new Object();
     this.stateTags = new Array();
+}
+
+function cmdCopyQualName (e)
+{
+    const CLIPBOARD_CTRID = "@mozilla.org/widget/clipboardhelper;1";
+    const nsIClipboardHelper = Components.interfaces.nsIClipboardHelper;
+
+    var clipboardHelper =
+        Components.classes[CLIPBOARD_CTRID].getService(nsIClipboardHelper);
+
+    clipboardHelper.copyString(e.expression);
 }
 
 console.views.locals.clear =
@@ -826,7 +845,7 @@ function lv_refresh()
 
 /*******************************************************************************
  * Scripts View
- *******************************************************************************/
+ ******************************************************************************/
 
 console.views.scripts = new XULTreeView ();
 
@@ -868,6 +887,7 @@ function scv_init ()
         [
          ["find-scriptinstance", {visibleif: "!has('scriptWrapper')"}],
          ["find-script",    {visibleif: "has('scriptWrapper')"}],
+         ["set-break"],
          ["clear-instance", {visibleif: "!has('scriptWrapper')"}],
          ["clear-script",   {visibleif: "has('scriptWrapper')",
                              enabledif: "cx.scriptWrapper.breakpointCount"}],
@@ -1106,7 +1126,7 @@ console.views.scripts.hooks["hook-script-instance-sealed"] =
 function scv_hookScriptInstanceSealed (e)
 {
     if (!e.scriptInstance.url ||
-        e.scriptInstance.url.search (/^x-jsd/) == 0)
+        e.scriptInstance.url.search (/^(x-jsd|javascript)/) == 0)
     {
         return;
     }
@@ -1317,14 +1337,14 @@ function scv_getcx(cx)
         {
             if (rec instanceof ScriptInstanceRecord)
             {
-                cx.url = rec.url;
+                cx.urlPattern = cx.url = rec.url;
                 cx.scriptInstance = rec.scriptInstance;
             }
             else if (rec instanceof ScriptRecord)
             {
                 cx.scriptWrapper = rec.scriptWrapper;
                 cx.scriptInstance = rec.scriptWrapper.scriptInstance;
-                cx.url = cx.scriptInstance.url;
+                cx.urlPattern = cx.url = cx.scriptInstance.url;
                 cx.lineNumber = rec.baseLineNumber;
             }
         }
@@ -1350,7 +1370,7 @@ function scv_getcx(cx)
 
 /*******************************************************************************
  * Session View
- *******************************************************************************/
+ ******************************************************************************/
 
 console.views.session = new Object();
 
@@ -1414,6 +1434,7 @@ function ss_init ()
          [">popup:emode"],
          [">popup:tmode"],
          ["-"],
+         ["clear-session"],
          [">session:colors"]
         ]
     };
@@ -1502,6 +1523,16 @@ function cmdSessionCSS (e)
 
 console.views.session.hooks = new Object();
 
+console.views.session.hooks["clear-session"] =
+function ss_clear(e)
+{
+    var sessionView = console.views.session;
+    sessionView.outputTBody = new htmlTBody({ id: "session-output-tbody" });
+    sessionView.messageCount = 0;
+    if (sessionView.currentContent)
+        sessionView.syncDisplayFrame();
+}
+
 console.views.session.hooks["focus-input"] =
 function ss_hookFocus(e)
 {
@@ -1521,7 +1552,8 @@ function ss_setThisObj (e)
     {
         if (console.currentEvalObject.script)
         {
-            urlFile = getFileFromPath(console.currentEvalObject.script.fileName);
+            urlFile = 
+                getFileFromPath(console.currentEvalObject.script.fileName);
             var tag = console.currentEvalObject.script.tag;
             if (tag in console.scriptWrappers)
                 functionName = console.scriptWrappers[tag].functionName;
@@ -1597,7 +1629,8 @@ function ss_hookDisplay (e)
     var msgData = htmlTD();
     setAttribs(msgData, "msg-data");
     if (typeof message == "string")
-        msgData.appendChild(console.views.session.stringToDOM(message, msgtype));
+        msgData.appendChild(console.views.session.stringToDOM(message,
+                                                              msgtype));
     else
         msgData.appendChild(message);
 
@@ -1788,6 +1821,7 @@ function ss_slkeypress (e)
             break;
 
         case 38: /* up */
+            e.preventDefault()
             if (this.lastHistoryReferenced == -2)
             {
                 this.lastHistoryReferenced = -1;
@@ -1802,6 +1836,7 @@ function ss_slkeypress (e)
             break;
 
         case 40: /* down */
+            e.preventDefault()
             if (this.lastHistoryReferenced > 0)
                 e.target.value =
                     this.inputHistory[--this.lastHistoryReferenced];
@@ -1934,7 +1969,7 @@ function ss_tabcomplete (e)
 
 /*******************************************************************************
  * Stack View
- *******************************************************************************/
+ ******************************************************************************/
 
 console.views.stack = new XULTreeView();
 
@@ -1962,6 +1997,9 @@ function skv_init()
         [
          ["find-script"],
          ["copy-frames"],
+         ["-"],
+         ["set-break"],
+         ["clear-script", {enabledif: "cx.scriptWrapper.breakpointCount"}],
          ["-"],
          ["debug-script", {type: "checkbox", checkedif: debugIf}],
          ["profile-script", {type: "checkbox", checkedif: profileIf}],
@@ -2099,6 +2137,10 @@ function sv_getcx(cx)
     
     function recordContextGetter (cx, rec, i)
     {
+        var line;
+        if (rec.scriptWrapper.jsdScript.isValid)
+            line = rec.scriptWrapper.jsdScript.baseLineNumber
+
         if (i == 0)
         {
             cx.jsdFrame = rec.jsdFrame;
@@ -2107,8 +2149,8 @@ function sv_getcx(cx)
             {
                 cx.scriptWrapper = rec.scriptWrapper;
                 cx.scriptInstance = rec.scriptWrapper.scriptInstance;
-                cx.url = cx.scriptInstance.url;
-                cx.lineNumber = rec.scriptWrapper.baseLineNumber;
+                cx.urlPattern = cx.url = cx.scriptInstance.url;
+                cx.lineNumber = line;
             }
         }
         else
@@ -2120,7 +2162,7 @@ function sv_getcx(cx)
                 cx.scriptWrapperList.push (rec.scriptWrapper);
                 cx.scriptInstanceList.push(rec.scriptWrapper.scriptInstance);
                 cx.urlList.push (rec.scriptWrapper.scriptInstance.url);
-                cx.lineNumberList.push (rec.scriptWrapper.baseLineNumber);
+                cx.lineNumberList.push(line);
             }
         }
         return cx;
@@ -2274,7 +2316,7 @@ function cmdReloadTab (e)
     const WINDOW = Components.interfaces.nsIWebProgress.NOTIFY_STATE_WINDOW;
     
     if (console.views.source2.sourceTabList.length == 0)
-        return
+        return;
 
     var source2View = console.views.source2;
     
@@ -2309,7 +2351,7 @@ function cmdSaveTab (e)
     {
         e.index = source2View.tabs.selectedIndex;
         if (!(e.index in source2View.sourceTabList))
-            return;
+            return null;
     }
     else if (!source2View.tabs || e.index < 0 ||
              e.index > source2View.sourceTabList.length - 1)
@@ -2936,10 +2978,11 @@ function s2v_createframe (sourceTab, index, raiseFlag)
     sourceTab.tab = tab;
 
     var tabPanel = document.createElement("tabpanel");
-    tabPanel.setAttribute ("flex", "1");
     var iframe = document.createElement("browser");
     iframe.setAttribute ("flex", "1");
     iframe.setAttribute ("context", "context:source2");
+    iframe.setAttribute ("disablehistory", "true");
+    iframe.setAttribute ("disablesecurity", "true");
     iframe.setAttribute ("type", "content");
     iframe.setAttribute ("onclick",
                          "console.views.source2.onSourceClick(event);");
@@ -3448,10 +3491,8 @@ function sv_init()
 {
     this.savedState = new Object();
 
-    var prefs =
-        [
-         ["sourceView.enableMenuItem", false]
-        ];
+    console.prefManager.addPref("sourceView.enableMenuItem", false);    
+    this.enableMenuItem = console.prefs["sourceView.enableMenuItem"];
 
     console.menuSpecs["context:source"] = {
         getContext: this.getContext,
@@ -3481,8 +3522,6 @@ function sv_init()
     };
     
     this.caption = MSG_VIEW_SOURCE;
-    this.enableMenuItem = console.prefs["sourceView.enableMenuItem"];
-
     var atomsvc = console.atomService;
 
     this.atomCurrent        = atomsvc.getAtom("current-line");

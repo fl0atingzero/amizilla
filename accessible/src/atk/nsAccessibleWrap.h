@@ -80,7 +80,9 @@ public:
     AtkObject * GetAtkObject(void);
     MaiInterface *GetMaiInterface(PRInt16 aIfaceType);
 
-    static void TranslateStates(PRUint32 aAccState,
+    PRBool IsValidObject();
+
+    static void TranslateStates(PRUint32 aState,
                                 void *aAtkStateSet);
 protected:
     AtkObject *mMaiAtkObject;

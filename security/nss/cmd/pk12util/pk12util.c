@@ -63,7 +63,7 @@ Usage(char *progName)
 }
 
 static PRBool
-p12u_OpenExportFile(p12uContext *p12cxt, PRBool fileRead)
+p12u_OpenFile(p12uContext *p12cxt, PRBool fileRead)
 {
     if(!p12cxt || !p12cxt->filename) {
 	return PR_FALSE;
@@ -80,7 +80,6 @@ p12u_OpenExportFile(p12uContext *p12cxt, PRBool fileRead)
 
     if(!p12cxt->file) {
 	p12cxt->error = PR_TRUE;
-	PR_SetError(SEC_ERROR_NO_MEMORY, 0);
 	return PR_FALSE;
     }
 
@@ -88,41 +87,37 @@ p12u_OpenExportFile(p12uContext *p12cxt, PRBool fileRead)
 }
 
 static void
-p12u_DestroyExportFileInfo(p12uContext **exp_ptr, PRBool removeFile)
+p12u_DestroyContext(p12uContext **ppCtx, PRBool removeFile)
 {
-    if(!exp_ptr || !(*exp_ptr)) {
+    if(!ppCtx || !(*ppCtx)) {
 	return;
     }
 
-    if((*exp_ptr)->file != NULL) {
-	PR_Close((*exp_ptr)->file);
+    if((*ppCtx)->file != NULL) {
+	PR_Close((*ppCtx)->file);
     }
 
-    if((*exp_ptr)->filename != NULL) {
+    if((*ppCtx)->filename != NULL) {
 	if(removeFile) {
-	    PR_Delete((*exp_ptr)->filename);
+	    PR_Delete((*ppCtx)->filename);
 	}
-	PR_Free((*exp_ptr)->filename);
+	PR_Free((*ppCtx)->filename);
     }
 
-    PR_Free(*exp_ptr);
-    *exp_ptr = NULL;
+    PR_Free(*ppCtx);
+    *ppCtx = NULL;
 }
 
 static p12uContext *
-p12u_InitFile(PRBool fileImport, char *filename)
+p12u_InitContext(PRBool fileImport, char *filename)
 {
     p12uContext *p12cxt;
     PRBool fileExist;
 
-    if(fileImport)
-	fileExist = PR_TRUE;
-    else
-	fileExist = PR_FALSE;
+    fileExist = fileImport;
 
-    p12cxt = (p12uContext *)PORT_ZAlloc(sizeof(p12uContext));
+    p12cxt = PORT_ZNew(p12uContext);
     if(!p12cxt) {
-	PR_SetError(SEC_ERROR_NO_MEMORY, 0);
 	return NULL;
     }
 
@@ -130,9 +125,8 @@ p12u_InitFile(PRBool fileImport, char *filename)
     p12cxt->errorValue = 0;
     p12cxt->filename = strdup(filename);
 
-    if(!p12u_OpenExportFile(p12cxt, fileImport)) {
-	PR_SetError(p12cxt->errorValue, 0);
-	p12u_DestroyExportFileInfo(&p12cxt, PR_FALSE);
+    if(!p12u_OpenFile(p12cxt, fileImport)) {
+	p12u_DestroyContext(&p12cxt, PR_FALSE);
 	return NULL;
     }
 
@@ -206,9 +200,8 @@ p12u_ucs2_ascii_conversion_function(PRBool	   toUnicode,
     SECItem it = { 0 };
     SECItem *dup = NULL;
     PRBool ret;
-    /* If converting Unicode to ASCII, swap bytes before conversion
-     * as neccessary.
-     */
+
+#ifdef DEBUG_CONVERSION
     if (pk12_debugging) {
 	int i;
 	printf("Converted from:\n");
@@ -218,9 +211,13 @@ p12u_ucs2_ascii_conversion_function(PRBool	   toUnicode,
 	}
 	printf("\n");
     }
+#endif
     it.data = inBuf;
     it.len = inBufLen;
     dup = SECITEM_DupItem(&it);
+    /* If converting Unicode to ASCII, swap bytes before conversion
+     * as neccessary.
+     */
     if (!toUnicode && swapBytes) {
 	if (p12u_SwapUnicodeBytes(dup) != SECSuccess) {
 	    SECITEM_ZfreeItem(dup, PR_TRUE);
@@ -232,22 +229,8 @@ p12u_ucs2_ascii_conversion_function(PRBool	   toUnicode,
                                    outBuf, maxOutBufLen, outBufLen);
     if (dup)
 	SECITEM_ZfreeItem(dup, PR_TRUE);
-    /* If converting ASCII to Unicode, swap bytes before returning
-     * as neccessary.
-     */
-#if 0
-    if (toUnicode && swapBytes) {
-	it.data = outBuf;
-	it.len = *outBufLen;
-	dup = SECITEM_DupItem(&it);
-	if (p12u_SwapUnicodeBytes(dup) != SECSuccess) {
-	    SECITEM_ZfreeItem(dup, PR_TRUE);
-	    return PR_FALSE;
-	}
-	memcpy(outBuf, dup->data, *outBufLen);
-	SECITEM_ZfreeItem(dup, PR_TRUE);
-    }
-#endif
+
+#ifdef DEBUG_CONVERSION
     if (pk12_debugging) {
 	int i;
 	printf("Converted to:\n");
@@ -257,6 +240,7 @@ p12u_ucs2_ascii_conversion_function(PRBool	   toUnicode,
 	}
 	printf("\n");
     }
+#endif
     return ret;
 }
 
@@ -364,7 +348,6 @@ P12U_ImportPKCS12Object(char *in_file, PK11SlotInfo *slot,
 			secuPWData *slotPw, secuPWData *p12FilePw)
 {
     p12uContext *p12cxt = NULL;
-    unsigned char inBuf[PKCS12_IN_BUFFER_SIZE];
     SEC_PKCS12DecoderContext *p12dcx = NULL;
     SECItem *pwitem = NULL, uniPwitem = { 0 };
     SECItem p12file = { 0 };
@@ -384,9 +367,9 @@ P12U_ImportPKCS12Object(char *in_file, PK11SlotInfo *slot,
 	goto loser;
     }
 
-    p12cxt = p12u_InitFile(PR_TRUE, in_file);
+    p12cxt = p12u_InitContext(PR_TRUE, in_file);
     if(!p12cxt) {
-	SECU_PrintError(progName,"Initialization failed: %s", in_file);
+	SECU_PrintError(progName,"File Open failed: %s", in_file);
 	pk12uErrno = PK12UERR_INIT_FILE;
 	goto loser;
     }
@@ -481,6 +464,7 @@ P12U_ImportPKCS12Object(char *in_file, PK11SlotInfo *slot,
     p12cxt->file = NULL;
     /* PK11_FreeSlot(slot); */
 
+    fprintf(stdout, "%s: PKCS12 IMPORT SUCCESSFUL\n", progName);
     rv = SECSuccess;
 
 loser:
@@ -493,7 +477,7 @@ loser:
     if (p12dcx) {
 	SEC_PKCS12DecoderFinish(p12dcx);
     }
-    p12u_DestroyExportFileInfo(&p12cxt, PR_FALSE);
+    p12u_DestroyContext(&p12cxt, PR_FALSE);
 
     if (uniPwitem.data) {
 	SECITEM_ZfreeItem(&uniPwitem, PR_FALSE);
@@ -590,7 +574,7 @@ P12U_ExportPKCS12Object(char *nn, char *outfile, PK11SlotInfo *inSlot,
 	goto loser;
     }
 
-    p12cxt = p12u_InitFile(PR_FALSE, outfile); 
+    p12cxt = p12u_InitContext(PR_FALSE, outfile); 
     if(!p12cxt) {
 	SECU_PrintError(progName,"Initialization failed: %s", outfile);
 	pk12uErrno = PK12UERR_INIT_FILE;
@@ -670,7 +654,7 @@ P12U_ExportPKCS12Object(char *nn, char *outfile, PK11SlotInfo *inSlot,
         goto loser;
     }
 
-    p12u_DestroyExportFileInfo(&p12cxt, PR_FALSE);
+    p12u_DestroyContext(&p12cxt, PR_FALSE);
     SECITEM_ZfreeItem(pwitem, PR_TRUE);
     fprintf(stdout, "%s: PKCS12 EXPORT SUCCESSFUL\n", progName);
     SEC_PKCS12DestroyExportContext(p12ecx);
@@ -691,7 +675,7 @@ loser:
     if (p12FilePw)
         PR_Free(p12FilePw->data);
 
-    p12u_DestroyExportFileInfo(&p12cxt, PR_TRUE);
+    p12u_DestroyContext(&p12cxt, PR_TRUE);
     if(pwitem) {
         SECITEM_ZfreeItem(pwitem, PR_TRUE);
     }
@@ -791,8 +775,8 @@ main(int argc, char **argv)
 
     pk12_debugging = pk12util.options[opt_Debug].activated;
 
-    if (pk12util.options[opt_Import].activated &&
-	pk12util.options[opt_Export].activated) {
+    if (pk12util.options[opt_Import].activated +
+	pk12util.options[opt_Export].activated != 1) {
 	Usage(progName);
     }
 
@@ -861,7 +845,7 @@ main(int argc, char **argv)
 done:
     if (slot) PK11_FreeSlot(slot);
     if (NSS_Shutdown() != SECSuccess) {
-	exit(1);
+	pk12uErrno = 1;
     }
-    exit(pk12uErrno);
+    return pk12uErrno;
 }

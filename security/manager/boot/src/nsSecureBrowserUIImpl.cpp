@@ -23,7 +23,7 @@
  *   Hubbie Shaw
  *   Doug Turner <dougt@netscape.com>
  *   Stuart Parmenter <pavlov@netscape.com>
- *   Brian Ryner <bryner@netscape.com>
+ *   Brian Ryner <bryner@brianryner.com>
  *   Terry Hayes <thayes@netscape.com>
  *   Kai Engert <kaie@netscape.com>
  *
@@ -106,12 +106,13 @@ RequestMapMatchEntry(PLDHashTable *table, const PLDHashEntryHdr *hdr,
   return entry->r == key;
 }
 
-PR_STATIC_CALLBACK(void)
+PR_STATIC_CALLBACK(PRBool)
 RequestMapInitEntry(PLDHashTable *table, PLDHashEntryHdr *hdr,
                      const void *key)
 {
   RequestHashEntry *entry = NS_STATIC_CAST(RequestHashEntry*, hdr);
   entry->r = (void*)key;
+  return PR_TRUE;
 }
 
 static PLDHashTableOps gMapOps = {
@@ -162,7 +163,7 @@ NS_IMPL_ISUPPORTS6(nsSecureBrowserUIImpl,
                    nsIFormSubmitObserver,
                    nsIObserver,
                    nsISupportsWeakReference,
-                   nsISSLStatusProvider);
+                   nsISSLStatusProvider)
 
 
 NS_IMETHODIMP
@@ -192,11 +193,7 @@ nsSecureBrowserUIImpl::Init(nsIDOMWindow *window)
   nsCOMPtr<nsIScriptGlobalObject> sgo(do_QueryInterface(mWindow));
   if (!sgo) return NS_ERROR_FAILURE;
   
-  nsCOMPtr<nsIDocShell> docShell;
-  sgo->GetDocShell(getter_AddRefs(docShell));
-  if (!docShell) return NS_ERROR_FAILURE;
-  
-  nsCOMPtr<nsIWebProgress> wp(do_GetInterface(docShell));
+  nsCOMPtr<nsIWebProgress> wp(do_GetInterface(sgo->GetDocShell()));
   if (!wp) return NS_ERROR_FAILURE;
   /* end GetWebProgress */
   
@@ -325,16 +322,12 @@ nsSecureBrowserUIImpl::Notify(nsIContent* formNode,
   if (!window || !actionURL || !formNode)
     return NS_OK;
   
-  nsCOMPtr<nsIDocument> document;
-  formNode->GetDocument(getter_AddRefs(document));
+  nsCOMPtr<nsIDocument> document = formNode->GetDocument();
   if (!document) return NS_OK;
 
-  nsCOMPtr<nsIURI> formURL;
-  document->GetBaseURL(getter_AddRefs(formURL));
-  
-  nsCOMPtr<nsIScriptGlobalObject> globalObject;
-  document->GetScriptGlobalObject(getter_AddRefs(globalObject));
-  nsCOMPtr<nsIDOMWindow> postingWindow(do_QueryInterface(globalObject));
+  nsIURI *formURL = document->GetBaseURI();
+
+  nsCOMPtr<nsIDOMWindow> postingWindow(do_QueryInterface(document->GetScriptGlobalObject()));
   
   PRBool isChild;
   IsChildOfDomWindow(mWindow, postingWindow, &isChild);

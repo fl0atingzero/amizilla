@@ -104,11 +104,10 @@
 @end
 
 
-NS_IMPL_ISUPPORTS2(CHClickListener, nsIDOMMouseListener, nsIDOMEventListener);
+NS_IMPL_ISUPPORTS2(CHClickListener, nsIDOMMouseListener, nsIDOMEventListener)
 
 CHClickListener::CHClickListener()
 {
-  NS_INIT_ISUPPORTS();
 }
 
 CHClickListener::~CHClickListener()
@@ -196,8 +195,7 @@ CHClickListener::MouseDown(nsIDOMEvent* aEvent)
     PRInt32 yDelta = top + height - clientY;
 
     nsCOMPtr<nsIContent> selContent = do_QueryInterface(sel);
-    nsCOMPtr<nsIDocument> doc;
-    selContent->GetDocument(*getter_AddRefs(doc));
+    nsCOMPtr<nsIDocument> doc = selContent->GetDocument();
 
     // I'm going to assume that if we got a mousedown for a content node,
     // it's actually in a document.

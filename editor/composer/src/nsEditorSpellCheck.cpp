@@ -40,7 +40,6 @@
 
 #include "nsEditorSpellCheck.h"
 
-#include "nsTextServicesCID.h"
 #include "nsITextServicesDocument.h"
 #include "nsISpellChecker.h"
 #include "nsISelection.h"
@@ -56,11 +55,9 @@
 #include "nsIChromeRegistry.h"
 #include "nsString.h"
 #include "nsReadableUtils.h"
-#include "nsComposeTxtSrvFilter.h"
+#include "nsITextServicesFilter.h"
 
-static NS_DEFINE_CID(kCTextServicesDocumentCID, NS_TEXTSERVICESDOCUMENT_CID);
-
-NS_IMPL_ISUPPORTS1(nsEditorSpellCheck, nsIEditorSpellCheck);
+NS_IMPL_ISUPPORTS1(nsEditorSpellCheck, nsIEditorSpellCheck)
 
 nsEditorSpellCheck::nsEditorSpellCheck()
   : mSuggestedWordIndex(0)
@@ -81,11 +78,8 @@ nsEditorSpellCheck::InitSpellChecker(nsIEditor* aEditor, PRBool aEnableSelection
   nsresult rv;
 
   // We can spell check with any editor type
-  nsCOMPtr<nsITextServicesDocument>tsDoc;
-  rv = nsComponentManager::CreateInstance(kCTextServicesDocumentCID,
-                                          nsnull,
-                                          NS_GET_IID(nsITextServicesDocument),
-                                          (void **)getter_AddRefs(tsDoc));
+  nsCOMPtr<nsITextServicesDocument>tsDoc =
+     do_CreateInstance("@mozilla.org/textservices/textservicesdocument;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!tsDoc)
@@ -186,7 +180,7 @@ nsEditorSpellCheck::InitSpellChecker(nsIEditor* aEditor, PRBool aEnableSelection
       nsCAutoString utf8DictName;
       rv = packageRegistry->GetSelectedLocale(NS_LITERAL_CSTRING("navigator"),
                                               utf8DictName);
-      dictName = NS_ConvertUTF8toUCS2(utf8DictName);
+      CopyUTF8toUTF16(utf8DictName, dictName);
     }
   }
 
@@ -212,7 +206,7 @@ nsEditorSpellCheck::GetNextMisspelledWord(PRUnichar **aNextMisspelledWord)
   nsAutoString nextMisspelledWord;
   
   DeleteSuggestedWordList();
-  nsresult rv = mSpellChecker->NextMisspelledWord(&nextMisspelledWord,
+  nsresult rv = mSpellChecker->NextMisspelledWord(nextMisspelledWord,
                                                   &mSuggestedWordList);
 
   *aNextMisspelledWord = ToNewUnicode(nextMisspelledWord);
@@ -229,7 +223,7 @@ nsEditorSpellCheck::GetSuggestedWord(PRUnichar **aSuggestedWord)
     mSuggestedWordIndex++;
   } else {
     // A blank string signals that there are no more strings
-    word.SetLength(0);
+    word.Truncate();
   }
 
   *aSuggestedWord = ToNewUnicode(word);
@@ -238,28 +232,26 @@ nsEditorSpellCheck::GetSuggestedWord(PRUnichar **aSuggestedWord)
 
 NS_IMETHODIMP    
 nsEditorSpellCheck::CheckCurrentWord(const PRUnichar *aSuggestedWord,
-                                       PRBool *aIsMisspelled)
+                                     PRBool *aIsMisspelled)
 {
   if (!mSpellChecker)
     return NS_NOINTERFACE;
 
-  nsAutoString suggestedWord(aSuggestedWord);
   DeleteSuggestedWordList();
-  return mSpellChecker->CheckWord(&suggestedWord, aIsMisspelled,
-                                    &mSuggestedWordList);
+  return mSpellChecker->CheckWord(nsDependentString(aSuggestedWord),
+                                  aIsMisspelled, &mSuggestedWordList);
 }
 
 NS_IMETHODIMP    
 nsEditorSpellCheck::ReplaceWord(const PRUnichar *aMisspelledWord,
-                                  const PRUnichar *aReplaceWord,
-                                  PRBool allOccurrences)
+                                const PRUnichar *aReplaceWord,
+                                PRBool           allOccurrences)
 {
   if (!mSpellChecker)
     return NS_NOINTERFACE;
 
-  nsAutoString misspelledWord(aMisspelledWord);
-  nsAutoString replaceWord(aReplaceWord);
-  return mSpellChecker->Replace(&misspelledWord, &replaceWord, allOccurrences);
+  return mSpellChecker->Replace(nsDependentString(aMisspelledWord),
+                                nsDependentString(aReplaceWord), allOccurrences);
 }
 
 NS_IMETHODIMP    
@@ -268,8 +260,7 @@ nsEditorSpellCheck::IgnoreWordAllOccurrences(const PRUnichar *aWord)
   if (!mSpellChecker)
     return NS_NOINTERFACE;
 
-  nsAutoString word(aWord);
-  return mSpellChecker->IgnoreAll(&word);
+  return mSpellChecker->IgnoreAll(nsDependentString(aWord));
 }
 
 NS_IMETHODIMP    
@@ -294,7 +285,7 @@ nsEditorSpellCheck::GetPersonalDictionaryWord(PRUnichar **aDictionaryWord)
     mDictionaryIndex++;
   } else {
     // A blank string signals that there are no more strings
-    word.SetLength(0);
+    word.Truncate();
   }
 
   *aDictionaryWord = ToNewUnicode(word);
@@ -307,8 +298,7 @@ nsEditorSpellCheck::AddWordToDictionary(const PRUnichar *aWord)
   if (!mSpellChecker)
     return NS_NOINTERFACE;
 
-  nsAutoString word(aWord);
-  return mSpellChecker->AddWordToPersonalDictionary(&word);
+  return mSpellChecker->AddWordToPersonalDictionary(nsDependentString(aWord));
 }
 
 NS_IMETHODIMP    
@@ -317,8 +307,7 @@ nsEditorSpellCheck::RemoveWordFromDictionary(const PRUnichar *aWord)
   if (!mSpellChecker)
     return NS_NOINTERFACE;
 
-  nsAutoString word(aWord);
-  return mSpellChecker->RemoveWordFromPersonalDictionary(&word);
+  return mSpellChecker->RemoveWordFromPersonalDictionary(nsDependentString(aWord));
 }
 
 NS_IMETHODIMP    
@@ -392,7 +381,7 @@ nsEditorSpellCheck::GetCurrentDictionary(PRUnichar **aDictionary)
   *aDictionary = 0;
 
   nsAutoString dictStr;
-  nsresult rv = mSpellChecker->GetCurrentDictionary(&dictStr);
+  nsresult rv = mSpellChecker->GetCurrentDictionary(dictStr);
   NS_ENSURE_SUCCESS(rv, rv);
 
   *aDictionary = ToNewUnicode(dictStr);
@@ -409,8 +398,7 @@ nsEditorSpellCheck::SetCurrentDictionary(const PRUnichar *aDictionary)
   if (!aDictionary)
     return NS_ERROR_NULL_POINTER;
 
-  nsAutoString dictStr(aDictionary);
-  return mSpellChecker->SetCurrentDictionary(&dictStr);
+  return mSpellChecker->SetCurrentDictionary(nsDependentString(aDictionary));
 }
 
 NS_IMETHODIMP    

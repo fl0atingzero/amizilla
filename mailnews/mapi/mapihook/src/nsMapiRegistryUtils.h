@@ -52,7 +52,6 @@ private :
     nsCAutoString m_thisApp ;
     nsAutoString m_brand ;
     nsAutoString m_vendor ;
-    nsAutoString m_versionNo ;
 
     nsCOMPtr<nsIStringBundle> m_mapiStringBundle ;
 
@@ -72,8 +71,6 @@ public :
     const PRUnichar * brandName() ;
     // This returns the vendor name of this application
     const PRUnichar * vendorName();
-    // This returns the version no for this application
-    const PRUnichar * versionNo() ;
     // verifyRestrictedAccess - Returns PR_TRUE if this user only has restricted access
     // to the registry keys we need to modify.
     PRBool verifyRestrictedAccess() ;
@@ -102,6 +99,9 @@ nsresult saveDefaultMailClient();
     // HKEY_LOCAL_MACHINE\\Software\\Mozilla\\Desktop
 nsresult saveUserDefaultMailClient();
 
+    nsresult setMailtoProtocolHandler();
+    nsresult setNewsProtocolHandler();
+
 nsresult CopyMozMapiToWinSysDir();
 nsresult RestoreBackedUpMapiDll();
 
@@ -112,7 +112,6 @@ nsresult RestoreBackedUpMapiDll();
     nsresult MakeMapiStringBundle(nsIStringBundle ** aMapiStringBundle) ;
     // display an error dialog for MAPI messages
     nsresult ShowMapiErrorDialog() ;
-
 } ;
 
 #endif

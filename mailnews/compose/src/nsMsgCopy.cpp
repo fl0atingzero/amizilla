@@ -44,7 +44,7 @@
 #include "nsMsgFolderFlags.h"
 #include "nsIMsgFolder.h"
 #include "nsIMsgAccountManager.h"
-#include "nsIFolder.h"
+#include "nsIMsgFolder.h"
 #include "nsISupportsArray.h"
 #include "nsIMsgIncomingServer.h"
 #include "nsISupports.h"
@@ -56,11 +56,10 @@
 #include "nsMsgComposeStringBundle.h"
 #include "nsMsgCompUtils.h"
 #include "prcmon.h"
-#include "nsImapCore.h"
 #include "nsIMsgImapMailFolder.h"
-#include "nsIImapIncomingServer.h"
 #include "nsIEventQueueService.h"
 #include "nsMsgSimulateError.h"
+#include "nsIMsgWindow.h"
 
 static NS_DEFINE_CID(kRDFServiceCID, NS_RDFSERVICE_CID);
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
@@ -184,7 +183,7 @@ nsMsgCopy::nsMsgCopy()
 
 nsMsgCopy::~nsMsgCopy()
 {
-  PR_FREEIF(mSavePref);
+  PR_Free(mSavePref);
 }
 
 nsresult
@@ -198,7 +197,7 @@ nsMsgCopy::StartCopyOperation(nsIMsgIdentity       *aUserIdentity,
   nsCOMPtr<nsIMsgFolder>  dstFolder;
   PRBool                  isDraft = PR_FALSE;
   PRBool                  waitForUrl = PR_FALSE;
-  nsresult			rv;
+  nsresult                rv;
 
   if (!aMsgSendObj)
     return NS_ERROR_INVALID_ARG;
@@ -222,31 +221,38 @@ nsMsgCopy::StartCopyOperation(nsIMsgIdentity       *aUserIdentity,
   {
     rv = GetDraftsFolder(aUserIdentity, getter_AddRefs(dstFolder), &waitForUrl);
     isDraft = PR_TRUE;
-    if (!dstFolder || NS_FAILED(rv)) {
-	    return NS_MSG_UNABLE_TO_SAVE_DRAFT;
-    } 
+    if (!dstFolder || NS_FAILED(rv))
+      return NS_MSG_UNABLE_TO_SAVE_DRAFT;
   }
   else if (aMode == nsIMsgSend::nsMsgSaveAsTemplate) // SaveAsTemplate (Templates)
   {
     rv = GetTemplatesFolder(aUserIdentity, getter_AddRefs(dstFolder), &waitForUrl);
     isDraft = PR_FALSE;
-    if (!dstFolder || NS_FAILED(rv) || CHECK_SIMULATED_ERROR(SIMULATED_SEND_ERROR_5)) {
+    if (!dstFolder || NS_FAILED(rv) || CHECK_SIMULATED_ERROR(SIMULATED_SEND_ERROR_5))
 	    return NS_MSG_UNABLE_TO_SAVE_TEMPLATE;
-    } 
   }
   else // SaveInSentFolder (Sent) -  nsMsgDeliverNow or nsMsgSendUnsent
   {
     rv = GetSentFolder(aUserIdentity, getter_AddRefs(dstFolder), &waitForUrl);
     isDraft = PR_FALSE;
-    if (!dstFolder || NS_FAILED(rv)) {
-	    return NS_MSG_COULDNT_OPEN_FCC_FOLDER;
-    }
+    if (!dstFolder || NS_FAILED(rv)) 
+      return NS_MSG_COULDNT_OPEN_FCC_FOLDER;
+  }
+
+  nsCOMPtr <nsIMsgWindow> msgWindow;
+
+  if (aMsgSendObj)
+  {
+    nsCOMPtr <nsIMsgProgress> progress;
+    aMsgSendObj->GetProgress(getter_AddRefs(progress));
+    if (progress)
+      progress->GetMsgWindow(getter_AddRefs(msgWindow));
   }
 
   mMode = aMode;
   if (!waitForUrl)
   {
-    rv = DoCopy(aFileSpec, dstFolder, aMsgToReplace, isDraft, nsnull, aMsgSendObj);
+    rv = DoCopy(aFileSpec, dstFolder, aMsgToReplace, isDraft, msgWindow, aMsgSendObj);
   }
   else
   {
@@ -272,9 +278,9 @@ nsMsgCopy::DoCopy(nsIFileSpec *aDiskFile, nsIMsgFolder *dstFolder,
   if ((!aDiskFile) || (!dstFolder))
     return NS_ERROR_INVALID_ARG;
 
-	//Call copyservice with dstFolder, disk file, and txnManager
-	if(NS_SUCCEEDED(rv))
-	{
+  //Call copyservice with dstFolder, disk file, and txnManager
+  if(NS_SUCCEEDED(rv))
+  {
     CopyListener    *tPtr = new CopyListener();
     if (!tPtr)
       return NS_ERROR_OUT_OF_MEMORY;
@@ -327,9 +333,9 @@ nsMsgCopy::DoCopy(nsIFileSpec *aDiskFile, nsIMsgFolder *dstFolder,
         if (eventQueue)
             eventQueue->ProcessPendingEvents();
     }
-	}
+  }
 
-	return rv;
+  return rv;
 }
 
 // nsIUrlListener methods
@@ -388,7 +394,7 @@ nsMsgCopy::CreateIfMissing(nsIMsgFolder **folder, PRBool *waitForUrl)
   nsresult ret = NS_OK;
   if (folder && *folder)
   {
-    nsCOMPtr <nsIFolder> parent;
+    nsCOMPtr <nsIMsgFolder> parent;
     (*folder)->GetParent(getter_AddRefs(parent));
     if (!parent)
     {
@@ -431,12 +437,12 @@ LocateMessageFolder(nsIMsgIdentity   *userIdentity,
   if (!msgFolder) return NS_ERROR_NULL_POINTER;
   *msgFolder = nsnull;
 
-  if (!aFolderURI || !*aFolderURI) {
+  if (!aFolderURI || !*aFolderURI)
     return NS_ERROR_INVALID_ARG;
-  }
 
   // as long as it doesn't start with anyfolder://
-  if (PL_strncasecmp(ANY_SERVER, aFolderURI, strlen(aFolderURI)) != 0) {
+  if (PL_strncasecmp(ANY_SERVER, aFolderURI, strlen(aFolderURI)) != 0)
+  {
     nsCOMPtr<nsIRDFService> rdf(do_GetService(kRDFServiceCID, &rv));
     if (NS_FAILED(rv)) return rv;
 
@@ -454,68 +460,8 @@ LocateMessageFolder(nsIMsgIdentity   *userIdentity,
       nsCOMPtr<nsIMsgIncomingServer> server; 
       //make sure that folder hierarchy is built so that legitimate parent-child relationship is established
       rv = folderResource->GetServer(getter_AddRefs(server));
-#if 0
-      // XXX TODO
-      // JUNK MAIL RELATED
-      // this should work, but I'm not going to turn it on until I test it more
       NS_ENSURE_SUCCESS(rv,rv);
-      return server->GetMsgFolderFromURI(folderResource, aFolderURI, aMsgFolder);
-#else
-      if (server)
-      { 
-        nsCOMPtr<nsIMsgFolder> rootMsgFolder;
-        server->GetRootMsgFolder(getter_AddRefs(rootMsgFolder));
-        if (rootMsgFolder)
-        {
-          nsCOMPtr<nsIImapIncomingServer> imapServer = do_QueryInterface(server);
-          // Make sure an specific IMAP folder has correct personal namespace
-          // See bugzilla bug 90494 (http://bugzilla.mozilla.org/show_bug.cgi?id=90494)
-          PRBool namespacePrefixAdded = PR_FALSE;
-          nsXPIDLCString folderUriWithNamespace;
-          if (imapServer)
-          {
-            imapServer->GetUriWithNamespacePrefixIfNecessary(kPersonalNamespace, aFolderURI, getter_Copies(folderUriWithNamespace));
-            if (!folderUriWithNamespace.IsEmpty())
-            {
-              rv = rootMsgFolder->GetChildWithURI(folderUriWithNamespace, PR_TRUE, PR_FALSE, msgFolder);
-              namespacePrefixAdded = PR_TRUE;
-            }
-            else
-              rv = rootMsgFolder->GetChildWithURI(aFolderURI, PR_TRUE, PR_FALSE, msgFolder);
-          }
-          else
-            rv = rootMsgFolder->GetChildWithURI(aFolderURI, PR_TRUE, PR_TRUE /*caseInsensitive*/, msgFolder);
-            /* we didn't find the folder so we will have to create new one.
-          CreateIfMissing does that provided we pass in a dummy folder */
-          if (!*msgFolder)
-          {
-            if (namespacePrefixAdded)
-            {
-              nsCOMPtr<nsIRDFResource> resource;
-              rv = rdf->GetResource(folderUriWithNamespace, getter_AddRefs(resource));
-              if (NS_FAILED(rv)) return rv;
-              
-              nsCOMPtr <nsIMsgFolder> folderResource;
-              folderResource = do_QueryInterface(resource, &rv);
-              if (NS_FAILED(rv)) return rv;
-              
-              *msgFolder = folderResource;
-              NS_ADDREF(*msgFolder);
-            }
-            else
-            {
-              *msgFolder = folderResource;
-              NS_ADDREF(*msgFolder);
-            }
-          }
-          return rv;
-        }
-        else
-          return NS_MSG_ERROR_FOLDER_MISSING;
-      }
-      else
-        return NS_MSG_ERROR_FOLDER_MISSING;
-#endif
+      return server->GetMsgFolderFromURI(folderResource, aFolderURI, msgFolder);
     }
     else 
     {
@@ -568,13 +514,8 @@ LocateMessageFolder(nsIMsgIdentity   *userIdentity,
       if ( NS_FAILED(rv) || (!serverURI) || !(*serverURI) )
         continue;
       
-      nsCOMPtr <nsIFolder> folder;
-      rv = inServer->GetRootFolder(getter_AddRefs(folder));
-      if (NS_FAILED(rv) || (!folder))
-        continue;
-      
       nsCOMPtr<nsIMsgFolder> rootFolder;
-      rootFolder = do_QueryInterface(folder, &rv);
+      rv = inServer->GetRootFolder(getter_AddRefs(rootFolder));
       
       if(NS_FAILED(rv) || (!rootFolder))
         continue;

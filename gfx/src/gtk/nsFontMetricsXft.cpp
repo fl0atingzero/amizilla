@@ -25,6 +25,8 @@
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *   Brian Stell <bstell@ix.netcom.com>
  *   Morten Nilsen <morten@nilsen.com>
+ *   Jungshik Shin <jshin@mailaps.org>
+ *   Jim Nance <jim_nance@yahoo.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -55,41 +57,141 @@
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
 #include "nsITimelineService.h"
+#include "nsICharsetConverterManager.h"
+#include "nsICharRepresentable.h"
+#include "nsIPersistentProperties2.h"
+#include "nsCompressedCharMap.h"
+#include "nsNetUtil.h"
+#include "nsClassHashtable.h"
+#include "nsAutoBuffer.h"
 
 #include <gdk/gdkx.h>
 #include <freetype/tttables.h>
+#include <freetype/freetype.h>
 
 #define FORCE_PR_LOG
 #include "prlog.h"
 
-// Class nsFontXft is an actual instance of a font.  The
-// |nsFontMetricsXft| class is made up of a collection of these little
+// Abstract class nsFontXft is the base class for nsFontXftUnicode and
+// nsFontXftCustom, either of which is an instance of fonts.  The 
+// |nsFontMetricsXft| class is made up of a collection of these little 
 // fonts, really.
+
+class nsAutoDrawSpecBuffer;
 
 class nsFontXft {
 public:
     nsFontXft(FcPattern *aPattern, FcPattern *aFontName);
-    ~nsFontXft();
+    virtual ~nsFontXft() = 0;
 
     XftFont   *GetXftFont (void);
-    gint       GetWidth32 (FcChar32 aString);
+    virtual nsresult GetTextExtents32 (const FcChar32 *aString, PRUint32 aLen, 
+                                       XGlyphInfo &aGlyphInfo);
+    gint     GetWidth32               (const FcChar32 *aString, PRUint32 aLen);
 
 #ifdef MOZ_MATHML
-    void       GetBoundingMetrics8  (const char *aString, PRUint32 aLength,
-                                     nsBoundingMetrics &aBoundingMetrics);
-    void       GetBoundingMetrics16 (const PRUnichar *aString,
-                                     PRUint32 aLength,
-                                     nsBoundingMetrics &aBoundingMetrics);
+    nsresult GetBoundingMetrics32 (const FcChar32 *aString, 
+                                   PRUint32 aLength,
+                                   nsBoundingMetrics &aBoundingMetrics);
 #endif /* MOZ_MATHML */
 
     PRInt16    GetMaxAscent(void);
     PRInt16    GetMaxDescent(void);
 
+    virtual PRBool     HasChar(PRUint32 aChar) = 0;
+    virtual FT_UInt    CharToGlyphIndex(FcChar32 aChar);
+
+    virtual nsresult   DrawStringSpec(FcChar32* aString, PRUint32 aLen,
+                                      void *aData);
+                                      
     // a reference to the font loaded and information about it.  
     XftFont   *mXftFont;
     FcPattern *mPattern;
     FcPattern *mFontName;
     FcCharSet *mCharset;
+};
+
+class nsFontXftInfo;
+
+// class for regular 'Unicode' fonts that are actually what they claim to be. 
+class nsFontXftUnicode : public nsFontXft {
+public:
+    nsFontXftUnicode(FcPattern *aPattern, FcPattern *aFontName)
+      : nsFontXft(aPattern, aFontName)
+    { }
+
+    virtual ~nsFontXftUnicode();
+
+    virtual PRBool     HasChar (PRUint32 aChar);
+};
+
+// class for custom encoded fonts that pretend to have Unicode cmap.
+// There are two kinds of them: 
+// 1. 'narrow' custom encoded fonts such as  mathematica fonts, 
+// TeX Computer Roman fonts, Symbol font, etc.
+// 2. 'wide' custom  encoded fonts such as 
+// Korean Jamo fonts, non-opentype fonts for Indic scripts.
+//
+// The biggest difference between 'narrow' and 'wide' fonts is that 
+// the result of calling mConverter for 'wide' fonts is a sequence of 
+// 16bit pseudo-Unicode code points.  For 'narrow' fonts, it's 
+// a sequence of 8bit code points. 
+class nsFontXftCustom : public nsFontXft {
+public:
+    nsFontXftCustom(FcPattern* aPattern, 
+                    FcPattern* aFontName, 
+                    nsFontXftInfo* aFontInfo)
+      : nsFontXft(aPattern, aFontName)
+      , mFontInfo(aFontInfo)
+      , mFT_Face(nsnull)
+    { }
+
+    virtual ~nsFontXftCustom();
+
+    virtual PRBool   HasChar            (PRUint32 aChar);
+    virtual FT_UInt  CharToGlyphIndex   (FcChar32 aChar);
+    virtual nsresult GetTextExtents32   (const FcChar32 *aString, 
+                                         PRUint32 aLen, XGlyphInfo &aGlyphInfo);
+    virtual nsresult DrawStringSpec     (FcChar32* aString, PRUint32 aLen,
+                                         void *aData);
+
+private:
+    nsFontXftInfo *mFontInfo; 
+
+    // freetype fontface : used for direct access to glyph indices
+    // in GetWidth32() and DrawStringSpec().
+    FT_Face    mFT_Face;
+    nsresult   SetFT_FaceCharmap (void);
+};
+
+enum nsXftFontType {
+    eFontTypeUnicode,
+    eFontTypeCustom,
+    eFontTypeCustomWide
+};
+
+// a class to hold some essential information about font. 
+// it's shared and cached with 'family name' as hash key.
+class nsFontXftInfo {
+    public:
+    nsFontXftInfo() : mCCMap(nsnull), mConverter(0), 
+                      mFontType(eFontTypeUnicode) 
+                      { }
+
+    ~nsFontXftInfo() {
+        if (mCCMap)
+            FreeCCMap(mCCMap);
+    }
+
+    // Char. coverage map(replacing mCharset in nsFontXft)
+    PRUint16*                   mCCMap;
+    // converter from Unicode to font-specific encoding
+    nsCOMPtr<nsIUnicodeEncoder> mConverter;
+    // Unicode, Custom, CustomWide
+    nsXftFontType               mFontType;
+    // Truetype cmap to use for direct retrieval of GIDs with FT_Get_Char_Index
+    // for 'narrow' custom fonts.
+    FT_Encoding                 mFT_Encoding;
 };
 
 struct MozXftLangGroup {
@@ -110,10 +212,9 @@ static const MozXftLangGroup MozXftLangGroups[] = {
 };
 
 #define NUM_XFT_LANG_GROUPS (sizeof (MozXftLangGroups) / \
-			                 sizeof (MozXftLangGroups[0]))
+                             sizeof (MozXftLangGroups[0]))
 
-typedef struct _DrawStringData {
-    nsFontMetricsXft      *metrics;
+struct DrawStringData {
     nscoord                x;
     nscoord                y;
     const nscoord         *spacing;
@@ -121,21 +222,19 @@ typedef struct _DrawStringData {
     nsRenderingContextGTK *context;
     XftDraw               *draw;
     XftColor               color;
-    PRUint32               specBufferLen;
-    XftGlyphFontSpec      *specBuffer;
-    PRBool                 foundGlyph;
     float                  p2t;
-} DrawStringData;
+    nsAutoDrawSpecBuffer  *drawBuffer;
+};
 
-typedef struct _TextDimensionsData {
-    nsFontMetricsXft *metrics;
-    nsTextDimensions *dimensions;
-} TextDimensionsData;
+#ifdef MOZ_MATHML
+struct BoundingMetricsData {
+    nsBoundingMetrics *bm;
+    PRBool firstTime;
+};
+#endif /* MOZ_MATHML */
 
-typedef struct _WidthData {
-    nsFontMetricsXft *metrics;
-    nscoord           width;
-} WidthData;
+#define AUTO_BUFFER_SIZE 3000
+typedef nsAutoBuffer<FcChar32, AUTO_BUFFER_SIZE> nsAutoFcChar32Buffer;
 
 static int      CalculateSlant   (PRUint8  aStyle);
 static int      CalculateWeight  (PRUint16 aWeight);
@@ -152,26 +251,19 @@ static nsresult EnumFontsXft     (nsIAtom* aLangGroup, const char* aGeneric,
 
 static const MozXftLangGroup* FindFCLangGroup (nsACString &aLangGroup);
 
-static inline XftGlyphFontSpec *AllocSpecBuffer(PRUint32 aLen);
-static inline void              FreeSpecBuffer (XftGlyphFontSpec *aBuffer);
-
-static inline void FreeUCS4Buffer       (FcChar32 *aBuffer);
 static        void ConvertCharToUCS4    (const char *aString,
                                          PRUint32 aLength,
-                                         FcChar32 **aOutBuffer,
+                                         nsAutoFcChar32Buffer &aOutBuffer,
                                          PRUint32 *aOutLen);
 static        void ConvertUnicharToUCS4 (const PRUnichar *aString,
                                          PRUint32 aLength,
-                                         FcChar32 **aOutBuffer,
+                                         nsAutoFcChar32Buffer &aOutBuffer,
                                          PRUint32 *aOutLen);
-
-static void StaticDrawStringCallback    (FcChar32 aChar, nsFontXft *aFont,
-                                         void *aData);
-static void StaticTextDimensionsCallback(FcChar32 aChar, nsFontXft *aFont,
-                                         void *aData);
-static void StaticGetWidthCallback      (FcChar32 aChar, nsFontXft *aFont,
-                                         void *aData);
-
+static    nsresult ConvertUCS4ToCustom  (FcChar32 *aSrc, PRUint32 aSrcLen,
+                                         PRUint32& aDestLen, 
+                                         nsIUnicodeEncoder *aConverter, 
+                                         PRBool aIsWide, 
+                                         nsAutoFcChar32Buffer &Result);
 
 #ifdef MOZ_WIDGET_GTK2
 static void GdkRegionSetXftClip(GdkRegion *aGdkRegion, XftDraw *aDraw);
@@ -183,21 +275,38 @@ static void GdkRegionSetXftClip(GdkRegion *aGdkRegion, XftDraw *aDraw);
 // that value instead of the requested size.
 #define FONT_MAX_FONT_SCALE 2
 
-#define FONT_SPEC_BUFFER_SIZE 3000
 #define UCS2_REPLACEMENT 0xFFFD
 
 #define IS_NON_BMP(c) ((c) >> 16)
 #define IS_NON_SURROGATE(c) ((c < 0xd800 || c > 0xdfff))
 
-static XftGlyphFontSpec gFontSpecBuffer[FONT_SPEC_BUFFER_SIZE];
-static FcChar32         gFontUCS4Buffer[FONT_SPEC_BUFFER_SIZE];
+// a helper class for Xft glyph drawings
+class nsAutoDrawSpecBuffer {
+public:
+    enum {BUFFER_LEN=1024};
+    nsAutoDrawSpecBuffer(XftDraw *aDraw, XftColor *aColor) :
+                         mDraw(aDraw), mColor(aColor), mSpecPos(0) {}
+
+    ~nsAutoDrawSpecBuffer() {
+        Flush();
+    }
+
+    void Flush();
+    void Draw(nscoord x, nscoord y, XftFont *font, FT_UInt glyph);
+
+private:
+    XftDraw         *mDraw;
+    XftColor        *mColor;
+    PRUint32         mSpecPos;
+    XftGlyphFontSpec mSpecBuffer[BUFFER_LEN];
+};
+
 
 PRLogModuleInfo *gXftFontLoad = nsnull;
+static int gNumInstances = 0;
 
 #undef DEBUG_XFT_MEMORY
 #ifdef DEBUG_XFT_MEMORY
-
-static int gNumInstances;
 
 extern "C" {
 extern void XftMemReport(void);
@@ -208,11 +317,33 @@ extern void FcMemReport(void);
 static nsresult
 EnumFontsXft(nsIAtom* aLangGroup, const char* aGeneric,
              PRUint32* aCount, PRUnichar*** aResult);
+ 
+static NS_DEFINE_CID(kCharsetConverterManagerCID,
+                     NS_ICHARSETCONVERTERMANAGER_CID);
+
+static PRBool                      gInitialized = PR_FALSE;
+static nsIPersistentProperties*    gFontEncodingProperties = nsnull;
+static nsICharsetConverterManager* gCharsetManager = nsnull;
+
+typedef nsClassHashtable<nsCharPtrHashKey, nsFontXftInfo> nsFontXftInfoHash; 
+static nsFontXftInfoHash           gFontXftMaps;
+#define INITIAL_FONT_MAP_SIZE      32
+
+static nsresult       GetEncoding(const char* aFontName,
+                                  char **aEncoding,
+                                  nsXftFontType &aType,
+                                  FT_Encoding &aFTEncoding);
+static nsresult       GetConverter(const char* aEncoding,
+                                   nsIUnicodeEncoder** aConverter);
+static nsresult       FreeGlobals(void);
+static nsFontXftInfo* GetFontXftInfo(FcPattern* aPattern);
 
 nsFontMetricsXft::nsFontMetricsXft(): mMiniFont(nsnull)
 {
     if (!gXftFontLoad)
         gXftFontLoad = PR_NewLogModule("XftFontLoad");
+
+    ++gNumInstances;
 }
 
 nsFontMetricsXft::~nsFontMetricsXft()
@@ -233,12 +364,13 @@ nsFontMetricsXft::~nsFontMetricsXft()
     if (mMiniFont)
         XftFontClose(GDK_DISPLAY(), mMiniFont);
 
-#ifdef DEBUG_XFT_MEMORY
     if (--gNumInstances == 0) {
+        FreeGlobals();
+#ifdef DEBUG_XFT_MEMORY
         XftMemReport();
         FcMemReport();
-    }
 #endif
+    }
 }
 
 NS_IMPL_ISUPPORTS1(nsFontMetricsXft, nsIFontMetrics)
@@ -255,17 +387,13 @@ nsFontMetricsXft::Init(const nsFont& aFont, nsIAtom* aLangGroup,
     // Hang onto the device context
     mDeviceContext = aContext;
 
-    mPointSize = NSTwipsToIntPoints(mFont->size);
+    float app2dev = mDeviceContext->AppUnitsToDevUnits();
+    mPixelSize = NSTwipsToFloatPixels(mFont->size, app2dev);
 
-    // pixels -> twips ; twips -> points
-    float dev2app;
-    mDeviceContext->GetDevUnitsToAppUnits(dev2app);
-    nscoord screenTwips = NSIntPixelsToTwips(gdk_screen_height(), dev2app);
-    nscoord screenPoints = NSTwipsToIntPoints(screenTwips);
-
-    // Make sure to clamp the point size to something reasonable so we
+    // Make sure to clamp the pixel size to something reasonable so we
     // don't make the X server blow up.
-    mPointSize = PR_MIN(screenPoints * FONT_MAX_FONT_SCALE, mPointSize);
+    nscoord screenPixels = gdk_screen_height();
+    mPixelSize = PR_MIN(screenPixels * FONT_MAX_FONT_SCALE, mPixelSize);
 
     // enumerate over the font names passed in
     mFont->EnumerateFamilies(nsFontMetricsXft::EnumFontCallback, this);
@@ -314,29 +442,37 @@ nsFontMetricsXft::Init(const nsFont& aFont, nsIAtom* aLangGroup,
         if (minimum < 0)
             minimum = 0;
 
-        // convert the minimum size into points
-        float P2T;
-        mDeviceContext->GetDevUnitsToAppUnits(P2T);
-        minimum = NSTwipsToIntPoints(NSFloatPixelsToTwips(minimum, P2T));
-
-        if (mPointSize < minimum)
-            mPointSize = minimum;
+        if (mPixelSize < minimum)
+            mPixelSize = minimum;
     }
 
-    // Make sure that the point size is at least greater than zero
-    if (mPointSize < 1) {
+    // Make sure that the pixel size is at least greater than zero
+    if (mPixelSize < 1) {
 #ifdef DEBUG
-        printf("*** Warning: nsFontMetricsXft was passed a point size of %d\n",
-               mPointSize);
+        printf("*** Warning: nsFontMetricsXft was passed a pixel size of %d\n",
+               mPixelSize);
 #endif
-        mPointSize = 1;
+        mPixelSize = 1;
+    }
+    if (!gInitialized) {
+        nsServiceManager::GetService(kCharsetConverterManagerCID,
+        NS_GET_IID(nsICharsetConverterManager), (nsISupports**) &gCharsetManager);
+        if (!gCharsetManager) {
+            FreeGlobals();
+            return NS_ERROR_FAILURE;
+        }
+
+        if (!gFontXftMaps.IsInitialized() && 
+            !gFontXftMaps.Init(INITIAL_FONT_MAP_SIZE)) {
+            FreeGlobals();
+            return NS_ERROR_OUT_OF_MEMORY;
+        }
+
+        gInitialized = PR_TRUE;
     }
 
     if (NS_FAILED(RealizeFont()))
         return NS_ERROR_FAILURE;
-
-    // Set up the mini-font in case it needs to be used later
-    SetupMiniFont();
 
     return NS_OK;
 }
@@ -381,6 +517,9 @@ nsFontMetricsXft::GetWidth(const char* aString, PRUint32 aLength,
     NS_TIMELINE_MARK_FUNCTION("GetWidth");
 
     XftFont *font = mWesternFont->GetXftFont();
+    if (!font)
+        return NS_ERROR_NOT_AVAILABLE;
+
     XGlyphInfo glyphInfo;
 
     // casting away const for aString but it  should be safe
@@ -388,7 +527,7 @@ nsFontMetricsXft::GetWidth(const char* aString, PRUint32 aLength,
                     aLength, &glyphInfo);
 
     float f;
-    mDeviceContext->GetDevUnitsToAppUnits(f);
+    f = mDeviceContext->DevUnitsToAppUnits();
     aWidth = NSToCoordRound(glyphInfo.xOff * f);
 
     return NS_OK;
@@ -408,7 +547,7 @@ nsFontMetricsXft::GetWidth(const PRUnichar* aString, PRUint32 aLength,
     gint rawWidth = RawGetWidth(aString, aLength);
 
     float f;
-    mDeviceContext->GetDevUnitsToAppUnits(f);
+    f = mDeviceContext->DevUnitsToAppUnits();
     aWidth = NSToCoordRound(rawWidth * f);
 
     if (aFontID)
@@ -430,21 +569,15 @@ nsFontMetricsXft::GetTextDimensions(const PRUnichar* aString,
     if (!aLength)
         return NS_OK;
 
-    TextDimensionsData data;
-    data.metrics = this;
-    data.dimensions = &aDimensions;
+    nsresult rv;
+    rv = EnumerateGlyphs(aString, aLength,
+                         &nsFontMetricsXft::TextDimensionsCallback,
+                         &aDimensions);
 
-    PRUint32 len;
-    FcChar32 *chars;
-
-    ConvertUnicharToUCS4(aString, aLength, &chars, &len);
-    if (!len || !chars)
-        return 0;
-
-    EnumerateGlyphs(chars, len, StaticTextDimensionsCallback, &data);
+    NS_ENSURE_SUCCESS(rv, rv);
 
     float P2T;
-    mDeviceContext->GetDevUnitsToAppUnits(P2T);
+    P2T = mDeviceContext->DevUnitsToAppUnits();
 
     aDimensions.width = NSToCoordRound(aDimensions.width * P2T);
     aDimensions.ascent = NSToCoordRound(aDimensions.ascent * P2T);
@@ -452,8 +585,6 @@ nsFontMetricsXft::GetTextDimensions(const PRUnichar* aString,
 
     if (nsnull != aFontID)
         *aFontID = 0;
-
-    FreeUCS4Buffer(chars);
 
     return NS_OK;
 }
@@ -503,35 +634,19 @@ nsFontMetricsXft::DrawString(const char *aString, PRUint32 aLength,
     DrawStringData data;
     memset(&data, 0, sizeof(data));
 
-    data.metrics = this;
     data.x = aX;
     data.y = aY;
     data.spacing = aSpacing;
     data.context = aContext;
-    mDeviceContext->GetDevUnitsToAppUnits(data.p2t);
-
-    data.specBuffer = AllocSpecBuffer(aLength);
-    if (!data.specBuffer)
-        return NS_ERROR_FAILURE;
+    data.p2t = mDeviceContext->DevUnitsToAppUnits();
 
     PrepareToDraw(aContext, aSurface, &data.draw, data.color);
 
-    PRUint32 len;
-    FcChar32 *chars;
-    // Convert the incoming string into an array of UCS4 chars
-    ConvertCharToUCS4(aString, aLength, &chars, &len);
-    if (!len || !chars)
-        return 0;
+    nsAutoDrawSpecBuffer drawBuffer(data.draw, &data.color);
+    data.drawBuffer = &drawBuffer;
 
-    EnumerateGlyphs(chars, len, StaticDrawStringCallback, &data);
-
-    // go forth and blit!
-    if (data.foundGlyph)
-        XftDrawGlyphFontSpec(data.draw, &data.color, data.specBuffer, len);
-
-    FreeSpecBuffer(data.specBuffer);
-
-    return NS_OK;
+    return EnumerateGlyphs(aString, aLength,
+                           &nsFontMetricsXft::DrawStringCallback, &data);
 }
 
 nsresult
@@ -548,38 +663,20 @@ nsFontMetricsXft::DrawString(const PRUnichar* aString, PRUint32 aLength,
     DrawStringData data;
     memset(&data, 0, sizeof(data));
 
-    data.metrics = this;
     data.x = aX;
     data.y = aY;
     data.spacing = aSpacing;
     data.context = aContext;
-    mDeviceContext->GetDevUnitsToAppUnits(data.p2t);
-
-    data.specBuffer = AllocSpecBuffer(aLength);
-    if (!data.specBuffer)
-        return NS_ERROR_FAILURE;
+    data.p2t = mDeviceContext->DevUnitsToAppUnits();
 
     // set up our colors and clip regions
     PrepareToDraw(aContext, aSurface, &data.draw, data.color);
 
-    PRUint32 len;
-    FcChar32 *chars;
+    nsAutoDrawSpecBuffer drawBuffer(data.draw, &data.color);
+    data.drawBuffer = &drawBuffer;
 
-    // Convert the incoming string into an array of UCS4 chars
-    ConvertUnicharToUCS4(aString, aLength, &chars, &len);
-    if (!len || !chars)
-        return 0;
-
-    EnumerateGlyphs(chars, len, StaticDrawStringCallback, &data);
-
-    // Go forth and blit!
-    if (data.foundGlyph)
-        XftDrawGlyphFontSpec(data.draw, &data.color,
-                             data.specBuffer, data.specBufferLen);
-
-    FreeSpecBuffer(data.specBuffer);
-
-    return NS_OK;
+    return EnumerateGlyphs(aString, aLength,
+                           &nsFontMetricsXft::DrawStringCallback, &data);
 }
 
 #ifdef MOZ_MATHML
@@ -589,8 +686,35 @@ nsFontMetricsXft::GetBoundingMetrics(const char *aString, PRUint32 aLength,
                                      nsBoundingMetrics &aBoundingMetrics,
                                      nsRenderingContextGTK *aContext)
 {
-    NS_NOTREACHED("GetBoundingMetrics");
-    return NS_ERROR_NOT_IMPLEMENTED;
+    aBoundingMetrics.Clear(); 
+
+    if (!aString || !aLength)
+        return NS_ERROR_FAILURE;
+
+    // The data we will carry through the function
+    BoundingMetricsData data;
+    data.bm = &aBoundingMetrics;
+    // the beginning of a string needs a special treatment (see
+    // 'operator +' definition of nsBoundingMetrics.)
+    data.firstTime = PR_TRUE; 
+
+    nsresult rv;
+    rv = EnumerateGlyphs(aString, aLength,
+                         &nsFontMetricsXft::BoundingMetricsCallback, &data);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    float P2T;
+    P2T = mDeviceContext->DevUnitsToAppUnits();
+
+    aBoundingMetrics.leftBearing =
+        NSToCoordRound(aBoundingMetrics.leftBearing * P2T);
+    aBoundingMetrics.rightBearing =
+        NSToCoordRound(aBoundingMetrics.rightBearing * P2T);
+    aBoundingMetrics.width = NSToCoordRound(aBoundingMetrics.width * P2T);
+    aBoundingMetrics.ascent = NSToCoordRound(aBoundingMetrics.ascent * P2T);
+    aBoundingMetrics.descent = NSToCoordRound(aBoundingMetrics.descent * P2T);
+
+    return NS_OK;
 }
 
 nsresult
@@ -600,8 +724,38 @@ nsFontMetricsXft::GetBoundingMetrics(const PRUnichar *aString,
                                      PRInt32 *aFontID,
                                      nsRenderingContextGTK *aContext)
 {
-    NS_NOTREACHED("GetBoundingMetrics");
-    return NS_ERROR_NOT_IMPLEMENTED;
+    aBoundingMetrics.Clear(); 
+
+    if (!aString || !aLength)
+        return NS_ERROR_FAILURE;
+
+    // The data we will carry through the function
+    BoundingMetricsData data;
+    data.bm = &aBoundingMetrics;
+    // the beginning of a string needs a special treatment (see
+    // 'operator +' definition of nsBoundingMetrics.)
+    data.firstTime = PR_TRUE; 
+
+    nsresult rv;
+    rv = EnumerateGlyphs(aString, aLength,
+                         &nsFontMetricsXft::BoundingMetricsCallback, &data);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    float P2T;
+    P2T = mDeviceContext->DevUnitsToAppUnits();
+
+    aBoundingMetrics.leftBearing =
+        NSToCoordRound(aBoundingMetrics.leftBearing * P2T);
+    aBoundingMetrics.rightBearing =
+        NSToCoordRound(aBoundingMetrics.rightBearing * P2T);
+    aBoundingMetrics.width = NSToCoordRound(aBoundingMetrics.width * P2T);
+    aBoundingMetrics.ascent = NSToCoordRound(aBoundingMetrics.ascent * P2T);
+    aBoundingMetrics.descent = NSToCoordRound(aBoundingMetrics.descent * P2T);
+
+    if (nsnull != aFontID)
+        *aFontID = 0;
+
+    return NS_OK;
 }
 
 #endif /* MOZ_MATHML */
@@ -630,18 +784,28 @@ nsFontMetricsXft::RealizeFont(void)
     return CacheFontMetrics();
 }
 
+// rounding and truncation functions for a Freetype floating point number 
+// (FT26Dot6) stored in a 32bit integer with high 26 bits for the integer
+// part and low 6 bits for the fractional part. 
+#define MOZ_FT_ROUND(x) (((x) + 32) & ~63) // 63 = 2^6 - 1
+#define MOZ_FT_TRUNC(x) ((x) >> 6)
+#define CONVERT_DESIGN_UNITS_TO_PIXELS(v, s) \
+        MOZ_FT_TRUNC(MOZ_FT_ROUND(FT_MulFix((v) , (s))))
+
 nsresult
 nsFontMetricsXft::CacheFontMetrics(void)
 {
     // Get our scale factor
     float f;
     float val;
-    mDeviceContext->GetDevUnitsToAppUnits(f);
+    f = mDeviceContext->DevUnitsToAppUnits();
     
     // Get our font face
     FT_Face face;
     TT_OS2 *os2;
     XftFont *xftFont = mWesternFont->GetXftFont();
+    if (!xftFont)
+        return NS_ERROR_NOT_AVAILABLE;
 
     face = XftLockFace(xftFont);
     os2 = (TT_OS2 *) FT_Get_Sfnt_Table(face, ft_sfnt_os2);
@@ -704,7 +868,8 @@ nsFontMetricsXft::CacheFontMetrics(void)
     mXHeight = nscoord(mXHeight * f);
 
     // mUnderlineOffset (offset for underlines)
-    val = face->underline_position >> 16;
+    val = CONVERT_DESIGN_UNITS_TO_PIXELS(face->underline_position,
+                                         face->size->metrics.y_scale);
     if (val) {
         mUnderlineOffset = NSToIntRound(val * f);
     }
@@ -714,7 +879,8 @@ nsFontMetricsXft::CacheFontMetrics(void)
     }
 
     // mUnderlineSize (thickness of an underline)
-    val = face->underline_thickness >> 16;
+    val = CONVERT_DESIGN_UNITS_TO_PIXELS(face->underline_thickness,
+                                         face->size->metrics.y_scale);
     if (val) {
         mUnderlineSize = nscoord(PR_MAX(f, NSToIntRound(val * f)));
     }
@@ -725,7 +891,8 @@ nsFontMetricsXft::CacheFontMetrics(void)
 
     // mSuperscriptOffset
     if (os2 && os2->ySuperscriptYOffset) {
-        val = os2->ySuperscriptYOffset >> 16;
+        val = CONVERT_DESIGN_UNITS_TO_PIXELS(os2->ySuperscriptYOffset,
+                                             face->size->metrics.y_scale);
         mSuperscriptOffset = nscoord(PR_MAX(f, NSToIntRound(val * f)));
     }
     else {
@@ -734,7 +901,10 @@ nsFontMetricsXft::CacheFontMetrics(void)
 
     // mSubscriptOffset
     if (os2 && os2->ySubscriptYOffset) {
-        val = os2->ySubscriptYOffset >> 16;
+        val = CONVERT_DESIGN_UNITS_TO_PIXELS(os2->ySubscriptYOffset,
+                                             face->size->metrics.y_scale);
+        // some fonts have the incorrect sign. 
+        val = (val < 0) ? -val : val;
         mSubscriptOffset = nscoord(PR_MAX(f, NSToIntRound(val * f)));
     }
     else {
@@ -753,7 +923,7 @@ nsFontMetricsXft::CacheFontMetrics(void)
 }
 
 nsFontXft *
-nsFontMetricsXft::FindFont(PRUnichar aChar)
+nsFontMetricsXft::FindFont(PRUint32 aChar)
 {
 
     // If mPattern is null, set up the base bits of it so we can
@@ -767,14 +937,37 @@ nsFontMetricsXft::FindFont(PRUnichar aChar)
     }
 
     // go forth and find us some fonts
-    if (!mMatched)
-        DoMatch();
+    if (mMatchType == eNoMatch) {
+        // Optimistically just look for the best match font.
+        // This can be completed in linear time, which is ideal if all
+        // of the characters we're asked for can be found in this font.
+        DoMatch(PR_FALSE);
+    }
 
     // Now that we have the fonts loaded and ready to run, return the
     // font in our loaded list that supports the character
-    for (PRInt32 i = 0, end = mLoadedFonts.Count(); i < end; ++i) {
+
+    if (mLoadedFonts.Count() == 0) {
+        // No fonts were matched at all.  This probably means out-of-memory
+        // or some equally bad condition.
+        return nsnull;
+    }
+
+    nsFontXft *font = (nsFontXft *)mLoadedFonts.ElementAt(0);
+    if (font->HasChar(aChar))
+        return font;
+
+    // We failed to find the character in the best-match font, so load
+    // _all_ matching fonts if we haven't already done so.
+
+    if (mMatchType == eBestMatch)
+        DoMatch(PR_TRUE);
+
+    // Now check the remaining fonts
+
+    for (PRInt32 i = 1, end = mLoadedFonts.Count(); i < end; ++i) {
         nsFontXft *font = (nsFontXft *)mLoadedFonts.ElementAt(i);
-        if (FcCharSetHasChar(font->mCharset, aChar))
+        if (font->HasChar(aChar))
             return font;
     }
 
@@ -815,6 +1008,9 @@ nsFontMetricsXft::SetupFCPattern(void)
     if (!mPattern)
         return;
 
+    if (gdk_rgb_get_cmap() != gdk_colormap_get_system())
+        XftPatternAddBool(mPattern, XFT_RENDER, False);
+
     // XXX need to add user defined family
 
     // Add CSS names - walk the list of fonts, adding the generic as
@@ -823,7 +1019,7 @@ nsFontMetricsXft::SetupFCPattern(void)
         // if this was a generic name, break out of the loop since we
         // don't want to add it to the pattern yet
         if (mFontIsGeneric[i])
-            break;
+            break;;
 
         nsCString *familyName = mFontList.CStringAt(i);
         AddFFRE(mPattern, familyName, PR_FALSE);
@@ -836,7 +1032,7 @@ nsFontMetricsXft::SetupFCPattern(void)
 
     // If there's a generic add a pref for the generic if there's one
     // set.
-    if (mGenericFont) {
+    if (mGenericFont && !mFont->systemFont) {
         nsCString name;
         name += "font.name.";
         name += mGenericFont->get();
@@ -871,17 +1067,17 @@ nsFontMetricsXft::SetupFCPattern(void)
     }
 
     // Add the generic if there is one.
-    if (mGenericFont)
+    if (mGenericFont && !mFont->systemFont)
         AddFFRE(mPattern, mGenericFont, PR_FALSE);
 
     if (PR_LOG_TEST(gXftFontLoad, PR_LOG_DEBUG)) {
         // generic font
-        if (mGenericFont) {
+        if (mGenericFont && !mFont->systemFont) {
             printf("\tadding generic family: %s\n", mGenericFont->get());
         }
 
-        // point size
-        printf("\tpoint,pixel size: %d,%d\n", mPointSize, mFont->size);
+        // pixel size
+        printf("\tpixel,twip size: %f,%d\n", mPixelSize, mFont->size);
 
         // slant type
         printf("\tslant: ");
@@ -904,7 +1100,10 @@ nsFontMetricsXft::SetupFCPattern(void)
     }        
 
     // add the point size
-    FcPatternAddInteger(mPattern, FC_SIZE, mPointSize);
+    // We've done some round-tripping of floating point numbers so they
+    // might not be quite right.  Since Xft rounds down, add a little,
+    // so we don't go from 9.00000 to 8.99999 to 8.
+    FcPatternAddDouble(mPattern, FC_PIXEL_SIZE, mPixelSize + 0.000001);
 
     // Add the slant type
     FcPatternAddInteger(mPattern, FC_SLANT,
@@ -921,19 +1120,22 @@ nsFontMetricsXft::SetupFCPattern(void)
 }
 
 void
-nsFontMetricsXft::DoMatch(void)
+nsFontMetricsXft::DoMatch(PRBool aMatchAll)
 {
     FcFontSet *set = nsnull;
     // now that we have a pattern we can match
-    FcCharSet *charset;
     FcResult   result;
 
-    set = FcFontSort(0, mPattern, FcTrue, &charset, &result);
-
-    // we don't need the charset since we're going to break it up into
-    // specific fonts anyway
-    if (charset)
-        FcCharSetDestroy(charset);
+    if (aMatchAll) {
+        set = FcFontSort(0, mPattern, FcTrue, NULL, &result);
+    }
+    else {
+        FcPattern* font = FcFontMatch(0, mPattern, &result);
+        if (font) {
+            set = FcFontSetCreate();
+            FcFontSetAdd(set, font);
+        }
+    }
 
     // did we not match anything?
     if (!set) {
@@ -945,15 +1147,30 @@ nsFontMetricsXft::DoMatch(void)
     }
 
     // Create a list of new font objects based on the fonts returned
-    // as part of the query
-    for (int i=0; i < set->nfont; ++i) {
+    // as part of the query. We start at mLoadedFonts.Count() so as to
+    // not re-add the best match font we've already loaded.
+    for (int i=mLoadedFonts.Count(); i < set->nfont; ++i) {
         if (PR_LOG_TEST(gXftFontLoad, PR_LOG_DEBUG)) {
             char *name;
             FcPatternGetString(set->fonts[i], FC_FAMILY, 0, (FcChar8 **)&name);
             printf("\t%s\n", name);
         }
 
-        nsFontXft *font = new nsFontXft(mPattern, set->fonts[i]);
+        nsFontXft *font;
+        nsFontXftInfo *info;
+        nsCOMPtr<nsIUnicodeEncoder> converter = 0;
+
+        info = GetFontXftInfo(set->fonts[i]);
+        if (info) {
+            if (info->mFontType == eFontTypeUnicode)
+                font = new nsFontXftUnicode(mPattern, set->fonts[i]);
+            else
+                font = new nsFontXftCustom(mPattern, set->fonts[i], info);
+        }
+        else {  // if null is returned, treat it as Unicode font.
+            font = new nsFontXftUnicode(mPattern, set->fonts[i]);
+        }
+
         if (!font)
             goto loser;
 
@@ -966,7 +1183,10 @@ nsFontMetricsXft::DoMatch(void)
     set = nsnull;
 
     // Done matching!
-    mMatched = PR_TRUE;
+    if (aMatchAll)
+        mMatchType = eAllMatching;
+    else
+        mMatchType = eBestMatch;
     return;
 
     // if we got this far, something went terribly wrong
@@ -986,31 +1206,30 @@ nsFontMetricsXft::DoMatch(void)
 gint
 nsFontMetricsXft::RawGetWidth(const PRUnichar* aString, PRUint32 aLength)
 {
-    WidthData data;
-    data.metrics = this;
-    data.width = 0;
+    nscoord width = 0;
+    nsresult rv;
 
-    PRUint32 len;
-    FcChar32 *chars;
+    rv = EnumerateGlyphs(aString, aLength,
+                         &nsFontMetricsXft::GetWidthCallback, &width);
 
-    ConvertUnicharToUCS4(aString, aLength, &chars, &len);
-    if (!len || !chars)
-        return 0;
+    if (NS_FAILED(rv))
+        width = 0;
 
-    EnumerateGlyphs(chars, len, StaticGetWidthCallback, &data);
-
-    FreeUCS4Buffer(chars);
-
-    return data.width;
+    return width;
 }
 
 nsresult
 nsFontMetricsXft::SetupMiniFont(void)
 {
+    // The minifont is initialized lazily.
+    if (mMiniFont)
+        return NS_OK;
+
     FcPattern *pattern = nsnull;
     XftFont *font = nsnull;
     XftFont *xftFont = mWesternFont->GetXftFont();
-    FcPattern *pat = nsnull;
+    if (!xftFont)
+        return NS_ERROR_NOT_AVAILABLE;
 
     mMiniFontAscent = xftFont->ascent;
     mMiniFontDescent = xftFont->descent;
@@ -1019,10 +1238,12 @@ nsFontMetricsXft::SetupMiniFont(void)
     if (!pattern)
         return NS_ERROR_FAILURE;
 
+    if (gdk_rgb_get_cmap() != gdk_colormap_get_system())
+        XftPatternAddBool(mPattern, XFT_RENDER, False);
+
     FcPatternAddString(pattern, FC_FAMILY, (FcChar8 *)"monospace");
 
-    FcPatternAddInteger(pattern, FC_SIZE, 
-                        (int)(0.5 * mPointSize));
+    FcPatternAddInteger(pattern, FC_PIXEL_SIZE, int(0.5 * mPixelSize));
 
     FcPatternAddInteger(pattern, FC_WEIGHT,
                         CalculateWeight(mFont->weight));
@@ -1031,14 +1252,9 @@ nsFontMetricsXft::SetupMiniFont(void)
     XftDefaultSubstitute(GDK_DISPLAY(), DefaultScreen(GDK_DISPLAY()),
                          pattern);
 
-    FcFontSet *set = nsnull;
     FcResult res;
     
-    set = FcFontSort(0, pattern, FcTrue, NULL, &res);
-
-    if (set) {
-        pat = FcFontRenderPrepare(0, pattern, set->fonts[0]);
-    }
+    FcPattern *pat = FcFontMatch(0, pattern, &res);
 
     if (pat) {
         font = XftFontOpenPattern(GDK_DISPLAY(), pat);
@@ -1084,8 +1300,6 @@ nsFontMetricsXft::SetupMiniFont(void)
         FcPatternDestroy(pat);
     if (pattern)
         FcPatternDestroy(pattern);
-    if (set)
-        FcFontSetSortDestroy(set);
 
     return NS_OK;
 }
@@ -1182,28 +1396,78 @@ nsFontMetricsXft::DrawUnknownGlyph(FcChar32   aChar,
     return NS_OK;
 }
 
-void
-nsFontMetricsXft::EnumerateGlyphs(FcChar32 *aChars, PRUint32 aLen,
+nsresult
+nsFontMetricsXft::EnumerateXftGlyphs(const FcChar32 *aString, PRUint32 aLen,
+                                     GlyphEnumeratorCallback aCallback,
+                                     void *aCallbackData)
+{
+    nsFontXft* prevFont = nsnull;
+    PRUint32 start = 0;
+    nsresult rv = NS_OK;
+    PRUint32 i = 0;
+
+    for ( ; i < aLen; i ++) {
+        nsFontXft *currFont = FindFont(aString[i]);
+
+        // Don't try to handle more than 512 characters at once, since
+        // Xft text measurement can't deal with anything with a width of
+        // more than 2^15 (32768) pixels.  This is a hack, and it could
+        // break things like combining characters, but that's not nearly
+        // as bad as not displaying anything, and it's also very rare to
+        // draw strings this long without any breaks.
+        if (currFont != prevFont || i - start > 512) {
+            if (i > start) {
+                rv = (this->*aCallback)(&aString[start], i - start, prevFont,
+                                        aCallbackData);
+                NS_ENSURE_SUCCESS(rv, rv);
+            }
+            prevFont = currFont;
+            start = i;
+        }
+    }
+
+    if (i > start)
+        rv = (this->*aCallback)(&aString[start], i - start, prevFont,
+                                aCallbackData);
+
+    return rv;
+}
+
+nsresult
+nsFontMetricsXft::EnumerateGlyphs(const PRUnichar *aString,
+                                  PRUint32 aLen,
                                   GlyphEnumeratorCallback aCallback,
                                   void *aCallbackData)
 {
-    for (PRUint32 i = 0; i < aLen; ++i) {
-        FcChar32 c = aChars[i];
-        nsFontXft *foundFont = nsnull;
+    PRUint32 len;
+    nsAutoFcChar32Buffer charBuffer;
 
-        // Walk the list of fonts, looking for a font that supports
-        // this character.
-        for (PRInt32 j = 0, end = mLoadedFonts.Count(); j < end; ++j) {
-            nsFontXft *font;
-            font = (nsFontXft *)mLoadedFonts.ElementAt(j);
-            if (FcCharSetHasChar(font->mCharset, c)) {
-                foundFont = font;
-                break;
-            }
-        }
+    NS_ENSURE_TRUE(aLen, NS_OK); 
 
-        aCallback(c, foundFont, aCallbackData);
-    }
+    ConvertUnicharToUCS4(aString, aLen, charBuffer, &len);
+    if (!len)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+    return EnumerateXftGlyphs(charBuffer.get(), len, aCallback, aCallbackData);
+}
+
+nsresult
+nsFontMetricsXft::EnumerateGlyphs(const char *aString,
+                                  PRUint32 aLen,
+                                  GlyphEnumeratorCallback aCallback,
+                                  void *aCallbackData)
+{
+    PRUint32 len;
+    nsAutoFcChar32Buffer charBuffer;
+
+    NS_ENSURE_TRUE(aLen, NS_OK); 
+
+    // Convert the incoming string into an array of UCS4 chars
+    ConvertCharToUCS4(aString, aLen, charBuffer, &len);
+    if (!len)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+    return EnumerateXftGlyphs(charBuffer.get(), len, aCallback, aCallbackData);
 }
 
 void
@@ -1248,114 +1512,150 @@ nsFontMetricsXft::PrepareToDraw(nsRenderingContextGTK *aContext,
     }
 }
 
-void
-nsFontMetricsXft::DrawStringCallback(FcChar32 aChar, nsFontXft *aFont,
-                                     void *aData)
+nsresult
+nsFontMetricsXft::DrawStringCallback(const FcChar32 *aString, PRUint32 aLen,
+                                     nsFontXft *aFont, void *aData)
 {
     DrawStringData *data = (DrawStringData *)aData;
-
-    // position in X is the location offset in the string plus
-    // whatever offset is required for the spacing argument
-    nscoord x = data->x + data->xOffset;
-    nscoord y = data->y;
-
-    // convert this into device coordinates
-    data->context->GetTranMatrix()->TransformCoord(&x, &y);
 
     // If there was no font found for this character, just draw the
     // unknown glyph character
     if (!aFont) {
-        DrawUnknownGlyph(aChar, x, y + mMiniFontYOffset, &data->color,
-                         data->draw);
+        SetupMiniFont();
 
-        if (data->spacing) {
-            data->xOffset += *data->spacing;
-            data->spacing += (IS_NON_BMP(aChar) ? 2 : 1);
-        }
-        else {
-            data->xOffset +=
-                NSToCoordRound((mMiniFontWidth*(IS_NON_BMP(aChar) ? 3 : 2) +
-                                mMiniFontPadding*(IS_NON_BMP(aChar) ? 6 : 5)) *
-                               data->p2t);
+        for (PRUint32 i = 0; i<aLen; i++) {
+            // position in X is the location offset in the string plus
+            // whatever offset is required for the spacing argument
+            const FcChar32 ch = aString[i];
+            nscoord x = data->x + data->xOffset;
+            nscoord y = data->y;
+
+            // convert this into device coordinates
+            data->context->GetTranMatrix()->TransformCoord(&x, &y);
+
+            DrawUnknownGlyph(ch, x, y + mMiniFontYOffset, &data->color,
+                             data->draw);
+
+            if (data->spacing) {
+                data->xOffset += *data->spacing;
+                data->spacing += IS_NON_BMP(ch) ? 2 : 1;
+            }
+            else {
+                data->xOffset +=
+                    NSToCoordRound((mMiniFontWidth*(IS_NON_BMP(ch) ? 3 : 2) +
+                                mMiniFontPadding*(IS_NON_BMP(ch) ? 6:5)) *
+                            data->p2t);
+            }
         }
 
         // We're done.
-        return;
+        return NS_OK;
     }
 
-    // Fill in the spec data with the glyph
-    data->specBuffer[data->specBufferLen].x = x;
-    data->specBuffer[data->specBufferLen].y = y;
-    data->specBuffer[data->specBufferLen].font = aFont->GetXftFont();
-    data->specBuffer[data->specBufferLen].glyph =
-        XftCharIndex(GDK_DISPLAY(), aFont->GetXftFont(), aChar);
-
-    // check to see if this glyph is non-empty
-    if (!data->foundGlyph) {
-        XGlyphInfo info;
-        XftGlyphExtents(GDK_DISPLAY(),
-                        data->specBuffer[data->specBufferLen].font,
-                        &data->specBuffer[data->specBufferLen].glyph,
-                        1, &info);
-
-        if (info.width && info.height)
-            data->foundGlyph = PR_TRUE;
-    }
-
-    ++data->specBufferLen;
-
-    if (data->spacing) {
-        data->xOffset += *data->spacing;
-        data->spacing += (IS_NON_BMP(aChar) ? 2 : 1);
-    }
-    else {
-        data->xOffset += NSToCoordRound(aFont->GetWidth32(aChar) * data->p2t);
-    }
+    // actually process the specbuffer converting the input string
+    // to custom font code if necessary.
+    return aFont->DrawStringSpec(NS_CONST_CAST(FcChar32 *, aString), 
+                                 aLen, data);
 }
 
-void
-nsFontMetricsXft::TextDimensionsCallback(FcChar32 aChar, nsFontXft *aFont,
-                                         void *aData)
+nsresult
+nsFontMetricsXft::TextDimensionsCallback(const FcChar32 *aString, PRUint32 aLen,
+                                         nsFontXft *aFont, void *aData)
 {
-    TextDimensionsData *data = (TextDimensionsData *)aData;
+    nsTextDimensions *dimensions = (nsTextDimensions *)aData;
 
     if (!aFont) {
-        data->dimensions->width += mMiniFontWidth * (IS_NON_BMP(aChar)?3:2) +
-                                   mMiniFontPadding * (IS_NON_BMP(aChar)?6:5);
+        SetupMiniFont();
+        for (PRUint32 i = 0; i<aLen; i++) {
+            dimensions->width += 
+                mMiniFontWidth * (IS_NON_BMP(aString[i]) ? 3 : 2) +
+                mMiniFontPadding * (IS_NON_BMP(aString[i]) ? 6 : 5);
+        }
 
-        if (data->dimensions->ascent < mMiniFontAscent)
-            data->dimensions->ascent = mMiniFontAscent;
-        if (data->dimensions->descent < mMiniFontDescent)
-            data->dimensions->descent = mMiniFontDescent;
+        if (dimensions->ascent < mMiniFontAscent)
+            dimensions->ascent = mMiniFontAscent;
+        if (dimensions->descent < mMiniFontDescent)
+            dimensions->descent = mMiniFontDescent;
 
-        return;
+        return NS_OK;
     }
 
-    data->dimensions->width += aFont->GetWidth32(aChar);
+    // get the metric after converting the input string to
+    // custom font code if necessary.
+    XGlyphInfo glyphInfo;
+    nsresult rv = aFont->GetTextExtents32(aString, aLen, glyphInfo);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    dimensions->width += glyphInfo.xOff;
 
     nscoord tmpMaxAscent = aFont->GetMaxAscent();
     nscoord tmpMaxDescent = aFont->GetMaxDescent();
 
-    if (data->dimensions->ascent < tmpMaxAscent)
-        data->dimensions->ascent = tmpMaxAscent;
-    if (data->dimensions->descent < tmpMaxDescent)
-        data->dimensions->descent = tmpMaxDescent;
+    if (dimensions->ascent < tmpMaxAscent)
+        dimensions->ascent = tmpMaxAscent;
+    if (dimensions->descent < tmpMaxDescent)
+        dimensions->descent = tmpMaxDescent;
+
+    return NS_OK;
 }
 
-void
-nsFontMetricsXft::GetWidthCallback(FcChar32 aChar, nsFontXft *aFont,
-                                   void *aData)
+nsresult
+nsFontMetricsXft::GetWidthCallback(const FcChar32 *aString, PRUint32 aLen,
+                                   nsFontXft *aFont, void *aData)
 {
-    WidthData *data = (WidthData *)aData;
+    nscoord *width = (nscoord*)aData;
 
     if (!aFont) {
-        data->width += mMiniFontWidth * (IS_NON_BMP(aChar) ? 3 : 2) + 
-                       mMiniFontPadding * (IS_NON_BMP(aChar) ? 6 : 5);
-        return;
+        SetupMiniFont();
+        for (PRUint32 i = 0; i < aLen; i++) {
+            *width += mMiniFontWidth * (IS_NON_BMP(aString[i]) ? 3 : 2) + 
+                      mMiniFontPadding * (IS_NON_BMP(aString[i]) ? 6 : 5);
+        }
+        return NS_OK;
     }
 
-    data->width += aFont->GetWidth32(aChar);
+    *width += aFont->GetWidth32(aString, aLen);
+    return NS_OK;
 }
+
+#ifdef MOZ_MATHML
+nsresult
+nsFontMetricsXft::BoundingMetricsCallback(const FcChar32 *aString, 
+                                          PRUint32 aLen, nsFontXft *aFont, 
+                                          void *aData)
+{
+    BoundingMetricsData *data = (BoundingMetricsData *)aData;
+    nsBoundingMetrics bm;
+
+    if (!aFont) {
+        SetupMiniFont();
+
+        // Note:  All fields of bm initialized to 0 in its constructor.
+        for (PRUint32 i = 0; i < aLen; i++) {
+            bm.width += mMiniFontWidth * (IS_NON_BMP(aString[i]) ? 3 : 2) +
+                        mMiniFontPadding * (IS_NON_BMP(aString[i]) ? 6 : 5);
+            bm.rightBearing += bm.width; // no need to set leftBearing.
+        }
+        bm.ascent = mMiniFontAscent;
+        bm.descent = mMiniFontDescent;
+    }
+    else {
+        nsresult rv;
+        rv = aFont->GetBoundingMetrics32(aString, aLen, bm);
+        NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    if (data->firstTime) {  
+        *(data->bm) = bm;
+        data->firstTime = PR_FALSE;
+    }
+    else {
+        *(data->bm) += bm;
+    }
+
+    return NS_OK;
+}
+#endif /* MOZ_MATHML */
 
 /* static */
 nsresult
@@ -1607,7 +1907,7 @@ nsFontXft::GetXftFont(void)
         // spaced-out ('s p a c e d - o u t') rendering. By deleting
         // FC_SPACING here, we're emulating the behavior of fontconfig 2.2 or 
         // later that does not set FC_SPACING for any font.
-        if (FcGetVersion() < 20200)
+        if (FcGetVersion() < 20300)
             FcPatternDel(pat, FC_SPACING);
 
         mXftFont = XftFontOpenPattern(GDK_DISPLAY(), pat);
@@ -1618,40 +1918,54 @@ nsFontXft::GetXftFont(void)
     return mXftFont;
 }
 
+// used by GetWidth32, GetBoundingMetrics32, and TextDimensionCallback
+nsresult
+nsFontXft::GetTextExtents32(const FcChar32 *aString, PRUint32 aLen, 
+                            XGlyphInfo &aGlyphInfo)
+{
+    if (!mXftFont && !GetXftFont())
+            return NS_ERROR_NOT_AVAILABLE;
+
+    XftTextExtents32(GDK_DISPLAY(), mXftFont, aString, aLen, &aGlyphInfo);
+
+    return NS_OK;
+}
+
 gint
-nsFontXft::GetWidth32(FcChar32 aString)
+nsFontXft::GetWidth32(const FcChar32 *aString, PRUint32 aLen)
 {
     XGlyphInfo glyphInfo;
-    if (!mXftFont)
-        GetXftFont();
-
-    XftTextExtents32(GDK_DISPLAY(), mXftFont, &aString, 1, &glyphInfo);
+    GetTextExtents32(aString, aLen, glyphInfo);
 
     return glyphInfo.xOff;
 }
 
 #ifdef MOZ_MATHML
-void
-nsFontXft::GetBoundingMetrics8 (const char *aString, PRUint32 aLength,
-                                nsBoundingMetrics &aBoundingMetrics)
+nsresult
+nsFontXft::GetBoundingMetrics32(const FcChar32*    aString,
+                                PRUint32           aLength,
+                                nsBoundingMetrics& aBoundingMetrics)
 {
-    NS_NOTREACHED("GetBoundingMetrics8");
-}
+    aBoundingMetrics.Clear ();
 
-void
-nsFontXft::GetBoundingMetrics16 (const PRUnichar *aString,
-                                 PRUint32 aLength,
-                                 nsBoundingMetrics &aBoundingMetrics)
-{
-    NS_NOTREACHED("GetBoundingMetrics16");
+    if (aString && aLength) {
+        XGlyphInfo glyphInfo;
+        GetTextExtents32 (aString, aLength, glyphInfo);
+        aBoundingMetrics.leftBearing = - glyphInfo.x;
+        aBoundingMetrics.rightBearing = glyphInfo.width - glyphInfo.x;
+        aBoundingMetrics.ascent = glyphInfo.y;
+        aBoundingMetrics.descent = glyphInfo.height - glyphInfo.y;
+        aBoundingMetrics.width = glyphInfo.xOff;
+    }
+    return NS_OK;
 }
 #endif /* MOZ_MATHML */
 
 PRInt16
 nsFontXft::GetMaxAscent(void)
 {
-    if (!mXftFont)
-        GetXftFont();
+    if (!mXftFont && !GetXftFont())
+            return 0;
 
     return mXftFont->ascent;
 }
@@ -1659,10 +1973,228 @@ nsFontXft::GetMaxAscent(void)
 PRInt16
 nsFontXft::GetMaxDescent(void)
 {
-    if (!mXftFont)
-        GetXftFont();
+    if (!mXftFont && !GetXftFont())
+            return 0;
 
     return mXftFont->descent;
+}
+
+FT_UInt
+nsFontXft::CharToGlyphIndex(FcChar32 aChar)
+{
+    return XftCharIndex(GDK_DISPLAY(), mXftFont, aChar);
+}
+
+// used by DrawStringCallback
+nsresult
+nsFontXft::DrawStringSpec(FcChar32 *aString, PRUint32 aLen, void *aData)
+{
+    DrawStringData *data = (DrawStringData *)aData;
+
+    if (!mXftFont && !GetXftFont())
+            return NS_ERROR_NOT_AVAILABLE;
+
+    FcChar32 *pstr = aString;
+    const FcChar32 *end = aString + aLen;
+
+    while(pstr < end) {
+        nscoord x = data->x + data->xOffset;               
+        nscoord y = data->y;                        
+        /* Convert to device coordinate. */   
+        data->context->GetTranMatrix()->TransformCoord(&x, &y);
+                                                                 
+        /* position in X is the location offset in the string 
+           plus whatever offset is required for the spacing   
+           argument                                           
+        */                                                  
+
+        FT_UInt glyph = CharToGlyphIndex(*pstr);
+        data->drawBuffer->Draw(x, y, mXftFont, glyph);
+
+        if (data->spacing) {
+            data->xOffset += *data->spacing;
+            data->spacing += IS_NON_BMP(*pstr) ? 2 : 1; 
+        }
+        else {
+            XGlyphInfo info;                        
+            XftGlyphExtents(GDK_DISPLAY(), mXftFont, &glyph, 1, &info);
+            data->xOffset += NSToCoordRound(info.xOff * data->p2t);
+        }
+
+        ++pstr;
+    }                                                          
+    return NS_OK;
+}
+
+// class nsFontXftUnicode impl
+  
+nsFontXftUnicode::~nsFontXftUnicode()
+{
+}
+
+PRBool
+nsFontXftUnicode::HasChar(PRUint32 aChar)
+{
+    return FcCharSetHasChar(mCharset, (FcChar32) aChar);
+}
+
+// class nsFontXftCustom impl
+
+nsFontXftCustom::~nsFontXftCustom()
+{
+    if (mXftFont && mFT_Face)
+       XftUnlockFace(mXftFont);
+}
+
+// used by GetWidth32, GetBoundingMetrics32, and TextDimensionCallback
+// Convert the input to custom font code before measuring.
+nsresult
+nsFontXftCustom::GetTextExtents32(const FcChar32 *aString, PRUint32 aLen, 
+                                  XGlyphInfo &aGlyphInfo)
+{
+    nsAutoFcChar32Buffer buffer;
+    nsresult rv;
+    PRUint32 destLen = aLen;
+    PRBool isWide = (mFontInfo->mFontType == eFontTypeCustomWide); 
+
+    // we won't use this again. it's safe to cast away const.
+    rv = ConvertUCS4ToCustom(NS_CONST_CAST(FcChar32 *, aString), 
+                             aLen, destLen, mFontInfo->mConverter,
+                             isWide, buffer);
+    NS_ENSURE_SUCCESS(rv, rv);
+      
+    FcChar32 *str = buffer.get();
+
+    if (!mXftFont && !GetXftFont())
+            return NS_ERROR_NOT_AVAILABLE;
+
+    // short cut for the common case
+    if (isWide) { 
+        XftTextExtents32(GDK_DISPLAY(), mXftFont, str, destLen, &aGlyphInfo);
+        return NS_OK;
+    }
+
+    // If FT_SelectCharMap succeeds for MacRoman or Unicode,
+    // use glyph indices directly for 'narrow' custom encoded fonts.
+    rv = SetFT_FaceCharmap();
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // replace chars with glyphs in place. 
+    for (PRUint32 i = 0; i < destLen; i++) {
+        str[i] = FT_Get_Char_Index (mFT_Face, FT_ULong(str[i]));
+    }
+
+    XftGlyphExtents(GDK_DISPLAY(), mXftFont, str, destLen, &aGlyphInfo);
+        
+    return NS_OK;
+}
+
+PRBool
+nsFontXftCustom::HasChar(PRUint32 aChar)
+{
+    return (mFontInfo->mCCMap &&
+            CCMAP_HAS_CHAR_EXT(mFontInfo->mCCMap, aChar)); 
+}
+
+FT_UInt
+nsFontXftCustom::CharToGlyphIndex(FcChar32 aChar)
+{
+    if (mFontInfo->mFontType == eFontTypeCustomWide)
+        return XftCharIndex(GDK_DISPLAY(), mXftFont, aChar);
+    else
+        return FT_Get_Char_Index(mFT_Face, aChar);
+}
+
+// used by DrawStringCallback
+// Convert the input to custom font code before filling up the buffer.
+nsresult
+nsFontXftCustom::DrawStringSpec(FcChar32* aString, PRUint32 aLen,
+                                void* aData)
+{
+    nsresult rv = NS_OK;
+    nsAutoFcChar32Buffer buffer;
+    PRUint32 destLen = aLen;
+    PRBool isWide = (mFontInfo->mFontType == eFontTypeCustomWide); 
+
+    rv = ConvertUCS4ToCustom(aString, aLen, destLen, mFontInfo->mConverter, 
+                             isWide, buffer);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (!mXftFont && !GetXftFont())
+            return NS_ERROR_NOT_AVAILABLE;
+
+    if (!isWide) {
+        // For some narrow fonts(Mathematica, Symbol, and MTExtra),  
+        // what we get back  after the conversion  is in the encoding 
+        // of a specific  FT_Charmap (Apple Roman) instead of Unicode 
+        // so that we  can't call XftCharIndex() which regards input 
+        // as a Unicode codepoint. Instead, we have to directly invoke 
+        // FT_Get_Char_Index() with FT_Face corresponding to XftFont 
+        // after setting FT_Charmap to the cmap of our choice(Apple Roman).
+        rv = SetFT_FaceCharmap();
+        NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    FcChar32 *str = buffer.get();
+
+    return nsFontXft::DrawStringSpec(str, destLen, aData);
+}
+
+nsresult
+nsFontXftCustom::SetFT_FaceCharmap(void)
+{
+    if (!mXftFont && !GetXftFont())
+            return NS_ERROR_NOT_AVAILABLE;
+
+    if (mFT_Face)
+        return NS_OK;
+
+    mFT_Face = XftLockFace(mXftFont);
+
+    NS_ENSURE_TRUE(mFT_Face != nsnull, NS_ERROR_UNEXPECTED);
+
+    // Select FT_Encoding to use for custom narrow fonts in 
+    // glyph index look-up with FT_Get_Char_Index succeeds.
+        
+    if (FT_Select_Charmap (mFT_Face, mFontInfo->mFT_Encoding))
+        return NS_ERROR_UNEXPECTED;
+
+    return NS_OK;
+}
+
+void
+nsAutoDrawSpecBuffer::Draw(nscoord x, nscoord y, XftFont *font, FT_UInt glyph)
+{
+    if (mSpecPos >= BUFFER_LEN-1)
+        Flush();
+
+    mSpecBuffer[mSpecPos].x = x;
+    mSpecBuffer[mSpecPos].y = y;
+    mSpecBuffer[mSpecPos].font = font;
+    mSpecBuffer[mSpecPos].glyph = glyph;
+    ++mSpecPos;
+}
+
+void
+nsAutoDrawSpecBuffer::Flush()
+{
+    if (mSpecPos) {
+        // Some Xft libraries will crash if none of the glyphs have any
+        // area.  So before we draw, we scan through the glyphs.  If we
+        // find any that have area, we can draw.
+        for (PRUint32 i = 0; i < mSpecPos; i++) {
+            XftGlyphFontSpec *sp = &mSpecBuffer[i];
+            XGlyphInfo info;
+            XftGlyphExtents(GDK_DISPLAY(), sp->font, &sp->glyph, 1, &info);
+            if (info.width && info.height) {
+                // If we get here it means we found a drawable glyph.  We will
+                // Draw all the remaining glyphs and then break out of the loop
+                XftDrawGlyphFontSpec(mDraw, mColor, mSpecBuffer+i, mSpecPos-i);
+                break;
+            }
+        }
+        mSpecPos = 0;
+    }
 }
 
 // Static functions
@@ -1731,7 +2263,7 @@ CalculateWeight (PRUint16 aWeight)
     static int fcWeights[5] = {
         FC_WEIGHT_LIGHT,      /* 0 */
         FC_WEIGHT_MEDIUM,     /* 1 */
-        FC_WEIGHT_DEMIBOLD,	  /* 2 */
+        FC_WEIGHT_DEMIBOLD,   /* 2 */
         FC_WEIGHT_BOLD,       /* 3 */
         FC_WEIGHT_BLACK,      /* 4 */
     };
@@ -1985,71 +2517,38 @@ FindFCLangGroup (nsACString &aLangGroup)
     return nsnull;
 }
 
-/* static inline */
-XftGlyphFontSpec *
-AllocSpecBuffer(PRUint32 aLen)
-{
-    if (aLen > FONT_SPEC_BUFFER_SIZE)
-        return new XftGlyphFontSpec[aLen];
-
-    return gFontSpecBuffer;
-}
-
-/* static inline */
-void
-FreeSpecBuffer (XftGlyphFontSpec *aBuffer)
-{
-    if (aBuffer != gFontSpecBuffer)
-        delete [] aBuffer;
-}
-
-/* static inline */
-void
-FreeUCS4Buffer(FcChar32 *aBuffer)
-{
-    if (aBuffer != gFontUCS4Buffer)
-        delete [] aBuffer;
-}
-
 /* static */
 void
-ConvertCharToUCS4(const char *aString, PRUint32 aLength,
-                     FcChar32 **aOutBuffer, PRUint32 *aOutLen)
+ConvertCharToUCS4(const char *aString, PRUint32 aLength, 
+                  nsAutoFcChar32Buffer &aOutBuffer, PRUint32 *aOutLen)
 {
-    *aOutBuffer = nsnull;
     *aOutLen = 0;
-    
-    FcChar32 *outBuffer = gFontUCS4Buffer;
-    // see if we need to allocate a new buffer for this thing
-    if (aLength > FONT_SPEC_BUFFER_SIZE) {
-        outBuffer = new FcChar32[aLength];
-        if (!outBuffer)
-            return;
-    }
+    FcChar32 *outBuffer;
 
-    for (PRUint32 i=0; i < aLength; ++i) {
-        outBuffer[i] = aString[i];
+    if (!aOutBuffer.EnsureElemCapacity(aLength))
+        return;
+    outBuffer  = aOutBuffer.get();
+    
+    for (PRUint32 i = 0; i < aLength; ++i) {
+        outBuffer[i] = PRUint8(aString[i]); // to convert char >= 0x80 correctly
     }
 
     *aOutLen = aLength;
-    *aOutBuffer = outBuffer;
 }
 
+// Convert the incoming string into an array of UCS4 chars
+  
 /* static */
 void
 ConvertUnicharToUCS4(const PRUnichar *aString, PRUint32 aLength,
-                     FcChar32 **aOutBuffer, PRUint32 *aOutLen)
+                     nsAutoFcChar32Buffer &aOutBuffer, PRUint32 *aOutLen)
 {
-    *aOutBuffer = nsnull;
     *aOutLen = 0;
+    FcChar32 *outBuffer;
 
-    FcChar32 *outBuffer = gFontUCS4Buffer;
-    // see if we need to allocate a new buffer for this thing
-    if (aLength > FONT_SPEC_BUFFER_SIZE) {
-        outBuffer = new FcChar32[aLength];
-        if (!outBuffer)
-            return;
-    }
+    if (!aOutBuffer.EnsureElemCapacity(aLength))
+        return;
+    outBuffer  = aOutBuffer.get();
 
     PRUint32 outLen = 0;
 
@@ -2079,31 +2578,6 @@ ConvertUnicharToUCS4(const PRUnichar *aString, PRUint32 aLength,
     }
 
     *aOutLen = outLen;
-    *aOutBuffer = outBuffer;
-}
-
-/* static */
-void
-StaticDrawStringCallback(FcChar32 aChar, nsFontXft *aFont, void *aData)
-{
-    DrawStringData *data = (DrawStringData *)aData;
-    data->metrics->DrawStringCallback(aChar, aFont, aData);
-}
-
-/* static */
-void
-StaticTextDimensionsCallback(FcChar32 aChar, nsFontXft *aFont, void *aData)
-{
-    TextDimensionsData *data = (TextDimensionsData *)aData;
-    data->metrics->TextDimensionsCallback(aChar, aFont, aData);
-}
-
-/* static */
-void
-StaticGetWidthCallback(FcChar32 aChar, nsFontXft *aFont, void *aData)
-{
-    WidthData *data = (WidthData *)aData;
-    data->metrics->GetWidthCallback(aChar, aFont, aData);
 }
 
 #ifdef MOZ_WIDGET_GTK2
@@ -2127,6 +2601,283 @@ GdkRegionSetXftClip(GdkRegion *aGdkRegion, XftDraw *aDraw)
 
     XftDrawSetClipRectangles(aDraw, 0, 0, xrects, n_rects);
 
+    g_free(xrects);
     g_free(rects);
 }
 #endif /* MOZ_WIDGET_GTK2 */
+
+// Helper to determine if a font has a private encoding that we know
+// something about
+/* static */
+nsresult
+GetEncoding(const char *aFontName, char **aEncoding, nsXftFontType &aType,
+            FT_Encoding &aFTEncoding)
+{
+  // below is a list of common used name for startup
+    if ((!strcmp(aFontName, "Helvetica" )) ||
+         (!strcmp(aFontName, "Times" )) ||
+         (!strcmp(aFontName, "Times New Roman" )) ||
+         (!strcmp(aFontName, "Courier New" )) ||
+         (!strcmp(aFontName, "Courier" )) ||
+         (!strcmp(aFontName, "Arial" )) ||
+         (!strcmp(aFontName, "MS P Gothic" )) ||
+        (!strcmp(aFontName, "Verdana" ))) {
+        // error mean do not get a special encoding
+        return NS_ERROR_NOT_AVAILABLE; 
+    }
+
+    nsCAutoString name;
+    name.Assign(NS_LITERAL_CSTRING("encoding.") + 
+                nsDependentCString(aFontName) + NS_LITERAL_CSTRING(".ttf"));
+
+    name.StripWhitespace();
+    ToLowerCase(name);
+
+    // if we have not init the property yet, init it right now.
+    if (!gFontEncodingProperties)
+        NS_LoadPersistentPropertiesFromURISpec(&gFontEncodingProperties,
+            NS_LITERAL_CSTRING("resource://gre/res/fonts/fontEncoding.properties"));
+
+    nsAutoString encoding;
+    *aEncoding = nsnull;
+    if (gFontEncodingProperties) {
+        nsresult rv = gFontEncodingProperties->GetStringProperty(name,
+                                                                 encoding);
+        if (NS_FAILED(rv)) 
+            return NS_ERROR_NOT_AVAILABLE;  // Unicode font
+
+        // '.wide' at the end indicates 'wide' font.
+        if (encoding.Length() > 5 && 
+            StringEndsWith(encoding, NS_LITERAL_STRING(".wide"))) {
+            aType = eFontTypeCustomWide;
+            encoding.Truncate(encoding.Length() - 5);
+        }
+        else  {
+            aType = eFontTypeCustom;
+
+            // Mathematica and TeX CM truetype fonts have both Apple Roman
+            // (PID=1, EID=0) and Unicode (PID=3, EID=1) cmaps. In the
+            // former, Unicode cmap uses codepoints in PUA beginning
+            // at U+F000 not representable in a single byte encoding
+            // like MathML encodings. ( On the other hand, TeX CM fonts
+            // have 'pseudo-Unicode' cmap with codepoints below U+0100.)
+            // Unicode to font encoding converters for MathML map input 
+            // Unicode codepoints to 'pseudo-glyph indices' in Apple Roman 
+            // for  Mathematica, Symbol and MTExtra fonts while it maps
+            // input Unicode codepoints  to 'pseudo-glyph indices' in 
+            // 'Unicode cmap' for TeX CM fonts. Therefore we have to select
+            // different FT_Encoding for two groups to guarantee that
+            // glyph index look-up with FT_Get_Char_Index succeeds for
+            // all MathML fonts. Instead of hard-coding this relation,
+            // it's put in fontEncoding.properties file and is parsed here.
+          
+            nsAutoString ftCharMap; 
+            nsresult rv = gFontEncodingProperties->GetStringProperty(
+                          Substring(name, 0, name.Length() - 4) + 
+                          NS_LITERAL_CSTRING(".ftcmap"), ftCharMap);
+          
+            if (NS_FAILED(rv)) 
+                aFTEncoding = ft_encoding_none;
+            else if (ftCharMap.EqualsIgnoreCase("mac_roman"))
+                aFTEncoding = ft_encoding_apple_roman;
+            else if (ftCharMap.EqualsIgnoreCase("unicode"))
+                aFTEncoding = ft_encoding_unicode;
+        }
+
+        // encoding name is always in US-ASCII so that there's no loss here.
+        *aEncoding = ToNewCString(encoding);
+        if (PR_LOG_TEST(gXftFontLoad, PR_LOG_DEBUG)) {
+          printf("\t\tc> it's %s and encoding is %s\n",
+                  aType==eFontTypeCustom ? "narrow" : "wide", *aEncoding);
+        }
+
+        return NS_OK;
+    }
+
+    return NS_ERROR_NOT_AVAILABLE;
+}
+
+/* static */
+static nsresult
+GetConverter(const char* aEncoding, nsIUnicodeEncoder **aConverter)
+{
+    nsresult rv;
+
+    if (!gCharsetManager) {
+        nsServiceManager::GetService(kCharsetConverterManagerCID,
+        NS_GET_IID(nsICharsetConverterManager), (nsISupports**)&gCharsetManager);
+        if (!gCharsetManager) {
+            FreeGlobals();
+            return NS_ERROR_FAILURE;
+        }
+    }
+
+    // encoding name obtained from fontEncoding.properties is
+    // canonical so that we don't need the alias resolution. use 'Raw'
+    // version.
+    rv = gCharsetManager->GetUnicodeEncoderRaw(aEncoding, aConverter);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (PR_LOG_TEST(gXftFontLoad, PR_LOG_DEBUG)) {
+        printf("\t\tc> got the converter for %s \n", aEncoding);
+    }
+
+    return (*aConverter)->SetOutputErrorBehavior(
+            (*aConverter)->kOnError_Replace, nsnull, '?');
+}
+
+
+/* static */
+nsresult
+FreeGlobals(void)
+{
+    gInitialized = 0;
+
+    NS_IF_RELEASE(gFontEncodingProperties);
+    NS_IF_RELEASE(gCharsetManager);
+
+    gFontXftMaps.Clear();
+
+    return NS_OK;
+}
+
+nsFontXftInfo*
+GetFontXftInfo(FcPattern* aPattern)
+{
+    const char* family;
+
+    // If there's no family, just treat it as if it's a normal Unicode font
+    if (FcPatternGetString(aPattern, FC_FAMILY, 0, (FcChar8 **) &family) 
+         != FcResultMatch) {
+        return nsnull;
+    }
+
+    NS_ASSERTION(gFontXftMaps.IsInitialized(), "gFontXMaps should be init'd by now.");
+
+    nsFontXftInfo* info;
+
+    // cached entry found. 
+    if (gFontXftMaps.Get(family, &info))
+        return info;
+
+    nsCOMPtr<nsIUnicodeEncoder> converter;
+    nsXftFontType fontType =  eFontTypeUnicode; 
+    nsXPIDLCString encoding;
+    FT_Encoding ftEncoding = ft_encoding_unicode;
+    PRUint16* ccmap = nsnull;
+
+    // See if a font has a custom/private encoding by matching
+    // its family name against the list in fontEncoding.properties 
+    // with GetEncoding(). It also sets fonttype (wide or narrow). 
+    // Then get the converter and see if has a valid coverage map. 
+    
+    // XXX these two if-statements used to be logically AND'ed, but
+    // string changes (bug 231995) made it impossible to use getter_Copies(encoding)
+    // and encoding.get() in a single statement. Until Darin comes up with 
+    // a solution, we need to split it into two if-statements. (bug 234908)
+    if (NS_SUCCEEDED(GetEncoding(family, getter_Copies(encoding), 
+                     fontType, ftEncoding))) {
+        if (NS_SUCCEEDED(GetConverter(encoding.get(), 
+                         getter_AddRefs(converter)))) {
+            nsCOMPtr<nsICharRepresentable> mapper(do_QueryInterface(converter));
+            if (PR_LOG_TEST(gXftFontLoad, PR_LOG_DEBUG)) {
+               printf("\t\tc> got the converter and CMap :%s !!\n",
+                      encoding.get());
+            }
+
+            if (mapper) {
+                ccmap = MapperToCCMap(mapper);
+            }
+        }
+    }
+
+    // XXX Need to check if an identical map has already been added - Bug 75260
+    // For Xft, this doesn't look as critical as in GFX Win.
+
+    info = new nsFontXftInfo; 
+    if (!info) 
+        return nsnull; 
+
+    info->mCCMap =  ccmap;  
+    info->mConverter = converter;
+    info->mFontType = fontType;
+    info->mFT_Encoding = ftEncoding;
+
+    gFontXftMaps.Put(family, info); 
+
+    return info;
+}
+
+/* static */
+// Convert input UCS4 string to "Pseudo-UCS4" string made of
+// custom font-specific codepoints with Unicode converter.
+nsresult
+ConvertUCS4ToCustom(FcChar32 *aSrc,  PRUint32 aSrcLen,
+                    PRUint32& aDestLen, nsIUnicodeEncoder *aConverter,
+                    PRBool aIsWide, nsAutoFcChar32Buffer& aResult)
+{
+    nsresult rv = NS_OK;
+
+    nsCOMPtr<nsIUnicodeEncoder> converter = aConverter;
+    if (!converter )
+        return NS_ERROR_UNEXPECTED;
+
+    // Convert to UTF-16 because UnicodeEncoder expects input to be in
+    // UTF-16.  We can get away with in-place replacement because
+    // UTF-16 is at most as long as UCS-4 so that UCS-4(source) buffer
+    // pointer is always ahead of UTF-16(target) buffer pointer and we
+    // won't revisit the buffer we already processed.
+    
+    PRUnichar *utf16Src  = NS_REINTERPRET_CAST(PRUnichar *, aSrc);
+    PRUnichar *utf16Ptr = utf16Src;
+    for (PRUint32 i = 0; i < aSrcLen; ++i, ++utf16Ptr) {
+        if (!IS_NON_BMP(aSrc[i])) {
+            *utf16Ptr = PRUnichar(aSrc[i]);
+        }
+        else {
+            *utf16Ptr = H_SURROGATE(aSrc[i]);
+            *++utf16Ptr = L_SURROGATE(aSrc[i]);
+        }
+    }
+
+    PRInt32 utf16SrcLen = utf16Ptr - utf16Src;
+    PRInt32 medLen = utf16SrcLen;
+    // Length can increase for 'Wide' custom fonts.
+    if (aIsWide &&
+        NS_FAILED(aConverter->GetMaxLength(utf16Src, utf16SrcLen, &medLen))) {
+        return NS_ERROR_UNEXPECTED;
+    }
+
+    nsAutoBuffer<char, AUTO_BUFFER_SIZE> medBuffer;
+    if (!medBuffer.EnsureElemCapacity(medLen))
+        return NS_ERROR_OUT_OF_MEMORY;
+    char *med  = medBuffer.get();
+
+    // Convert utf16Src  to font-specific encoding with mConverter.
+    rv = converter->Convert(utf16Src, &utf16SrcLen, med, &medLen);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Put pseudo-unicode str. into font specific pseudo-UCS-4 str.
+    if (aIsWide) {
+#ifdef IS_LITTLE_ENDIAN
+        // Convert BE UTF-16 to LE UTF-16 for 'wide' custom fonts
+        char* pstr = med;
+        while (pstr < med + medLen) {
+            PRUint8 tmp = pstr[0];
+            pstr[0] = pstr[1];
+            pstr[1] = tmp;
+            pstr += 2; // swap every two bytes
+        }
+#endif
+        // Convert 16bit  custom font codes to UCS4
+        ConvertUnicharToUCS4(NS_REINTERPRET_CAST(PRUnichar *, med),
+                             medLen >> 1, aResult, &aDestLen);
+        rv = aDestLen ? rv : NS_ERROR_OUT_OF_MEMORY;
+    }
+    else {
+        // Convert 8bit custom font codes to UCS4
+        ConvertCharToUCS4(med, medLen, aResult, &aDestLen);
+        rv = aDestLen ? rv : NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    return rv;
+}

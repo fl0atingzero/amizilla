@@ -137,37 +137,56 @@ class nsCSSScanner {
 
   // Get the next token. Return nsfalse on EOF or ERROR. aTokenResult
   // is filled in with the data for the token.
-  PRBool Next(PRInt32& aErrorCode, nsCSSToken& aTokenResult);
+  PRBool Next(nsresult& aErrorCode, nsCSSToken& aTokenResult);
 
   // Get the next token that may be a string or unquoted URL or whitespace
-  PRBool NextURL(PRInt32& aErrorCode, nsCSSToken& aTokenResult);
+  PRBool NextURL(nsresult& aErrorCode, nsCSSToken& aTokenResult);
 
+  static inline PRBool
+  IsIdentStart(PRInt32 aChar, const PRUint8* aLexTable)
+  {
+    return aChar >= 0 &&
+      (aChar >= 256 || (aLexTable[aChar] & START_IDENT) != 0);
+  }
+
+  static inline PRBool
+  StartsIdent(PRInt32 aFirstChar, PRInt32 aSecondChar,
+              const PRUint8* aLexTable)
+  {
+    return IsIdentStart(aFirstChar, aLexTable) ||
+      (aFirstChar == '-' && IsIdentStart(aSecondChar, aLexTable));
+  }
+
+  static inline const PRUint8* GetLexTable() {
+    return gLexTable;
+  }
+  
 protected:
   void Close();
-  PRInt32 Read(PRInt32& aErrorCode);
-  PRInt32 Peek(PRInt32& aErrorCode);
+  PRInt32 Read(nsresult& aErrorCode);
+  PRInt32 Peek(nsresult& aErrorCode);
   void Unread();
   void Pushback(PRUnichar aChar);
-  PRBool LookAhead(PRInt32& aErrorCode, PRUnichar aChar);
-  PRBool EatWhiteSpace(PRInt32& aErrorCode);
-  PRBool EatNewline(PRInt32& aErrorCode);
+  PRBool LookAhead(nsresult& aErrorCode, PRUnichar aChar);
+  PRBool EatWhiteSpace(nsresult& aErrorCode);
+  PRBool EatNewline(nsresult& aErrorCode);
 
-  PRInt32 ParseEscape(PRInt32& aErrorCode);
-  PRBool ParseIdent(PRInt32& aErrorCode, PRInt32 aChar, nsCSSToken& aResult);
-  PRBool ParseAtKeyword(PRInt32& aErrorCode, PRInt32 aChar,
+  PRInt32 ParseEscape(nsresult& aErrorCode);
+  PRBool ParseIdent(nsresult& aErrorCode, PRInt32 aChar, nsCSSToken& aResult);
+  PRBool ParseAtKeyword(nsresult& aErrorCode, PRInt32 aChar,
                         nsCSSToken& aResult);
-  PRBool ParseNumber(PRInt32& aErrorCode, PRInt32 aChar, nsCSSToken& aResult);
-  PRBool ParseID(PRInt32& aErrorCode, PRInt32 aChar, nsCSSToken& aResult);
-  PRBool ParseString(PRInt32& aErrorCode, PRInt32 aChar, nsCSSToken& aResult);
+  PRBool ParseNumber(nsresult& aErrorCode, PRInt32 aChar, nsCSSToken& aResult);
+  PRBool ParseID(nsresult& aErrorCode, PRInt32 aChar, nsCSSToken& aResult);
+  PRBool ParseString(nsresult& aErrorCode, PRInt32 aChar, nsCSSToken& aResult);
 #if 0
-  PRBool ParseEOLComment(PRInt32& aErrorCode, nsCSSToken& aResult);
-  PRBool ParseCComment(PRInt32& aErrorCode, nsCSSToken& aResult);
+  PRBool ParseEOLComment(nsresult& aErrorCode, nsCSSToken& aResult);
+  PRBool ParseCComment(nsresult& aErrorCode, nsCSSToken& aResult);
 #endif
-  PRBool SkipCComment(PRInt32& aErrorCode);
+  PRBool SkipCComment(nsresult& aErrorCode);
 
-  PRBool GatherString(PRInt32& aErrorCode, PRInt32 aStop,
+  PRBool GatherString(nsresult& aErrorCode, PRInt32 aStop,
                       nsString& aString);
-  PRBool GatherIdent(PRInt32& aErrorCode, PRInt32 aChar, nsString& aIdent);
+  PRBool GatherIdent(nsresult& aErrorCode, PRInt32 aChar, nsString& aIdent);
 
   nsIUnicharInputStream* mInput;
   PRUnichar* mBuffer;
@@ -186,6 +205,16 @@ protected:
   nsString mError;
 #endif
 
+  static const PRUint8 IS_DIGIT;
+  static const PRUint8 IS_HEX_DIGIT;
+  static const PRUint8 IS_ALPHA;
+  static const PRUint8 START_IDENT;
+  static const PRUint8 IS_IDENT;
+  static const PRUint8 IS_WHITESPACE;
+
+  static PRUint8 gLexTable[256];
+  static void BuildLexTable();
+  static PRBool CheckLexTable(PRInt32 aChar, PRUint8 aBit, PRUint8* aLexTable);
 };
 
 #endif /* nsCSSScanner_h___ */

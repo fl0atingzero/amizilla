@@ -268,6 +268,7 @@ nsPluginDirServiceProvider::GetFile(const char *prop, PRBool *persistant, nsIFil
     // Look for the Java OJI plugin via the JRE install path
     HKEY baseloc;
     HKEY keyloc;
+    HKEY entryloc;
     FILETIME modTime;
     DWORD type; 
     DWORD index = 0;
@@ -278,12 +279,15 @@ nsPluginDirServiceProvider::GetFile(const char *prop, PRBool *persistant, nsIFil
     char curKey[_MAX_PATH] = "Software\\JavaSoft\\Java Plug-in";
     char path[_MAX_PATH];
     char newestPath[_MAX_PATH + 4]; // to prevent buffer overrun when adding \bin
+    const char mozPath[_MAX_PATH] = "Software\\mozilla.org\\Mozilla";
 
     newestPath[0] = 0;
     LONG result = ::RegOpenKeyEx(HKEY_LOCAL_MACHINE, curKey, 0, KEY_READ, &baseloc);
+    if (ERROR_SUCCESS != result)
+      return NS_ERROR_FAILURE;
 
     // we must enumerate through the keys because what if there is more than one version?
-    while (ERROR_SUCCESS == result) {
+    do {
       path[0] = 0;
       numChars = _MAX_PATH;
       pathlen = sizeof(path);
@@ -298,12 +302,18 @@ nsPluginDirServiceProvider::GetFile(const char *prop, PRBool *persistant, nsIFil
             if (CompareVersion(curVer, maxVer) >= 0 && CompareVersion(curVer, minVer) >= 0) {
               PL_strcpy(newestPath, path);
               CopyVersion(&maxVer, &curVer);
+              if (ERROR_SUCCESS == ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, mozPath, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE|KEY_QUERY_VALUE, NULL, &entryloc, NULL)) {
+              	if (ERROR_SUCCESS != ::RegQueryValueEx(entryloc, "CurrentVersion", 0, NULL, NULL, NULL)) {
+              	  ::RegSetValueEx(entryloc, "CurrentVersion", 0, REG_SZ, (const BYTE*)MOZILLA_VERSION, sizeof(MOZILLA_VERSION));
+                }
+              }
+              ::RegCloseKey(entryloc);
             }
-            ::RegCloseKey(keyloc);
           }
+          ::RegCloseKey(keyloc);
         }
       }
-    }
+    } while (ERROR_SUCCESS == result);
 
     ::RegCloseKey(baseloc);
 
@@ -424,8 +434,8 @@ nsPluginDirServiceProvider::GetFile(const char *prop, PRBool *persistant, nsIFil
               PL_strcpy(newestPath, path);
               CopyVersion(&maxVer, &curVer);
             }
-            ::RegCloseKey(keyloc);
           }
+          ::RegCloseKey(keyloc);
         }
       }
     }
@@ -439,7 +449,7 @@ nsPluginDirServiceProvider::GetFile(const char *prop, PRBool *persistant, nsIFil
 #endif
 
   if (localFile && NS_SUCCEEDED(rv))
-    return localFile->QueryInterface(NS_GET_IID(nsIFile), (void**)_retval);
+    return CallQueryInterface(localFile, _retval);
 
   return rv;
 }
@@ -458,9 +468,11 @@ nsPluginDirServiceProvider::GetPLIDDirectories(nsISimpleEnumerator **aEnumerator
   char curKey[_MAX_PATH] = "Software\\MozillaPlugins";
 
   LONG result = ::RegOpenKeyEx(HKEY_LOCAL_MACHINE, curKey, 0, KEY_READ, &baseloc);
+  if (ERROR_SUCCESS != result)
+    return NS_ERROR_FAILURE;
 
   DWORD index = 0;
-  while (ERROR_SUCCESS == result) {
+  do {
     DWORD numChars = _MAX_PATH;
     FILETIME modTime;
     DWORD type;
@@ -508,7 +520,7 @@ nsPluginDirServiceProvider::GetPLIDDirectories(nsISimpleEnumerator **aEnumerator
       }
       ::RegCloseKey(keyloc);
     }
-  }
+  } while (ERROR_SUCCESS == result);
 
   ::RegCloseKey(baseloc);
   

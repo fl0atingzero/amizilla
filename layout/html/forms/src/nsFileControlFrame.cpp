@@ -97,7 +97,8 @@ NS_NewFileControlFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
 
 nsFileControlFrame::nsFileControlFrame():
   mTextFrame(nsnull), 
-  mCachedState(nsnull)
+  mCachedState(nsnull),
+  mDidPreDestroy(PR_FALSE)
 {
     //Shrink the area around it's contents
   SetFlags(NS_BLOCK_SHRINK_WRAP);
@@ -117,8 +118,8 @@ nsFileControlFrame::~nsFileControlFrame()
   }
 }
 
-NS_IMETHODIMP 
-nsFileControlFrame::Destroy(nsIPresContext* aPresContext)
+void
+nsFileControlFrame::PreDestroy(nsIPresContext* aPresContext)
 {
   // Toss the value into the control from the anonymous content, which is about
   // to get lost.
@@ -131,7 +132,30 @@ nsFileControlFrame::Destroy(nsIPresContext* aPresContext)
     nsCOMPtr<nsITextControlElement> fileInput = do_QueryInterface(mContent);
     fileInput->TakeTextFrameValue(value);
   }
+  mDidPreDestroy = PR_TRUE;
+}
+
+NS_IMETHODIMP
+nsFileControlFrame::Destroy(nsIPresContext* aPresContext)
+{
+  if (!mDidPreDestroy) {
+    PreDestroy(aPresContext);
+  }
+  mTextFrame = nsnull;
   return nsAreaFrame::Destroy(aPresContext);
+}
+
+void
+nsFileControlFrame::RemovedAsPrimaryFrame(nsIPresContext* aPresContext)
+{
+  if (!mDidPreDestroy) {
+    PreDestroy(aPresContext);
+  }
+#ifdef DEBUG
+  else {
+    NS_ERROR("RemovedAsPrimaryFrame called after PreDestroy");
+  }
+#endif
 }
 
 NS_IMETHODIMP
@@ -139,16 +163,15 @@ nsFileControlFrame::CreateAnonymousContent(nsIPresContext* aPresContext,
                                            nsISupportsArray& aChildList)
 {
   // Get the NodeInfoManager and tag necessary to create input elements
-  nsCOMPtr<nsIDocument> doc;
-  mContent->GetDocument(getter_AddRefs(doc));
-  nsCOMPtr<nsINodeInfoManager> nimgr;
-  nsresult rv = doc->GetNodeInfoManager(getter_AddRefs(nimgr));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIDocument> doc = mContent->GetDocument();
+  nsINodeInfoManager *nimgr = doc->GetNodeInfoManager();
+  NS_ENSURE_TRUE(nimgr, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsINodeInfo> nodeInfo;
   nimgr->GetNodeInfo(nsHTMLAtoms::input, nsnull, kNameSpaceID_None,
                      getter_AddRefs(nodeInfo));
 
+  nsresult rv;
   nsCOMPtr<nsIElementFactory> ef(do_GetService(kHTMLElementFactoryCID,&rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -213,7 +236,7 @@ nsFileControlFrame::QueryInterface(const nsIID& aIID, void** aInstancePtr)
 }
 
 NS_IMETHODIMP_(PRInt32)
-nsFileControlFrame::GetType() const
+nsFileControlFrame::GetFormControlType() const
 {
   return NS_FORM_INPUT_FILE;
 }
@@ -224,8 +247,7 @@ nsFileControlFrame::SetFocus(PRBool aOn, PRBool aRepaint)
 {
   // Fix for Bug 6133 
   if (mTextFrame) {
-    nsCOMPtr<nsIContent> content;
-    mTextFrame->GetContent(getter_AddRefs(content));
+    nsIContent* content = mTextFrame->GetContent();
     if (content) {
       content->SetFocus(mPresContext);
     }
@@ -236,8 +258,7 @@ void
 nsFileControlFrame::ScrollIntoView(nsIPresContext* aPresContext)
 {
   if (aPresContext) {
-    nsCOMPtr<nsIPresShell> presShell;
-    aPresContext->GetShell(getter_AddRefs(presShell));
+    nsIPresShell *presShell = aPresContext->GetPresShell();
     if (presShell) {
       presShell->ScrollFrameIntoView(this,
                    NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE,NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE);
@@ -266,22 +287,15 @@ nsFileControlFrame::MouseClick(nsIDOMEvent* aMouseEvent)
   nsresult result;
 
   // Get parent nsIDOMWindowInternal object.
-  nsCOMPtr<nsIContent> content;
-  result = GetContent(getter_AddRefs(content));
+  nsIContent* content = GetContent();
   if (!content)
-    return NS_FAILED(result) ? result : NS_ERROR_FAILURE;
+    return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIDocument> doc;
-  result = content->GetDocument(getter_AddRefs(doc));
+  nsCOMPtr<nsIDocument> doc = content->GetDocument();
   if (!doc)
-    return NS_FAILED(result) ? result : NS_ERROR_FAILURE;
+    return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIScriptGlobalObject> scriptGlobalObject;
-  result = doc->GetScriptGlobalObject(getter_AddRefs(scriptGlobalObject));
-  if (!scriptGlobalObject)
-    return NS_FAILED(result) ? result : NS_ERROR_FAILURE;
-
-  nsCOMPtr<nsIDOMWindowInternal> parentWindow = do_QueryInterface(scriptGlobalObject);
+  nsCOMPtr<nsIDOMWindowInternal> parentWindow = do_QueryInterface(doc->GetScriptGlobalObject());
   if (!parentWindow)
     return NS_ERROR_FAILURE;
 
@@ -326,6 +340,9 @@ nsFileControlFrame::MouseClick(nsIDOMEvent* aMouseEvent)
     }
   }
 
+  // Tell our textframe to remember the currently focused value
+  mTextFrame->InitFocusedValue();
+
   // Open dialog
   PRInt16 mode;
   result = filePicker->Show(&mode);
@@ -334,6 +351,11 @@ nsFileControlFrame::MouseClick(nsIDOMEvent* aMouseEvent)
   if (mode == nsIFilePicker::returnCancel)
     return NS_OK;
 
+  if (!mTextFrame) {
+    // We got destroyed while the filepicker was up.  Don't do anything here.
+    return NS_OK;
+  }
+  
   // Set property
   nsCOMPtr<nsILocalFile> localFile;
   result = filePicker->GetFile(getter_AddRefs(localFile));
@@ -342,6 +364,8 @@ nsFileControlFrame::MouseClick(nsIDOMEvent* aMouseEvent)
     result = localFile->GetPath(unicodePath);
     if (!unicodePath.IsEmpty()) {
       mTextFrame->SetProperty(mPresContext, nsHTMLAtoms::value, unicodePath);
+      // May need to fire an onchange here
+      mTextFrame->CheckFireOnChange();
       return NS_OK;
     }
   }
@@ -376,16 +400,13 @@ NS_IMETHODIMP nsFileControlFrame::Reflow(nsIPresContext*          aPresContext,
   if (NS_SUCCEEDED(rv) && mTextFrame != nsnull) {
     const nsStyleVisibility* vis = GetStyleVisibility();
 
-    nsIFrame * child;
-    FirstChild(aPresContext, nsnull, &child);
-    while (child == mTextFrame) {
-      child->GetNextSibling(&child);
+    nsIFrame* child = GetFirstChild(nsnull);
+    if (child == mTextFrame) {
+      child = child->GetNextSibling();
     }
-    if (child != nsnull) {
-      nsRect buttonRect;
-      nsRect txtRect;
-      mTextFrame->GetRect(txtRect);
-      child->GetRect(buttonRect);
+    if (child) {
+      nsRect buttonRect = child->GetRect();
+      nsRect txtRect = mTextFrame->GetRect();
 
       // check to see if we must reflow just the area frame again 
       // in order for the text field to be the correct height
@@ -410,7 +431,7 @@ NS_IMETHODIMP nsFileControlFrame::Reflow(nsIPresContext*          aPresContext,
           // now adjust the frame positions
           txtRect.y      = aReflowState.mComputedBorderPadding.top;
           txtRect.height = aDesiredSize.height;
-          mTextFrame->SetRect(aPresContext, txtRect);
+          mTextFrame->SetRect(txtRect);
         }
       }
 
@@ -420,11 +441,11 @@ NS_IMETHODIMP nsFileControlFrame::Reflow(nsIPresContext*          aPresContext,
       // and we must make sure the text field is the correct height
       if (NS_STYLE_DIRECTION_RTL == vis->mDirection) {
         buttonRect.x      = aReflowState.mComputedBorderPadding.left;
-        child->SetRect(aPresContext, buttonRect);
+        child->SetRect(buttonRect);
         txtRect.x         = aDesiredSize.width - txtRect.width + aReflowState.mComputedBorderPadding.left;
         txtRect.y         = aReflowState.mComputedBorderPadding.top;
         txtRect.height    = aDesiredSize.height;
-        mTextFrame->SetRect(aPresContext, txtRect);
+        mTextFrame->SetRect(txtRect);
       }
 
     }
@@ -453,28 +474,15 @@ nsFileControlFrame::GetTextControlFrame(nsIPresContext* aPresContext, nsIFrame* 
   nsNewFrame* result = nsnull;
 #ifndef DEBUG_NEWFRAME
   // find the text control frame.
-  nsIFrame* childFrame = nsnull;
-  aStart->FirstChild(aPresContext, nsnull, &childFrame);
+  nsIFrame* childFrame = aStart->GetFirstChild(nsnull);
 
   while (childFrame) {
     // see if the child is a text control
-    nsCOMPtr<nsIContent> content;
-    nsresult res = childFrame->GetContent(getter_AddRefs(content));
-    if (NS_SUCCEEDED(res) && content) {
-      nsCOMPtr<nsIAtom> atom;
-      res = content->GetTag(getter_AddRefs(atom));
-      if (NS_SUCCEEDED(res) && atom) {
-        if (atom.get() == nsHTMLAtoms::input) {
+    nsCOMPtr<nsIFormControl> formCtrl =
+      do_QueryInterface(childFrame->GetContent());
 
-          // It's an input, is it a text input?
-          nsAutoString value;
-          if (NS_CONTENT_ATTR_HAS_VALUE == content->GetAttr(kNameSpaceID_None, nsHTMLAtoms::type, value)) {
-            if (value.EqualsIgnoreCase("text")) {
-              result = (nsNewFrame*)childFrame;      
-            }
-          }
-        }
-      }
+    if (formCtrl && formCtrl->GetType() == NS_FORM_INPUT_TEXT) {
+      result = (nsNewFrame*)childFrame;
     }
 
     // if not continue looking
@@ -482,8 +490,7 @@ nsFileControlFrame::GetTextControlFrame(nsIPresContext* aPresContext, nsIFrame* 
     if (frame)
        result = frame;
      
-    res = childFrame->GetNextSibling(&childFrame);
-    NS_ASSERTION(res == NS_OK,"failed to get next child");
+    childFrame = childFrame->GetNextSibling();
   }
 
   return result;
@@ -533,8 +540,7 @@ nsFileControlFrame::AttributeChanged(nsIPresContext* aPresContext,
                                        nsIContent*     aChild,
                                        PRInt32         aNameSpaceID,
                                        nsIAtom*        aAttribute,
-                                       PRInt32         aModType, 
-                                       PRInt32         aHint)
+                                       PRInt32         aModType)
 {
   // propagate disabled to text / button inputs
   if (aNameSpaceID == kNameSpaceID_None &&
@@ -546,7 +552,7 @@ nsFileControlFrame::AttributeChanged(nsIPresContext* aPresContext,
     SyncAttr(aNameSpaceID, aAttribute, SYNC_TEXT);
   }
 
-  return nsAreaFrame::AttributeChanged(aPresContext, aChild, aNameSpaceID, aAttribute, aModType, aHint);
+  return nsAreaFrame::AttributeChanged(aPresContext, aChild, aNameSpaceID, aAttribute, aModType);
 }
 
 NS_IMETHODIMP
@@ -565,7 +571,7 @@ nsFileControlFrame::GetFrameForPoint(nsIPresContext* aPresContext,
     return nsAreaFrame::GetFrameForPoint(aPresContext, aPoint, aWhichLayer, aFrame);
   }
 #endif
-  return NS_OK;
+  return NS_ERROR_FAILURE;
 }
 
 #ifdef NS_DEBUG
@@ -579,12 +585,9 @@ nsFileControlFrame::GetFrameName(nsAString& aResult) const
 NS_IMETHODIMP
 nsFileControlFrame::GetFormContent(nsIContent*& aContent) const
 {
-  nsIContent* content;
-  nsresult    rv;
-
-  rv = GetContent(&content);
-  aContent = content;
-  return rv;
+  aContent = GetContent();
+  NS_IF_ADDREF(aContent);
+  return NS_OK;
 }
 
 NS_IMETHODIMP

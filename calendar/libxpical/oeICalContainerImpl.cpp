@@ -34,6 +34,11 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* This file implements the Container object for calendars. The container is the topmost object in 
+the backend and contains and interact with all calendar objects. It acts as a distributor of global
+commands to individual calendars and a collector of calculated data for global queries.
+*/
+
 #include "oeICalContainerImpl.h"
 #include "nsISupportsArray.h"
 #include "nsComponentManagerUtils.h"
@@ -220,7 +225,7 @@ oeICalContainerImpl::~oeICalContainerImpl()
  * Notice that the second parameter to the macro is the static IID accessor
  * method, and NOT the #defined IID.
  */
-NS_IMPL_ISUPPORTS1(oeICalContainerImpl, oeIICalContainer);
+NS_IMPL_ISUPPORTS1(oeICalContainerImpl, oeIICalContainer)
 
 NS_IMETHODIMP
 oeICalContainerImpl::AddCalendar( const char *server ) {
@@ -1053,6 +1058,11 @@ oeICalContainerFilter::~oeICalContainerFilter()
     NS_RELEASE( m_completed );
 }
 
+NS_IMETHODIMP oeICalContainerFilter::GetType(Componenttype *aRetVal)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 NS_IMETHODIMP oeICalContainerFilter::GetId(char **aRetVal)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -1271,10 +1281,21 @@ NS_IMETHODIMP oeICalContainerFilter::SetRecurForever(PRBool aNewVal)
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP oeICalContainerFilter::GetLastAlarmAck(PRTime *aRetVal)
+NS_IMETHODIMP oeICalContainerFilter::GetLastModified(PRTime *aRetVal)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
+
+NS_IMETHODIMP oeICalContainerFilter::UpdateLastModified()
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP oeICalContainerFilter::GetLastAlarmAck(PRTime *aNewVal)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 NS_IMETHODIMP oeICalContainerFilter::SetLastAlarmAck(PRTime aNewVal)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -1480,6 +1501,15 @@ void oeICalContainerFilter::UpdateAllFilters( PRInt32 icaltype )
 NS_IMETHODIMP oeICalContainerFilter::ReportError( PRInt16 severity, PRUint32 errorid, const char *errorstring ) {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
+
+NS_IMETHODIMP oeICalContainerFilter::SetParameter( const char *name, const char *value ) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP oeICalContainerFilter::GetParameter( const char *name, char **value ) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 ///////////////////////////////////////////////////
 // FilterDateTime
 //////////////////////////////////////////////////

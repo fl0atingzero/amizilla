@@ -173,6 +173,7 @@ nsMsgDBViewCommandUpdater.prototype =
   displayMessageChanged : function(aFolder, aSubject, aKeywords)
   {
     setTitleFromFolder(aFolder, aSubject);
+    ClearPendingReadTimer(); // we are loading / selecting a new message so kill the mark as read timer for the currently viewed message
     gCurrentMessageUri = gDBView.URIForFirstSelectedMessage;
     UpdateStandAloneMessageCounts();
     SetKeywords(aKeywords);
@@ -705,6 +706,7 @@ var MessageWindowController =
       case "cmd_markAsRead":
       case "cmd_markAllRead":
       case "cmd_markThreadAsRead":
+      case "cmd_markReadByDate":
       case "cmd_markAsFlagged":
       case "cmd_label0":
       case "cmd_label1":
@@ -716,6 +718,7 @@ var MessageWindowController =
       case "cmd_file":
       case "cmd_markAsJunk":
       case "cmd_markAsNotJunk":
+      case "cmd_recalculateJunkScore":
       case "cmd_applyFilters":
       case "cmd_runJunkControls":
       case "cmd_deleteJunk":
@@ -727,7 +730,7 @@ var MessageWindowController =
       case "cmd_previousMsg": 
       case "cmd_previousUnreadMsg": 
       case "cmd_previousFlaggedMsg":
-        return !(gDBView.keyForFirstSelectedMessage == nsMsgKey_None);
+        return (gDBView.keyForFirstSelectedMessage != nsMsgKey_None);
       case "cmd_getNextNMessages":
       case "cmd_find":
       case "cmd_findAgain":
@@ -756,25 +759,27 @@ var MessageWindowController =
 
 	isCommandEnabled: function(command)
 	{
+    var loadedFolder;
+
 		switch (command)
 		{
       case "cmd_createFilterFromPopup":
       case "cmd_createFilterFromMenu":
-        var loadedFolder = GetLoadedMsgFolder();
-        if (!(loadedFolder && loadedFolder.server.canHaveFilters))
-          return false;
+        loadedFolder = GetLoadedMsgFolder();
+        return (loadedFolder && loadedFolder.server.canHaveFilters);
 			case "cmd_delete":
         UpdateDeleteCommand();
         // fall through
 			case "button_delete":
 			case "cmd_shiftDelete":
-        var loadedFolder = GetLoadedMsgFolder();
+        loadedFolder = GetLoadedMsgFolder();
         return gCurrentMessageUri && loadedFolder && (loadedFolder.canDeleteMessages || isNewsURI(gCurrentFolderUri));
       case "button_junk":
         UpdateJunkToolbarButton();
         // fall through
       case "cmd_markAsJunk":
 			case "cmd_markAsNotJunk":
+      case "cmd_recalculateJunkScore":
         // can't do junk on news yet
         return (!isNewsURI(gCurrentFolderUri));
 			case "cmd_reply":
@@ -800,17 +805,18 @@ var MessageWindowController =
 			case "cmd_markAsRead":
 			case "cmd_markAllRead":
 			case "cmd_markThreadAsRead":
+			case "cmd_markReadByDate":
       case "cmd_label0":
       case "cmd_label1":
       case "cmd_label2":
       case "cmd_label3":
       case "cmd_label4":
       case "cmd_label5":
-        return(true);
+        return true;
 			case "cmd_markAsFlagged":
       case "button_file":
 			case "cmd_file":
-				return ( gCurrentMessageUri != null);
+        return (gCurrentMessageUri != null);
 			case "cmd_printSetup":
 			  return true;
 			case "cmd_getNewMessages":
@@ -837,10 +843,8 @@ var MessageWindowController =
 			case "cmd_findPrev":
 				return MsgCanFindAgain();
       case "cmd_search":
-        var loadedFolder = GetLoadedMsgFolder();
-        if (!loadedFolder)
-          return false;
-        return loadedFolder.server.canSearchMessages; 
+        loadedFolder = GetLoadedMsgFolder();
+        return (loadedFolder && loadedFolder.server.canSearchMessages);
       case "cmd_undo":
       case "cmd_redo":
         return SetupUndoRedoCommand(command);
@@ -965,6 +969,9 @@ var MessageWindowController =
 			case "cmd_markAllRead":
 				MsgMarkAllRead();
 				return;
+			case "cmd_markReadByDate":
+				MsgMarkReadByDate();
+				return;
 			case "cmd_markAsFlagged":
 				MsgMarkAsFlagged(null);
 				return;
@@ -974,6 +981,9 @@ var MessageWindowController =
 			case "cmd_markAsNotJunk":
         JunkSelectedMessages(false);
 				return;
+      case "cmd_recalculateJunkScore":
+        analyzeMessagesForJunk();
+        return;
       case "cmd_label0":
         gDBView.doCommand(nsMsgViewCommandType.label0);
  				return;

@@ -42,7 +42,6 @@
 
 #include "nsISoftwareUpdate.h"
 #include "nsSoftwareUpdateIIDs.h"
-#include "nsTextFormatter.h"
 
 #include "nsXPITriggerInfo.h"
 #include "nsXPInstallManager.h"
@@ -50,7 +49,9 @@
 #include "nsInstallResources.h"
 #include "nsIProxyObjectManager.h"
 #include "nsIWindowWatcher.h"
+#include "nsIWindowMediator.h"
 #include "nsIDOMWindowInternal.h"
+#include "nsPIDOMWindow.h"
 #include "nsDirectoryService.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsAppDirectoryServiceDefs.h"
@@ -61,16 +62,21 @@
 #include "nsIScriptGlobalObject.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
+#include "nsIObserverService.h"
+
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 
 #include "CertReader.h"
 
-static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);
 static NS_DEFINE_IID(kProxyObjectManagerCID, NS_PROXYEVENT_MANAGER_CID);
 static NS_DEFINE_IID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
 
 #include "nsIEventQueueService.h"
 
-static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
+#define PREF_XPINSTALL_CONFIRM_DLG "xpinstall.dialog.confirm"
+#define PREF_XPINSTALL_STATUS_DLG "xpinstall.dialog.progress"
+#define PREF_XPINSTALL_STATUS_DLG_TYPE "xpinstall.dialog.progress.type"
 
 #define UPDATE_DLG(x)  (((x) - mLastUpdate) > 250000)
 
@@ -95,68 +101,78 @@ nsXPInstallManager::nsXPInstallManager()
     // initialize mLastUpdate to the current time
     mLastUpdate = PR_Now();
 
-    // get the resourced xpinstall string bundle
-    mStringBundle = nsnull;
-    nsresult rv;
-    nsCOMPtr<nsIStringBundleService> service =
-        do_GetService( kStringBundleServiceCID, &rv );
-
-    if (NS_SUCCEEDED(rv) && service)
-    {
-        rv = service->CreateBundle( XPINSTALL_BUNDLE_URL,
-                                    getter_AddRefs(mStringBundle) );
-    }
+    nsCOMPtr<nsIObserverService> os(do_GetService("@mozilla.org/observer-service;1"));
+    if (os)
+        os->AddObserver(this, XPI_PROGRESS_TOPIC, PR_TRUE);
 }
 
 
 nsXPInstallManager::~nsXPInstallManager()
 {
+    nsCOMPtr<nsIObserverService> os(do_GetService("@mozilla.org/observer-service;1"));
+    if (os)
+        os->RemoveObserver(this, XPI_PROGRESS_TOPIC);
+ 
     if (mTriggers)
         delete mTriggers;
 }
 
 
-NS_IMPL_THREADSAFE_ISUPPORTS7( nsXPInstallManager,
+NS_IMPL_THREADSAFE_ISUPPORTS8( nsXPInstallManager,
                                nsIXPIListener,
                                nsIXPIDialogService,
                                nsIObserver,
                                nsIStreamListener,
                                nsIProgressEventSink,
                                nsIInterfaceRequestor,
-                               nsPICertNotification)
+                               nsPICertNotification,
+                               nsISupportsWeakReference)
 
 
 NS_IMETHODIMP
 nsXPInstallManager::InitManager(nsIScriptGlobalObject* aGlobalObject, nsXPITriggerInfo* aTriggers, PRUint32 aChromeType)
 {
+    if ( !aTriggers || aTriggers->Size() == 0 )
+    {
+        NS_WARNING("XPInstallManager called with no trigger info!");
+        NS_RELEASE_THIS();
+        return NS_ERROR_INVALID_POINTER;
+    }
+
     nsresult rv = NS_OK;
 
     mTriggers = aTriggers;
     mChromeType = aChromeType;
     mNeedsShutdown = PR_TRUE;
 
-    if ( !mTriggers || mTriggers->Size() == 0 )
+    mParentWindow = do_QueryInterface(aGlobalObject);
+
+    // Don't launch installs while page is still loading
+    PRBool isPageLoading = PR_FALSE;
+    nsCOMPtr<nsPIDOMWindow> piWindow = do_QueryInterface(mParentWindow);
+    if (piWindow)
+        piWindow->IsLoadingOrRunningTimeout(&isPageLoading);
+
+    if (isPageLoading)
+        rv = NS_ERROR_FAILURE;
+    else
     {
-        rv = NS_ERROR_INVALID_POINTER;
-        NS_RELEASE_THIS();
-        return rv;
+        // Start downloading initial chunks looking for signatures,
+        mOutstandingCertLoads = mTriggers->Size();
+
+        nsXPITriggerItem *item = mTriggers->Get(--mOutstandingCertLoads);
+
+        nsCOMPtr<nsIURI> uri;
+        NS_NewURI(getter_AddRefs(uri), NS_ConvertUCS2toUTF8(item->mURL));
+        nsCOMPtr<nsIStreamListener> listener = new CertReader(uri, nsnull, this);
+        if (listener)
+            rv = NS_OpenURI(listener, nsnull, uri);
+        else
+            rv = NS_ERROR_OUT_OF_MEMORY;
     }
 
-    mParentWindow = do_QueryInterface(aGlobalObject);
-    mOutstandingCertLoads = mTriggers->Size();
-
-    nsXPITriggerItem *item = mTriggers->Get(--mOutstandingCertLoads);
-
-    nsCOMPtr<nsIURI> uri;
-    NS_NewURI(getter_AddRefs(uri), NS_ConvertUCS2toUTF8(item->mURL.get()).get());
-    nsIStreamListener* listener = new CertReader(uri, nsnull, this);
-    NS_ADDREF(listener);
-
-    rv = NS_OpenURI(listener, nsnull, uri);
-
-    NS_RELEASE(listener);
     if (NS_FAILED(rv)) {
-        NS_RELEASE_THIS();
+        Shutdown();
     }
     return rv;
 }
@@ -184,7 +200,7 @@ nsXPInstallManager::InitManagerInternal()
 
     // --- prepare dialog params
     PRUint32 numTriggers = mTriggers->Size();
-    PRUint32 numStrings = 3 * numTriggers;
+    PRUint32 numStrings = 4 * numTriggers;
     const PRUnichar** packageList =
         (const PRUnichar**)malloc( sizeof(PRUnichar*) * numStrings );
 
@@ -196,6 +212,7 @@ nsXPInstallManager::InitManagerInternal()
             nsXPITriggerItem *item = mTriggers->Get(i);
             packageList[j++] = item->mName.get();
             packageList[j++] = item->mURL.get();
+            packageList[j++] = item->mIconURL.get();
             packageList[j++] = item->mCertName.get();
         }
 
@@ -272,7 +289,6 @@ nsXPInstallManager::ConfirmInstall(nsIDOMWindow *aParent, const PRUnichar **aPac
     if ( NS_SUCCEEDED(rv) && parentWindow && params)
     {
         nsCOMPtr<nsIDOMWindow> newWindow;
-        nsCOMPtr<nsISupportsArray> array;
 
         nsCOMPtr<nsISupportsInterfacePointer> ifptr =
             do_CreateInstance(NS_SUPPORTS_INTERFACE_POINTER_CONTRACTID, &rv);
@@ -281,9 +297,18 @@ nsXPInstallManager::ConfirmInstall(nsIDOMWindow *aParent, const PRUnichar **aPac
         ifptr->SetData(params);
         ifptr->SetDataIID(&NS_GET_IID(nsIDialogParamBlock));
 
-        rv = parentWindow->OpenDialog(NS_LITERAL_STRING("chrome://communicator/content/xpinstall/institems.xul"),
+        char* confirmDialogURL;
+        nsCOMPtr<nsIPrefBranch> pref(do_GetService(NS_PREFSERVICE_CONTRACTID));
+        if (pref) {
+          rv = pref->GetCharPref(PREF_XPINSTALL_CONFIRM_DLG, &confirmDialogURL);
+          NS_ASSERTION(NS_SUCCEEDED(rv), "Can't invoke XPInstall FE without a FE URL! Set xpinstall.dialog.confirm");
+          if (NS_FAILED(rv))
+            return rv;
+        }
+
+        rv = parentWindow->OpenDialog(NS_ConvertASCIItoUCS2(confirmDialogURL),
                                       NS_LITERAL_STRING("_blank"),
-                                      NS_LITERAL_STRING("chrome,centerscreen,modal,titlebar,resizable"),
+                                      NS_LITERAL_STRING("chrome,centerscreen,modal,titlebar"),
                                       ifptr,
                                       getter_AddRefs(newWindow));
 
@@ -302,59 +327,58 @@ nsXPInstallManager::ConfirmInstall(nsIDOMWindow *aParent, const PRUnichar **aPac
 PRBool nsXPInstallManager::ConfirmChromeInstall(nsIDOMWindowInternal* aParentWindow, const PRUnichar **aPackage)
 {
     // get the dialog strings
-    nsresult rv;
     nsXPIDLString applyNowText;
-    nsXPIDLString confirmFormat;
-    PRUnichar*    confirmText = nsnull;
-    nsCOMPtr<nsIStringBundle> xpiBundle;
+    nsXPIDLString confirmText;
     nsCOMPtr<nsIStringBundleService> bundleSvc =
-             do_GetService( kStringBundleServiceCID, &rv );
-    if (NS_SUCCEEDED(rv) && bundleSvc)
+             do_GetService( kStringBundleServiceCID );
+    if (!bundleSvc)
+        return PR_FALSE;
+
+    nsCOMPtr<nsIStringBundle> xpiBundle;
+    bundleSvc->CreateBundle( XPINSTALL_BUNDLE_URL,
+                             getter_AddRefs(xpiBundle) );
+    if (!xpiBundle)
+        return PR_FALSE;
+
+    const PRUnichar *formatStrings[2] = { aPackage[0], aPackage[1] }; 
+    if ( mChromeType == CHROME_LOCALE )
     {
-        rv = bundleSvc->CreateBundle( XPINSTALL_BUNDLE_URL,
-                                      getter_AddRefs(xpiBundle) );
-        if (NS_SUCCEEDED(rv) && xpiBundle)
-        {
-            if ( mChromeType == CHROME_LOCALE )
-            {
-                xpiBundle->GetStringFromName(
-                    NS_LITERAL_STRING("ApplyNowLocale").get(),
-                    getter_Copies(applyNowText));
-                xpiBundle->GetStringFromName(
-                    NS_LITERAL_STRING("ConfirmLocale").get(),
-                    getter_Copies(confirmFormat));
-            }
-            else
-            {
-                xpiBundle->GetStringFromName(
-                    NS_LITERAL_STRING("ApplyNowSkin").get(),
-                    getter_Copies(applyNowText));
-                xpiBundle->GetStringFromName(
-                    NS_LITERAL_STRING("ConfirmSkin").get(),
-                    getter_Copies(confirmFormat));
-            }
-
-            confirmText = nsTextFormatter::smprintf(confirmFormat,
-                                                    aPackage[0],
-                                                    aPackage[1]);
-        }
+        xpiBundle->GetStringFromName(
+            NS_LITERAL_STRING("ApplyNowLocale").get(),
+            getter_Copies(applyNowText));
+        xpiBundle->FormatStringFromName(
+            NS_LITERAL_STRING("ConfirmLocale").get(),
+            formatStrings, 
+            2, 
+            getter_Copies(confirmText));
     }
-
+    else
+    {
+        xpiBundle->GetStringFromName(
+            NS_LITERAL_STRING("ApplyNowSkin").get(),
+            getter_Copies(applyNowText));
+        xpiBundle->FormatStringFromName(
+            NS_LITERAL_STRING("ConfirmSkin").get(),
+            formatStrings, 
+            2, 
+            getter_Copies(confirmText));
+    }
+    
+    if (confirmText.IsEmpty())
+        return PR_FALSE;
 
     // confirmation dialog
     PRBool bInstall = PR_FALSE;
-    if (confirmText)
+    nsCOMPtr<nsIPromptService> dlgService(do_GetService("@mozilla.org/embedcomp/prompt-service;1"));
+    if (dlgService)
     {
-        nsCOMPtr<nsIPromptService> dlgService(do_GetService("@mozilla.org/embedcomp/prompt-service;1"));
-        if (dlgService)
-        {
-            rv = dlgService->ConfirmCheck( aParentWindow,
-                                           nsnull,
-                                           confirmText,
-                                           applyNowText,
-                                           &mSelectChrome,
-                                           &bInstall );
-        }
+        dlgService->ConfirmCheck(
+            aParentWindow,
+            nsnull,
+            confirmText,
+            applyNowText,
+            &mSelectChrome,
+            &bInstall );
     }
 
     return bInstall;
@@ -393,9 +417,35 @@ nsXPInstallManager::OpenProgressDialog(const PRUnichar **aPackageList, PRUint32 
     // --- open the window
     nsCOMPtr<nsIWindowWatcher> wwatch(do_GetService(NS_WINDOWWATCHER_CONTRACTID, &rv));
     if (wwatch) {
+        char *statusDialogURL, *statusDialogType;
+        nsCOMPtr<nsIPrefBranch> pref(do_GetService(NS_PREFSERVICE_CONTRACTID));
+        if (pref) {
+          rv = pref->GetCharPref(PREF_XPINSTALL_STATUS_DLG, &statusDialogURL);
+          NS_ASSERTION(NS_SUCCEEDED(rv), "Can't invoke XPInstall FE without a FE URL! Set xpinstall.dialog.status");
+          if (NS_FAILED(rv))
+            return rv;
+
+          rv = pref->GetCharPref(PREF_XPINSTALL_STATUS_DLG_TYPE, &statusDialogType);
+          nsAutoString type; 
+          type.AssignWithConversion(statusDialogType);
+          if (NS_SUCCEEDED(rv) && !type.IsEmpty()) {
+            nsCOMPtr<nsIWindowMediator> wm = do_GetService(NS_WINDOWMEDIATOR_CONTRACTID);
+          
+            nsCOMPtr<nsIDOMWindowInternal> recentWindow;
+            wm->GetMostRecentWindow(type.get(), getter_AddRefs(recentWindow));
+            if (recentWindow) {
+              nsCOMPtr<nsIObserverService> os(do_GetService("@mozilla.org/observer-service;1"));
+              os->NotifyObservers(params, "xpinstall-download-started", nsnull);
+
+              recentWindow->Focus();
+              return NS_OK;
+            }
+          }
+        }
+
         nsCOMPtr<nsIDOMWindow> newWindow;
         rv = wwatch->OpenWindow(0, 
-                                "chrome://communicator/content/xpinstall/xpistatus.xul",
+                                statusDialogURL,
                                 "_blank", 
                                 "chrome,centerscreen,titlebar,resizable",
                                 params, 

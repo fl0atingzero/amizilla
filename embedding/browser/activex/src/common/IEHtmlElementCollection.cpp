@@ -20,7 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Adam Lock <adamlock@netscape.com>
+ *
+ *   Adam Lock <adamlock@eircom.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -155,7 +156,9 @@ HRESULT CIEHtmlElementCollection::PopulateFromDOMNode(nsIDOMNode *aDOMNode, BOOL
             nsCOMPtr<nsIDOMNode> docAsNode = aDOMNode;
             nsCOMPtr<nsIDOMDocument> doc = do_QueryInterface(aDOMNode);
             while (!doc) {
-                docAsNode->GetParentNode(getter_AddRefs(docAsNode));
+                nsCOMPtr<nsIDOMNode> parentNode;
+                docAsNode->GetParentNode(getter_AddRefs(parentNode));
+                docAsNode = parentNode;
                 if (!docAsNode)
                 {
                     return E_FAIL;
@@ -167,7 +170,7 @@ HRESULT CIEHtmlElementCollection::PopulateFromDOMNode(nsIDOMNode *aDOMNode, BOOL
             nsCOMPtr<nsIDOMDocumentTraversal> trav = do_QueryInterface(doc, &rv);
             NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
             nsCOMPtr<nsIDOMTreeWalker> walker;
-            rv = trav->CreateTreeWalker(docAsNode, 
+            rv = trav->CreateTreeWalker(aDOMNode, 
                 nsIDOMNodeFilter::SHOW_ELEMENT,
                 nsnull, PR_TRUE, getter_AddRefs(walker));
             NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
@@ -175,7 +178,7 @@ HRESULT CIEHtmlElementCollection::PopulateFromDOMNode(nsIDOMNode *aDOMNode, BOOL
             // We're not interested in the document node, so we always start
             // with the next one, walking through them all to make the collection
             nsCOMPtr<nsIDOMNode> currentNode;
-            walker->NextNode(getter_AddRefs(currentNode));
+            walker->FirstChild(getter_AddRefs(currentNode));
             while (currentNode)
             {
                 // Create an equivalent IE element

@@ -59,12 +59,12 @@
 #include "nsIAppShell.h"
 #include "nsIJSContextStack.h"
 
-/* XXX
+/*
  * defining CAUTIOUS_SCRIPTHOOK makes jsds disable GC while calling out to the
- * script hook.  This is a hack to avoid some js engine problems that I havn't
- * properly tracked down.  I'm lame.
+ * script hook.  This was a hack to avoid some js engine problems that should
+ * be fixed now (see Mozilla bug 77636).
  */
-#define CAUTIOUS_SCRIPTHOOK
+#undef CAUTIOUS_SCRIPTHOOK
 
 #ifdef DEBUG_verbose
 #   define DEBUG_COUNT(name, count)                                             \
@@ -96,7 +96,7 @@
 }
 
 #define JSDS_MAJOR_VERSION 1
-#define JSDS_MINOR_VERSION 1
+#define JSDS_MINOR_VERSION 2
 
 #define NS_CATMAN_CTRID   "@mozilla.org/categorymanager;1"
 #define NS_JSRT_CTRID     "@mozilla.org/js/xpc/RuntimeService;1"
@@ -790,7 +790,7 @@ jsdContext::GetJSDContext(JSDContext **_rval)
 */
 
 /* Objects */
-NS_IMPL_THREADSAFE_ISUPPORTS1(jsdObject, jsdIObject); 
+NS_IMPL_THREADSAFE_ISUPPORTS1(jsdObject, jsdIObject)
 
 NS_IMETHODIMP
 jsdObject::GetJSDContext(JSDContext **_rval)
@@ -858,7 +858,7 @@ jsdObject::GetValue(jsdIValue **_rval)
 }
 
 /* Properties */
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdProperty, jsdIProperty, jsdIEphemeral);
+NS_IMPL_THREADSAFE_ISUPPORTS2(jsdProperty, jsdIProperty, jsdIEphemeral)
 
 jsdProperty::jsdProperty (JSDContext *aCx, JSDProperty *aProperty) :
     mCx(aCx), mProperty(aProperty)
@@ -956,7 +956,7 @@ jsdProperty::GetVarArgSlot(PRUint32 *_rval)
 }
 
 /* Scripts */
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdScript, jsdIScript, jsdIEphemeral); 
+NS_IMPL_THREADSAFE_ISUPPORTS2(jsdScript, jsdIScript, jsdIEphemeral)
 
 jsdScript::jsdScript (JSDContext *aCx, JSDScript *aScript) : mValid(PR_FALSE),
                                                              mTag(0),
@@ -1421,7 +1421,7 @@ jsdScript::ClearAllBreakpoints()
 }
 
 /* Contexts */
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdContext, jsdIContext, jsdIEphemeral);
+NS_IMPL_THREADSAFE_ISUPPORTS2(jsdContext, jsdIContext, jsdIEphemeral)
 
 jsdIContext *
 jsdContext::FromPtr (JSDContext *aJSDCx, JSContext *aJSCx)
@@ -1606,7 +1606,9 @@ jsdContext::GetScriptsEnabled (PRBool *_rval)
     if (!context)
         return NS_ERROR_NO_INTERFACE;
 
-    return context->GetScriptsEnabled(_rval);
+    *_rval = context->GetScriptsEnabled();
+
+    return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1617,11 +1619,13 @@ jsdContext::SetScriptsEnabled (PRBool _rval)
     if (!context)
         return NS_ERROR_NO_INTERFACE;
 
-    return context->SetScriptsEnabled(_rval, PR_TRUE);
+    context->SetScriptsEnabled(_rval, PR_TRUE);
+
+    return NS_OK;
 }
 
 /* Stack Frames */
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdStackFrame, jsdIStackFrame, jsdIEphemeral);
+NS_IMPL_THREADSAFE_ISUPPORTS2(jsdStackFrame, jsdIStackFrame, jsdIEphemeral)
 
 jsdStackFrame::jsdStackFrame (JSDContext *aCx, JSDThreadState *aThreadState,
                               JSDStackFrameInfo *aStackFrameInfo) :
@@ -1870,9 +1874,11 @@ jsdStackFrame::Eval (const nsAString &bytes, const char *fileName,
     if (bytes.IsEmpty())
         return NS_ERROR_INVALID_ARG;
 
-    const nsSharedBufferHandle<PRUnichar> *h = bytes.GetSharedBufferHandle();
-    const jschar *char_bytes = NS_REINTERPRET_CAST(const jschar *,
-                                                   h->DataStart());
+    // get pointer to buffer contained in |bytes|
+    nsAString::const_iterator h;
+    bytes.BeginReading(h);
+    const jschar *char_bytes = NS_REINTERPRET_CAST(const jschar *, h.get());
+
     JSExceptionState *estate = 0;
     jsval jv;
 
@@ -1903,7 +1909,7 @@ jsdStackFrame::Eval (const nsAString &bytes, const char *fileName,
 }        
 
 /* Values */
-NS_IMPL_THREADSAFE_ISUPPORTS2(jsdValue, jsdIValue, jsdIEphemeral);
+NS_IMPL_THREADSAFE_ISUPPORTS2(jsdValue, jsdIValue, jsdIEphemeral)
 jsdIValue *
 jsdValue::FromPtr (JSDContext *aCx, JSDValue *aValue)
 {
@@ -2133,8 +2139,8 @@ jsdValue::GetStringValue(char **_rval)
 {
     ASSERT_VALID_EPHEMERAL;
     JSString *jstr_val = JSD_GetValueString(mCx, mValue);
-    char *bytes = JS_GetStringBytes(jstr_val);
-    if (bytes) {
+    if (jstr_val) {
+        char *bytes = JS_GetStringBytes(jstr_val);
         *_rval = PL_strdup(bytes);
         if (!*_rval)
             return NS_ERROR_OUT_OF_MEMORY;
@@ -2243,7 +2249,7 @@ jsdValue::GetWrappedValue()
 /******************************************************************************
  * debugger service implementation
  ******************************************************************************/
-NS_IMPL_THREADSAFE_ISUPPORTS1(jsdService, jsdIDebuggerService); 
+NS_IMPL_THREADSAFE_ISUPPORTS1(jsdService, jsdIDebuggerService)
 
 NS_IMETHODIMP
 jsdService::GetJSDContext(JSDContext **_rval)
@@ -2533,7 +2539,7 @@ jsdService::Off (void)
     mOn = PR_FALSE;
 
 #ifdef DEBUG
-    printf ("+++ JavaScript debuging hooks removed.\n");
+    printf ("+++ JavaScript debugging hooks removed.\n");
 #endif
 
     return NS_OK;
@@ -2650,7 +2656,9 @@ jsdService::EnumerateScripts (jsdIScriptEnumerator *enumerator)
 }
 
 #ifdef GC_MARK_DEBUG
-extern JS_FRIEND_DATA(FILE *) js_DumpGCHeap;
+JS_BEGIN_EXTERN_C
+JS_FRIEND_DATA(FILE *) js_DumpGCHeap;
+JS_END_EXTERN_C
 #endif
 
 NS_IMETHODIMP
@@ -2664,7 +2672,8 @@ jsdService::GC (void)
 #endif
     JS_GC(cx);
 #ifdef GC_MARK_DEBUG
-    fclose (file);
+    if (file)
+        fclose (file);
     js_DumpGCHeap = NULL;
 #endif
     return NS_OK;
@@ -2686,6 +2695,8 @@ jsdService::InsertFilter (jsdIFilter *filter, jsdIFilter *after)
         return NS_ERROR_INVALID_ARG;
 
     FilterRecord *rec = PR_NEWZAP (FilterRecord);
+    if (!rec)
+        return NS_ERROR_OUT_OF_MEMORY;
 
     if (!jsds_SyncFilter (rec, filter)) {
         PR_Free (rec);
@@ -3223,7 +3234,7 @@ jsdService::GetService ()
     return gJsds;
 }
 
-NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(jsdService, jsdService::GetService);
+NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(jsdService, jsdService::GetService)
 
 /* app-start observer.  turns on the debugger at app-start.  this is inserted
  * and/or removed from the app-start category by the jsdService::initAtStartup
@@ -3235,12 +3246,10 @@ class jsdASObserver : public nsIObserver
     NS_DECL_ISUPPORTS
     NS_DECL_NSIOBSERVER
 
-    jsdASObserver ()
-    {
-    }    
+    jsdASObserver () {}    
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(jsdASObserver, nsIObserver); 
+NS_IMPL_THREADSAFE_ISUPPORTS1(jsdASObserver, nsIObserver)
 
 NS_IMETHODIMP
 jsdASObserver::Observe (nsISupports *aSubject, const char *aTopic,
@@ -3267,18 +3276,20 @@ jsdASObserver::Observe (nsISupports *aSubject, const char *aTopic,
         return rv;
 
     rv = jsds->OnForRuntime(rt);
+    if (NS_FAILED(rv))
+        return rv;
     
-    return rv;
+    return jsds->SetFlags(JSD_DISABLE_OBJECT_TRACE);
 }
 
-NS_GENERIC_FACTORY_CONSTRUCTOR(jsdASObserver);
+NS_GENERIC_FACTORY_CONSTRUCTOR(jsdASObserver)
 
 static const nsModuleComponentInfo components[] = {
-    {"JSDService", JSDSERVICE_CID,     jsdServiceCtrID, jsdServiceConstructor},
-    {"JSDASObserver",  JSDASO_CID,  jsdASObserverCtrID, jsdASObserverConstructor}
+    {"JSDService", JSDSERVICE_CID,    jsdServiceCtrID, jsdServiceConstructor},
+    {"JSDASObserver",  JSDASO_CID, jsdASObserverCtrID, jsdASObserverConstructor}
 };
 
-NS_IMPL_NSGETMODULE(JavaScript_Debugger, components);
+NS_IMPL_NSGETMODULE(JavaScript_Debugger, components)
 
 /********************************************************************************
  ********************************************************************************

@@ -52,11 +52,9 @@
 #include "nsICSSLoader.h"
 #include "nsIXBLDocumentInfo.h"
 #include "nsIURI.h"
-#include "nsIHTMLContentContainer.h"
 #include "nsNetUtil.h"
 #include "nsXBLAtoms.h"
-#include "nsINameSpaceManager.h"
-#include "nsIFrameManager.h"
+#include "nsFrameManager.h"
 #include "nsStyleContext.h"
 #include "nsXBLPrototypeBinding.h"
 
@@ -97,17 +95,10 @@ nsXBLResourceLoader::LoadResources(PRBool* aResult)
   nsCOMPtr<imgILoader> il;
   nsCOMPtr<nsICSSLoader> cssLoader;
 
-  nsCOMPtr<nsIXBLDocumentInfo> info = mBinding->GetXBLDocumentInfo(nsnull);
-  if (!info) {
-    mInLoadResourcesFunc = PR_FALSE;
-    return;
-  }
-
   nsCOMPtr<nsIDocument> doc;
-  info->GetDocument(getter_AddRefs(doc));
+  mBinding->XBLDocumentInfo()->GetDocument(getter_AddRefs(doc));
 
-  nsCOMPtr<nsIURI> docURL;
-  doc->GetDocumentURL(getter_AddRefs(docURL));
+  nsIURI *docURL = doc->GetDocumentURI();
 
   nsCOMPtr<nsIURI> url;
 
@@ -135,8 +126,7 @@ nsXBLResourceLoader::LoadResources(PRBool* aResult)
     }
     else if (curr->mType == nsXBLAtoms::stylesheet) {
       if (!cssLoader) {
-        nsCOMPtr<nsIHTMLContentContainer> htmlContent(do_QueryInterface(doc));
-        htmlContent->GetCSSLoader(*getter_AddRefs(cssLoader));
+        cssLoader = doc->GetCSSLoader();
       }
 
       if (!cssLoader)
@@ -146,10 +136,11 @@ nsXBLResourceLoader::LoadResources(PRBool* aResult)
 
       // Always load chrome synchronously
       PRBool chrome;
+      nsresult rv;
       if (NS_SUCCEEDED(url->SchemeIs("chrome", &chrome)) && chrome)
       {
         nsCOMPtr<nsICSSStyleSheet> sheet;
-        nsresult rv = cssLoader->LoadAgentSheet(url, getter_AddRefs(sheet));
+        rv = cssLoader->LoadAgentSheet(url, getter_AddRefs(sheet));
         NS_ASSERTION(NS_SUCCEEDED(rv), "Load failed!!!");
         if (NS_SUCCEEDED(rv))
         {
@@ -161,8 +152,8 @@ nsXBLResourceLoader::LoadResources(PRBool* aResult)
       {
         PRBool doneLoading;
         NS_NAMED_LITERAL_STRING(empty, "");
-        nsresult rv = cssLoader->LoadStyleLink(nsnull, url, empty, empty, kNameSpaceID_Unknown,
-                                               nsnull, doneLoading, this);
+        rv = cssLoader->LoadStyleLink(nsnull, url, empty, empty,
+                                      nsnull, doneLoading, this);
         NS_ASSERTION(NS_SUCCEEDED(rv), "Load failed!!!");
 
         if (!doneLoading)
@@ -183,13 +174,12 @@ nsXBLResourceLoader::LoadResources(PRBool* aResult)
 NS_IMETHODIMP
 nsXBLResourceLoader::StyleSheetLoaded(nsICSSStyleSheet* aSheet, PRBool aNotify)
 {
-  if (!mResources->mStyleSheetList) {
-    NS_NewISupportsArray(getter_AddRefs(mResources->mStyleSheetList));
-    if (!mResources->mStyleSheetList)
-      return NS_ERROR_OUT_OF_MEMORY;
+  if (!mResources) {
+    // Our resources got destroyed -- just bail out
+    return NS_OK;
   }
-
-  mResources->mStyleSheetList->AppendElement(aSheet);
+   
+  mResources->mStyleSheetList.AppendObject(aSheet);
 
   if (!mInLoadResourcesFunc)
     mPendingSheets--;
@@ -197,17 +187,15 @@ nsXBLResourceLoader::StyleSheetLoaded(nsICSSStyleSheet* aSheet, PRBool aNotify)
   if (mPendingSheets == 0) {
     // All stylesheets are loaded.  
     nsCOMPtr<nsIStyleRuleProcessor> prevProcessor;
-    NS_NewISupportsArray(getter_AddRefs(mResources->mRuleProcessors));
-    PRUint32 count;
-    mResources->mStyleSheetList->Count(&count);
-    for (PRUint32 i = 0; i < count; i++) {
-      nsCOMPtr<nsISupports> supp = getter_AddRefs(mResources->mStyleSheetList->ElementAt(i));
-      nsCOMPtr<nsICSSStyleSheet> sheet(do_QueryInterface(supp));
+    mResources->mRuleProcessors.Clear();
+    PRInt32 count = mResources->mStyleSheetList.Count();
+    for (PRInt32 i = 0; i < count; i++) {
+      nsICSSStyleSheet* sheet = mResources->mStyleSheetList[i];
 
       nsCOMPtr<nsIStyleRuleProcessor> processor;
       sheet->GetStyleRuleProcessor(*getter_AddRefs(processor), prevProcessor);
       if (processor != prevProcessor) {
-        mResources->mRuleProcessors->AppendElement(processor);
+        mResources->mRuleProcessors.AppendObject(processor);
         prevProcessor = processor;
       }
     }
@@ -250,32 +238,28 @@ void
 nsXBLResourceLoader::NotifyBoundElements()
 {
   nsCOMPtr<nsIXBLService> xblService(do_GetService("@mozilla.org/xbl;1"));
-  nsCAutoString bindingURI;
-  mBinding->GetBindingURI(bindingURI);
+  nsIURI* bindingURI = mBinding->BindingURI();
 
   PRUint32 eltCount;
   mBoundElements->Count(&eltCount);
   for (PRUint32 j = 0; j < eltCount; j++) {
-    nsCOMPtr<nsISupports> supp = getter_AddRefs(mBoundElements->ElementAt(j));
-    nsCOMPtr<nsIContent> content(do_QueryInterface(supp));
+    nsCOMPtr<nsIContent> content(do_QueryElementAt(mBoundElements, j));
     
     PRBool ready = PR_FALSE;
     xblService->BindingReady(content, bindingURI, &ready);
 
     if (ready) {
-      nsCOMPtr<nsIDocument> doc;
-      content->GetDocument(getter_AddRefs(doc));
+      nsCOMPtr<nsIDocument> doc = content->GetDocument();
     
       if (doc) {
         // Flush first
         doc->FlushPendingNotifications();
 
         // Notify
-        nsCOMPtr<nsIContent> parent;
-        content->GetParent(getter_AddRefs(parent));
+        nsCOMPtr<nsIContent> parent = content->GetParent();
         PRInt32 index = 0;
         if (parent)
-          parent->IndexOf(content, index);
+          index = parent->IndexOf(content);
         
         // If |content| is (in addition to having binding |mBinding|)
         // also a descendant of another element with binding |mBinding|,
@@ -286,16 +270,15 @@ nsXBLResourceLoader::NotifyBoundElements()
         // has a primary frame and whether it's in the undisplayed map
         // before sending a ContentInserted notification, or bad things
         // will happen.
-        nsCOMPtr<nsIPresShell> shell;
-        doc->GetShellAt(0, getter_AddRefs(shell));
+        nsIPresShell *shell = doc->GetShellAt(0);
         if (shell) {
           nsIFrame* childFrame;
           shell->GetPrimaryFrameFor(content, &childFrame);
           if (!childFrame) {
             // Check to see if it's in the undisplayed content map.
-            nsCOMPtr<nsIFrameManager> frameManager;
-            shell->GetFrameManager(getter_AddRefs(frameManager));
-            nsStyleContext* sc = frameManager->GetUndisplayedContent(content);
+            nsStyleContext* sc =
+              shell->FrameManager()->GetUndisplayedContent(content);
+
             if (!sc) {
               nsCOMPtr<nsIDocumentObserver> obs(do_QueryInterface(shell));
               obs->ContentInserted(doc, parent, content, index);

@@ -87,6 +87,8 @@ nsNewsDownloader::nsNewsDownloader(nsIMsgWindow *window, nsIMsgDatabase *msgDB, 
   m_abort = PR_FALSE;
   m_listener = listener;
   m_window = window;
+  m_lastPercent = -1;
+  LL_I2L(m_lastProgressTime, 0);
   // not the perfect place for this, but I think it will work.
   if (m_window)
     m_window->SetStopped(PR_FALSE);
@@ -187,12 +189,27 @@ PRBool nsNewsDownloader::GetNextHdrToRetrieve()
   {
     if (m_numwrote >= (PRInt32) m_keysToDownload.GetSize())
       return PR_FALSE;
+
     m_keyToDownload = m_keysToDownload.GetAt(m_numwrote++);
-#ifdef DEBUG_bienvenu
-    //		XP_Trace("downloading %ld index = %ld\n", m_keyToDownload, m_numwrote);
-#endif
+    PRInt32 percent;
+    percent = (100 * m_numwrote) / (PRInt32) m_keysToDownload.GetSize();
+
+    PRInt64 nowMS = LL_ZERO;
+    if (percent < 100)  // always need to do 100%
+    {
+      int64 minIntervalBetweenProgress;
+
+      LL_I2L(minIntervalBetweenProgress, 750);
+      int64 diffSinceLastProgress;
+      LL_I2L(nowMS, PR_IntervalToMilliseconds(PR_IntervalNow()));
+      LL_SUB(diffSinceLastProgress, nowMS, m_lastProgressTime); // r = a - b
+      LL_SUB(diffSinceLastProgress, diffSinceLastProgress, minIntervalBetweenProgress); // r = a - b
+      if (!LL_GE_ZERO(diffSinceLastProgress))
+        return PR_TRUE;
+    }
+
+    m_lastProgressTime = nowMS;
     nsCOMPtr <nsIMsgNewsFolder> newsFolder = do_QueryInterface(m_folder);
-    //		PRInt32 stringID = (newsFolder ? MK_MSG_RETRIEVING_ARTICLE_OF : MK_MSG_RETRIEVING_MESSAGE_OF);
     nsCOMPtr<nsIStringBundleService> bundleService = do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
     nsCOMPtr<nsIStringBundle> bundle;
@@ -211,10 +228,6 @@ PRBool nsNewsDownloader::GetNextHdrToRetrieve()
     const PRUnichar *formatStrings[3] = { firstStr.get(), totalStr.get(), (const PRUnichar *) prettiestName };
     rv = bundle->FormatStringFromName(NS_LITERAL_STRING("downloadingArticlesForOffline").get(), formatStrings, 3, getter_Copies(statusString));
     NS_ENSURE_SUCCESS(rv, rv);
-    // ### TODO set status string on window?
-    PRInt32 percent;
-    percent = (100 * m_numwrote) / (PRInt32) m_keysToDownload.GetSize();
-    // FE_SetProgressBarPercent (m_context, percent);
     ShowProgress(statusString, percent);
     return PR_TRUE;
   }
@@ -232,7 +245,11 @@ nsresult nsNewsDownloader::ShowProgress(const PRUnichar *progressString, PRInt32
   if (m_statusFeedback)
   {
     m_statusFeedback->ShowStatusString(progressString);
-    m_statusFeedback->ShowProgress(percent);
+    if (percent != m_lastPercent)
+    {
+      m_statusFeedback->ShowProgress(percent);
+      m_lastPercent = percent;
+    }
   }
   return NS_OK;
 }
@@ -281,15 +298,6 @@ NS_IMETHODIMP nsNewsDownloader::OnSearchHit(nsIMsgDBHdr *header, nsIMsgFolder *f
     nsMsgKey key;
     header->GetMessageKey(&key);
     m_keysToDownload.Add(key);
-#ifdef HAVE_PORT
-    char *statusTemplate = XP_GetString (MK_MSG_ARTICLES_TO_RETRIEVE);
-    char *statusString = PR_smprintf (statusTemplate,  (long) newsArticleState->m_keysToDownload.GetSize());
-    if (statusString)
-    {
-      FE_Progress (newsArticleState->m_context, statusString);
-      XP_FREE(statusString);
-    }
-#endif
   }
   return NS_OK;
 }
@@ -345,7 +353,6 @@ DownloadMatchingNewsArticlesToNewsDB::~DownloadMatchingNewsArticlesToNewsDB()
 {
 }
 
-static NS_DEFINE_CID(kRDFServiceCID, NS_RDFSERVICE_CID);
 
 NS_IMPL_ISUPPORTS1(nsMsgDownloadAllNewsgroups, nsIUrlListener)
 
@@ -425,7 +432,7 @@ nsresult nsMsgDownloadAllNewsgroups::AdvanceToNextServer(PRBool *done)
   m_currentServer = nsnull;
   PRUint32 numServers; 
   m_allServers->Count(&numServers);
-  nsCOMPtr <nsIFolder> rootFolder;
+  nsCOMPtr <nsIMsgFolder> rootFolder;
 
   while (serverIndex < numServers)
   {
@@ -537,6 +544,7 @@ nsresult nsMsgDownloadAllNewsgroups::ProcessNextGroup()
 
 nsresult nsMsgDownloadAllNewsgroups::DownloadMsgsForCurrentGroup()
 {
+  NS_ENSURE_TRUE(m_downloaderForGroup, NS_ERROR_OUT_OF_MEMORY);
   nsCOMPtr <nsIMsgDatabase> db;
   nsCOMPtr <nsISupportsArray> termList;
   nsCOMPtr <nsIMsgDownloadSettings> downloadSettings;
@@ -561,11 +569,11 @@ nsresult nsMsgDownloadAllNewsgroups::DownloadMsgsForCurrentGroup()
   PRUint32 ageLimitOfMsgsToDownload;
 
   downloadSettings->GetDownloadByDate(&downloadByDate);
-	downloadSettings->GetDownloadUnreadOnly(&downloadUnreadOnly);
-	downloadSettings->GetAgeLimitOfMsgsToDownload(&ageLimitOfMsgsToDownload);
+  downloadSettings->GetDownloadUnreadOnly(&downloadUnreadOnly);
+  downloadSettings->GetAgeLimitOfMsgsToDownload(&ageLimitOfMsgsToDownload);
 
   nsCOMPtr <nsIMsgSearchTerm> term;
-	nsCOMPtr <nsIMsgSearchValue>		value;
+  nsCOMPtr <nsIMsgSearchValue>    value;
 
   rv = searchSession->CreateTerm(getter_AddRefs(term));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -577,14 +585,14 @@ nsresult nsMsgDownloadAllNewsgroups::DownloadMsgsForCurrentGroup()
     value->SetStatus(MSG_FLAG_READ);
     searchSession->AddSearchTerm(nsMsgSearchAttrib::MsgStatus, nsMsgSearchOp::Isnt, value, PR_TRUE, nsnull);
   }
-	if (downloadByDate)
-	{
+  if (downloadByDate)
+  {
     value->SetAttrib(nsMsgSearchAttrib::AgeInDays);
-		value->SetAge(ageLimitOfMsgsToDownload);
-		searchSession->AddSearchTerm(nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::IsLessThan, value, nsMsgSearchBooleanOp::BooleanAND, nsnull);
-	}
+    value->SetAge(ageLimitOfMsgsToDownload);
+    searchSession->AddSearchTerm(nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::IsLessThan, value, nsMsgSearchBooleanOp::BooleanAND, nsnull);
+  }
   value->SetAttrib(nsMsgSearchAttrib::MsgStatus);
-	value->SetStatus(MSG_FLAG_OFFLINE);
+  value->SetStatus(MSG_FLAG_OFFLINE);
   searchSession->AddSearchTerm(nsMsgSearchAttrib::MsgStatus, nsMsgSearchOp::Isnt, value, nsMsgSearchBooleanOp::BooleanAND, nsnull);
 
   m_downloaderForGroup->RunSearch(m_currentFolder, db, searchSession);

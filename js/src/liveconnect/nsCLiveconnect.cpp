@@ -1,36 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 /*
  * This file is part of the Java-vendor-neutral implementation of LiveConnect
  *
@@ -75,46 +80,6 @@ PR_END_EXTERN_C
 #include "nsNetUtil.h"
 #include "nsISecurityContext.h"
 #include "prmem.h"
-
-static nsresult
-CreatePrincipal(nsISupports* aSecuritySupports,
-                nsIScriptSecurityManager* aSecMan,
-                nsIPrincipal ** aOutPrincipal)
-{
-    nsresult rv;
-    nsCOMPtr<nsISecurityContext> securityContext(
-        do_QueryInterface(aSecuritySupports, &rv));
-    if (NS_FAILED(rv)) return rv;
-
-    char originBuf1[512];
-    char* origin = originBuf1;
-    size_t originSize = sizeof(originBuf1);
-    rv = securityContext->GetOrigin(origin, originSize);
-    while (NS_FAILED(rv) && originSize < 65536U)
-    {  // Try allocating a larger buffer on the heap
-        if (origin != originBuf1)
-        PR_Free(origin);
-        originSize *= 2;
-        origin = (char*)PR_Malloc(originSize);
-        if (!origin)
-            return NS_ERROR_OUT_OF_MEMORY;
-        rv = securityContext->GetOrigin(origin, originSize);
-    }
-    if (NS_FAILED(rv))
-    {
-        if (origin != originBuf1)
-            PR_Free(origin);
-        return rv;
-    }
-
-    nsCOMPtr<nsIURI> originURI;
-    rv = NS_NewURI(getter_AddRefs(originURI), origin);
-    if (origin != originBuf1)
-        PR_Free(origin);
-    if (NS_FAILED(rv)) return rv;
-
-    return aSecMan->GetCodebasePrincipal(originURI, aOutPrincipal);
-}
 
 /***************************************************************************/
 // A class to put on the stack to manage JS contexts when we are entering JS.
@@ -171,10 +136,7 @@ AutoPushJSContext::AutoPushJSContext(nsISupports* aSecuritySupports,
         return;
 
     nsCOMPtr<nsIPrincipal> principal;
-    if (aSecuritySupports)
-        mPushResult = CreatePrincipal(aSecuritySupports, secMan, getter_AddRefs(principal));
-    else
-        mPushResult = secMan->GetPrincipalFromContext(cx, getter_AddRefs(principal));
+    mPushResult = secMan->GetPrincipalFromContext(cx, getter_AddRefs(principal));
 
     if (NS_FAILED(mPushResult))
     {
@@ -182,7 +144,7 @@ AutoPushJSContext::AutoPushJSContext(nsISupports* aSecuritySupports,
         return;
     }
 
-    // See if Javascript is enabled for the current window
+    // See if JavaScript is enabled for the current window
     PRBool jsEnabled = PR_FALSE;
     mPushResult = secMan->CanExecuteScripts(cx, principal, &jsEnabled);
     if (!jsEnabled)
@@ -210,7 +172,7 @@ AutoPushJSContext::AutoPushJSContext(nsISupports* aSecuritySupports,
         if (!hasScript)
         {
             JSPrincipals* jsprinc;
-            principal->GetJSPrincipals(&jsprinc);
+            principal->GetJSPrincipals(cx, &jsprinc);
 
             mFrame.script = JS_CompileScriptForPrincipals(cx, JS_GetGlobalObject(cx),
                                                           jsprinc, "", 0, "", 1);
@@ -243,7 +205,7 @@ AutoPushJSContext::~AutoPushJSContext()
 
 // Thes macro expands to the aggregated query interface scheme.
 
-NS_IMPL_AGGREGATED(nsCLiveconnect);
+NS_IMPL_AGGREGATED(nsCLiveconnect)
 
 NS_METHOD
 nsCLiveconnect::AggregatedQueryInterface(const nsIID& aIID, void** aInstancePtr)
@@ -567,11 +529,12 @@ nsCLiveconnect::Call(JNIEnv *jEnv, jsobject obj, const jchar *name, jsize length
     }
 
     /* Allocate space for JS arguments */
-    if (java_args) {
-        argc = jEnv->GetArrayLength(java_args);
+    argc = java_args ? jEnv->GetArrayLength(java_args) : 0;
+    if (argc) {
         argv = (jsval*)JS_malloc(cx, argc * sizeof(jsval));
+        if (!argv)
+            goto done;
     } else {
-        argc = 0;
         argv = 0;
     }
 

@@ -58,7 +58,6 @@
 #include "nsDTDUtils.h"
 #include "nsHTMLTokenizer.h"
 #include "nsTime.h"
-#include "nsViewSourceHTML.h"
 #include "nsParserNode.h"
 #include "nsHTMLEntities.h"
 #include "nsLinebreakConverter.h"
@@ -74,7 +73,6 @@
 #endif
 
 
-static NS_DEFINE_IID(kIHTMLContentSinkIID, NS_IHTML_CONTENT_SINK_IID);
 static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);                 
 static NS_DEFINE_IID(kIDTDIID,      NS_IDTD_IID);
 static NS_DEFINE_IID(kClassIID,     NS_INAVHTML_DTD_IID); 
@@ -334,6 +332,9 @@ CNavDTD::CanParse(CParserContext& aParserContext,
     else if (aParserContext.mMimeType.Equals(NS_LITERAL_CSTRING(kRDFTextContentType)) ||
              aParserContext.mMimeType.Equals(NS_LITERAL_CSTRING(kXULTextContentType)) ||
              aParserContext.mMimeType.Equals(NS_LITERAL_CSTRING(kXMLTextContentType)) ||
+#ifdef MOZ_SVG
+             aParserContext.mMimeType.Equals(NS_LITERAL_CSTRING(kSVGTextContentType)) ||
+#endif
              aParserContext.mMimeType.Equals(NS_LITERAL_CSTRING(kXMLApplicationContentType))) {
       result=eUnknownDetect;
     }
@@ -642,7 +643,7 @@ nsresult CNavDTD::DidBuildModel(nsresult anErrorCode,
         result = CloseContainersTo(mBodyContext->Last(), PR_FALSE);
         if (NS_FAILED(result)) {
           //No matter what, you need to call did build model.
-          aSink->DidBuildModel(0);
+          aSink->DidBuildModel();
           return result;
         }
       } 
@@ -679,11 +680,11 @@ nsresult CNavDTD::DidBuildModel(nsresult anErrorCode,
       if (mComputedCRC32 != mExpectedCRC32) { 
         if (mExpectedCRC32 != 0) { 
           printf("CRC Computed: %u  Expected CRC: %u\n,",mComputedCRC32,mExpectedCRC32); 
-          result = aSink->DidBuildModel(2); 
+          result = aSink->DidBuildModel(); 
         } 
         else { 
           printf("Computed CRC: %u.\n",mComputedCRC32); 
-          result = aSink->DidBuildModel(3); 
+          result = aSink->DidBuildModel(); 
           NS_ENSURE_SUCCESS(result, result);
         } 
       } 
@@ -703,7 +704,7 @@ nsresult CNavDTD::DidBuildModel(nsresult anErrorCode,
   } //if aparser
 
   //No matter what, you need to call did build model.
-  return aSink->DidBuildModel(0); 
+  return aSink->DidBuildModel(); 
 }
 
 NS_IMETHODIMP_(void) 
@@ -1124,7 +1125,6 @@ nsresult CNavDTD::DidHandleStartTag(nsIParserNode& aNode,eHTMLTags aChildTag){
         mBodyContext->IncrementCounter(theGrandParentTag,aNode,theNumber);
 
         CTextToken theToken(theNumber);
-        PRInt32 theLineNumber=0;
         nsCParserNode theNode(&theToken, 0 /*stack token*/);
         result=mSink->AddLeaf(theNode);
       }
@@ -2588,6 +2588,17 @@ CNavDTD::IntTagToStringTag(PRInt32 aIntTag) const
   return str_ptr;
 }
 
+NS_IMETHODIMP_(nsIAtom *)
+CNavDTD::IntTagToAtom(PRInt32 aIntTag) const
+{
+  nsIAtom *atom = nsHTMLTags::GetAtom((nsHTMLTag)aIntTag);
+
+  NS_ASSERTION(atom, "Bad tag enum passed to CNavDTD::IntTagToAtom()"
+               "!!");
+
+  return atom;
+}
+
 /**
  *  This method is called to determine whether or not
  *  the given childtag is a block element.
@@ -2967,7 +2978,7 @@ nsresult CNavDTD::OpenTransientStyles(eHTMLTags aChildTag){
                   // precedence over the residual style tags' size info.. 
                   // *Note: Make sure that this attribute is transient since it
                   // should not get carried over to cases other than heading.
-                  CAttributeToken theAttrToken(NS_LITERAL_STRING("_moz-rs-heading"),NS_LITERAL_STRING(""));
+                  CAttributeToken theAttrToken(NS_LITERAL_STRING("_moz-rs-heading"), EmptyString());
                   theNode->AddAttribute(&theAttrToken);
                   result = OpenContainer(theNode,theNodeTag,PR_FALSE,theStack);
                   theNode->PopAttributeToken();
@@ -3429,11 +3440,13 @@ CNavDTD::OpenContainer(const nsCParserNode *aNode,
       break;
     
     case eHTMLTag_noscript:
+      // we want to make sure that OpenContainer gets called below since we're
+      // not doing it here
+      done=PR_FALSE;
       // If the script is disabled noscript should not be
       // in the content model until the layout can somehow
       // turn noscript's display property to block <-- bug 67899
       if(mFlags & NS_DTD_FLAG_SCRIPT_ENABLED) {
-        done=PR_FALSE;
         mScratch.Truncate();
         mFlags |= NS_DTD_FLAG_ALTERNATE_CONTENT;
       }

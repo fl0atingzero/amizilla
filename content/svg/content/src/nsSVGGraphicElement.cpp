@@ -41,10 +41,13 @@
 #include "nsSVGAnimatedTransformList.h"
 #include "nsSVGAtoms.h"
 #include "nsSVGMatrix.h"
-#include "nsIDOMSVGSVGElement.h"
+#include "nsISVGSVGElement.h"
 #include "nsIDOMEventTarget.h"
 #include "nsIBindingManager.h"
 #include "nsIDocument.h"
+#include "nsIPresShell.h"
+#include "nsIFrame.h"
+#include "nsISVGChildFrame.h"
 
 //----------------------------------------------------------------------
 // nsISupports methods
@@ -61,10 +64,9 @@ NS_INTERFACE_MAP_END_INHERITING(nsSVGGraphicElementBase)
 // Implementation
 
 nsresult
-nsSVGGraphicElement::Init()
+nsSVGGraphicElement::Init(nsINodeInfo* aNodeInfo)
 {
-  nsresult rv;
-  rv = nsSVGGraphicElementBase::Init();
+  nsresult rv = nsSVGGraphicElementBase::Init(aNodeInfo);
   NS_ENSURE_SUCCESS(rv,rv);
 
   // Create mapped properties:
@@ -77,7 +79,7 @@ nsSVGGraphicElement::Init()
     rv = NS_NewSVGAnimatedTransformList(getter_AddRefs(mTransforms),
                                         transformList);
     NS_ENSURE_SUCCESS(rv,rv);
-    rv = mAttributes->AddMappedSVGValue(nsSVGAtoms::transform, mTransforms);
+    rv = AddMappedSVGValue(nsSVGAtoms::transform, mTransforms);
     NS_ENSURE_SUCCESS(rv,rv);
   }
   
@@ -104,8 +106,27 @@ NS_IMETHODIMP nsSVGGraphicElement::GetFarthestViewportElement(nsIDOMSVGElement *
 /* nsIDOMSVGRect getBBox (); */
 NS_IMETHODIMP nsSVGGraphicElement::GetBBox(nsIDOMSVGRect **_retval)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  *_retval = nsnull;
+  
+  if (!mDocument) return NS_ERROR_FAILURE;
+  nsIPresShell *presShell = mDocument->GetShellAt(0);
+  NS_ASSERTION(presShell, "no presShell");
+  if (!presShell) return NS_ERROR_FAILURE;
+
+  nsIFrame* frame;
+  presShell->GetPrimaryFrameFor(NS_STATIC_CAST(nsIStyledContent*, this), &frame);
+
+  NS_ASSERTION(frame, "can't get bounding box for element without frame");
+
+  if (frame) {
+    nsISVGChildFrame* svgframe;
+    frame->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&svgframe);
+    NS_ASSERTION(svgframe, "wrong frame type");
+    if (svgframe) {
+      return svgframe->GetBBox(_retval);
+    }
+  }
+  return NS_ERROR_FAILURE;
 }
 
 /* nsIDOMSVGMatrix getCTM (); */
@@ -113,9 +134,9 @@ NS_IMETHODIMP nsSVGGraphicElement::GetCTM(nsIDOMSVGMatrix **_retval)
 {
   nsCOMPtr<nsIDOMSVGMatrix> CTM;
 
-  nsCOMPtr<nsIBindingManager> bindingManager;
+  nsIBindingManager *bindingManager = nsnull;
   if (mDocument) {
-    mDocument->GetBindingManager(getter_AddRefs(bindingManager));
+    bindingManager = mDocument->GetBindingManager();
   }
 
   nsCOMPtr<nsIContent> parent;
@@ -128,7 +149,7 @@ NS_IMETHODIMP nsSVGGraphicElement::GetCTM(nsIDOMSVGMatrix **_retval)
   if (!parent) {
     // if we didn't find an anonymous parent, use the explicit one,
     // whether it's null or not...
-    parent = mParent;
+    parent = GetParent();
   }
   
   while (parent) {
@@ -160,7 +181,7 @@ NS_IMETHODIMP nsSVGGraphicElement::GetCTM(nsIDOMSVGMatrix **_retval)
 
     if (!next) {
       // no anonymous parent, so use explicit one
-      parent->GetParent(getter_AddRefs(next));
+      next = parent->GetParent();
     }
 
     parent = next;
@@ -188,9 +209,9 @@ NS_IMETHODIMP nsSVGGraphicElement::GetScreenCTM(nsIDOMSVGMatrix **_retval)
 {
   nsCOMPtr<nsIDOMSVGMatrix> screenCTM;
 
-  nsCOMPtr<nsIBindingManager> bindingManager;
+  nsIBindingManager *bindingManager = nsnull;
   if (mDocument) {
-    mDocument->GetBindingManager(getter_AddRefs(bindingManager));
+    bindingManager = mDocument->GetBindingManager();
   }
 
   nsCOMPtr<nsIContent> parent;
@@ -203,7 +224,7 @@ NS_IMETHODIMP nsSVGGraphicElement::GetScreenCTM(nsIDOMSVGMatrix **_retval)
   if (!parent) {
     // if we didn't find an anonymous parent, use the explicit one,
     // whether it's null or not...
-    parent = mParent;
+    parent = GetParent();
   }
   
   while (parent) {
@@ -239,7 +260,7 @@ NS_IMETHODIMP nsSVGGraphicElement::GetScreenCTM(nsIDOMSVGMatrix **_retval)
 
     if (!next) {
       // no anonymous parent, so use explicit one
-      parent->GetParent(getter_AddRefs(next));
+      next = parent->GetParent();
     }
 
     parent = next;
@@ -278,5 +299,21 @@ NS_IMETHODIMP nsSVGGraphicElement::GetTransform(nsIDOMSVGAnimatedTransformList *
   *aTransform = mTransforms;
   NS_IF_ADDREF(*aTransform);
   return NS_OK;
+}
+
+
+//----------------------------------------------------------------------
+// nsIStyledContent methods
+
+NS_IMETHODIMP_(PRBool)
+nsSVGGraphicElement::IsAttributeMapped(const nsIAtom* name) const
+{
+  static const MappedAttributeEntry* const map[] = {
+    sFillStrokeMap,
+    sGraphicsMap,
+  };
+  
+  return FindAttributeDependence(name, map, NS_ARRAY_LENGTH(map)) ||
+    nsSVGGraphicElementBase::IsAttributeMapped(name);
 }
 

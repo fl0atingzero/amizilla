@@ -41,7 +41,6 @@
 
 #include "nsIPresShell.h"
 #include "nsICSSStyleSheet.h"
-#include "nsIStyleSet.h"
 #include "nsIDocument.h"
 #include "nsIDocumentObserver.h"
 #include "nsISelectionController.h"
@@ -49,7 +48,31 @@
 
 #include "nsStyleSheetTxns.h"
 
+static void
+AddStyleSheet(nsIEditor* aEditor, nsIStyleSheet* aSheet)
+{
+  nsCOMPtr<nsIDOMDocument> domDoc;
+  aEditor->GetDocument(getter_AddRefs(domDoc));
+  nsCOMPtr<nsIDocument> doc = do_QueryInterface(domDoc);
+  if (doc) {
+    doc->BeginUpdate(UPDATE_STYLE);
+    doc->AddStyleSheet(aSheet, 0);
+    doc->EndUpdate(UPDATE_STYLE);
+  }
+}
 
+static void
+RemoveStyleSheet(nsIEditor *aEditor, nsIStyleSheet *aSheet)
+{
+  nsCOMPtr<nsIDOMDocument> domDoc;
+  aEditor->GetDocument(getter_AddRefs(domDoc));
+  nsCOMPtr<nsIDocument> doc = do_QueryInterface(domDoc);
+  if (doc) {
+    doc->BeginUpdate(UPDATE_STYLE);
+    doc->RemoveStyleSheet(aSheet);
+    doc->EndUpdate(UPDATE_STYLE);
+  }
+}
 
 AddStyleSheetTxn::AddStyleSheetTxn()
 :  EditTxn()
@@ -83,35 +106,8 @@ AddStyleSheetTxn::DoTransaction()
   if (!mEditor || !mSheet)
     return NS_ERROR_NOT_INITIALIZED;
   
-  nsCOMPtr<nsISelectionController> selCon;
-  mEditor->GetSelectionController(getter_AddRefs(selCon));
-  if (!selCon)
-    return NS_ERROR_UNEXPECTED;
-
-  nsCOMPtr<nsIPresShell> presShell;
-  presShell = do_QueryInterface(selCon);
-
-  if (!presShell)
-    return NS_ERROR_UNEXPECTED;
-  
-  nsCOMPtr<nsIStyleSet> styleSet;
-  nsresult rv = presShell->GetStyleSet(getter_AddRefs(styleSet));
-
-  if (NS_SUCCEEDED(rv) && styleSet)
-  {
-    nsCOMPtr<nsIStyleSheet> styleSheet     = do_QueryInterface(mSheet);
-
-    if (styleSheet)
-    {
-      nsCOMPtr<nsIDocument> document;
-      rv = presShell->GetDocument(getter_AddRefs(document));
-
-      if (NS_SUCCEEDED(rv) && document)
-        document->AddStyleSheet(styleSheet, 0);
-    }
-  }
-  
-  return rv;
+  AddStyleSheet(mEditor, mSheet);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -120,34 +116,8 @@ AddStyleSheetTxn::UndoTransaction()
   if (!mEditor || !mSheet)
     return NS_ERROR_NOT_INITIALIZED;
   
-  nsCOMPtr<nsISelectionController> selCon;
-  mEditor->GetSelectionController(getter_AddRefs(selCon));
-  if (!selCon)
-    return NS_ERROR_UNEXPECTED;
-
-  nsCOMPtr<nsIPresShell> presShell;
-  presShell = do_QueryInterface(selCon);
-  if (!presShell)
-    return NS_ERROR_UNEXPECTED;
-  
-  nsCOMPtr<nsIStyleSet> styleSet;
-  nsresult rv = presShell->GetStyleSet(getter_AddRefs(styleSet));
-
-  if (NS_SUCCEEDED(rv) && styleSet)
-  {
-    styleSet->RemoveDocStyleSheet(mSheet);
-
-    nsCOMPtr<nsIDocumentObserver> observer = do_QueryInterface(presShell);
-    nsCOMPtr<nsIStyleSheet> styleSheet     = do_QueryInterface(mSheet);
-    nsCOMPtr<nsIDocument> document;
-
-    rv = presShell->GetDocument(getter_AddRefs(document));
-
-    if (NS_SUCCEEDED(rv) && document && observer && styleSheet)
-      rv = observer->StyleSheetRemoved(document, styleSheet);
-  }
-  
-  return rv;
+  RemoveStyleSheet(mEditor, mSheet);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -210,35 +180,9 @@ RemoveStyleSheetTxn::DoTransaction()
 {
   if (!mEditor || !mSheet)
     return NS_ERROR_NOT_INITIALIZED;
-  
-  nsCOMPtr<nsISelectionController> selCon;
-  mEditor->GetSelectionController(getter_AddRefs(selCon));
-  if (!selCon)
-    return NS_ERROR_UNEXPECTED;
 
-  nsCOMPtr<nsIPresShell> presShell;
-  presShell = do_QueryInterface(selCon);
-  if (!presShell)
-    return NS_ERROR_UNEXPECTED;
-  
-  nsCOMPtr<nsIStyleSet> styleSet;
-  nsresult rv = presShell->GetStyleSet(getter_AddRefs(styleSet));
-
-  if (NS_SUCCEEDED(rv) && styleSet)
-  {
-    styleSet->RemoveDocStyleSheet(mSheet);
-
-    nsCOMPtr<nsIDocumentObserver> observer = do_QueryInterface(presShell);
-    nsCOMPtr<nsIStyleSheet> styleSheet     = do_QueryInterface(mSheet);
-    nsCOMPtr<nsIDocument> document;
-
-    rv = presShell->GetDocument(getter_AddRefs(document));
-
-    if (NS_SUCCEEDED(rv) && document && observer && styleSheet)
-      rv = observer->StyleSheetRemoved(document, styleSheet);
-  }
-  
-  return rv;
+  RemoveStyleSheet(mEditor, mSheet);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -246,35 +190,9 @@ RemoveStyleSheetTxn::UndoTransaction()
 {
   if (!mEditor || !mSheet)
     return NS_ERROR_NOT_INITIALIZED;
-  
-  nsCOMPtr<nsISelectionController> selCon;
-  mEditor->GetSelectionController(getter_AddRefs(selCon));
-  if (!selCon)
-    return NS_ERROR_UNEXPECTED;
 
-  nsCOMPtr<nsIPresShell> presShell;
-  presShell = do_QueryInterface(selCon);
-  if (!presShell)
-    return NS_ERROR_UNEXPECTED;
-  
-  nsCOMPtr<nsIStyleSet> styleSet;
-  nsresult rv = presShell->GetStyleSet(getter_AddRefs(styleSet));
-
-  if (NS_SUCCEEDED(rv) && styleSet)
-  {
-    nsCOMPtr<nsIStyleSheet> styleSheet     = do_QueryInterface(mSheet);
-
-    if (styleSheet)
-    {
-      nsCOMPtr<nsIDocument> document;
-      rv = presShell->GetDocument(getter_AddRefs(document));
-
-      if (NS_SUCCEEDED(rv) && document)
-        document->AddStyleSheet(styleSheet, 0);
-    }
-  }
-  
-  return rv;
+  AddStyleSheet(mEditor, mSheet);
+  return NS_OK;
 }
 
 NS_IMETHODIMP

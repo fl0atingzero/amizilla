@@ -254,7 +254,8 @@ function backupCerts()
   fp.init(window,
           bundle.GetStringFromName("chooseP12BackupFileDialog"),
           nsIFilePicker.modeSave);
-  fp.appendFilter("PKCS12 Files", "*.p12");
+  fp.appendFilter(bundle.GetStringFromName("file_browse_PKCS12_spec"),
+                  "*.p12");
   fp.appendFilters(nsIFilePicker.filterAll);
   var rv = fp.show();
   if (rv == nsIFilePicker.returnOK || rv == nsIFilePicker.returnReplace) {
@@ -283,13 +284,13 @@ function editCerts()
     var others_tab = document.getElementById("others_tab");
     if (ca_tab.selected) {
       window.openDialog('chrome://pippki/content/editcacert.xul', certkey,
-                  'chrome,width=100,resizable=1,modal');
+                        'chrome,centerscreen,modal');
     } else if (others_tab.selected) {
       window.openDialog('chrome://pippki/content/editemailcert.xul', certkey,
-                  'chrome,width=100,resizable=1,modal');
+                        'chrome,centerscreen,modal');
     } else {
       window.openDialog('chrome://pippki/content/editsslcert.xul', certkey,
-                  'chrome,width=100,resizable=1,modal');
+                        'chrome,centerscreen,modal');
     }
   }
 }
@@ -301,7 +302,8 @@ function restoreCerts()
   fp.init(window,
           bundle.GetStringFromName("chooseP12RestoreFileDialog"),
           nsIFilePicker.modeOpen);
-  fp.appendFilter("PKCS12 Files", "*.p12; *.pfx");
+  fp.appendFilter(bundle.GetStringFromName("file_browse_PKCS12_spec"),
+                  "*.p12; *.pfx");
   fp.appendFilters(nsIFilePicker.filterAll);
   if (fp.show() == nsIFilePicker.returnOK) {
     certdb.importPKCS12File(null, fp.file);
@@ -365,7 +367,7 @@ function deleteCerts()
   // Certs which could not get deleted, will have their corrensponding
   // param string erased.
   window.openDialog('chrome://pippki/content/deletecert.xul', "",
-                'chrome,resizable=1,modal',params);
+                    'chrome,centerscreen,modal', params);
  
   if (params.GetInt(1) == 1) {
     // user closed dialog with OK
@@ -420,7 +422,8 @@ function addCACerts()
   fp.init(window,
           bundle.GetStringFromName("importCACertsPrompt"),
           nsIFilePicker.modeOpen);
-  fp.appendFilter("Certificate Files", "*.crt; *.cert; *.cer; *.pem; *.der");
+  fp.appendFilter(bundle.GetStringFromName("file_browse_Certificate_spec"),
+                  "*.crt; *.cert; *.cer; *.pem; *.der");
   fp.appendFilters(nsIFilePicker.filterAll);
   if (fp.show() == nsIFilePicker.returnOK) {
     certdb.importCertsFromFile(null, fp.file, nsIX509Cert.CA_CERT);
@@ -436,7 +439,8 @@ function addEmailCert()
   fp.init(window,
           bundle.GetStringFromName("importEmailCertPrompt"),
           nsIFilePicker.modeOpen);
-  fp.appendFilter("Certificate Files", "*.crt; *.cert; *.cer; *.pem; *.der");
+  fp.appendFilter(bundle.GetStringFromName("file_browse_Certificate_spec"),
+                  "*.crt; *.cert; *.cer; *.pem; *.der");
   fp.appendFilters(nsIFilePicker.filterAll);
   if (fp.show() == nsIFilePicker.returnOK) {
     certdb.importCertsFromFile(null, fp.file, nsIX509Cert.EMAIL_CERT);
@@ -456,7 +460,8 @@ function addWebSiteCert()
   fp.init(window,
           bundle.GetStringFromName("importWebSiteCertPrompt"),
           nsIFilePicker.modeOpen);
-  fp.appendFilter("Certificate Files", "*.crt; *.cert; *.cer; *.pem; *.der");
+  fp.appendFilter(bundle.GetStringFromName("file_browse_Certificate_spec"),
+                  "*.crt; *.cert; *.cer; *.pem; *.der");
   fp.appendFilters(nsIFilePicker.filterAll);
   if (fp.show() == nsIFilePicker.returnOK) {
     certdb.importCertsFromFile(null, fp.file, nsIX509Cert.SERVER_CERT);

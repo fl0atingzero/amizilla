@@ -242,6 +242,7 @@ private:
   nsresult GetListStyleImage(nsIFrame *aFrame, nsIDOMCSSValue** aValue);
   nsresult GetListStylePosition(nsIFrame *aFrame, nsIDOMCSSValue** aValue);
   nsresult GetListStyleType(nsIFrame *aFrame, nsIDOMCSSValue** aValue);
+  nsresult GetImageRegion(nsIFrame *aFrame, nsIDOMCSSValue** aValue);
 
   /* Text Properties */
   nsresult GetLineHeight(nsIFrame *aFrame, nsIDOMCSSValue** aValue);
@@ -292,7 +293,7 @@ private:
 
   static const ComputedStyleMapEntry* GetQueryablePropertyMap(PRUint32* aLength);
 
-  nsCOMPtr<nsISupports> mInner; // CSS2Properties
+  CSS2PropertiesTearoff mInner;
 
   nsWeakPtr mPresShellWeak;
   nsCOMPtr<nsIContent> mContent;

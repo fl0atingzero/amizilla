@@ -152,18 +152,13 @@ nsResizerFrame::HandleEvent(nsIPresContext* aPresContext,
 			 if(mTrackingMouseMove)
 			 {				 				 
 			   // get the document and the global script object - should this be cached?
-			   nsCOMPtr<nsIPresShell> presShell;
-			   aPresContext->GetShell(getter_AddRefs(presShell));
 			   nsCOMPtr<nsIDocument> document;
-			   presShell->GetDocument(getter_AddRefs(document));
-			   nsCOMPtr<nsIScriptGlobalObject> scriptGlobalObject;
-			   document->GetScriptGlobalObject(getter_AddRefs(scriptGlobalObject));
+			   aPresContext->PresShell()->GetDocument(getter_AddRefs(document));
+			   nsIScriptGlobalObject *scriptGlobalObject = document->GetScriptGlobalObject();
          NS_ENSURE_TRUE(scriptGlobalObject, NS_ERROR_FAILURE);
 
-         nsCOMPtr<nsIDocShell> docShell;
-         scriptGlobalObject->GetDocShell(getter_AddRefs(docShell));
-
-         nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(do_QueryInterface(docShell));
+         nsCOMPtr<nsIDocShellTreeItem> docShellAsItem =
+           do_QueryInterface(scriptGlobalObject->GetDocShell());
          NS_ENSURE_TRUE(docShellAsItem, NS_ERROR_FAILURE);
 
          nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
@@ -273,35 +268,35 @@ nsResizerFrame::EvalDirection(nsAutoString& aText,eDirection& aDir)
 {
 	PRBool aResult = PR_TRUE;
 	
-	if( aText.EqualsIgnoreCase("topleft") )
+	if( aText.Equals( NS_LITERAL_STRING("topleft") ) )
 	{
 		aDir = topleft;
 	}
-	else if( aText.EqualsIgnoreCase("top") )
+	else if( aText.Equals( NS_LITERAL_STRING("top") ) )
 	{
 		aDir = top;
 	}
-	else if( aText.EqualsIgnoreCase("topright") )
+	else if( aText.Equals( NS_LITERAL_STRING("topright") ) )
 	{
 		aDir = topright;
 	}
-	else if( aText.EqualsIgnoreCase("left") )
+	else if( aText.Equals( NS_LITERAL_STRING("left") ) )
 	{
 		aDir = left;
 	}	
-	else if( aText.EqualsIgnoreCase("right") )
+	else if( aText.Equals( NS_LITERAL_STRING("right") ) )
 	{
 		aDir = right;
 	}
-	else if( aText.EqualsIgnoreCase("bottomleft") )
+	else if( aText.Equals( NS_LITERAL_STRING("bottomleft") ) )
 	{
 		aDir = bottomleft;
 	}
-	else if( aText.EqualsIgnoreCase("bottom") )
+	else if( aText.Equals( NS_LITERAL_STRING("bottom") ) )
 	{
 		aDir = bottom;
 	}
-	else if( aText.EqualsIgnoreCase("bottomright") )
+	else if( aText.Equals( NS_LITERAL_STRING("bottomright") ) )
 	{
 		aDir = bottomright;
 	}
@@ -342,11 +337,11 @@ nsResizerFrame::AttributeChanged(nsIPresContext* aPresContext,
                                nsIContent* aChild,
                                PRInt32 aNameSpaceID,
                                nsIAtom* aAttribute,
-                               PRInt32 aModType, 
-                               PRInt32 aHint)
+                               PRInt32 aModType)
 {
     nsresult rv = nsTitleBarFrame::AttributeChanged(aPresContext, aChild,
-                                              aNameSpaceID, aAttribute, aModType, aHint);
+                                                    aNameSpaceID, aAttribute,
+                                                    aModType);
 
     if (aAttribute == nsXULAtoms::dir ) 
 	 {
@@ -364,14 +359,6 @@ nsResizerFrame::MouseClicked (nsIPresContext* aPresContext)
 {
   // Execute the oncommand event handler.
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event;
-  event.eventStructType = NS_EVENT;
-  event.message = NS_XUL_COMMAND;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_COMMAND);
   mContent->HandleDOMEvent(aPresContext, &event, nsnull, NS_EVENT_FLAG_INIT, &status);
 }

@@ -71,7 +71,7 @@ static NS_DEFINE_CID(kAppShellServiceCID,   NS_APPSHELL_SERVICE_CID);
 
 #ifdef MOZ_WIDGET_PHOTON
 #include <photon/PhProto.h>
-#include <sys/mman.h>			/* for munlockall() */
+#include <string.h>
 #endif
 
 static char _progname[1024] = "huh?";
@@ -97,7 +97,7 @@ void abnormal_exit_handler(int signum)
            _progname, getpid(), strsignal(signum));
 
     printf("Sleeping for 5 minutes.\n");
-    printf("Type 'gdb %s %d' to attatch your debugger to this thread.\n",
+    printf("Type 'gdb %s %d' to attach your debugger to this thread.\n",
            _progname, getpid());
 
     sleep(300);
@@ -128,7 +128,7 @@ ah_crap_handler(int signum)
   DumpStackToFile(stdout);
 
   printf("Sleeping for 5 minutes.\n");
-  printf("Type 'gdb %s %d' to attatch your debugger to this thread.\n",
+  printf("Type 'gdb %s %d' to attach your debugger to this thread.\n",
          _progname,
          getpid());
 
@@ -173,8 +173,6 @@ void InstallUnixSignalHandlers(const char *ProgramName)
   signal(SIGILL,  abnormal_exit_handler);
   signal(SIGABRT, abnormal_exit_handler);
 
-/* Tell the OS it can page any part of this program to virtual memory */
-  munlockall();
 #elif defined(CRAWL_STACK_ON_SIGSEGV)
   signal(SIGSEGV, ah_crap_handler);
   signal(SIGILL, ah_crap_handler);

@@ -19,6 +19,7 @@
  *
  * Contributor(s): 
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
+ *   Ken Herron <kherron@newsguy.com>
  *
  * This Original Code has been modified by IBM Corporation. Modifications made by IBM 
  * described herein are Copyright (c) International Business Machines Corporation, 2000.
@@ -50,11 +51,11 @@
 #include "nsReadableUtils.h"
 
 #include "nsICharsetAlias.h"
-#include "nsIURI.h"
 #include "nsNetUtil.h"
 #include "nsIPersistentProperties2.h"
 #include "nsCRT.h"
 #include "nsFontMetricsPS.h"
+#include "nsPaperPS.h"
 
 #ifndef NS_BUILD_ID
 #include "nsBuildID.h"
@@ -62,14 +63,10 @@
 
 #include "prenv.h"
 #include "prprf.h"
+#include "prerror.h"
 
-#include <locale.h>
-#include <limits.h>
 #include <errno.h>
-
-#ifdef VMS
-#include <stdlib.h>
-#endif /* VMS */
+#include <sys/wait.h>
 
 #ifdef MOZ_ENABLE_FREETYPE2
 #include "nsType8.h"
@@ -79,23 +76,27 @@
 static PRLogModuleInfo *nsPostScriptObjLM = PR_NewLogModule("nsPostScriptObj");
 #endif /* PR_LOGGING */
 
-extern "C" PS_FontInfo *PSFE_MaskToFI[N_FONTS];   // need fontmetrics.c
+/* A private class to format floating-point values into strings. This
+ * is used to write floating-point values into the postscript document.
+ * printf()-based functions can't be used because they may generate
+ * locale-ized output, e.g. using a comma for the decimal point, which
+ * isn't a valid postscript number.
+ */
+class fpCString : public nsCAutoString {
+  public:
+    inline fpCString(float aValue) { AppendFloat(aValue); }
+};
 
-// These set the location to standard C and back
-// which will keep the "." from converting to a "," 
-// in certain languages for floating point output to postscript
-#define XL_SET_NUMERIC_LOCALE() char* cur_locale = setlocale(LC_NUMERIC, "C")
-#define XL_RESTORE_NUMERIC_LOCALE() setlocale(LC_NUMERIC, cur_locale)
 
 #define NS_PS_RED(x) (((float)(NS_GET_R(x))) / 255.0) 
 #define NS_PS_GREEN(x) (((float)(NS_GET_G(x))) / 255.0) 
 #define NS_PS_BLUE(x) (((float)(NS_GET_B(x))) / 255.0) 
-#define NS_TWIPS_TO_POINTS(x) (((x) / 20))
+#define NS_PS_GRAY(x) (((float)(x)) / 255.0) 
+#define NS_RGB_TO_GRAY(r,g,b) ((int(r) * 77 + int(g) * 150 + int(b) * 29) / 256)
 #define NS_IS_BOLD(x) (((x) >= 401) ? 1 : 0) 
 
 static NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
 static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
-static NS_DEFINE_IID(kICharsetConverterManagerIID, NS_ICHARSETCONVERTERMANAGER_IID);
 
 /* 
  * global
@@ -246,6 +247,11 @@ nsPostScriptObj::~nsPostScriptObj()
     gLangGroups = nsnull;
   }
 
+  if (mDocProlog)
+    mDocProlog->Remove(PR_FALSE);
+  if (mDocScript)
+    mDocScript->Remove(PR_FALSE);
+
   PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("nsPostScriptObj::~nsPostScriptObj(): printing done."));
 }
 
@@ -257,25 +263,9 @@ nsPostScriptObj::settitle(PRUnichar * aTitle)
   }
 }
 
-static
-const PSPaperSizeRec *paper_name_to_PSPaperSizeRec(const char *paper_name)
-{
-  int i;
-        
-  for( i = 0 ; postscript_module_paper_sizes[i].name != nsnull ; i++ )
-  {
-    const PSPaperSizeRec *curr = &postscript_module_paper_sizes[i];
-
-    if (!PL_strcasecmp(paper_name, curr->name))
-      return curr;
-  }
-
-  return nsnull;
-}
-
 /** ---------------------------------------------------
  *  See documentation in nsPostScriptObj.h
- *	@update 2/1/99 dwc
+ *	@update 2/20/2004 kherron
  */
 nsresult 
 nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
@@ -284,8 +274,8 @@ nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
               isAPrinter,
               isFirstPageFirst;
   int         landscape;
-  float       fwidth, fheight;
   const char *printername;
+  nsresult    rv;
 
   PrintInfo* pi = new PrintInfo(); 
   mPrintSetup = new PrintSetup();
@@ -308,13 +298,11 @@ nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
       if ( isFirstPageFirst == PR_FALSE )
         mPrintSetup->reverse = 1;
 
-      /* Find PS paper size record by name */
-      const char *paper_name = nsnull;
-      aSpec->GetPaperName(&paper_name);    
-      mPrintSetup->paper_size = paper_name_to_PSPaperSizeRec(paper_name);
-
-      if (!mPrintSetup->paper_size)
-        return NS_ERROR_GFX_PRINTER_PAPER_SIZE_NOT_SUPPORTED;
+      // Clean up tempfile remnants of any previous print job
+      if (mDocProlog)
+        mDocProlog->Remove(PR_FALSE);
+      if (mDocScript)
+        mDocScript->Remove(PR_FALSE);
                
       aSpec->GetToPrinter( isAPrinter );
       if (isAPrinter) {
@@ -324,12 +312,6 @@ nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
          * - which means that if the ${MOZ_PRINTER_NAME} env var is not empty
          * the "-P" option of lpr will be set to the printer name.
          */
-#ifndef ARG_MAX
-#define ARG_MAX 4096
-#endif /* !ARG_MAX */
-        /* |putenv()| will use the pointer to this buffer directly and will not
-         * |strdup()| the content!!!! */
-        static char envvar[ARG_MAX];
 
         /* get printer name */
         aSpec->GetPrinterName(&printername);
@@ -347,41 +329,67 @@ nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
         else 
           printername = "";
 
-        /* We're using a |static| buffer (|envvar|) here to ensure that the
-         * memory "remembered" in the env var pool does still exist when we
-         * leave this context.
-         * However we can't write to the buffer while it's memory is linked
-         * to the env var pool - otherwise we may corrupt the pool.
-         * Therefore we're feeding a "dummy" env name/value string to the pool
-         * to "unlink" our static buffer (if it was set by an previous print
-         * job), then we write to the buffer and finally we |putenv()| our
-         * static buffer again.
+        /* Construct an environment string MOZ_PRINTER_NAME=<printername>
+         * and add it to the environment.
+         * On a POSIX system the original buffer becomes part of the
+         * environment, so it must remain valid until replaced. To preserve
+         * the ability to unload shared libraries, we have to either remove
+         * the string from the environment at unload time or else store the
+         * string in the heap, where it'll be left behind after unloading
+         * the library.
          */
-        PR_SetEnv("MOZ_PRINTER_NAME=dummy_value_to_make_putenv_happy");
-        PRInt32 nchars = PR_snprintf(envvar, ARG_MAX,
-                                  "MOZ_PRINTER_NAME=%s", printername);
-        if (nchars < 0 || nchars >= ARG_MAX)
-            sprintf(envvar, "MOZ_PRINTER_NAME=");
-
+        static char *moz_printer_string;
+        char *old_printer_string = moz_printer_string;
+        moz_printer_string = PR_smprintf("MOZ_PRINTER_NAME=%s", printername);
 #ifdef DEBUG
-        printf("setting printer name via '%s'\n", envvar);
-#endif /* DEBUG */
-        PR_SetEnv(envvar);
-        
+        printf("setting '%s'\n", moz_printer_string);
+#endif
+
+        if (!moz_printer_string) {
+          /* We're probably out of memory */
+          moz_printer_string = old_printer_string;
+          return (PR_OUT_OF_MEMORY_ERROR == PR_GetError()) ? 
+            NS_ERROR_OUT_OF_MEMORY : NS_ERROR_UNEXPECTED;
+        }
+        else {
+          PR_SetEnv(moz_printer_string);
+          if (old_printer_string)
+            PR_smprintf_free(old_printer_string);
+        }
+
         aSpec->GetCommand(&mPrintSetup->print_cmd);
-        mPrintSetup->out = tmpfile();
-        mPrintSetup->filename = nsnull;  
+        // Create a temporary file for the document prolog
+        rv = mTempfileFactory.CreateTempFile(getter_AddRefs(mDocProlog),
+            &mPrintSetup->out, "w+");
+        NS_ENSURE_SUCCESS(rv, NS_ERROR_GFX_PRINTER_FILE_IO_ERROR);
+        NS_POSTCONDITION(nsnull != mPrintSetup->out,
+          "CreateTempFile succeeded but no file handle");
+
       } else {
         const char *path;
         aSpec->GetPath(&path);
-        mPrintSetup->filename = path;          
-        mPrintSetup->out = fopen(mPrintSetup->filename, "w"); 
-        if (!mPrintSetup->out)
+        rv = NS_NewNativeLocalFile(nsDependentCString(path),
+          PR_FALSE, getter_AddRefs(mDocProlog));
+        rv = mDocProlog->OpenANSIFileDesc("w", &mPrintSetup->out);
+        if (NS_FAILED(rv))
           return NS_ERROR_GFX_PRINTER_COULD_NOT_OPEN_FILE;
+        NS_POSTCONDITION(nsnull != mPrintSetup->out,
+          "OpenANSIFileDesc succeeded but no file handle");
+        mPrintSetup->print_cmd = NULL;	// Indicate print-to-file
       }
-      mPrintSetup->tmpBody = tmpfile();
-      NS_ENSURE_TRUE(mPrintSetup->tmpBody, NS_ERROR_FAILURE);
-      mPrintSetup->tmpBody_filename = nsnull;
+
+      // Open the temporary file for the document script (printable content)
+      rv = mTempfileFactory.CreateTempFile(getter_AddRefs(mDocScript),
+          &mPrintSetup->tmpBody, "w+");
+      if (NS_FAILED(rv)) {
+        fclose(mPrintSetup->out);
+        mPrintSetup->out = nsnull;
+        mDocProlog->Remove(PR_FALSE);
+        mDocProlog = nsnull;
+        return NS_ERROR_GFX_PRINTER_FILE_IO_ERROR;
+      }
+      NS_POSTCONDITION(nsnull != mPrintSetup->tmpBody,
+        "CreateTempFile succeeded but no file handle");
     } else 
         return NS_ERROR_FAILURE;
 
@@ -394,28 +402,26 @@ nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
     memset(mPrintContext, 0, sizeof(struct PSContext_));
     memset(pi, 0, sizeof(struct PrintInfo_));
 
-    mPrintSetup->dpi = 72.0f;                  // dpi for externally sized items 
+    /* Find PS paper size record by name */
+    aSpec->GetPaperName(&(mPrintSetup->paper_name));
+    nsPaperSizePS paper;
+    if (!paper.Find(mPrintSetup->paper_name))
+      return NS_ERROR_GFX_PRINTER_PAPER_SIZE_NOT_SUPPORTED;
+
     aSpec->GetLandscape( landscape );
-    fwidth  = mPrintSetup->paper_size->width;
-    fheight = mPrintSetup->paper_size->height;
+    mPrintSetup->width = NS_MILLIMETERS_TO_TWIPS(paper.Width_mm());
+    mPrintSetup->height = NS_MILLIMETERS_TO_TWIPS(paper.Height_mm());
 
     if (landscape) {
-      float temp;
-      temp   = fwidth;
-      fwidth = fheight;
-      fheight = temp;
+      nscoord temp = mPrintSetup->width;
+      mPrintSetup->width = mPrintSetup->height;
+      mPrintSetup->height = temp;
     }
 
-    mPrintSetup->left   = (int)(mPrintSetup->paper_size->left   * mPrintSetup->dpi);
-    mPrintSetup->top    = (int)(mPrintSetup->paper_size->top    * mPrintSetup->dpi);
-    mPrintSetup->bottom = (int)(mPrintSetup->paper_size->bottom * mPrintSetup->dpi);
-    mPrintSetup->right  = (int)(mPrintSetup->paper_size->right  * mPrintSetup->dpi);
-    
-    mPrintSetup->width  = (int)(fwidth  * mPrintSetup->dpi);
-    mPrintSetup->height = (int)(fheight * mPrintSetup->dpi);
 #ifdef DEBUG
-    printf("\nPreWidth = %f PreHeight = %f\n",fwidth,fheight);
-    printf("\nWidth = %d Height = %d\n",mPrintSetup->width,mPrintSetup->height);
+    printf("\nPaper Width = %d twips (%gmm) Height = %d twips (%gmm)\n",
+        mPrintSetup->width, paper.Width_mm(),
+        mPrintSetup->height, paper.Height_mm());
 #endif
     mPrintSetup->header = "header";
     mPrintSetup->footer = "footer";
@@ -427,10 +433,7 @@ nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
     mPrintSetup->underline = PR_TRUE;             // underline links 
     mPrintSetup->scale_images = PR_TRUE;          // Scale unsized images which are too big 
     mPrintSetup->scale_pre = PR_FALSE;		        // do the pre-scaling thing 
-    // scale margins (specified in inches) to dots.
 
-    PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("dpi %g top %d bottom %d left %d right %d\n", 
-           mPrintSetup->dpi, mPrintSetup->top, mPrintSetup->bottom, mPrintSetup->left, mPrintSetup->right));
 
     mPrintSetup->rules = 1.0f;			            // Scale factor for rulers 
     mPrintSetup->n_up = 0;                     // cool page combining 
@@ -449,30 +452,10 @@ nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
     mPrintSetup->completion = nsnull;          // Called when translation finished 
     mPrintSetup->carg = nsnull;                // Data saved for completion routine 
     mPrintSetup->status = 0;                   // Status of URL on completion 
-	                                    // "other" font is for encodings other than iso-8859-1 
-    mPrintSetup->otherFontName[0] = nsnull;		   
-  				                            // name of "other" PostScript font 
-    mPrintSetup->otherFontInfo[0] = nsnull;	   
-    // font info parsed from "other" afm file 
-    mPrintSetup->otherFontCharSetID = 0;	      // charset ID of "other" font 
-    //mPrintSetup->cx = nsnull;                 // original context, if available 
-    pi->page_height = mPrintSetup->height * 10;	// Size of printable area on page 
-    pi->page_width = mPrintSetup->width * 10;	// Size of printable area on page 
-    pi->page_break = 0;	              // Current page bottom 
-    pi->page_topy = 0;	              // Current page top 
-    pi->phase = 0;
-
- 
-    pi->pages = nsnull;		                // Contains extents of each page 
-
-    pi->pt_size = 0;		              // Size of above table 
-    pi->n_pages = 0;	        	      // # of valid entries in above table 
 
     mTitle = nsnull;
 
     pi->doc_title = mTitle;
-    pi->doc_width = 0;	              // Total document width 
-    pi->doc_height = 0;	              // Total document height 
 
     mPrintContext->prInfo = pi;
 
@@ -510,21 +493,6 @@ nsPostScriptObj::initialize_translation(PrintSetup* pi)
   PrintSetup *dup = (PrintSetup *)malloc(sizeof(PrintSetup));
   *dup = *pi;
   mPrintContext->prSetup = dup;
-  dup->width = POINT_TO_PAGE(dup->width);
-  dup->height = POINT_TO_PAGE(dup->height);
-  dup->top = POINT_TO_PAGE(dup->top);
-  dup->left = POINT_TO_PAGE(dup->left);
-  dup->bottom = POINT_TO_PAGE(dup->bottom);
-  dup->right = POINT_TO_PAGE(dup->right);
-/*
-  if (pi->landscape){
-    dup->height = POINT_TO_PAGE(pi->width);
-    dup->width = POINT_TO_PAGE(pi->height);
-    //XXX Should I swap the margins too ??? 
-    //XXX kaie: I don't think so... The user still sees the options
-    //          named left margin etc.
-  }	
-*/
 }
 
 /** ---------------------------------------------------
@@ -537,22 +505,33 @@ nsPostScriptObj::begin_document()
 int i;
 FILE *f;
 
+  nscoord paper_width = mPrintContext->prSetup->width;
+  nscoord paper_height = mPrintContext->prSetup->height;
+  const char *orientation;
+
+  if (paper_height < paper_width) {
+    // prSetup->width and height have been swapped, indicating landscape.
+    // The bounding box etc. must be in terms of the default PS coordinate
+    // system.
+    nscoord temp = paper_width;
+    paper_width = paper_height;
+    paper_height = temp;
+    orientation = "Landscape";
+  }
+  else
+    orientation = "Portrait";
+
   f = mPrintContext->prSetup->out;
   fprintf(f, "%%!PS-Adobe-3.0\n");
-  fprintf(f, "%%%%BoundingBox: %d %d %d %d\n",
-              PAGE_TO_POINT_I(mPrintContext->prSetup->left),
-	            PAGE_TO_POINT_I(mPrintContext->prSetup->top),
-	            PAGE_TO_POINT_I(mPrintContext->prSetup->width-mPrintContext->prSetup->right),
-	            PAGE_TO_POINT_I(mPrintContext->prSetup->height-(mPrintContext->prSetup->bottom + mPrintContext->prSetup->top)));
+  fprintf(f, "%%%%BoundingBox: 0 0 %s %s\n",
+    fpCString(NSTwipsToFloatPoints(paper_width)).get(),
+    fpCString(NSTwipsToFloatPoints(paper_height)).get());
 
-  nsXPIDLCString useragent;
-  useragent.Assign("unknown"); /* Fallback */
-  gPrefs->CopyCharPref("general.useragent.misc", getter_Copies(useragent));
-  fprintf(f, "%%%%Creator: Mozilla PostScript module (%s/%lu)\n", useragent.get(), (unsigned long)NS_BUILD_ID);
+  fprintf(f, "%%%%Creator: Mozilla PostScript module (%s/%lu)\n",
+             "rv:" MOZILLA_VERSION, (unsigned long)NS_BUILD_ID);
   fprintf(f, "%%%%DocumentData: Clean8Bit\n");
-  fprintf(f, "%%%%DocumentPaperSizes: %s\n", mPrintSetup->paper_size->name);
-  fprintf(f, "%%%%Orientation: %s\n",
-              (mPrintContext->prSetup->width < mPrintContext->prSetup->height) ? "Portrait" : "Landscape");
+  fprintf(f, "%%%%DocumentPaperSizes: %s\n", mPrintSetup->paper_name);
+  fprintf(f, "%%%%Orientation: %s\n", orientation);
 
   // hmm, n_pages is always zero so don't use it
 #if 0
@@ -586,6 +565,17 @@ FILE *f;
     
     // now begin prolog 
   fprintf(f, "%%%%BeginProlog\n");
+
+  // Tell the printer what size paper it should use
+  fprintf(f,
+    "/setpagedevice where\n"			// Test for the feature
+    "{ pop 1 dict\n"				// Set up a dictionary
+    "  dup /PageSize [ %s %s ] put\n"		// Paper dimensions
+    "  setpagedevice\n"				// Install settings
+    "} if\n", 
+    fpCString(NSTwipsToFloatPoints(paper_width)).get(),
+    fpCString(NSTwipsToFloatPoints(paper_height)).get());
+
   fprintf(f, "[");
   for (i = 0; i < 256; i++){
 	  if (*isotab[i] == '\0'){
@@ -601,1375 +591,1329 @@ FILE *f;
 
   fprintf(f, "] /isolatin1encoding exch def\n");
 
-#ifdef OLDFONTS
-  // output the fonts supported here    
-  for (i = 0; i < N_FONTS; i++){
-    fprintf(f, 
-	          "/F%d\n"
-	          "    /%s findfont\n"
-	          "    dup length dict begin\n"
-	          "	{1 index /FID ne {def} {pop pop} ifelse} forall\n"
-	          "	/Encoding isolatin1encoding def\n"
-	          "    currentdict end\n"
-	          "definefont pop\n"
-	          "/f%d { /csize exch def /F%d findfont csize scalefont setfont } bind def\n",
-		        i, PSFE_MaskToFI[i]->name, i, i);
-  }
+  // Procedure to reencode a font
+  fprintf(f, "%s",
+      "/Mfr {\n"
+      "  findfont dup length dict\n"
+      "  begin\n"
+      "    {1 index /FID ne {def} {pop pop} ifelse} forall\n"
+      "    /Encoding isolatin1encoding def\n"
+      "    currentdict\n"
+      "  end\n"
+      "  definefont pop\n"
+      "} bind def\n");
 
-  for (i = 0; i < N_FONTS; i++){
-    if (mPrintContext->prSetup->otherFontName[i]) {
-	    fprintf(f, 
-	          "/of%d { /%s findfont exch scalefont setfont } bind def\n",
-		        i, mPrintContext->prSetup->otherFontName[i]);
-            //fprintf(f, "/of /of1;\n", mPrintContext->prSetup->otherFontName); 
-    }
-  }
-#else
+  // Procedure to select and scale a font, using selectfont if available. See
+  // Adobe Technical note 5048. Note msf args are backwards from selectfont.
+  fprintf(f, "%s",
+    "/Msf /selectfont where\n"
+    "  { pop { exch selectfont } }\n"
+    "  { { findfont exch scalefont setfont } }\n"
+    "  ifelse\n"
+    "  bind def\n");
+
   for(i=0;i<NUM_AFM_FONTS;i++){
     fprintf(f, 
-	          "/F%d\n"
-	          "    /%s findfont\n"
-	          "    dup length dict begin\n"
-	          "	{1 index /FID ne {def} {pop pop} ifelse} forall\n"
-	          "	/Encoding isolatin1encoding def\n"
-	          "    currentdict end\n"
-	          "definefont pop\n"
-	          "/f%d { /csize exch def /F%d findfont csize scalefont setfont } bind def\n",
-		        i, gSubstituteFonts[i].mPSName, i, i);
+      "/F%d /%s Mfr\n"
+      "/f%d { dup /csize exch def /F%d Msf } bind def\n",
+      i, gSubstituteFonts[i].mPSName, i, i);
 
   }
-#endif
 
+  fprintf(f, "%s",
+    // Unicode glyph dictionary
+    "/UniDict\n"
+    "1051 dict dup begin\n"
+    "16#0020	/space def\n"
+    "16#0021	/exclam def\n"
+    "16#0022	/quotedbl def\n"
+    "16#0023	/numbersign def\n"
+    "16#0024	/dollar def\n"
+    "16#0025	/percent def\n"
+    "16#0026	/ampersand def\n"
+    "16#0027	/quotesingle def\n"
+    "16#0028	/parenleft def\n"
+    "16#0029	/parenright def\n"
+    "16#002A	/asterisk def\n"
+    "16#002B	/plus def\n"
+    "16#002C	/comma def\n"
+    "16#002D	/hyphen def\n"
+    "16#002E	/period def\n"
+    "16#002F	/slash def\n"
+    "16#0030	/zero def\n"
+    "16#0031	/one def\n"
+    "16#0032	/two def\n"
+    "16#0033	/three def\n"
+    "16#0034	/four def\n"
+    "16#0035	/five def\n"
+    "16#0036	/six def\n"
+    "16#0037	/seven def\n"
+    "16#0038	/eight def\n"
+    "16#0039	/nine def\n"
+    "16#003A	/colon def\n"
+    "16#003B	/semicolon def\n"
+    "16#003C	/less def\n"
+    "16#003D	/equal def\n"
+    "16#003E	/greater def\n"
+    "16#003F	/question def\n"
+    "16#0040	/at def\n"
+    "16#0041	/A def\n"
+    "16#0042	/B def\n"
+    "16#0043	/C def\n"
+    "16#0044	/D def\n"
+    "16#0045	/E def\n"
+    "16#0046	/F def\n"
+    "16#0047	/G def\n"
+    "16#0048	/H def\n"
+    "16#0049	/I def\n"
+    "16#004A	/J def\n"
+    "16#004B	/K def\n"
+    "16#004C	/L def\n"
+    "16#004D	/M def\n"
+    "16#004E	/N def\n"
+    "16#004F	/O def\n"
+    "16#0050	/P def\n"
+    "16#0051	/Q def\n"
+    "16#0052	/R def\n"
+    "16#0053	/S def\n"
+    "16#0054	/T def\n"
+    "16#0055	/U def\n"
+    "16#0056	/V def\n"
+    "16#0057	/W def\n"
+    "16#0058	/X def\n"
+    "16#0059	/Y def\n"
+    "16#005A	/Z def\n"
+    "16#005B	/bracketleft def\n"
+    "16#005C	/backslash def\n"
+    "16#005D	/bracketright def\n"
+    "16#005E	/asciicircum def\n"
+    "16#005F	/underscore def\n"
+    "16#0060	/grave def\n"
+    "16#0061	/a def\n"
+    "16#0062	/b def\n"
+    "16#0063	/c def\n"
+    "16#0064	/d def\n"
+    "16#0065	/e def\n"
+    "16#0066	/f def\n"
+    "16#0067	/g def\n"
+    "16#0068	/h def\n"
+    "16#0069	/i def\n"
+    "16#006A	/j def\n"
+    "16#006B	/k def\n"
+    "16#006C	/l def\n"
+    "16#006D	/m def\n"
+    "16#006E	/n def\n"
+    "16#006F	/o def\n"
+    "16#0070	/p def\n"
+    "16#0071	/q def\n"
+    "16#0072	/r def\n"
+    "16#0073	/s def\n"
+    "16#0074	/t def\n"
+    "16#0075	/u def\n"
+    "16#0076	/v def\n"
+    "16#0077	/w def\n"
+    "16#0078	/x def\n"
+    "16#0079	/y def\n"
+    "16#007A	/z def\n"
+    "16#007B	/braceleft def\n"
+    "16#007C	/bar def\n"
+    "16#007D	/braceright def\n"
+    "16#007E	/asciitilde def\n"
+    "16#00A0	/space def\n"
+    "16#00A1	/exclamdown def\n"
+    "16#00A2	/cent def\n"
+    "16#00A3	/sterling def\n"
+    "16#00A4	/currency def\n"
+    "16#00A5	/yen def\n"
+    "16#00A6	/brokenbar def\n"
+    "16#00A7	/section def\n"
+    "16#00A8	/dieresis def\n"
+    "16#00A9	/copyright def\n"
+    "16#00AA	/ordfeminine def\n"
+    "16#00AB	/guillemotleft def\n"
+    "16#00AC	/logicalnot def\n"
+    "16#00AD	/hyphen def\n"
+    "16#00AE	/registered def\n"
+    "16#00AF	/macron def\n"
+    "16#00B0	/degree def\n"
+    "16#00B1	/plusminus def\n"
+    "16#00B2	/twosuperior def\n"
+    "16#00B3	/threesuperior def\n"
+    "16#00B4	/acute def\n"
+    "16#00B5	/mu def\n"
+    "16#00B6	/paragraph def\n"
+    "16#00B7	/periodcentered def\n"
+    "16#00B8	/cedilla def\n"
+    "16#00B9	/onesuperior def\n"
+    "16#00BA	/ordmasculine def\n"
+    "16#00BB	/guillemotright def\n"
+    "16#00BC	/onequarter def\n"
+    "16#00BD	/onehalf def\n"
+    "16#00BE	/threequarters def\n"
+    "16#00BF	/questiondown def\n"
+    "16#00C0	/Agrave def\n"
+    "16#00C1	/Aacute def\n"
+    "16#00C2	/Acircumflex def\n"
+    "16#00C3	/Atilde def\n"
+    "16#00C4	/Adieresis def\n"
+    "16#00C5	/Aring def\n"
+    "16#00C6	/AE def\n"
+    "16#00C7	/Ccedilla def\n"
+    "16#00C8	/Egrave def\n"
+    "16#00C9	/Eacute def\n"
+    "16#00CA	/Ecircumflex def\n"
+    "16#00CB	/Edieresis def\n"
+    "16#00CC	/Igrave def\n"
+    "16#00CD	/Iacute def\n"
+    "16#00CE	/Icircumflex def\n"
+    "16#00CF	/Idieresis def\n"
+    "16#00D0	/Eth def\n"
+    "16#00D1	/Ntilde def\n"
+    "16#00D2	/Ograve def\n"
+    "16#00D3	/Oacute def\n"
+    "16#00D4	/Ocircumflex def\n"
+    "16#00D5	/Otilde def\n"
+    "16#00D6	/Odieresis def\n"
+    "16#00D7	/multiply def\n"
+    "16#00D8	/Oslash def\n"
+    "16#00D9	/Ugrave def\n"
+    "16#00DA	/Uacute def\n"
+    "16#00DB	/Ucircumflex def\n"
+    "16#00DC	/Udieresis def\n"
+    "16#00DD	/Yacute def\n"
+    "16#00DE	/Thorn def\n"
+    "16#00DF	/germandbls def\n"
+    "16#00E0	/agrave def\n"
+    "16#00E1	/aacute def\n"
+    "16#00E2	/acircumflex def\n"
+    "16#00E3	/atilde def\n"
+    "16#00E4	/adieresis def\n"
+    "16#00E5	/aring def\n"
+    "16#00E6	/ae def\n"
+    "16#00E7	/ccedilla def\n"
+    "16#00E8	/egrave def\n"
+    "16#00E9	/eacute def\n"
+    "16#00EA	/ecircumflex def\n"
+    "16#00EB	/edieresis def\n"
+    "16#00EC	/igrave def\n"
+    "16#00ED	/iacute def\n"
+    "16#00EE	/icircumflex def\n"
+    "16#00EF	/idieresis def\n"
+    "16#00F0	/eth def\n"
+    "16#00F1	/ntilde def\n"
+    "16#00F2	/ograve def\n"
+    "16#00F3	/oacute def\n"
+    "16#00F4	/ocircumflex def\n"
+    "16#00F5	/otilde def\n"
+    "16#00F6	/odieresis def\n"
+    "16#00F7	/divide def\n"
+    "16#00F8	/oslash def\n"
+    "16#00F9	/ugrave def\n"
+    "16#00FA	/uacute def\n"
+    "16#00FB	/ucircumflex def\n"
+    "16#00FC	/udieresis def\n"
+    "16#00FD	/yacute def\n"
+    "16#00FE	/thorn def\n"
+    "16#00FF	/ydieresis def\n"
+    "16#0100	/Amacron def\n"
+    "16#0101	/amacron def\n"
+    "16#0102	/Abreve def\n"
+    "16#0103	/abreve def\n"
+    "16#0104	/Aogonek def\n"
+    "16#0105	/aogonek def\n"
+    "16#0106	/Cacute def\n"
+    "16#0107	/cacute def\n"
+    "16#0108	/Ccircumflex def\n"
+    "16#0109	/ccircumflex def\n"
+    "16#010A	/Cdotaccent def\n"
+    "16#010B	/cdotaccent def\n"
+    "16#010C	/Ccaron def\n"
+    "16#010D	/ccaron def\n"
+    "16#010E	/Dcaron def\n"
+    "16#010F	/dcaron def\n"
+    "16#0110	/Dcroat def\n"
+    "16#0111	/dcroat def\n"
+    "16#0112	/Emacron def\n"
+    "16#0113	/emacron def\n"
+    "16#0114	/Ebreve def\n"
+    "16#0115	/ebreve def\n"
+    "16#0116	/Edotaccent def\n"
+    "16#0117	/edotaccent def\n"
+    "16#0118	/Eogonek def\n"
+    "16#0119	/eogonek def\n"
+    "16#011A	/Ecaron def\n"
+    "16#011B	/ecaron def\n"
+    "16#011C	/Gcircumflex def\n"
+    "16#011D	/gcircumflex def\n"
+    "16#011E	/Gbreve def\n"
+    "16#011F	/gbreve def\n"
+    "16#0120	/Gdotaccent def\n"
+    "16#0121	/gdotaccent def\n"
+    "16#0122	/Gcommaaccent def\n"
+    "16#0123	/gcommaaccent def\n"
+    "16#0124	/Hcircumflex def\n"
+    "16#0125	/hcircumflex def\n"
+    "16#0126	/Hbar def\n"
+    "16#0127	/hbar def\n"
+    "16#0128	/Itilde def\n"
+    "16#0129	/itilde def\n"
+    "16#012A	/Imacron def\n"
+    "16#012B	/imacron def\n"
+    "16#012C	/Ibreve def\n"
+    "16#012D	/ibreve def\n"
+    "16#012E	/Iogonek def\n"
+    "16#012F	/iogonek def\n"
+    "16#0130	/Idotaccent def\n"
+    "16#0131	/dotlessi def\n"
+    "16#0132	/IJ def\n"
+    "16#0133	/ij def\n"
+    "16#0134	/Jcircumflex def\n"
+    "16#0135	/jcircumflex def\n"
+    "16#0136	/Kcommaaccent def\n"
+    "16#0137	/kcommaaccent def\n"
+    "16#0138	/kgreenlandic def\n"
+    "16#0139	/Lacute def\n"
+    "16#013A	/lacute def\n"
+    "16#013B	/Lcommaaccent def\n"
+    "16#013C	/lcommaaccent def\n"
+    "16#013D	/Lcaron def\n"
+    "16#013E	/lcaron def\n"
+    "16#013F	/Ldot def\n"
+    "16#0140	/ldot def\n"
+    "16#0141	/Lslash def\n"
+    "16#0142	/lslash def\n"
+    "16#0143	/Nacute def\n"
+    "16#0144	/nacute def\n"
+    "16#0145	/Ncommaaccent def\n"
+    "16#0146	/ncommaaccent def\n"
+    "16#0147	/Ncaron def\n"
+    "16#0148	/ncaron def\n"
+    "16#0149	/napostrophe def\n"
+    "16#014A	/Eng def\n"
+    "16#014B	/eng def\n"
+    "16#014C	/Omacron def\n"
+    "16#014D	/omacron def\n"
+    "16#014E	/Obreve def\n"
+    "16#014F	/obreve def\n"
+    "16#0150	/Ohungarumlaut def\n"
+    "16#0151	/ohungarumlaut def\n"
+    "16#0152	/OE def\n"
+    "16#0153	/oe def\n"
+    "16#0154	/Racute def\n"
+    "16#0155	/racute def\n"
+    "16#0156	/Rcommaaccent def\n"
+    "16#0157	/rcommaaccent def\n"
+    "16#0158	/Rcaron def\n"
+    "16#0159	/rcaron def\n"
+    "16#015A	/Sacute def\n"
+    "16#015B	/sacute def\n"
+    "16#015C	/Scircumflex def\n"
+    "16#015D	/scircumflex def\n"
+    "16#015E	/Scedilla def\n"
+    "16#015F	/scedilla def\n"
+    "16#0160	/Scaron def\n"
+    "16#0161	/scaron def\n"
+    "16#0162	/Tcommaaccent def\n"
+    "16#0163	/tcommaaccent def\n"
+    "16#0164	/Tcaron def\n"
+    "16#0165	/tcaron def\n"
+    "16#0166	/Tbar def\n"
+    "16#0167	/tbar def\n"
+    "16#0168	/Utilde def\n"
+    "16#0169	/utilde def\n"
+    "16#016A	/Umacron def\n"
+    "16#016B	/umacron def\n"
+    "16#016C	/Ubreve def\n"
+    "16#016D	/ubreve def\n"
+    "16#016E	/Uring def\n"
+    "16#016F	/uring def\n"
+    "16#0170	/Uhungarumlaut def\n"
+    "16#0171	/uhungarumlaut def\n"
+    "16#0172	/Uogonek def\n"
+    "16#0173	/uogonek def\n"
+    "16#0174	/Wcircumflex def\n"
+    "16#0175	/wcircumflex def\n"
+    "16#0176	/Ycircumflex def\n"
+    "16#0177	/ycircumflex def\n"
+    "16#0178	/Ydieresis def\n"
+    "16#0179	/Zacute def\n"
+    "16#017A	/zacute def\n"
+    "16#017B	/Zdotaccent def\n"
+    "16#017C	/zdotaccent def\n"
+    "16#017D	/Zcaron def\n"
+    "16#017E	/zcaron def\n"
+    "16#017F	/longs def\n"
+    "16#0192	/florin def\n"
+    "16#01A0	/Ohorn def\n"
+    "16#01A1	/ohorn def\n"
+    "16#01AF	/Uhorn def\n"
+    "16#01B0	/uhorn def\n"
+    "16#01E6	/Gcaron def\n"
+    "16#01E7	/gcaron def\n"
+    "16#01FA	/Aringacute def\n"
+    "16#01FB	/aringacute def\n"
+    "16#01FC	/AEacute def\n"
+    "16#01FD	/aeacute def\n"
+    "16#01FE	/Oslashacute def\n"
+    "16#01FF	/oslashacute def\n"
+    "16#0218	/Scommaaccent def\n"
+    "16#0219	/scommaaccent def\n"
+    "16#021A	/Tcommaaccent def\n"
+    "16#021B	/tcommaaccent def\n"
+    "16#02BC	/afii57929 def\n"
+    "16#02BD	/afii64937 def\n"
+    "16#02C6	/circumflex def\n"
+    "16#02C7	/caron def\n"
+    "16#02C9	/macron def\n"
+    "16#02D8	/breve def\n"
+    "16#02D9	/dotaccent def\n"
+    "16#02DA	/ring def\n"
+    "16#02DB	/ogonek def\n"
+    "16#02DC	/tilde def\n"
+    "16#02DD	/hungarumlaut def\n"
+    "16#0300	/gravecomb def\n"
+    "16#0301	/acutecomb def\n"
+    "16#0303	/tildecomb def\n"
+    "16#0309	/hookabovecomb def\n"
+    "16#0323	/dotbelowcomb def\n"
+    "16#0384	/tonos def\n"
+    "16#0385	/dieresistonos def\n"
+    "16#0386	/Alphatonos def\n"
+    "16#0387	/anoteleia def\n"
+    "16#0388	/Epsilontonos def\n"
+    "16#0389	/Etatonos def\n"
+    "16#038A	/Iotatonos def\n"
+    "16#038C	/Omicrontonos def\n"
+    "16#038E	/Upsilontonos def\n"
+    "16#038F	/Omegatonos def\n"
+    "16#0390	/iotadieresistonos def\n"
+    "16#0391	/Alpha def\n"
+    "16#0392	/Beta def\n"
+    "16#0393	/Gamma def\n"
+    "16#0394	/Delta def\n"
+    "16#0395	/Epsilon def\n"
+    "16#0396	/Zeta def\n"
+    "16#0397	/Eta def\n"
+    "16#0398	/Theta def\n"
+    "16#0399	/Iota def\n"
+    "16#039A	/Kappa def\n"
+    "16#039B	/Lambda def\n"
+    "16#039C	/Mu def\n"
+    "16#039D	/Nu def\n"
+    "16#039E	/Xi def\n"
+    "16#039F	/Omicron def\n"
+    "16#03A0	/Pi def\n"
+    "16#03A1	/Rho def\n"
+    "16#03A3	/Sigma def\n"
+    "16#03A4	/Tau def\n"
+    "16#03A5	/Upsilon def\n"
+    "16#03A6	/Phi def\n"
+    "16#03A7	/Chi def\n"
+    "16#03A8	/Psi def\n"
+    "16#03A9	/Omega def\n"
+    "16#03AA	/Iotadieresis def\n"
+    "16#03AB	/Upsilondieresis def\n"
+    "16#03AC	/alphatonos def\n"
+    "16#03AD	/epsilontonos def\n"
+    "16#03AE	/etatonos def\n"
+    "16#03AF	/iotatonos def\n"
+    "16#03B0	/upsilondieresistonos def\n"
+    "16#03B1	/alpha def\n"
+    "16#03B2	/beta def\n"
+    "16#03B3	/gamma def\n"
+    "16#03B4	/delta def\n"
+    "16#03B5	/epsilon def\n"
+    "16#03B6	/zeta def\n"
+    "16#03B7	/eta def\n"
+    "16#03B8	/theta def\n"
+    "16#03B9	/iota def\n"
+    "16#03BA	/kappa def\n"
+    "16#03BB	/lambda def\n"
+    "16#03BC	/mu def\n"
+    "16#03BD	/nu def\n"
+    "16#03BE	/xi def\n"
+    "16#03BF	/omicron def\n"
+    "16#03C0	/pi def\n"
+    "16#03C1	/rho def\n"
+    "16#03C2	/sigma1 def\n"
+    "16#03C3	/sigma def\n"
+    "16#03C4	/tau def\n"
+    "16#03C5	/upsilon def\n"
+    "16#03C6	/phi def\n"
+    "16#03C7	/chi def\n"
+    "16#03C8	/psi def\n"
+    "16#03C9	/omega def\n"
+    "16#03CA	/iotadieresis def\n"
+    "16#03CB	/upsilondieresis def\n"
+    "16#03CC	/omicrontonos def\n"
+    );
+  fprintf(f, "%s",
+    "16#03CD	/upsilontonos def\n"
+    "16#03CE	/omegatonos def\n"
+    "16#03D1	/theta1 def\n"
+    "16#03D2	/Upsilon1 def\n"
+    "16#03D5	/phi1 def\n"
+    "16#03D6	/omega1 def\n"
+    "16#0401	/afii10023 def\n"
+    "16#0402	/afii10051 def\n"
+    "16#0403	/afii10052 def\n"
+    "16#0404	/afii10053 def\n"
+    "16#0405	/afii10054 def\n"
+    "16#0406	/afii10055 def\n"
+    "16#0407	/afii10056 def\n"
+    "16#0408	/afii10057 def\n"
+    "16#0409	/afii10058 def\n"
+    "16#040A	/afii10059 def\n"
+    "16#040B	/afii10060 def\n"
+    "16#040C	/afii10061 def\n"
+    "16#040E	/afii10062 def\n"
+    "16#040F	/afii10145 def\n"
+    "16#0410	/afii10017 def\n"
+    "16#0411	/afii10018 def\n"
+    "16#0412	/afii10019 def\n"
+    "16#0413	/afii10020 def\n"
+    "16#0414	/afii10021 def\n"
+    "16#0415	/afii10022 def\n"
+    "16#0416	/afii10024 def\n"
+    "16#0417	/afii10025 def\n"
+    "16#0418	/afii10026 def\n"
+    "16#0419	/afii10027 def\n"
+    "16#041A	/afii10028 def\n"
+    "16#041B	/afii10029 def\n"
+    "16#041C	/afii10030 def\n"
+    "16#041D	/afii10031 def\n"
+    "16#041E	/afii10032 def\n"
+    "16#041F	/afii10033 def\n"
+    "16#0420	/afii10034 def\n"
+    "16#0421	/afii10035 def\n"
+    "16#0422	/afii10036 def\n"
+    "16#0423	/afii10037 def\n"
+    "16#0424	/afii10038 def\n"
+    "16#0425	/afii10039 def\n"
+    "16#0426	/afii10040 def\n"
+    "16#0427	/afii10041 def\n"
+    "16#0428	/afii10042 def\n"
+    "16#0429	/afii10043 def\n"
+    "16#042A	/afii10044 def\n"
+    "16#042B	/afii10045 def\n"
+    "16#042C	/afii10046 def\n"
+    "16#042D	/afii10047 def\n"
+    "16#042E	/afii10048 def\n"
+    "16#042F	/afii10049 def\n"
+    "16#0430	/afii10065 def\n"
+    "16#0431	/afii10066 def\n"
+    "16#0432	/afii10067 def\n"
+    "16#0433	/afii10068 def\n"
+    "16#0434	/afii10069 def\n"
+    "16#0435	/afii10070 def\n"
+    "16#0436	/afii10072 def\n"
+    "16#0437	/afii10073 def\n"
+    "16#0438	/afii10074 def\n"
+    "16#0439	/afii10075 def\n"
+    "16#043A	/afii10076 def\n"
+    "16#043B	/afii10077 def\n"
+    "16#043C	/afii10078 def\n"
+    "16#043D	/afii10079 def\n"
+    "16#043E	/afii10080 def\n"
+    "16#043F	/afii10081 def\n"
+    "16#0440	/afii10082 def\n"
+    "16#0441	/afii10083 def\n"
+    "16#0442	/afii10084 def\n"
+    "16#0443	/afii10085 def\n"
+    "16#0444	/afii10086 def\n"
+    "16#0445	/afii10087 def\n"
+    "16#0446	/afii10088 def\n"
+    "16#0447	/afii10089 def\n"
+    "16#0448	/afii10090 def\n"
+    "16#0449	/afii10091 def\n"
+    "16#044A	/afii10092 def\n"
+    "16#044B	/afii10093 def\n"
+    "16#044C	/afii10094 def\n"
+    "16#044D	/afii10095 def\n"
+    "16#044E	/afii10096 def\n"
+    "16#044F	/afii10097 def\n"
+    "16#0451	/afii10071 def\n"
+    "16#0452	/afii10099 def\n"
+    "16#0453	/afii10100 def\n"
+    "16#0454	/afii10101 def\n"
+    "16#0455	/afii10102 def\n"
+    "16#0456	/afii10103 def\n"
+    "16#0457	/afii10104 def\n"
+    "16#0458	/afii10105 def\n"
+    "16#0459	/afii10106 def\n"
+    "16#045A	/afii10107 def\n"
+    "16#045B	/afii10108 def\n"
+    "16#045C	/afii10109 def\n"
+    "16#045E	/afii10110 def\n"
+    "16#045F	/afii10193 def\n"
+    "16#0462	/afii10146 def\n"
+    "16#0463	/afii10194 def\n"
+    "16#0472	/afii10147 def\n"
+    "16#0473	/afii10195 def\n"
+    "16#0474	/afii10148 def\n"
+    "16#0475	/afii10196 def\n"
+    "16#0490	/afii10050 def\n"
+    "16#0491	/afii10098 def\n"
+    "16#04D9	/afii10846 def\n"
+    "16#05B0	/afii57799 def\n"
+    "16#05B1	/afii57801 def\n"
+    "16#05B2	/afii57800 def\n"
+    "16#05B3	/afii57802 def\n"
+    "16#05B4	/afii57793 def\n"
+    "16#05B5	/afii57794 def\n"
+    "16#05B6	/afii57795 def\n"
+    "16#05B7	/afii57798 def\n"
+    "16#05B8	/afii57797 def\n"
+    "16#05B9	/afii57806 def\n"
+    "16#05BB	/afii57796 def\n"
+    "16#05BC	/afii57807 def\n"
+    "16#05BD	/afii57839 def\n"
+    "16#05BE	/afii57645 def\n"
+    "16#05BF	/afii57841 def\n"
+    "16#05C0	/afii57842 def\n"
+    "16#05C1	/afii57804 def\n"
+    "16#05C2	/afii57803 def\n"
+    "16#05C3	/afii57658 def\n"
+    "16#05D0	/afii57664 def\n"
+    "16#05D1	/afii57665 def\n"
+    "16#05D2	/afii57666 def\n"
+    "16#05D3	/afii57667 def\n"
+    "16#05D4	/afii57668 def\n"
+    "16#05D5	/afii57669 def\n"
+    "16#05D6	/afii57670 def\n"
+    "16#05D7	/afii57671 def\n"
+    "16#05D8	/afii57672 def\n"
+    "16#05D9	/afii57673 def\n"
+    "16#05DA	/afii57674 def\n"
+    "16#05DB	/afii57675 def\n"
+    "16#05DC	/afii57676 def\n"
+    "16#05DD	/afii57677 def\n"
+    "16#05DE	/afii57678 def\n"
+    "16#05DF	/afii57679 def\n"
+    "16#05E0	/afii57680 def\n"
+    "16#05E1	/afii57681 def\n"
+    "16#05E2	/afii57682 def\n"
+    "16#05E3	/afii57683 def\n"
+    "16#05E4	/afii57684 def\n"
+    "16#05E5	/afii57685 def\n"
+    "16#05E6	/afii57686 def\n"
+    "16#05E7	/afii57687 def\n"
+    "16#05E8	/afii57688 def\n"
+    "16#05E9	/afii57689 def\n"
+    "16#05EA	/afii57690 def\n"
+    "16#05F0	/afii57716 def\n"
+    "16#05F1	/afii57717 def\n"
+    "16#05F2	/afii57718 def\n"
+    "16#060C	/afii57388 def\n"
+    "16#061B	/afii57403 def\n"
+    "16#061F	/afii57407 def\n"
+    "16#0621	/afii57409 def\n"
+    "16#0622	/afii57410 def\n"
+    "16#0623	/afii57411 def\n"
+    "16#0624	/afii57412 def\n"
+    "16#0625	/afii57413 def\n"
+    "16#0626	/afii57414 def\n"
+    "16#0627	/afii57415 def\n"
+    "16#0628	/afii57416 def\n"
+    "16#0629	/afii57417 def\n"
+    "16#062A	/afii57418 def\n"
+    "16#062B	/afii57419 def\n"
+    "16#062C	/afii57420 def\n"
+    "16#062D	/afii57421 def\n"
+    "16#062E	/afii57422 def\n"
+    "16#062F	/afii57423 def\n"
+    "16#0630	/afii57424 def\n"
+    "16#0631	/afii57425 def\n"
+    "16#0632	/afii57426 def\n"
+    "16#0633	/afii57427 def\n"
+    "16#0634	/afii57428 def\n"
+    "16#0635	/afii57429 def\n"
+    "16#0636	/afii57430 def\n"
+    "16#0637	/afii57431 def\n"
+    "16#0638	/afii57432 def\n"
+    "16#0639	/afii57433 def\n"
+    "16#063A	/afii57434 def\n"
+    "16#0640	/afii57440 def\n"
+    "16#0641	/afii57441 def\n"
+    "16#0642	/afii57442 def\n"
+    "16#0643	/afii57443 def\n"
+    "16#0644	/afii57444 def\n"
+    "16#0645	/afii57445 def\n"
+    "16#0646	/afii57446 def\n"
+    "16#0647	/afii57470 def\n"
+    "16#0648	/afii57448 def\n"
+    "16#0649	/afii57449 def\n"
+    "16#064A	/afii57450 def\n"
+    "16#064B	/afii57451 def\n"
+    "16#064C	/afii57452 def\n"
+    "16#064D	/afii57453 def\n"
+    "16#064E	/afii57454 def\n"
+    "16#064F	/afii57455 def\n"
+    "16#0650	/afii57456 def\n"
+    "16#0651	/afii57457 def\n"
+    "16#0652	/afii57458 def\n"
+    "16#0660	/afii57392 def\n"
+    "16#0661	/afii57393 def\n"
+    "16#0662	/afii57394 def\n"
+    "16#0663	/afii57395 def\n"
+    "16#0664	/afii57396 def\n"
+    "16#0665	/afii57397 def\n"
+    "16#0666	/afii57398 def\n"
+    "16#0667	/afii57399 def\n"
+    "16#0668	/afii57400 def\n"
+    "16#0669	/afii57401 def\n"
+    "16#066A	/afii57381 def\n"
+    "16#066D	/afii63167 def\n"
+    "16#0679	/afii57511 def\n"
+    "16#067E	/afii57506 def\n"
+    "16#0686	/afii57507 def\n"
+    "16#0688	/afii57512 def\n"
+    "16#0691	/afii57513 def\n"
+    "16#0698	/afii57508 def\n"
+    "16#06A4	/afii57505 def\n"
+    "16#06AF	/afii57509 def\n"
+    "16#06BA	/afii57514 def\n"
+    "16#06D2	/afii57519 def\n"
+    "16#06D5	/afii57534 def\n"
+    "16#1E80	/Wgrave def\n"
+    "16#1E81	/wgrave def\n"
+    "16#1E82	/Wacute def\n"
+    "16#1E83	/wacute def\n"
+    "16#1E84	/Wdieresis def\n"
+    "16#1E85	/wdieresis def\n"
+    "16#1EF2	/Ygrave def\n"
+    "16#1EF3	/ygrave def\n"
+    "16#200C	/afii61664 def\n"
+    "16#200D	/afii301 def\n"
+    "16#200E	/afii299 def\n"
+    "16#200F	/afii300 def\n"
+    "16#2012	/figuredash def\n"
+    "16#2013	/endash def\n"
+    "16#2014	/emdash def\n"
+    "16#2015	/afii00208 def\n"
+    "16#2017	/underscoredbl def\n"
+    "16#2018	/quoteleft def\n"
+    "16#2019	/quoteright def\n"
+    "16#201A	/quotesinglbase def\n"
+    "16#201B	/quotereversed def\n"
+    "16#201C	/quotedblleft def\n"
+    "16#201D	/quotedblright def\n"
+    "16#201E	/quotedblbase def\n"
+    "16#2020	/dagger def\n"
+    "16#2021	/daggerdbl def\n"
+    "16#2022	/bullet def\n"
+    "16#2024	/onedotenleader def\n"
+    "16#2025	/twodotenleader def\n"
+    "16#2026	/ellipsis def\n"
+    "16#202C	/afii61573 def\n"
+    "16#202D	/afii61574 def\n"
+    "16#202E	/afii61575 def\n"
+    "16#2030	/perthousand def\n"
+    "16#2032	/minute def\n"
+    "16#2033	/second def\n"
+    "16#2039	/guilsinglleft def\n"
+    "16#203A	/guilsinglright def\n"
+    "16#203C	/exclamdbl def\n"
+    "16#2044	/fraction def\n"
+    "16#2070	/zerosuperior def\n"
+    "16#2074	/foursuperior def\n"
+    "16#2075	/fivesuperior def\n"
+    "16#2076	/sixsuperior def\n"
+    "16#2077	/sevensuperior def\n"
+    "16#2078	/eightsuperior def\n"
+    "16#2079	/ninesuperior def\n"
+    "16#207D	/parenleftsuperior def\n"
+    "16#207E	/parenrightsuperior def\n"
+    "16#207F	/nsuperior def\n"
+    "16#2080	/zeroinferior def\n"
+    "16#2081	/oneinferior def\n"
+    "16#2082	/twoinferior def\n"
+    "16#2083	/threeinferior def\n"
+    "16#2084	/fourinferior def\n"
+    "16#2085	/fiveinferior def\n"
+    "16#2086	/sixinferior def\n"
+    "16#2087	/seveninferior def\n"
+    "16#2088	/eightinferior def\n"
+    "16#2089	/nineinferior def\n"
+    "16#208D	/parenleftinferior def\n"
+    "16#208E	/parenrightinferior def\n"
+    "16#20A1	/colonmonetary def\n"
+    "16#20A3	/franc def\n"
+    "16#20A4	/lira def\n"
+    "16#20A7	/peseta def\n"
+    "16#20AA	/afii57636 def\n"
+    "16#20AB	/dong def\n"
+    "16#20AC	/Euro def\n"
+    "16#2105	/afii61248 def\n"
+    "16#2111	/Ifraktur def\n"
+    "16#2113	/afii61289 def\n"
+    "16#2116	/afii61352 def\n"
+    "16#2118	/weierstrass def\n"
+    "16#211C	/Rfraktur def\n"
+    "16#211E	/prescription def\n"
+    "16#2122	/trademark def\n"
+    "16#2126	/Omega def\n"
+    "16#212E	/estimated def\n"
+    "16#2135	/aleph def\n"
+    "16#2153	/onethird def\n"
+    "16#2154	/twothirds def\n"
+    "16#215B	/oneeighth def\n"
+    "16#215C	/threeeighths def\n"
+    "16#215D	/fiveeighths def\n"
+    "16#215E	/seveneighths def\n"
+    "16#2190	/arrowleft def\n"
+    "16#2191	/arrowup def\n"
+    "16#2192	/arrowright def\n"
+    "16#2193	/arrowdown def\n"
+    "16#2194	/arrowboth def\n"
+    "16#2195	/arrowupdn def\n"
+    "16#21A8	/arrowupdnbse def\n"
+    "16#21B5	/carriagereturn def\n"
+    "16#21D0	/arrowdblleft def\n"
+    "16#21D1	/arrowdblup def\n"
+    "16#21D2	/arrowdblright def\n"
+    "16#21D3	/arrowdbldown def\n"
+    "16#21D4	/arrowdblboth def\n"
+    "16#2200	/universal def\n"
+    "16#2202	/partialdiff def\n"
+    "16#2203	/existential def\n"
+    "16#2205	/emptyset def\n"
+    "16#2206	/Delta def\n"
+    "16#2207	/gradient def\n"
+    "16#2208	/element def\n"
+    "16#2209	/notelement def\n"
+    "16#220B	/suchthat def\n"
+    "16#220F	/product def\n"
+    "16#2211	/summation def\n"
+    "16#2212	/minus def\n"
+    "16#2215	/fraction def\n"
+    "16#2217	/asteriskmath def\n"
+    "16#2219	/periodcentered def\n"
+    "16#221A	/radical def\n"
+    "16#221D	/proportional def\n"
+    "16#221E	/infinity def\n"
+    "16#221F	/orthogonal def\n"
+    "16#2220	/angle def\n"
+    "16#2227	/logicaland def\n"
+    "16#2228	/logicalor def\n"
+    "16#2229	/intersection def\n"
+    "16#222A	/union def\n"
+    "16#222B	/integral def\n"
+    "16#2234	/therefore def\n"
+    "16#223C	/similar def\n"
+    "16#2245	/congruent def\n"
+    "16#2248	/approxequal def\n"
+    "16#2260	/notequal def\n"
+    "16#2261	/equivalence def\n"
+    "16#2264	/lessequal def\n"
+    "16#2265	/greaterequal def\n"
+    "16#2282	/propersubset def\n"
+    "16#2283	/propersuperset def\n"
+    "16#2284	/notsubset def\n"
+    "16#2286	/reflexsubset def\n"
+    "16#2287	/reflexsuperset def\n"
+    "16#2295	/circleplus def\n"
+    "16#2297	/circlemultiply def\n"
+    "16#22A5	/perpendicular def\n"
+    "16#22C5	/dotmath def\n"
+    "16#2302	/house def\n"
+    "16#2310	/revlogicalnot def\n"
+    "16#2320	/integraltp def\n"
+    "16#2321	/integralbt def\n"
+    "16#2329	/angleleft def\n"
+    "16#232A	/angleright def\n"
+    "16#2500	/SF100000 def\n"
+    "16#2502	/SF110000 def\n"
+    "16#250C	/SF010000 def\n"
+    "16#2510	/SF030000 def\n"
+    "16#2514	/SF020000 def\n"
+    "16#2518	/SF040000 def\n"
+    "16#251C	/SF080000 def\n"
+    "16#2524	/SF090000 def\n"
+    "16#252C	/SF060000 def\n"
+    "16#2534	/SF070000 def\n"
+    "16#253C	/SF050000 def\n"
+    "16#2550	/SF430000 def\n"
+    "16#2551	/SF240000 def\n"
+    "16#2552	/SF510000 def\n"
+    "16#2553	/SF520000 def\n"
+    "16#2554	/SF390000 def\n"
+    "16#2555	/SF220000 def\n"
+    "16#2556	/SF210000 def\n"
+    "16#2557	/SF250000 def\n"
+    "16#2558	/SF500000 def\n"
+    "16#2559	/SF490000 def\n"
+    "16#255A	/SF380000 def\n"
+    "16#255B	/SF280000 def\n"
+    "16#255C	/SF270000 def\n"
+    "16#255D	/SF260000 def\n"
+    "16#255E	/SF360000 def\n"
+    "16#255F	/SF370000 def\n"
+    "16#2560	/SF420000 def\n"
+    "16#2561	/SF190000 def\n"
+    "16#2562	/SF200000 def\n"
+    "16#2563	/SF230000 def\n"
+    "16#2564	/SF470000 def\n"
+    "16#2565	/SF480000 def\n"
+    "16#2566	/SF410000 def\n"
+    "16#2567	/SF450000 def\n"
+    "16#2568	/SF460000 def\n"
+    "16#2569	/SF400000 def\n"
+    "16#256A	/SF540000 def\n"
+    "16#256B	/SF530000 def\n"
+    "16#256C	/SF440000 def\n"
+    "16#2580	/upblock def\n"
+    "16#2584	/dnblock def\n"
+    "16#2588	/block def\n"
+    "16#258C	/lfblock def\n"
+    "16#2590	/rtblock def\n"
+    "16#2591	/ltshade def\n"
+    "16#2592	/shade def\n"
+    "16#2593	/dkshade def\n"
+    "16#25A0	/filledbox def\n"
+    );
+  fprintf(f, "%s",
+    "16#25A1	/H22073 def\n"
+    "16#25AA	/H18543 def\n"
+    "16#25AB	/H18551 def\n"
+    "16#25AC	/filledrect def\n"
+    "16#25B2	/triagup def\n"
+    "16#25BA	/triagrt def\n"
+    "16#25BC	/triagdn def\n"
+    "16#25C4	/triaglf def\n"
+    "16#25CA	/lozenge def\n"
+    "16#25CB	/circle def\n"
+    "16#25CF	/H18533 def\n"
+    "16#25D8	/invbullet def\n"
+    "16#25D9	/invcircle def\n"
+    "16#25E6	/openbullet def\n"
+    "16#263A	/smileface def\n"
+    "16#263B	/invsmileface def\n"
+    "16#263C	/sun def\n"
+    "16#2640	/female def\n"
+    "16#2642	/male def\n"
+    "16#2660	/spade def\n"
+    "16#2663	/club def\n"
+    "16#2665	/heart def\n"
+    "16#2666	/diamond def\n"
+    "16#266A	/musicalnote def\n"
+    "16#266B	/musicalnotedbl def\n"
+    "16#F6BE	/dotlessj def\n"
+    "16#F6BF	/LL def\n"
+    "16#F6C0	/ll def\n"
+    "16#F6C1	/Scedilla def\n"
+    "16#F6C2	/scedilla def\n"
+    "16#F6C3	/commaaccent def\n"
+    "16#F6C4	/afii10063 def\n"
+    "16#F6C5	/afii10064 def\n"
+    "16#F6C6	/afii10192 def\n"
+    "16#F6C7	/afii10831 def\n"
+    "16#F6C8	/afii10832 def\n"
+    "16#F6C9	/Acute def\n"
+    "16#F6CA	/Caron def\n"
+    "16#F6CB	/Dieresis def\n"
+    "16#F6CC	/DieresisAcute def\n"
+    "16#F6CD	/DieresisGrave def\n"
+    "16#F6CE	/Grave def\n"
+    "16#F6CF	/Hungarumlaut def\n"
+    "16#F6D0	/Macron def\n"
+    "16#F6D1	/cyrBreve def\n"
+    "16#F6D2	/cyrFlex def\n"
+    "16#F6D3	/dblGrave def\n"
+    "16#F6D4	/cyrbreve def\n"
+    "16#F6D5	/cyrflex def\n"
+    "16#F6D6	/dblgrave def\n"
+    "16#F6D7	/dieresisacute def\n"
+    "16#F6D8	/dieresisgrave def\n"
+    "16#F6D9	/copyrightserif def\n"
+    "16#F6DA	/registerserif def\n"
+    "16#F6DB	/trademarkserif def\n"
+    "16#F6DC	/onefitted def\n"
+    "16#F6DD	/rupiah def\n"
+    "16#F6DE	/threequartersemdash def\n"
+    "16#F6DF	/centinferior def\n"
+    "16#F6E0	/centsuperior def\n"
+    "16#F6E1	/commainferior def\n"
+    "16#F6E2	/commasuperior def\n"
+    "16#F6E3	/dollarinferior def\n"
+    "16#F6E4	/dollarsuperior def\n"
+    "16#F6E5	/hypheninferior def\n"
+    "16#F6E6	/hyphensuperior def\n"
+    "16#F6E7	/periodinferior def\n"
+    "16#F6E8	/periodsuperior def\n"
+    "16#F6E9	/asuperior def\n"
+    "16#F6EA	/bsuperior def\n"
+    "16#F6EB	/dsuperior def\n"
+    "16#F6EC	/esuperior def\n"
+    "16#F6ED	/isuperior def\n"
+    "16#F6EE	/lsuperior def\n"
+    "16#F6EF	/msuperior def\n"
+    "16#F6F0	/osuperior def\n"
+    "16#F6F1	/rsuperior def\n"
+    "16#F6F2	/ssuperior def\n"
+    "16#F6F3	/tsuperior def\n"
+    "16#F6F4	/Brevesmall def\n"
+    "16#F6F5	/Caronsmall def\n"
+    "16#F6F6	/Circumflexsmall def\n"
+    "16#F6F7	/Dotaccentsmall def\n"
+    "16#F6F8	/Hungarumlautsmall def\n"
+    "16#F6F9	/Lslashsmall def\n"
+    "16#F6FA	/OEsmall def\n"
+    "16#F6FB	/Ogoneksmall def\n"
+    "16#F6FC	/Ringsmall def\n"
+    "16#F6FD	/Scaronsmall def\n"
+    "16#F6FE	/Tildesmall def\n"
+    "16#F6FF	/Zcaronsmall def\n"
+    "16#F721	/exclamsmall def\n"
+    "16#F724	/dollaroldstyle def\n"
+    "16#F726	/ampersandsmall def\n"
+    "16#F730	/zerooldstyle def\n"
+    "16#F731	/oneoldstyle def\n"
+    "16#F732	/twooldstyle def\n"
+    "16#F733	/threeoldstyle def\n"
+    "16#F734	/fouroldstyle def\n"
+    "16#F735	/fiveoldstyle def\n"
+    "16#F736	/sixoldstyle def\n"
+    "16#F737	/sevenoldstyle def\n"
+    "16#F738	/eightoldstyle def\n"
+    "16#F739	/nineoldstyle def\n"
+    "16#F73F	/questionsmall def\n"
+    "16#F760	/Gravesmall def\n"
+    "16#F761	/Asmall def\n"
+    "16#F762	/Bsmall def\n"
+    "16#F763	/Csmall def\n"
+    "16#F764	/Dsmall def\n"
+    "16#F765	/Esmall def\n"
+    "16#F766	/Fsmall def\n"
+    "16#F767	/Gsmall def\n"
+    "16#F768	/Hsmall def\n"
+    "16#F769	/Ismall def\n"
+    "16#F76A	/Jsmall def\n"
+    "16#F76B	/Ksmall def\n"
+    "16#F76C	/Lsmall def\n"
+    "16#F76D	/Msmall def\n"
+    "16#F76E	/Nsmall def\n"
+    "16#F76F	/Osmall def\n"
+    "16#F770	/Psmall def\n"
+    "16#F771	/Qsmall def\n"
+    "16#F772	/Rsmall def\n"
+    "16#F773	/Ssmall def\n"
+    "16#F774	/Tsmall def\n"
+    "16#F775	/Usmall def\n"
+    "16#F776	/Vsmall def\n"
+    "16#F777	/Wsmall def\n"
+    "16#F778	/Xsmall def\n"
+    "16#F779	/Ysmall def\n"
+    "16#F77A	/Zsmall def\n"
+    "16#F7A1	/exclamdownsmall def\n"
+    "16#F7A2	/centoldstyle def\n"
+    "16#F7A8	/Dieresissmall def\n"
+    "16#F7AF	/Macronsmall def\n"
+    "16#F7B4	/Acutesmall def\n"
+    "16#F7B8	/Cedillasmall def\n"
+    "16#F7BF	/questiondownsmall def\n"
+    "16#F7E0	/Agravesmall def\n"
+    "16#F7E1	/Aacutesmall def\n"
+    "16#F7E2	/Acircumflexsmall def\n"
+    "16#F7E3	/Atildesmall def\n"
+    "16#F7E4	/Adieresissmall def\n"
+    "16#F7E5	/Aringsmall def\n"
+    "16#F7E6	/AEsmall def\n"
+    "16#F7E7	/Ccedillasmall def\n"
+    "16#F7E8	/Egravesmall def\n"
+    "16#F7E9	/Eacutesmall def\n"
+    "16#F7EA	/Ecircumflexsmall def\n"
+    "16#F7EB	/Edieresissmall def\n"
+    "16#F7EC	/Igravesmall def\n"
+    "16#F7ED	/Iacutesmall def\n"
+    "16#F7EE	/Icircumflexsmall def\n"
+    "16#F7EF	/Idieresissmall def\n"
+    "16#F7F0	/Ethsmall def\n"
+    "16#F7F1	/Ntildesmall def\n"
+    "16#F7F2	/Ogravesmall def\n"
+    "16#F7F3	/Oacutesmall def\n"
+    "16#F7F4	/Ocircumflexsmall def\n"
+    "16#F7F5	/Otildesmall def\n"
+    "16#F7F6	/Odieresissmall def\n"
+    "16#F7F8	/Oslashsmall def\n"
+    "16#F7F9	/Ugravesmall def\n"
+    "16#F7FA	/Uacutesmall def\n"
+    "16#F7FB	/Ucircumflexsmall def\n"
+    "16#F7FC	/Udieresissmall def\n"
+    "16#F7FD	/Yacutesmall def\n"
+    "16#F7FE	/Thornsmall def\n"
+    "16#F7FF	/Ydieresissmall def\n"
+    "16#F8E5	/radicalex def\n"
+    "16#F8E6	/arrowvertex def\n"
+    "16#F8E7	/arrowhorizex def\n"
+    "16#F8E8	/registersans def\n"
+    "16#F8E9	/copyrightsans def\n"
+    "16#F8EA	/trademarksans def\n"
+    "16#F8EB	/parenlefttp def\n"
+    "16#F8EC	/parenleftex def\n"
+    "16#F8ED	/parenleftbt def\n"
+    "16#F8EE	/bracketlefttp def\n"
+    "16#F8EF	/bracketleftex def\n"
+    "16#F8F0	/bracketleftbt def\n"
+    "16#F8F1	/bracelefttp def\n"
+    "16#F8F2	/braceleftmid def\n"
+    "16#F8F3	/braceleftbt def\n"
+    "16#F8F4	/braceex def\n"
+    "16#F8F5	/integralex def\n"
+    "16#F8F6	/parenrighttp def\n"
+    "16#F8F7	/parenrightex def\n"
+    "16#F8F8	/parenrightbt def\n"
+    "16#F8F9	/bracketrighttp def\n"
+    "16#F8FA	/bracketrightex def\n"
+    "16#F8FB	/bracketrightbt def\n"
+    "16#F8FC	/bracerighttp def\n"
+    "16#F8FD	/bracerightmid def\n"
+    "16#F8FE	/bracerightbt def\n"
+    "16#FB00	/ff def\n"
+    "16#FB01	/fi def\n"
+    "16#FB02	/fl def\n"
+    "16#FB03	/ffi def\n"
+    "16#FB04	/ffl def\n"
+    "16#FB1F	/afii57705 def\n"
+    "16#FB2A	/afii57694 def\n"
+    "16#FB2B	/afii57695 def\n"
+    "16#FB35	/afii57723 def\n"
+    "16#FB4B	/afii57700 def\n"
+    "end\n"
+    "def\n"
 
+    "10 dict dup begin\n"
+    "  /FontType 3 def\n"
+    "  /FontMatrix [.001 0 0 .001 0 0 ] def\n"
+    "  /FontBBox [0 0 100 100] def\n"
+    "  /Encoding 256 array def\n"
+    "  0 1 255 {Encoding exch /.notdef put} for\n"
+    "  Encoding 97 /openbox put\n"
+    "  /CharProcs 2 dict def\n"
+    "  CharProcs begin\n"
+    "    /.notdef { } def\n"
+    "    /openbox\n"
+    "      { newpath\n"
+    "          90 30 moveto  90 670 lineto\n"
+    "          730 670 lineto  730 30 lineto\n"
+    "        closepath\n"
+    "        60 setlinewidth\n"
+    "        stroke } def\n"
+    "  end\n"
+    "  /BuildChar\n"
+    "    { 1000 0 0\n"
+    "	0 750 750\n"
+    "        setcachedevice\n"
+    "	exch begin\n"
+    "        Encoding exch get\n"
+    "        CharProcs exch get\n"
+    "	end\n"
+    "	exec\n"
+    "    } def\n"
+    "end\n"
+    "/NoglyphFont exch definefont pop\n"
+    "\n"
 
+    "/mbshow {                       % num\n"
+    "    8 array                     % num array\n"
+    "    -1                          % num array counter\n"
+    "    {\n"
+    "        dup 7 ge { exit } if\n"
+    "        1 add                   % num array counter\n"
+    "        2 index 16#100 mod      % num array counter mod\n"
+    "        3 copy put pop          % num array counter\n"
+    "        2 index 16#100 idiv     % num array counter num\n"
+    "        dup 0 le\n"
+    "        {\n"
+    "            pop exit\n"
+    "        } if\n"
+    "        4 -1 roll pop\n"
+    "        3 1 roll\n"
+    "    } loop                      % num array counter\n"
+    "    3 -1 roll pop               % array counter\n"
+    "    dup 1 add string            % array counter string\n"
+    "    0 1 3 index\n"
+    "    {                           % array counter string index\n"
+    "        2 index 1 index sub     % array counter string index sid\n"
+    "        4 index 3 2 roll get    % array counter string sid byte\n"
+    "        2 index 3 1 roll put    % array counter string\n"
+    "    } for\n"
+    "    show pop pop\n"
+    "} def\n"
 
+    "/draw_undefined_char\n"
+    "{\n"
+    "  csize /NoglyphFont Msf (a) show\n"
+    "} bind def\n"
+    "\n"
+    "/real_unicodeshow\n"
+    "{\n"
+    "  /ccode exch def\n"
+    "  /Unicodedict where {\n"
+    "    pop\n"
+    "    Unicodedict ccode known {\n"
+    "      /cwidth {currentfont /ScaleMatrix get 0 get} def \n"
+    "      /cheight cwidth def \n"
+    "      gsave\n"
+    "      currentpoint translate\n"
+    "      cwidth 1056 div cheight 1056 div scale\n"
+    "      2 -2 translate\n"
+    "      ccode Unicodedict exch get\n"
+    "      cvx exec\n"
+    "      grestore\n"
+    "      currentpoint exch cwidth add exch moveto\n"
+    "      true\n"
+    "    } {\n"
+    "      false\n"
+    "    } ifelse\n"
+    "  } {\n"
+    "    false\n"
+    "  } ifelse\n"
+    "} bind def\n"
+    "\n"
+    "/real_unicodeshow_native\n"
+    "{\n"
+    "  /ccode exch def\n"
+    "  /NativeFont where {\n"
+    "    pop\n"
+    "    NativeFont findfont /FontName get /Courier eq {\n"
+    "      false\n"
+    "    } {\n"
+    "      csize NativeFont Msf\n"
+    "      /Unicode2NativeDict where {\n"
+    "        pop\n"
+    "        Unicode2NativeDict ccode known {\n"
+    "          Unicode2NativeDict ccode get show\n"
+    "          true\n"
+    "        } {\n"
+    "          false\n"
+    "        } ifelse\n"
+    "      } {\n"
+    "	  false\n"
+    "      } ifelse\n"
+    "    } ifelse\n"
+    "  } {\n"
+    "    false\n"
+    "  } ifelse\n"
+    "} bind def\n"
+    "\n"
+    "/real_glyph_unicodeshow\n"
+    "{\n"
+    "  /ccode exch def\n"
+    "      /UniDict where {\n"
+    "        pop\n"
+    "        UniDict ccode known {\n"
+    "          UniDict ccode get glyphshow\n"
+    "          true\n"
+    "        } {\n"
+    "          false\n"
+    "        } ifelse\n"
+    "      } {\n"
+    "	  false\n"
+    "      } ifelse\n"
+    "} bind def\n"
+    "/real_unicodeshow_cid\n"
+    "{\n"
+    "  /ccode exch def\n"
+    "  /UCS2Font where {\n"
+    "    pop\n"
+    "    UCS2Font findfont /FontName get /Courier eq {\n"
+    "      false\n"
+    "    } {\n"
+    "      csize UCS2Font Msf\n"
+    "      ccode mbshow\n"
+    "      true\n"
+    "    } ifelse\n"
+    "  } {\n"
+    "    false\n"
+    "  } ifelse\n"
+    "} bind def\n"
+    "\n"
+    "/unicodeshow \n"
+    "{\n"
+    "  /cfont currentfont def\n"
+    "  /str exch def\n"
+    "  /i 0 def\n"
+    "  str length /ls exch def\n"
+    "  {\n"
+    "    i 1 add ls ge {exit} if\n"
+    "    str i get /c1 exch def\n"
+    "    str i 1 add get /c2 exch def\n"
+    "    /c c2 256 mul c1 add def\n"
+    "    c2 1 ge \n"
+    "    {\n"
+    "      c unicodeshow1\n"
+    "      {\n"
+    "        % do nothing\n"
+    "      } {\n"
+    "        c real_unicodeshow_cid	% try CID \n"
+    "        {\n"
+    "          % do nothing\n"
+    "        } {\n"
+    "          c unicodeshow2\n"
+    "          {\n"
+    "            % do nothing\n"
+    "          } {\n"
+    "            draw_undefined_char\n"
+    "          } ifelse\n"
+    "        } ifelse\n"
+    "      } ifelse\n"
+    "    } {\n"
+    "      % ascii\n"
+    "      cfont setfont\n"
+    "      str i 1 getinterval show\n"
+    "    } ifelse\n"
+    "    /i i 2 add def\n"
+    "  } loop\n"
+    "}  bind def\n"
+    "\n"
 
+    "/u2nadd {Unicode2NativeDict 3 1 roll put} bind def\n"
+    "\n"
 
-  fprintf(f, "/rhc {\n");
-  fprintf(f, "    {\n");
-  fprintf(f, "        currentfile read {\n");
-  fprintf(f, "	    dup 97 ge\n");
-  fprintf(f, "		{ 87 sub true exit }\n");
-  fprintf(f, "		{ dup 48 ge { 48 sub true exit } { pop } ifelse }\n");
-  fprintf(f, "	    ifelse\n");
-  fprintf(f, "	} {\n");
-  fprintf(f, "	    false\n");
-  fprintf(f, "	    exit\n");
-  fprintf(f, "	} ifelse\n");
-  fprintf(f, "    } loop\n");
-  fprintf(f, "} bind def\n");
-  fprintf(f, "\n");
-  fprintf(f, "/cvgray { %% xtra_char npix cvgray - (string npix long)\n");
-  fprintf(f, "    dup string\n");
-  fprintf(f, "    0\n");
-  fprintf(f, "    {\n");
-  fprintf(f, "	rhc { cvr 4.784 mul } { exit } ifelse\n");
-  fprintf(f, "	rhc { cvr 9.392 mul } { exit } ifelse\n");
-  fprintf(f, "	rhc { cvr 1.824 mul } { exit } ifelse\n");
-  fprintf(f, "	add add cvi 3 copy put pop\n");
-  fprintf(f, "	1 add\n");
-  fprintf(f, "	dup 3 index ge { exit } if\n");
-  fprintf(f, "    } loop\n");
-  fprintf(f, "    pop\n");
-  fprintf(f, "    3 -1 roll 0 ne { rhc { pop } if } if\n");
-  fprintf(f, "    exch pop\n");
-  fprintf(f, "} bind def\n");
-  fprintf(f, "\n");
-  fprintf(f, "/smartimage12rgb { %% w h b [matrix] smartimage12rgb -\n");
-  fprintf(f, "    /colorimage where {\n");
-  fprintf(f, "	pop\n");
-  fprintf(f, "	{ currentfile rowdata readhexstring pop }\n");
-  fprintf(f, "	false 3\n");
-  fprintf(f, "	colorimage\n");
-  fprintf(f, "    } {\n");
-  fprintf(f, "	exch pop 8 exch\n");
-  fprintf(f, "	3 index 12 mul 8 mod 0 ne { 1 } { 0 } ifelse\n");
-  fprintf(f, "	4 index\n");
-  fprintf(f, "	6 2 roll\n");
-  fprintf(f, "	{ 2 copy cvgray }\n");
-  fprintf(f, "	image\n");
-  fprintf(f, "	pop pop\n");
-  fprintf(f, "    } ifelse\n");
-  fprintf(f, "} def\n");
-  fprintf(f,"/cshow { dup stringwidth pop 2 div neg 0 rmoveto show } bind def\n");  
-  fprintf(f,"/rshow { dup stringwidth pop neg 0 rmoveto show } bind def\n");
-  fprintf(f, "/BeginEPSF {\n");
-  fprintf(f, "  /b4_Inc_state save def\n");
-  fprintf(f, "  /dict_count countdictstack def\n");
-  fprintf(f, "  /op_count count 1 sub def\n");
-  fprintf(f, "  userdict begin\n");
-  fprintf(f, "  /showpage {} def\n");
-  fprintf(f, "  0 setgray 0 setlinecap 1 setlinewidth 0 setlinejoin\n");
-  fprintf(f, "  10 setmiterlimit [] 0 setdash newpath\n");
-  fprintf(f, "  /languagelevel where\n");
-  fprintf(f, "  { pop languagelevel 1 ne\n");
-  fprintf(f, "    { false setstrokeadjust false setoverprint } if\n");
-  fprintf(f, "  } if\n");
-  fprintf(f, "} bind def\n");
-  fprintf(f, "/EndEPSF {\n");
-  fprintf(f, "  count op_count sub {pop} repeat\n");
-  fprintf(f, "  countdictstack dict_count sub {end} repeat\n");
-  fprintf(f, "  b4_Inc_state restore\n");
-  fprintf(f, "} bind def\n");
+    "/Unicode2NativeDictdef 0 dict def\n"
+    "/default_ls {\n"
+    "  /Unicode2NativeDict Unicode2NativeDictdef def\n"
+    "  /UCS2Font   /Courier def\n"
+    "  /NativeFont /Courier def\n"
+    "  /unicodeshow1 { real_glyph_unicodeshow } bind def\n"
+    "  /unicodeshow2 { real_unicodeshow_native } bind def\n"
+    "} bind def\n"
 
-  fprintf(f, "\n");
+    // Procedure to stroke a rectangle. Coordinates are rounded
+    // to device pixel boundaries. See Adobe Technical notes 5111 and
+    // 5126 and the "Scan Conversion" section of the PS Language
+    // Reference for background.
+    "/Mrect { % x y w h Mrect -\n"
+    "  2 index add\n"		// x y w h+y
+    "  4 1 roll\n"		// h+y x y w
+    "  2 index add\n"		// h+y x y w+x
+    "  4 1 roll\n"		// w+x h+y x y
+    "  transform round .1 add exch round .1 add exch itransform\n"
+    "  4 -2 roll\n"		// x' y' w+x h+x
+    "  transform round .1 sub exch round .1 sub exch itransform\n"
+    "  2 index sub\n"		// x' y' w'+x h'
+    "  4 1 roll\n"		// h' x' y' w'+x
+    "  2 index sub\n"		// h' x' y' w'
+    "  4 1 roll\n"		// w' h' x' y'
+    "  moveto\n"		// w' h'
+    "  dup 0 exch rlineto\n"	// w' h'
+    "  exch 0 rlineto\n"	// h'
+    "  neg 0 exch rlineto\n"	// -
+    "  closepath\n"
+    "} bind def\n"
 
-  fprintf(f, "/UniDict    <<\n");
-  fprintf(f, "16#0020    /space\n");
-  fprintf(f, "16#0021    /exclam\n");
-  fprintf(f, "16#0022    /quotedbl\n");
-  fprintf(f, "16#0023    /numbersign\n");
-  fprintf(f, "16#0024    /dollar\n");
-  fprintf(f, "16#0025    /percent\n");
-  fprintf(f, "16#0026    /ampersand\n");
-  fprintf(f, "16#0027    /quotesingle\n");
-  fprintf(f, "16#0028    /parenleft\n");
-  fprintf(f, "16#0029    /parenright\n");
-  fprintf(f, "16#002A    /asterisk\n");
-  fprintf(f, "16#002B    /plus\n");
-  fprintf(f, "16#002C    /comma\n");
-  fprintf(f, "16#002D    /hyphen\n");
-  fprintf(f, "16#002E    /period\n");
-  fprintf(f, "16#002F    /slash\n");
-  fprintf(f, "16#0030    /zero\n");
-  fprintf(f, "16#0031    /one\n");
-  fprintf(f, "16#0032    /two\n");
-  fprintf(f, "16#0033    /three\n");
-  fprintf(f, "16#0034    /four\n");
-  fprintf(f, "16#0035    /five\n");
-  fprintf(f, "16#0036    /six\n");
-  fprintf(f, "16#0037    /seven\n");
-  fprintf(f, "16#0038    /eight\n");
-  fprintf(f, "16#0039    /nine\n");
-  fprintf(f, "16#003A    /colon\n");
-  fprintf(f, "16#003B    /semicolon\n");
-  fprintf(f, "16#003C    /less\n");
-  fprintf(f, "16#003D    /equal\n");
-  fprintf(f, "16#003E    /greater\n");
-  fprintf(f, "16#003F    /question\n");
-  fprintf(f, "16#0040    /at\n");
-  fprintf(f, "16#0041    /A\n");
-  fprintf(f, "16#0042    /B\n");
-  fprintf(f, "16#0043    /C\n");
-  fprintf(f, "16#0044    /D\n");
-  fprintf(f, "16#0045    /E\n");
-  fprintf(f, "16#0046    /F\n");
-  fprintf(f, "16#0047    /G\n");
-  fprintf(f, "16#0048    /H\n");
-  fprintf(f, "16#0049    /I\n");
-  fprintf(f, "16#004A    /J\n");
-  fprintf(f, "16#004B    /K\n");
-  fprintf(f, "16#004C    /L\n");
-  fprintf(f, "16#004D    /M\n");
-  fprintf(f, "16#004E    /N\n");
-  fprintf(f, "16#004F    /O\n");
-  fprintf(f, "16#0050    /P\n");
-  fprintf(f, "16#0051    /Q\n");
-  fprintf(f, "16#0052    /R\n");
-  fprintf(f, "16#0053    /S\n");
-  fprintf(f, "16#0054    /T\n");
-  fprintf(f, "16#0055    /U\n");
-  fprintf(f, "16#0056    /V\n");
-  fprintf(f, "16#0057    /W\n");
-  fprintf(f, "16#0058    /X\n");
-  fprintf(f, "16#0059    /Y\n");
-  fprintf(f, "16#005A    /Z\n");
-  fprintf(f, "16#005B    /bracketleft\n");
-  fprintf(f, "16#005C    /backslash\n");
-  fprintf(f, "16#005D    /bracketright\n");
-  fprintf(f, "16#005E    /asciicircum\n");
-  fprintf(f, "16#005F    /underscore\n");
-  fprintf(f, "16#0060    /grave\n");
-  fprintf(f, "16#0061    /a\n");
-  fprintf(f, "16#0062    /b\n");
-  fprintf(f, "16#0063    /c\n");
-  fprintf(f, "16#0064    /d\n");
-  fprintf(f, "16#0065    /e\n");
-  fprintf(f, "16#0066    /f\n");
-  fprintf(f, "16#0067    /g\n");
-  fprintf(f, "16#0068    /h\n");
-  fprintf(f, "16#0069    /i\n");
-  fprintf(f, "16#006A    /j\n");
-  fprintf(f, "16#006B    /k\n");
-  fprintf(f, "16#006C    /l\n");
-  fprintf(f, "16#006D    /m\n");
-  fprintf(f, "16#006E    /n\n");
-  fprintf(f, "16#006F    /o\n");
-  fprintf(f, "16#0070    /p\n");
-  fprintf(f, "16#0071    /q\n");
-  fprintf(f, "16#0072    /r\n");
-  fprintf(f, "16#0073    /s\n");
-  fprintf(f, "16#0074    /t\n");
-  fprintf(f, "16#0075    /u\n");
-  fprintf(f, "16#0076    /v\n");
-  fprintf(f, "16#0077    /w\n");
-  fprintf(f, "16#0078    /x\n");
-  fprintf(f, "16#0079    /y\n");
-  fprintf(f, "16#007A    /z\n");
-  fprintf(f, "16#007B    /braceleft\n");
-  fprintf(f, "16#007C    /bar\n");
-  fprintf(f, "16#007D    /braceright\n");
-  fprintf(f, "16#007E    /asciitilde\n");
-  fprintf(f, "16#00A0    /space\n");
-  fprintf(f, "16#00A1    /exclamdown\n");
-  fprintf(f, "16#00A2    /cent\n");
-  fprintf(f, "16#00A3    /sterling\n");
-  fprintf(f, "16#00A4    /currency\n");
-  fprintf(f, "16#00A5    /yen\n");
-  fprintf(f, "16#00A6    /brokenbar\n");
-  fprintf(f, "16#00A7    /section\n");
-  fprintf(f, "16#00A8    /dieresis\n");
-  fprintf(f, "16#00A9    /copyright\n");
-  fprintf(f, "16#00AA    /ordfeminine\n");
-  fprintf(f, "16#00AB    /guillemotleft\n");
-  fprintf(f, "16#00AC    /logicalnot\n");
-  fprintf(f, "16#00AD    /hyphen\n");
-  fprintf(f, "16#00AE    /registered\n");
-  fprintf(f, "16#00AF    /macron\n");
-  fprintf(f, "16#00B0    /degree\n");
-  fprintf(f, "16#00B1    /plusminus\n");
-  fprintf(f, "16#00B2    /twosuperior\n");
-  fprintf(f, "16#00B3    /threesuperior\n");
-  fprintf(f, "16#00B4    /acute\n");
-  fprintf(f, "16#00B5    /mu\n");
-  fprintf(f, "16#00B6    /paragraph\n");
-  fprintf(f, "16#00B7    /periodcentered\n");
-  fprintf(f, "16#00B8    /cedilla\n");
-  fprintf(f, "16#00B9    /onesuperior\n");
-  fprintf(f, "16#00BA    /ordmasculine\n");
-  fprintf(f, "16#00BB    /guillemotright\n");
-  fprintf(f, "16#00BC    /onequarter\n");
-  fprintf(f, "16#00BD    /onehalf\n");
-  fprintf(f, "16#00BE    /threequarters\n");
-  fprintf(f, "16#00BF    /questiondown\n");
-  fprintf(f, "16#00C0    /Agrave\n");
-  fprintf(f, "16#00C1    /Aacute\n");
-  fprintf(f, "16#00C2    /Acircumflex\n");
-  fprintf(f, "16#00C3    /Atilde\n");
-  fprintf(f, "16#00C4    /Adieresis\n");
-  fprintf(f, "16#00C5    /Aring\n");
-  fprintf(f, "16#00C6    /AE\n");
-  fprintf(f, "16#00C7    /Ccedilla\n");
-  fprintf(f, "16#00C8    /Egrave\n");
-  fprintf(f, "16#00C9    /Eacute\n");
-  fprintf(f, "16#00CA    /Ecircumflex\n");
-  fprintf(f, "16#00CB    /Edieresis\n");
-  fprintf(f, "16#00CC    /Igrave\n");
-  fprintf(f, "16#00CD    /Iacute\n");
-  fprintf(f, "16#00CE    /Icircumflex\n");
-  fprintf(f, "16#00CF    /Idieresis\n");
-  fprintf(f, "16#00D0    /Eth\n");
-  fprintf(f, "16#00D1    /Ntilde\n");
-  fprintf(f, "16#00D2    /Ograve\n");
-  fprintf(f, "16#00D3    /Oacute\n");
-  fprintf(f, "16#00D4    /Ocircumflex\n");
-  fprintf(f, "16#00D5    /Otilde\n");
-  fprintf(f, "16#00D6    /Odieresis\n");
-  fprintf(f, "16#00D7    /multiply\n");
-  fprintf(f, "16#00D8    /Oslash\n");
-  fprintf(f, "16#00D9    /Ugrave\n");
-  fprintf(f, "16#00DA    /Uacute\n");
-  fprintf(f, "16#00DB    /Ucircumflex\n");
-  fprintf(f, "16#00DC    /Udieresis\n");
-  fprintf(f, "16#00DD    /Yacute\n");
-  fprintf(f, "16#00DE    /Thorn\n");
-  fprintf(f, "16#00DF    /germandbls\n");
-  fprintf(f, "16#00E0    /agrave\n");
-  fprintf(f, "16#00E1    /aacute\n");
-  fprintf(f, "16#00E2    /acircumflex\n");
-  fprintf(f, "16#00E3    /atilde\n");
-  fprintf(f, "16#00E4    /adieresis\n");
-  fprintf(f, "16#00E5    /aring\n");
-  fprintf(f, "16#00E6    /ae\n");
-  fprintf(f, "16#00E7    /ccedilla\n");
-  fprintf(f, "16#00E8    /egrave\n");
-  fprintf(f, "16#00E9    /eacute\n");
-  fprintf(f, "16#00EA    /ecircumflex\n");
-  fprintf(f, "16#00EB    /edieresis\n");
-  fprintf(f, "16#00EC    /igrave\n");
-  fprintf(f, "16#00ED    /iacute\n");
-  fprintf(f, "16#00EE    /icircumflex\n");
-  fprintf(f, "16#00EF    /idieresis\n");
-  fprintf(f, "16#00F0    /eth\n");
-  fprintf(f, "16#00F1    /ntilde\n");
-  fprintf(f, "16#00F2    /ograve\n");
-  fprintf(f, "16#00F3    /oacute\n");
-  fprintf(f, "16#00F4    /ocircumflex\n");
-  fprintf(f, "16#00F5    /otilde\n");
-  fprintf(f, "16#00F6    /odieresis\n");
-  fprintf(f, "16#00F7    /divide\n");
-  fprintf(f, "16#00F8    /oslash\n");
-  fprintf(f, "16#00F9    /ugrave\n");
-  fprintf(f, "16#00FA    /uacute\n");
-  fprintf(f, "16#00FB    /ucircumflex\n");
-  fprintf(f, "16#00FC    /udieresis\n");
-  fprintf(f, "16#00FD    /yacute\n");
-  fprintf(f, "16#00FE    /thorn\n");
-  fprintf(f, "16#00FF    /ydieresis\n");
-  fprintf(f, "16#0100    /Amacron\n");
-  fprintf(f, "16#0101    /amacron\n");
-  fprintf(f, "16#0102    /Abreve\n");
-  fprintf(f, "16#0103    /abreve\n");
-  fprintf(f, "16#0104    /Aogonek\n");
-  fprintf(f, "16#0105    /aogonek\n");
-  fprintf(f, "16#0106    /Cacute\n");
-  fprintf(f, "16#0107    /cacute\n");
-  fprintf(f, "16#0108    /Ccircumflex\n");
-  fprintf(f, "16#0109    /ccircumflex\n");
-  fprintf(f, "16#010A    /Cdotaccent\n");
-  fprintf(f, "16#010B    /cdotaccent\n");
-  fprintf(f, "16#010C    /Ccaron\n");
-  fprintf(f, "16#010D    /ccaron\n");
-  fprintf(f, "16#010E    /Dcaron\n");
-  fprintf(f, "16#010F    /dcaron\n");
-  fprintf(f, "16#0110    /Dcroat\n");
-  fprintf(f, "16#0111    /dcroat\n");
-  fprintf(f, "16#0112    /Emacron\n");
-  fprintf(f, "16#0113    /emacron\n");
-  fprintf(f, "16#0114    /Ebreve\n");
-  fprintf(f, "16#0115    /ebreve\n");
-  fprintf(f, "16#0116    /Edotaccent\n");
-  fprintf(f, "16#0117    /edotaccent\n");
-  fprintf(f, "16#0118    /Eogonek\n");
-  fprintf(f, "16#0119    /eogonek\n");
-  fprintf(f, "16#011A    /Ecaron\n");
-  fprintf(f, "16#011B    /ecaron\n");
-  fprintf(f, "16#011C    /Gcircumflex\n");
-  fprintf(f, "16#011D    /gcircumflex\n");
-  fprintf(f, "16#011E    /Gbreve\n");
-  fprintf(f, "16#011F    /gbreve\n");
-  fprintf(f, "16#0120    /Gdotaccent\n");
-  fprintf(f, "16#0121    /gdotaccent\n");
-  fprintf(f, "16#0122    /Gcommaaccent\n");
-  fprintf(f, "16#0123    /gcommaaccent\n");
-  fprintf(f, "16#0124    /Hcircumflex\n");
-  fprintf(f, "16#0125    /hcircumflex\n");
-  fprintf(f, "16#0126    /Hbar\n");
-  fprintf(f, "16#0127    /hbar\n");
-  fprintf(f, "16#0128    /Itilde\n");
-  fprintf(f, "16#0129    /itilde\n");
-  fprintf(f, "16#012A    /Imacron\n");
-  fprintf(f, "16#012B    /imacron\n");
-  fprintf(f, "16#012C    /Ibreve\n");
-  fprintf(f, "16#012D    /ibreve\n");
-  fprintf(f, "16#012E    /Iogonek\n");
-  fprintf(f, "16#012F    /iogonek\n");
-  fprintf(f, "16#0130    /Idotaccent\n");
-  fprintf(f, "16#0131    /dotlessi\n");
-  fprintf(f, "16#0132    /IJ\n");
-  fprintf(f, "16#0133    /ij\n");
-  fprintf(f, "16#0134    /Jcircumflex\n");
-  fprintf(f, "16#0135    /jcircumflex\n");
-  fprintf(f, "16#0136    /Kcommaaccent\n");
-  fprintf(f, "16#0137    /kcommaaccent\n");
-  fprintf(f, "16#0138    /kgreenlandic\n");
-  fprintf(f, "16#0139    /Lacute\n");
-  fprintf(f, "16#013A    /lacute\n");
-  fprintf(f, "16#013B    /Lcommaaccent\n");
-  fprintf(f, "16#013C    /lcommaaccent\n");
-  fprintf(f, "16#013D    /Lcaron\n");
-  fprintf(f, "16#013E    /lcaron\n");
-  fprintf(f, "16#013F    /Ldot\n");
-  fprintf(f, "16#0140    /ldot\n");
-  fprintf(f, "16#0141    /Lslash\n");
-  fprintf(f, "16#0142    /lslash\n");
-  fprintf(f, "16#0143    /Nacute\n");
-  fprintf(f, "16#0144    /nacute\n");
-  fprintf(f, "16#0145    /Ncommaaccent\n");
-  fprintf(f, "16#0146    /ncommaaccent\n");
-  fprintf(f, "16#0147    /Ncaron\n");
-  fprintf(f, "16#0148    /ncaron\n");
-  fprintf(f, "16#0149    /napostrophe\n");
-  fprintf(f, "16#014A    /Eng\n");
-  fprintf(f, "16#014B    /eng\n");
-  fprintf(f, "16#014C    /Omacron\n");
-  fprintf(f, "16#014D    /omacron\n");
-  fprintf(f, "16#014E    /Obreve\n");
-  fprintf(f, "16#014F    /obreve\n");
-  fprintf(f, "16#0150    /Ohungarumlaut\n");
-  fprintf(f, "16#0151    /ohungarumlaut\n");
-  fprintf(f, "16#0152    /OE\n");
-  fprintf(f, "16#0153    /oe\n");
-  fprintf(f, "16#0154    /Racute\n");
-  fprintf(f, "16#0155    /racute\n");
-  fprintf(f, "16#0156    /Rcommaaccent\n");
-  fprintf(f, "16#0157    /rcommaaccent\n");
-  fprintf(f, "16#0158    /Rcaron\n");
-  fprintf(f, "16#0159    /rcaron\n");
-  fprintf(f, "16#015A    /Sacute\n");
-  fprintf(f, "16#015B    /sacute\n");
-  fprintf(f, "16#015C    /Scircumflex\n");
-  fprintf(f, "16#015D    /scircumflex\n");
-  fprintf(f, "16#015E    /Scedilla\n");
-  fprintf(f, "16#015F    /scedilla\n");
-  fprintf(f, "16#0160    /Scaron\n");
-  fprintf(f, "16#0161    /scaron\n");
-  fprintf(f, "16#0162    /Tcommaaccent\n");
-  fprintf(f, "16#0163    /tcommaaccent\n");
-  fprintf(f, "16#0164    /Tcaron\n");
-  fprintf(f, "16#0165    /tcaron\n");
-  fprintf(f, "16#0166    /Tbar\n");
-  fprintf(f, "16#0167    /tbar\n");
-  fprintf(f, "16#0168    /Utilde\n");
-  fprintf(f, "16#0169    /utilde\n");
-  fprintf(f, "16#016A    /Umacron\n");
-  fprintf(f, "16#016B    /umacron\n");
-  fprintf(f, "16#016C    /Ubreve\n");
-  fprintf(f, "16#016D    /ubreve\n");
-  fprintf(f, "16#016E    /Uring\n");
-  fprintf(f, "16#016F    /uring\n");
-  fprintf(f, "16#0170    /Uhungarumlaut\n");
-  fprintf(f, "16#0171    /uhungarumlaut\n");
-  fprintf(f, "16#0172    /Uogonek\n");
-  fprintf(f, "16#0173    /uogonek\n");
-  fprintf(f, "16#0174    /Wcircumflex\n");
-  fprintf(f, "16#0175    /wcircumflex\n");
-  fprintf(f, "16#0176    /Ycircumflex\n");
-  fprintf(f, "16#0177    /ycircumflex\n");
-  fprintf(f, "16#0178    /Ydieresis\n");
-  fprintf(f, "16#0179    /Zacute\n");
-  fprintf(f, "16#017A    /zacute\n");
-  fprintf(f, "16#017B    /Zdotaccent\n");
-  fprintf(f, "16#017C    /zdotaccent\n");
-  fprintf(f, "16#017D    /Zcaron\n");
-  fprintf(f, "16#017E    /zcaron\n");
-  fprintf(f, "16#017F    /longs\n");
-  fprintf(f, "16#0192    /florin\n");
-  fprintf(f, "16#01A0    /Ohorn\n");
-  fprintf(f, "16#01A1    /ohorn\n");
-  fprintf(f, "16#01AF    /Uhorn\n");
-  fprintf(f, "16#01B0    /uhorn\n");
-  fprintf(f, "16#01E6    /Gcaron\n");
-  fprintf(f, "16#01E7    /gcaron\n");
-  fprintf(f, "16#01FA    /Aringacute\n");
-  fprintf(f, "16#01FB    /aringacute\n");
-  fprintf(f, "16#01FC    /AEacute\n");
-  fprintf(f, "16#01FD    /aeacute\n");
-  fprintf(f, "16#01FE    /Oslashacute\n");
-  fprintf(f, "16#01FF    /oslashacute\n");
-  fprintf(f, "16#0218    /Scommaaccent\n");
-  fprintf(f, "16#0219    /scommaaccent\n");
-  fprintf(f, "16#021A    /Tcommaaccent\n");
-  fprintf(f, "16#021B    /tcommaaccent\n");
-  fprintf(f, "16#02BC    /afii57929\n");
-  fprintf(f, "16#02BD    /afii64937\n");
-  fprintf(f, "16#02C6    /circumflex\n");
-  fprintf(f, "16#02C7    /caron\n");
-  fprintf(f, "16#02C9    /macron\n");
-  fprintf(f, "16#02D8    /breve\n");
-  fprintf(f, "16#02D9    /dotaccent\n");
-  fprintf(f, "16#02DA    /ring\n");
-  fprintf(f, "16#02DB    /ogonek\n");
-  fprintf(f, "16#02DC    /tilde\n");
-  fprintf(f, "16#02DD    /hungarumlaut\n");
-  fprintf(f, "16#0300    /gravecomb\n");
-  fprintf(f, "16#0301    /acutecomb\n");
-  fprintf(f, "16#0303    /tildecomb\n");
-  fprintf(f, "16#0309    /hookabovecomb\n");
-  fprintf(f, "16#0323    /dotbelowcomb\n");
-  fprintf(f, "16#0384    /tonos\n");
-  fprintf(f, "16#0385    /dieresistonos\n");
-  fprintf(f, "16#0386    /Alphatonos\n");
-  fprintf(f, "16#0387    /anoteleia\n");
-  fprintf(f, "16#0388    /Epsilontonos\n");
-  fprintf(f, "16#0389    /Etatonos\n");
-  fprintf(f, "16#038A    /Iotatonos\n");
-  fprintf(f, "16#038C    /Omicrontonos\n");
-  fprintf(f, "16#038E    /Upsilontonos\n");
-  fprintf(f, "16#038F    /Omegatonos\n");
-  fprintf(f, "16#0390    /iotadieresistonos\n");
-  fprintf(f, "16#0391    /Alpha\n");
-  fprintf(f, "16#0392    /Beta\n");
-  fprintf(f, "16#0393    /Gamma\n");
-  fprintf(f, "16#0394    /Delta\n");
-  fprintf(f, "16#0395    /Epsilon\n");
-  fprintf(f, "16#0396    /Zeta\n");
-  fprintf(f, "16#0397    /Eta\n");
-  fprintf(f, "16#0398    /Theta\n");
-  fprintf(f, "16#0399    /Iota\n");
-  fprintf(f, "16#039A    /Kappa\n");
-  fprintf(f, "16#039B    /Lambda\n");
-  fprintf(f, "16#039C    /Mu\n");
-  fprintf(f, "16#039D    /Nu\n");
-  fprintf(f, "16#039E    /Xi\n");
-  fprintf(f, "16#039F    /Omicron\n");
-  fprintf(f, "16#03A0    /Pi\n");
-  fprintf(f, "16#03A1    /Rho\n");
-  fprintf(f, "16#03A3    /Sigma\n");
-  fprintf(f, "16#03A4    /Tau\n");
-  fprintf(f, "16#03A5    /Upsilon\n");
-  fprintf(f, "16#03A6    /Phi\n");
-  fprintf(f, "16#03A7    /Chi\n");
-  fprintf(f, "16#03A8    /Psi\n");
-  fprintf(f, "16#03A9    /Omega\n");
-  fprintf(f, "16#03AA    /Iotadieresis\n");
-  fprintf(f, "16#03AB    /Upsilondieresis\n");
-  fprintf(f, "16#03AC    /alphatonos\n");
-  fprintf(f, "16#03AD    /epsilontonos\n");
-  fprintf(f, "16#03AE    /etatonos\n");
-  fprintf(f, "16#03AF    /iotatonos\n");
-  fprintf(f, "16#03B0    /upsilondieresistonos\n");
-  fprintf(f, "16#03B1    /alpha\n");
-  fprintf(f, "16#03B2    /beta\n");
-  fprintf(f, "16#03B3    /gamma\n");
-  fprintf(f, "16#03B4    /delta\n");
-  fprintf(f, "16#03B5    /epsilon\n");
-  fprintf(f, "16#03B6    /zeta\n");
-  fprintf(f, "16#03B7    /eta\n");
-  fprintf(f, "16#03B8    /theta\n");
-  fprintf(f, "16#03B9    /iota\n");
-  fprintf(f, "16#03BA    /kappa\n");
-  fprintf(f, "16#03BB    /lambda\n");
-  fprintf(f, "16#03BC    /mu\n");
-  fprintf(f, "16#03BD    /nu\n");
-  fprintf(f, "16#03BE    /xi\n");
-  fprintf(f, "16#03BF    /omicron\n");
-  fprintf(f, "16#03C0    /pi\n");
-  fprintf(f, "16#03C1    /rho\n");
-  fprintf(f, "16#03C2    /sigma1\n");
-  fprintf(f, "16#03C3    /sigma\n");
-  fprintf(f, "16#03C4    /tau\n");
-  fprintf(f, "16#03C5    /upsilon\n");
-  fprintf(f, "16#03C6    /phi\n");
-  fprintf(f, "16#03C7    /chi\n");
-  fprintf(f, "16#03C8    /psi\n");
-  fprintf(f, "16#03C9    /omega\n");
-  fprintf(f, "16#03CA    /iotadieresis\n");
-  fprintf(f, "16#03CB    /upsilondieresis\n");
-  fprintf(f, "16#03CC    /omicrontonos\n");
-  fprintf(f, "16#03CD    /upsilontonos\n");
-  fprintf(f, "16#03CE    /omegatonos\n");
-  fprintf(f, "16#03D1    /theta1\n");
-  fprintf(f, "16#03D2    /Upsilon1\n");
-  fprintf(f, "16#03D5    /phi1\n");
-  fprintf(f, "16#03D6    /omega1\n");
-  fprintf(f, "16#0401    /afii10023\n");
-  fprintf(f, "16#0402    /afii10051\n");
-  fprintf(f, "16#0403    /afii10052\n");
-  fprintf(f, "16#0404    /afii10053\n");
-  fprintf(f, "16#0405    /afii10054\n");
-  fprintf(f, "16#0406    /afii10055\n");
-  fprintf(f, "16#0407    /afii10056\n");
-  fprintf(f, "16#0408    /afii10057\n");
-  fprintf(f, "16#0409    /afii10058\n");
-  fprintf(f, "16#040A    /afii10059\n");
-  fprintf(f, "16#040B    /afii10060\n");
-  fprintf(f, "16#040C    /afii10061\n");
-  fprintf(f, "16#040E    /afii10062\n");
-  fprintf(f, "16#040F    /afii10145\n");
-  fprintf(f, "16#0410    /afii10017\n");
-  fprintf(f, "16#0411    /afii10018\n");
-  fprintf(f, "16#0412    /afii10019\n");
-  fprintf(f, "16#0413    /afii10020\n");
-  fprintf(f, "16#0414    /afii10021\n");
-  fprintf(f, "16#0415    /afii10022\n");
-  fprintf(f, "16#0416    /afii10024\n");
-  fprintf(f, "16#0417    /afii10025\n");
-  fprintf(f, "16#0418    /afii10026\n");
-  fprintf(f, "16#0419    /afii10027\n");
-  fprintf(f, "16#041A    /afii10028\n");
-  fprintf(f, "16#041B    /afii10029\n");
-  fprintf(f, "16#041C    /afii10030\n");
-  fprintf(f, "16#041D    /afii10031\n");
-  fprintf(f, "16#041E    /afii10032\n");
-  fprintf(f, "16#041F    /afii10033\n");
-  fprintf(f, "16#0420    /afii10034\n");
-  fprintf(f, "16#0421    /afii10035\n");
-  fprintf(f, "16#0422    /afii10036\n");
-  fprintf(f, "16#0423    /afii10037\n");
-  fprintf(f, "16#0424    /afii10038\n");
-  fprintf(f, "16#0425    /afii10039\n");
-  fprintf(f, "16#0426    /afii10040\n");
-  fprintf(f, "16#0427    /afii10041\n");
-  fprintf(f, "16#0428    /afii10042\n");
-  fprintf(f, "16#0429    /afii10043\n");
-  fprintf(f, "16#042A    /afii10044\n");
-  fprintf(f, "16#042B    /afii10045\n");
-  fprintf(f, "16#042C    /afii10046\n");
-  fprintf(f, "16#042D    /afii10047\n");
-  fprintf(f, "16#042E    /afii10048\n");
-  fprintf(f, "16#042F    /afii10049\n");
-  fprintf(f, "16#0430    /afii10065\n");
-  fprintf(f, "16#0431    /afii10066\n");
-  fprintf(f, "16#0432    /afii10067\n");
-  fprintf(f, "16#0433    /afii10068\n");
-  fprintf(f, "16#0434    /afii10069\n");
-  fprintf(f, "16#0435    /afii10070\n");
-  fprintf(f, "16#0436    /afii10072\n");
-  fprintf(f, "16#0437    /afii10073\n");
-  fprintf(f, "16#0438    /afii10074\n");
-  fprintf(f, "16#0439    /afii10075\n");
-  fprintf(f, "16#043A    /afii10076\n");
-  fprintf(f, "16#043B    /afii10077\n");
-  fprintf(f, "16#043C    /afii10078\n");
-  fprintf(f, "16#043D    /afii10079\n");
-  fprintf(f, "16#043E    /afii10080\n");
-  fprintf(f, "16#043F    /afii10081\n");
-  fprintf(f, "16#0440    /afii10082\n");
-  fprintf(f, "16#0441    /afii10083\n");
-  fprintf(f, "16#0442    /afii10084\n");
-  fprintf(f, "16#0443    /afii10085\n");
-  fprintf(f, "16#0444    /afii10086\n");
-  fprintf(f, "16#0445    /afii10087\n");
-  fprintf(f, "16#0446    /afii10088\n");
-  fprintf(f, "16#0447    /afii10089\n");
-  fprintf(f, "16#0448    /afii10090\n");
-  fprintf(f, "16#0449    /afii10091\n");
-  fprintf(f, "16#044A    /afii10092\n");
-  fprintf(f, "16#044B    /afii10093\n");
-  fprintf(f, "16#044C    /afii10094\n");
-  fprintf(f, "16#044D    /afii10095\n");
-  fprintf(f, "16#044E    /afii10096\n");
-  fprintf(f, "16#044F    /afii10097\n");
-  fprintf(f, "16#0451    /afii10071\n");
-  fprintf(f, "16#0452    /afii10099\n");
-  fprintf(f, "16#0453    /afii10100\n");
-  fprintf(f, "16#0454    /afii10101\n");
-  fprintf(f, "16#0455    /afii10102\n");
-  fprintf(f, "16#0456    /afii10103\n");
-  fprintf(f, "16#0457    /afii10104\n");
-  fprintf(f, "16#0458    /afii10105\n");
-  fprintf(f, "16#0459    /afii10106\n");
-  fprintf(f, "16#045A    /afii10107\n");
-  fprintf(f, "16#045B    /afii10108\n");
-  fprintf(f, "16#045C    /afii10109\n");
-  fprintf(f, "16#045E    /afii10110\n");
-  fprintf(f, "16#045F    /afii10193\n");
-  fprintf(f, "16#0462    /afii10146\n");
-  fprintf(f, "16#0463    /afii10194\n");
-  fprintf(f, "16#0472    /afii10147\n");
-  fprintf(f, "16#0473    /afii10195\n");
-  fprintf(f, "16#0474    /afii10148\n");
-  fprintf(f, "16#0475    /afii10196\n");
-  fprintf(f, "16#0490    /afii10050\n");
-  fprintf(f, "16#0491    /afii10098\n");
-  fprintf(f, "16#04D9    /afii10846\n");
-  fprintf(f, "16#05B0    /afii57799\n");
-  fprintf(f, "16#05B1    /afii57801\n");
-  fprintf(f, "16#05B2    /afii57800\n");
-  fprintf(f, "16#05B3    /afii57802\n");
-  fprintf(f, "16#05B4    /afii57793\n");
-  fprintf(f, "16#05B5    /afii57794\n");
-  fprintf(f, "16#05B6    /afii57795\n");
-  fprintf(f, "16#05B7    /afii57798\n");
-  fprintf(f, "16#05B8    /afii57797\n");
-  fprintf(f, "16#05B9    /afii57806\n");
-  fprintf(f, "16#05BB    /afii57796\n");
-  fprintf(f, "16#05BC    /afii57807\n");
-  fprintf(f, "16#05BD    /afii57839\n");
-  fprintf(f, "16#05BE    /afii57645\n");
-  fprintf(f, "16#05BF    /afii57841\n");
-  fprintf(f, "16#05C0    /afii57842\n");
-  fprintf(f, "16#05C1    /afii57804\n");
-  fprintf(f, "16#05C2    /afii57803\n");
-  fprintf(f, "16#05C3    /afii57658\n");
-  fprintf(f, "16#05D0    /afii57664\n");
-  fprintf(f, "16#05D1    /afii57665\n");
-  fprintf(f, "16#05D2    /afii57666\n");
-  fprintf(f, "16#05D3    /afii57667\n");
-  fprintf(f, "16#05D4    /afii57668\n");
-  fprintf(f, "16#05D5    /afii57669\n");
-  fprintf(f, "16#05D6    /afii57670\n");
-  fprintf(f, "16#05D7    /afii57671\n");
-  fprintf(f, "16#05D8    /afii57672\n");
-  fprintf(f, "16#05D9    /afii57673\n");
-  fprintf(f, "16#05DA    /afii57674\n");
-  fprintf(f, "16#05DB    /afii57675\n");
-  fprintf(f, "16#05DC    /afii57676\n");
-  fprintf(f, "16#05DD    /afii57677\n");
-  fprintf(f, "16#05DE    /afii57678\n");
-  fprintf(f, "16#05DF    /afii57679\n");
-  fprintf(f, "16#05E0    /afii57680\n");
-  fprintf(f, "16#05E1    /afii57681\n");
-  fprintf(f, "16#05E2    /afii57682\n");
-  fprintf(f, "16#05E3    /afii57683\n");
-  fprintf(f, "16#05E4    /afii57684\n");
-  fprintf(f, "16#05E5    /afii57685\n");
-  fprintf(f, "16#05E6    /afii57686\n");
-  fprintf(f, "16#05E7    /afii57687\n");
-  fprintf(f, "16#05E8    /afii57688\n");
-  fprintf(f, "16#05E9    /afii57689\n");
-  fprintf(f, "16#05EA    /afii57690\n");
-  fprintf(f, "16#05F0    /afii57716\n");
-  fprintf(f, "16#05F1    /afii57717\n");
-  fprintf(f, "16#05F2    /afii57718\n");
-  fprintf(f, "16#060C    /afii57388\n");
-  fprintf(f, "16#061B    /afii57403\n");
-  fprintf(f, "16#061F    /afii57407\n");
-  fprintf(f, "16#0621    /afii57409\n");
-  fprintf(f, "16#0622    /afii57410\n");
-  fprintf(f, "16#0623    /afii57411\n");
-  fprintf(f, "16#0624    /afii57412\n");
-  fprintf(f, "16#0625    /afii57413\n");
-  fprintf(f, "16#0626    /afii57414\n");
-  fprintf(f, "16#0627    /afii57415\n");
-  fprintf(f, "16#0628    /afii57416\n");
-  fprintf(f, "16#0629    /afii57417\n");
-  fprintf(f, "16#062A    /afii57418\n");
-  fprintf(f, "16#062B    /afii57419\n");
-  fprintf(f, "16#062C    /afii57420\n");
-  fprintf(f, "16#062D    /afii57421\n");
-  fprintf(f, "16#062E    /afii57422\n");
-  fprintf(f, "16#062F    /afii57423\n");
-  fprintf(f, "16#0630    /afii57424\n");
-  fprintf(f, "16#0631    /afii57425\n");
-  fprintf(f, "16#0632    /afii57426\n");
-  fprintf(f, "16#0633    /afii57427\n");
-  fprintf(f, "16#0634    /afii57428\n");
-  fprintf(f, "16#0635    /afii57429\n");
-  fprintf(f, "16#0636    /afii57430\n");
-  fprintf(f, "16#0637    /afii57431\n");
-  fprintf(f, "16#0638    /afii57432\n");
-  fprintf(f, "16#0639    /afii57433\n");
-  fprintf(f, "16#063A    /afii57434\n");
-  fprintf(f, "16#0640    /afii57440\n");
-  fprintf(f, "16#0641    /afii57441\n");
-  fprintf(f, "16#0642    /afii57442\n");
-  fprintf(f, "16#0643    /afii57443\n");
-  fprintf(f, "16#0644    /afii57444\n");
-  fprintf(f, "16#0645    /afii57445\n");
-  fprintf(f, "16#0646    /afii57446\n");
-  fprintf(f, "16#0647    /afii57470\n");
-  fprintf(f, "16#0648    /afii57448\n");
-  fprintf(f, "16#0649    /afii57449\n");
-  fprintf(f, "16#064A    /afii57450\n");
-  fprintf(f, "16#064B    /afii57451\n");
-  fprintf(f, "16#064C    /afii57452\n");
-  fprintf(f, "16#064D    /afii57453\n");
-  fprintf(f, "16#064E    /afii57454\n");
-  fprintf(f, "16#064F    /afii57455\n");
-  fprintf(f, "16#0650    /afii57456\n");
-  fprintf(f, "16#0651    /afii57457\n");
-  fprintf(f, "16#0652    /afii57458\n");
-  fprintf(f, "16#0660    /afii57392\n");
-  fprintf(f, "16#0661    /afii57393\n");
-  fprintf(f, "16#0662    /afii57394\n");
-  fprintf(f, "16#0663    /afii57395\n");
-  fprintf(f, "16#0664    /afii57396\n");
-  fprintf(f, "16#0665    /afii57397\n");
-  fprintf(f, "16#0666    /afii57398\n");
-  fprintf(f, "16#0667    /afii57399\n");
-  fprintf(f, "16#0668    /afii57400\n");
-  fprintf(f, "16#0669    /afii57401\n");
-  fprintf(f, "16#066A    /afii57381\n");
-  fprintf(f, "16#066D    /afii63167\n");
-  fprintf(f, "16#0679    /afii57511\n");
-  fprintf(f, "16#067E    /afii57506\n");
-  fprintf(f, "16#0686    /afii57507\n");
-  fprintf(f, "16#0688    /afii57512\n");
-  fprintf(f, "16#0691    /afii57513\n");
-  fprintf(f, "16#0698    /afii57508\n");
-  fprintf(f, "16#06A4    /afii57505\n");
-  fprintf(f, "16#06AF    /afii57509\n");
-  fprintf(f, "16#06BA    /afii57514\n");
-  fprintf(f, "16#06D2    /afii57519\n");
-  fprintf(f, "16#06D5    /afii57534\n");
-  fprintf(f, "16#1E80    /Wgrave\n");
-  fprintf(f, "16#1E81    /wgrave\n");
-  fprintf(f, "16#1E82    /Wacute\n");
-  fprintf(f, "16#1E83    /wacute\n");
-  fprintf(f, "16#1E84    /Wdieresis\n");
-  fprintf(f, "16#1E85    /wdieresis\n");
-  fprintf(f, "16#1EF2    /Ygrave\n");
-  fprintf(f, "16#1EF3    /ygrave\n");
-  fprintf(f, "16#200C    /afii61664\n");
-  fprintf(f, "16#200D    /afii301\n");
-  fprintf(f, "16#200E    /afii299\n");
-  fprintf(f, "16#200F    /afii300\n");
-  fprintf(f, "16#2012    /figuredash\n");
-  fprintf(f, "16#2013    /endash\n");
-  fprintf(f, "16#2014    /emdash\n");
-  fprintf(f, "16#2015    /afii00208\n");
-  fprintf(f, "16#2017    /underscoredbl\n");
-  fprintf(f, "16#2018    /quoteleft\n");
-  fprintf(f, "16#2019    /quoteright\n");
-  fprintf(f, "16#201A    /quotesinglbase\n");
-  fprintf(f, "16#201B    /quotereversed\n");
-  fprintf(f, "16#201C    /quotedblleft\n");
-  fprintf(f, "16#201D    /quotedblright\n");
-  fprintf(f, "16#201E    /quotedblbase\n");
-  fprintf(f, "16#2020    /dagger\n");
-  fprintf(f, "16#2021    /daggerdbl\n");
-  fprintf(f, "16#2022    /bullet\n");
-  fprintf(f, "16#2024    /onedotenleader\n");
-  fprintf(f, "16#2025    /twodotenleader\n");
-  fprintf(f, "16#2026    /ellipsis\n");
-  fprintf(f, "16#202C    /afii61573\n");
-  fprintf(f, "16#202D    /afii61574\n");
-  fprintf(f, "16#202E    /afii61575\n");
-  fprintf(f, "16#2030    /perthousand\n");
-  fprintf(f, "16#2032    /minute\n");
-  fprintf(f, "16#2033    /second\n");
-  fprintf(f, "16#2039    /guilsinglleft\n");
-  fprintf(f, "16#203A    /guilsinglright\n");
-  fprintf(f, "16#203C    /exclamdbl\n");
-  fprintf(f, "16#2044    /fraction\n");
-  fprintf(f, "16#2070    /zerosuperior\n");
-  fprintf(f, "16#2074    /foursuperior\n");
-  fprintf(f, "16#2075    /fivesuperior\n");
-  fprintf(f, "16#2076    /sixsuperior\n");
-  fprintf(f, "16#2077    /sevensuperior\n");
-  fprintf(f, "16#2078    /eightsuperior\n");
-  fprintf(f, "16#2079    /ninesuperior\n");
-  fprintf(f, "16#207D    /parenleftsuperior\n");
-  fprintf(f, "16#207E    /parenrightsuperior\n");
-  fprintf(f, "16#207F    /nsuperior\n");
-  fprintf(f, "16#2080    /zeroinferior\n");
-  fprintf(f, "16#2081    /oneinferior\n");
-  fprintf(f, "16#2082    /twoinferior\n");
-  fprintf(f, "16#2083    /threeinferior\n");
-  fprintf(f, "16#2084    /fourinferior\n");
-  fprintf(f, "16#2085    /fiveinferior\n");
-  fprintf(f, "16#2086    /sixinferior\n");
-  fprintf(f, "16#2087    /seveninferior\n");
-  fprintf(f, "16#2088    /eightinferior\n");
-  fprintf(f, "16#2089    /nineinferior\n");
-  fprintf(f, "16#208D    /parenleftinferior\n");
-  fprintf(f, "16#208E    /parenrightinferior\n");
-  fprintf(f, "16#20A1    /colonmonetary\n");
-  fprintf(f, "16#20A3    /franc\n");
-  fprintf(f, "16#20A4    /lira\n");
-  fprintf(f, "16#20A7    /peseta\n");
-  fprintf(f, "16#20AA    /afii57636\n");
-  fprintf(f, "16#20AB    /dong\n");
-  fprintf(f, "16#20AC    /Euro\n");
-  fprintf(f, "16#2105    /afii61248\n");
-  fprintf(f, "16#2111    /Ifraktur\n");
-  fprintf(f, "16#2113    /afii61289\n");
-  fprintf(f, "16#2116    /afii61352\n");
-  fprintf(f, "16#2118    /weierstrass\n");
-  fprintf(f, "16#211C    /Rfraktur\n");
-  fprintf(f, "16#211E    /prescription\n");
-  fprintf(f, "16#2122    /trademark\n");
-  fprintf(f, "16#2126    /Omega\n");
-  fprintf(f, "16#212E    /estimated\n");
-  fprintf(f, "16#2135    /aleph\n");
-  fprintf(f, "16#2153    /onethird\n");
-  fprintf(f, "16#2154    /twothirds\n");
-  fprintf(f, "16#215B    /oneeighth\n");
-  fprintf(f, "16#215C    /threeeighths\n");
-  fprintf(f, "16#215D    /fiveeighths\n");
-  fprintf(f, "16#215E    /seveneighths\n");
-  fprintf(f, "16#2190    /arrowleft\n");
-  fprintf(f, "16#2191    /arrowup\n");
-  fprintf(f, "16#2192    /arrowright\n");
-  fprintf(f, "16#2193    /arrowdown\n");
-  fprintf(f, "16#2194    /arrowboth\n");
-  fprintf(f, "16#2195    /arrowupdn\n");
-  fprintf(f, "16#21A8    /arrowupdnbse\n");
-  fprintf(f, "16#21B5    /carriagereturn\n");
-  fprintf(f, "16#21D0    /arrowdblleft\n");
-  fprintf(f, "16#21D1    /arrowdblup\n");
-  fprintf(f, "16#21D2    /arrowdblright\n");
-  fprintf(f, "16#21D3    /arrowdbldown\n");
-  fprintf(f, "16#21D4    /arrowdblboth\n");
-  fprintf(f, "16#2200    /universal\n");
-  fprintf(f, "16#2202    /partialdiff\n");
-  fprintf(f, "16#2203    /existential\n");
-  fprintf(f, "16#2205    /emptyset\n");
-  fprintf(f, "16#2206    /Delta\n");
-  fprintf(f, "16#2207    /gradient\n");
-  fprintf(f, "16#2208    /element\n");
-  fprintf(f, "16#2209    /notelement\n");
-  fprintf(f, "16#220B    /suchthat\n");
-  fprintf(f, "16#220F    /product\n");
-  fprintf(f, "16#2211    /summation\n");
-  fprintf(f, "16#2212    /minus\n");
-  fprintf(f, "16#2215    /fraction\n");
-  fprintf(f, "16#2217    /asteriskmath\n");
-  fprintf(f, "16#2219    /periodcentered\n");
-  fprintf(f, "16#221A    /radical\n");
-  fprintf(f, "16#221D    /proportional\n");
-  fprintf(f, "16#221E    /infinity\n");
-  fprintf(f, "16#221F    /orthogonal\n");
-  fprintf(f, "16#2220    /angle\n");
-  fprintf(f, "16#2227    /logicaland\n");
-  fprintf(f, "16#2228    /logicalor\n");
-  fprintf(f, "16#2229    /intersection\n");
-  fprintf(f, "16#222A    /union\n");
-  fprintf(f, "16#222B    /integral\n");
-  fprintf(f, "16#2234    /therefore\n");
-  fprintf(f, "16#223C    /similar\n");
-  fprintf(f, "16#2245    /congruent\n");
-  fprintf(f, "16#2248    /approxequal\n");
-  fprintf(f, "16#2260    /notequal\n");
-  fprintf(f, "16#2261    /equivalence\n");
-  fprintf(f, "16#2264    /lessequal\n");
-  fprintf(f, "16#2265    /greaterequal\n");
-  fprintf(f, "16#2282    /propersubset\n");
-  fprintf(f, "16#2283    /propersuperset\n");
-  fprintf(f, "16#2284    /notsubset\n");
-  fprintf(f, "16#2286    /reflexsubset\n");
-  fprintf(f, "16#2287    /reflexsuperset\n");
-  fprintf(f, "16#2295    /circleplus\n");
-  fprintf(f, "16#2297    /circlemultiply\n");
-  fprintf(f, "16#22A5    /perpendicular\n");
-  fprintf(f, "16#22C5    /dotmath\n");
-  fprintf(f, "16#2302    /house\n");
-  fprintf(f, "16#2310    /revlogicalnot\n");
-  fprintf(f, "16#2320    /integraltp\n");
-  fprintf(f, "16#2321    /integralbt\n");
-  fprintf(f, "16#2329    /angleleft\n");
-  fprintf(f, "16#232A    /angleright\n");
-  fprintf(f, "16#2500    /SF100000\n");
-  fprintf(f, "16#2502    /SF110000\n");
-  fprintf(f, "16#250C    /SF010000\n");
-  fprintf(f, "16#2510    /SF030000\n");
-  fprintf(f, "16#2514    /SF020000\n");
-  fprintf(f, "16#2518    /SF040000\n");
-  fprintf(f, "16#251C    /SF080000\n");
-  fprintf(f, "16#2524    /SF090000\n");
-  fprintf(f, "16#252C    /SF060000\n");
-  fprintf(f, "16#2534    /SF070000\n");
-  fprintf(f, "16#253C    /SF050000\n");
-  fprintf(f, "16#2550    /SF430000\n");
-  fprintf(f, "16#2551    /SF240000\n");
-  fprintf(f, "16#2552    /SF510000\n");
-  fprintf(f, "16#2553    /SF520000\n");
-  fprintf(f, "16#2554    /SF390000\n");
-  fprintf(f, "16#2555    /SF220000\n");
-  fprintf(f, "16#2556    /SF210000\n");
-  fprintf(f, "16#2557    /SF250000\n");
-  fprintf(f, "16#2558    /SF500000\n");
-  fprintf(f, "16#2559    /SF490000\n");
-  fprintf(f, "16#255A    /SF380000\n");
-  fprintf(f, "16#255B    /SF280000\n");
-  fprintf(f, "16#255C    /SF270000\n");
-  fprintf(f, "16#255D    /SF260000\n");
-  fprintf(f, "16#255E    /SF360000\n");
-  fprintf(f, "16#255F    /SF370000\n");
-  fprintf(f, "16#2560    /SF420000\n");
-  fprintf(f, "16#2561    /SF190000\n");
-  fprintf(f, "16#2562    /SF200000\n");
-  fprintf(f, "16#2563    /SF230000\n");
-  fprintf(f, "16#2564    /SF470000\n");
-  fprintf(f, "16#2565    /SF480000\n");
-  fprintf(f, "16#2566    /SF410000\n");
-  fprintf(f, "16#2567    /SF450000\n");
-  fprintf(f, "16#2568    /SF460000\n");
-  fprintf(f, "16#2569    /SF400000\n");
-  fprintf(f, "16#256A    /SF540000\n");
-  fprintf(f, "16#256B    /SF530000\n");
-  fprintf(f, "16#256C    /SF440000\n");
-  fprintf(f, "16#2580    /upblock\n");
-  fprintf(f, "16#2584    /dnblock\n");
-  fprintf(f, "16#2588    /block\n");
-  fprintf(f, "16#258C    /lfblock\n");
-  fprintf(f, "16#2590    /rtblock\n");
-  fprintf(f, "16#2591    /ltshade\n");
-  fprintf(f, "16#2592    /shade\n");
-  fprintf(f, "16#2593    /dkshade\n");
-  fprintf(f, "16#25A0    /filledbox\n");
-  fprintf(f, "16#25A1    /H22073\n");
-  fprintf(f, "16#25AA    /H18543\n");
-  fprintf(f, "16#25AB    /H18551\n");
-  fprintf(f, "16#25AC    /filledrect\n");
-  fprintf(f, "16#25B2    /triagup\n");
-  fprintf(f, "16#25BA    /triagrt\n");
-  fprintf(f, "16#25BC    /triagdn\n");
-  fprintf(f, "16#25C4    /triaglf\n");
-  fprintf(f, "16#25CA    /lozenge\n");
-  fprintf(f, "16#25CB    /circle\n");
-  fprintf(f, "16#25CF    /H18533\n");
-  fprintf(f, "16#25D8    /invbullet\n");
-  fprintf(f, "16#25D9    /invcircle\n");
-  fprintf(f, "16#25E6    /openbullet\n");
-  fprintf(f, "16#263A    /smileface\n");
-  fprintf(f, "16#263B    /invsmileface\n");
-  fprintf(f, "16#263C    /sun\n");
-  fprintf(f, "16#2640    /female\n");
-  fprintf(f, "16#2642    /male\n");
-  fprintf(f, "16#2660    /spade\n");
-  fprintf(f, "16#2663    /club\n");
-  fprintf(f, "16#2665    /heart\n");
-  fprintf(f, "16#2666    /diamond\n");
-  fprintf(f, "16#266A    /musicalnote\n");
-  fprintf(f, "16#266B    /musicalnotedbl\n");
-  fprintf(f, "16#F6BE    /dotlessj\n");
-  fprintf(f, "16#F6BF    /LL\n");
-  fprintf(f, "16#F6C0    /ll\n");
-  fprintf(f, "16#F6C1    /Scedilla\n");
-  fprintf(f, "16#F6C2    /scedilla\n");
-  fprintf(f, "16#F6C3    /commaaccent\n");
-  fprintf(f, "16#F6C4    /afii10063\n");
-  fprintf(f, "16#F6C5    /afii10064\n");
-  fprintf(f, "16#F6C6    /afii10192\n");
-  fprintf(f, "16#F6C7    /afii10831\n");
-  fprintf(f, "16#F6C8    /afii10832\n");
-  fprintf(f, "16#F6C9    /Acute\n");
-  fprintf(f, "16#F6CA    /Caron\n");
-  fprintf(f, "16#F6CB    /Dieresis\n");
-  fprintf(f, "16#F6CC    /DieresisAcute\n");
-  fprintf(f, "16#F6CD    /DieresisGrave\n");
-  fprintf(f, "16#F6CE    /Grave\n");
-  fprintf(f, "16#F6CF    /Hungarumlaut\n");
-  fprintf(f, "16#F6D0    /Macron\n");
-  fprintf(f, "16#F6D1    /cyrBreve\n");
-  fprintf(f, "16#F6D2    /cyrFlex\n");
-  fprintf(f, "16#F6D3    /dblGrave\n");
-  fprintf(f, "16#F6D4    /cyrbreve\n");
-  fprintf(f, "16#F6D5    /cyrflex\n");
-  fprintf(f, "16#F6D6    /dblgrave\n");
-  fprintf(f, "16#F6D7    /dieresisacute\n");
-  fprintf(f, "16#F6D8    /dieresisgrave\n");
-  fprintf(f, "16#F6D9    /copyrightserif\n");
-  fprintf(f, "16#F6DA    /registerserif\n");
-  fprintf(f, "16#F6DB    /trademarkserif\n");
-  fprintf(f, "16#F6DC    /onefitted\n");
-  fprintf(f, "16#F6DD    /rupiah\n");
-  fprintf(f, "16#F6DE    /threequartersemdash\n");
-  fprintf(f, "16#F6DF    /centinferior\n");
-  fprintf(f, "16#F6E0    /centsuperior\n");
-  fprintf(f, "16#F6E1    /commainferior\n");
-  fprintf(f, "16#F6E2    /commasuperior\n");
-  fprintf(f, "16#F6E3    /dollarinferior\n");
-  fprintf(f, "16#F6E4    /dollarsuperior\n");
-  fprintf(f, "16#F6E5    /hypheninferior\n");
-  fprintf(f, "16#F6E6    /hyphensuperior\n");
-  fprintf(f, "16#F6E7    /periodinferior\n");
-  fprintf(f, "16#F6E8    /periodsuperior\n");
-  fprintf(f, "16#F6E9    /asuperior\n");
-  fprintf(f, "16#F6EA    /bsuperior\n");
-  fprintf(f, "16#F6EB    /dsuperior\n");
-  fprintf(f, "16#F6EC    /esuperior\n");
-  fprintf(f, "16#F6ED    /isuperior\n");
-  fprintf(f, "16#F6EE    /lsuperior\n");
-  fprintf(f, "16#F6EF    /msuperior\n");
-  fprintf(f, "16#F6F0    /osuperior\n");
-  fprintf(f, "16#F6F1    /rsuperior\n");
-  fprintf(f, "16#F6F2    /ssuperior\n");
-  fprintf(f, "16#F6F3    /tsuperior\n");
-  fprintf(f, "16#F6F4    /Brevesmall\n");
-  fprintf(f, "16#F6F5    /Caronsmall\n");
-  fprintf(f, "16#F6F6    /Circumflexsmall\n");
-  fprintf(f, "16#F6F7    /Dotaccentsmall\n");
-  fprintf(f, "16#F6F8    /Hungarumlautsmall\n");
-  fprintf(f, "16#F6F9    /Lslashsmall\n");
-  fprintf(f, "16#F6FA    /OEsmall\n");
-  fprintf(f, "16#F6FB    /Ogoneksmall\n");
-  fprintf(f, "16#F6FC    /Ringsmall\n");
-  fprintf(f, "16#F6FD    /Scaronsmall\n");
-  fprintf(f, "16#F6FE    /Tildesmall\n");
-  fprintf(f, "16#F6FF    /Zcaronsmall\n");
-  fprintf(f, "16#F721    /exclamsmall\n");
-  fprintf(f, "16#F724    /dollaroldstyle\n");
-  fprintf(f, "16#F726    /ampersandsmall\n");
-  fprintf(f, "16#F730    /zerooldstyle\n");
-  fprintf(f, "16#F731    /oneoldstyle\n");
-  fprintf(f, "16#F732    /twooldstyle\n");
-  fprintf(f, "16#F733    /threeoldstyle\n");
-  fprintf(f, "16#F734    /fouroldstyle\n");
-  fprintf(f, "16#F735    /fiveoldstyle\n");
-  fprintf(f, "16#F736    /sixoldstyle\n");
-  fprintf(f, "16#F737    /sevenoldstyle\n");
-  fprintf(f, "16#F738    /eightoldstyle\n");
-  fprintf(f, "16#F739    /nineoldstyle\n");
-  fprintf(f, "16#F73F    /questionsmall\n");
-  fprintf(f, "16#F760    /Gravesmall\n");
-  fprintf(f, "16#F761    /Asmall\n");
-  fprintf(f, "16#F762    /Bsmall\n");
-  fprintf(f, "16#F763    /Csmall\n");
-  fprintf(f, "16#F764    /Dsmall\n");
-  fprintf(f, "16#F765    /Esmall\n");
-  fprintf(f, "16#F766    /Fsmall\n");
-  fprintf(f, "16#F767    /Gsmall\n");
-  fprintf(f, "16#F768    /Hsmall\n");
-  fprintf(f, "16#F769    /Ismall\n");
-  fprintf(f, "16#F76A    /Jsmall\n");
-  fprintf(f, "16#F76B    /Ksmall\n");
-  fprintf(f, "16#F76C    /Lsmall\n");
-  fprintf(f, "16#F76D    /Msmall\n");
-  fprintf(f, "16#F76E    /Nsmall\n");
-  fprintf(f, "16#F76F    /Osmall\n");
-  fprintf(f, "16#F770    /Psmall\n");
-  fprintf(f, "16#F771    /Qsmall\n");
-  fprintf(f, "16#F772    /Rsmall\n");
-  fprintf(f, "16#F773    /Ssmall\n");
-  fprintf(f, "16#F774    /Tsmall\n");
-  fprintf(f, "16#F775    /Usmall\n");
-  fprintf(f, "16#F776    /Vsmall\n");
-  fprintf(f, "16#F777    /Wsmall\n");
-  fprintf(f, "16#F778    /Xsmall\n");
-  fprintf(f, "16#F779    /Ysmall\n");
-  fprintf(f, "16#F77A    /Zsmall\n");
-  fprintf(f, "16#F7A1    /exclamdownsmall\n");
-  fprintf(f, "16#F7A2    /centoldstyle\n");
-  fprintf(f, "16#F7A8    /Dieresissmall\n");
-  fprintf(f, "16#F7AF    /Macronsmall\n");
-  fprintf(f, "16#F7B4    /Acutesmall\n");
-  fprintf(f, "16#F7B8    /Cedillasmall\n");
-  fprintf(f, "16#F7BF    /questiondownsmall\n");
-  fprintf(f, "16#F7E0    /Agravesmall\n");
-  fprintf(f, "16#F7E1    /Aacutesmall\n");
-  fprintf(f, "16#F7E2    /Acircumflexsmall\n");
-  fprintf(f, "16#F7E3    /Atildesmall\n");
-  fprintf(f, "16#F7E4    /Adieresissmall\n");
-  fprintf(f, "16#F7E5    /Aringsmall\n");
-  fprintf(f, "16#F7E6    /AEsmall\n");
-  fprintf(f, "16#F7E7    /Ccedillasmall\n");
-  fprintf(f, "16#F7E8    /Egravesmall\n");
-  fprintf(f, "16#F7E9    /Eacutesmall\n");
-  fprintf(f, "16#F7EA    /Ecircumflexsmall\n");
-  fprintf(f, "16#F7EB    /Edieresissmall\n");
-  fprintf(f, "16#F7EC    /Igravesmall\n");
-  fprintf(f, "16#F7ED    /Iacutesmall\n");
-  fprintf(f, "16#F7EE    /Icircumflexsmall\n");
-  fprintf(f, "16#F7EF    /Idieresissmall\n");
-  fprintf(f, "16#F7F0    /Ethsmall\n");
-  fprintf(f, "16#F7F1    /Ntildesmall\n");
-  fprintf(f, "16#F7F2    /Ogravesmall\n");
-  fprintf(f, "16#F7F3    /Oacutesmall\n");
-  fprintf(f, "16#F7F4    /Ocircumflexsmall\n");
-  fprintf(f, "16#F7F5    /Otildesmall\n");
-  fprintf(f, "16#F7F6    /Odieresissmall\n");
-  fprintf(f, "16#F7F8    /Oslashsmall\n");
-  fprintf(f, "16#F7F9    /Ugravesmall\n");
-  fprintf(f, "16#F7FA    /Uacutesmall\n");
-  fprintf(f, "16#F7FB    /Ucircumflexsmall\n");
-  fprintf(f, "16#F7FC    /Udieresissmall\n");
-  fprintf(f, "16#F7FD    /Yacutesmall\n");
-  fprintf(f, "16#F7FE    /Thornsmall\n");
-  fprintf(f, "16#F7FF    /Ydieresissmall\n");
-  fprintf(f, "16#F8E5    /radicalex\n");
-  fprintf(f, "16#F8E6    /arrowvertex\n");
-  fprintf(f, "16#F8E7    /arrowhorizex\n");
-  fprintf(f, "16#F8E8    /registersans\n");
-  fprintf(f, "16#F8E9    /copyrightsans\n");
-  fprintf(f, "16#F8EA    /trademarksans\n");
-  fprintf(f, "16#F8EB    /parenlefttp\n");
-  fprintf(f, "16#F8EC    /parenleftex\n");
-  fprintf(f, "16#F8ED    /parenleftbt\n");
-  fprintf(f, "16#F8EE    /bracketlefttp\n");
-  fprintf(f, "16#F8EF    /bracketleftex\n");
-  fprintf(f, "16#F8F0    /bracketleftbt\n");
-  fprintf(f, "16#F8F1    /bracelefttp\n");
-  fprintf(f, "16#F8F2    /braceleftmid\n");
-  fprintf(f, "16#F8F3    /braceleftbt\n");
-  fprintf(f, "16#F8F4    /braceex\n");
-  fprintf(f, "16#F8F5    /integralex\n");
-  fprintf(f, "16#F8F6    /parenrighttp\n");
-  fprintf(f, "16#F8F7    /parenrightex\n");
-  fprintf(f, "16#F8F8    /parenrightbt\n");
-  fprintf(f, "16#F8F9    /bracketrighttp\n");
-  fprintf(f, "16#F8FA    /bracketrightex\n");
-  fprintf(f, "16#F8FB    /bracketrightbt\n");
-  fprintf(f, "16#F8FC    /bracerighttp\n");
-  fprintf(f, "16#F8FD    /bracerightmid\n");
-  fprintf(f, "16#F8FE    /bracerightbt\n");
-  fprintf(f, "16#FB00    /ff\n");
-  fprintf(f, "16#FB01    /fi\n");
-  fprintf(f, "16#FB02    /fl\n");
-  fprintf(f, "16#FB03    /ffi\n");
-  fprintf(f, "16#FB04    /ffl\n");
-  fprintf(f, "16#FB1F    /afii57705\n");
-  fprintf(f, "16#FB2A    /afii57694\n");
-  fprintf(f, "16#FB2B    /afii57695\n");
-  fprintf(f, "16#FB35    /afii57723\n");
-  fprintf(f, "16#FB4B    /afii57700\n");
-  fprintf(f, ">>    def\n");
+    // Setstrokeadjust, or null if not supported
+    "/Msetstrokeadjust /setstrokeadjust where\n"
+    "  { pop /setstrokeadjust } { /pop } ifelse\n"
+    "  load def\n"
 
-  fprintf(f, "10 dict dup begin\n");
-  fprintf(f, "  /FontType 3 def\n");
-  fprintf(f, "  /FontMatrix [.001 0 0 .001 0 0 ] def\n");
-  fprintf(f, "  /FontBBox [0 0 100 100] def\n");
-  fprintf(f, "  /Encoding 256 array def\n");
-  fprintf(f, "  0 1 255 {Encoding exch /.notdef put} for\n");
-  fprintf(f, "  Encoding 97 /openbox put\n");
-  fprintf(f, "  /CharProcs 2 dict def\n");
-  fprintf(f, "  CharProcs begin\n");
-  fprintf(f, "    /.notdef { } def\n");
-  fprintf(f, "    /openbox\n");
-  fprintf(f, "      { newpath\n");
-  fprintf(f, "          90 30 moveto  90 670 lineto\n");
-  fprintf(f, "          730 670 lineto  730 30 lineto\n");
-  fprintf(f, "        closepath\n");
-  fprintf(f, "        60 setlinewidth\n");
-  fprintf(f, "        stroke } def\n");
-  fprintf(f, "  end\n");
-  fprintf(f, "  /BuildChar\n");
-  fprintf(f, "    { 1000 0 0\n");
-  fprintf(f, "	0 750 750\n");
-  fprintf(f, "        setcachedevice\n");
-  fprintf(f, "	exch begin\n");
-  fprintf(f, "        Encoding exch get\n");
-  fprintf(f, "        CharProcs exch get\n");
-  fprintf(f, "	end\n");
-  fprintf(f, "	exec\n");
-  fprintf(f, "    } def\n");
-  fprintf(f, "end\n");
-  fprintf(f, "/NoglyphFont exch definefont pop\n");
-  fprintf(f, "\n");
-
-  fprintf(f, "/mbshow {                       %% num\n");
-  fprintf(f, "    8 array                     %% num array\n");
-  fprintf(f, "    -1                          %% num array counter\n");
-  fprintf(f, "    {\n");
-  fprintf(f, "        dup 7 ge { exit } if\n");
-  fprintf(f, "        1 add                   %% num array counter\n");
-  fprintf(f, "        2 index 16#100 mod      %% num array counter mod\n");
-  fprintf(f, "        3 copy put pop          %% num array counter\n");
-  fprintf(f, "        2 index 16#100 idiv     %% num array counter num\n");
-  fprintf(f, "        dup 0 le\n");
-  fprintf(f, "        {\n");
-  fprintf(f, "            pop exit\n");
-  fprintf(f, "        } if\n");
-  fprintf(f, "        4 -1 roll pop\n");
-  fprintf(f, "        3 1 roll\n");
-  fprintf(f, "    } loop                      %% num array counter\n");
-  fprintf(f, "    3 -1 roll pop               %% array counter\n");
-  fprintf(f, "    dup 1 add string            %% array counter string\n");
-  fprintf(f, "    0 1 3 index\n");
-  fprintf(f, "    {                           %% array counter string index\n");
-  fprintf(f, "        2 index 1 index sub     %% array counter string index sid\n");
-  fprintf(f, "        4 index 3 2 roll get    %% array counter string sid byte\n");
-  fprintf(f, "        2 index 3 1 roll put    %% array counter string\n");
-  fprintf(f, "    } for\n");
-  fprintf(f, "    show pop pop\n");
-  fprintf(f, "} def\n");
-
-  fprintf(f, "/draw_undefined_char\n");
-  fprintf(f, "{\n");
-  fprintf(f, "  /NoglyphFont findfont csize scalefont setfont (a) show\n");
-  fprintf(f, "} bind def\n");
-  fprintf(f, "\n");
-  fprintf(f, "/real_unicodeshow\n");
-  fprintf(f, "{\n");
-  fprintf(f, "  /ccode exch def\n");
-  fprintf(f, "  /Unicodedict where {\n");
-  fprintf(f, "    pop\n");
-  fprintf(f, "    Unicodedict ccode known {\n");
-  fprintf(f, "      /cwidth {currentfont /ScaleMatrix get 0 get} def \n");
-  fprintf(f, "      /cheight cwidth def \n");
-  fprintf(f, "      gsave\n");
-  fprintf(f, "      currentpoint translate\n");
-  fprintf(f, "      cwidth 1056 div cheight 1056 div scale\n");
-  fprintf(f, "      2 -2 translate\n");
-  fprintf(f, "      ccode Unicodedict exch get\n");
-  fprintf(f, "      cvx exec\n");
-  fprintf(f, "      grestore\n");
-  fprintf(f, "      currentpoint exch cwidth add exch moveto\n");
-  fprintf(f, "      true\n");
-  fprintf(f, "    } {\n");
-  fprintf(f, "      false\n");
-  fprintf(f, "    } ifelse\n");
-  fprintf(f, "  } {\n");
-  fprintf(f, "    false\n");
-  fprintf(f, "  } ifelse\n");
-  fprintf(f, "} bind def\n");
-  fprintf(f, "\n");
-  fprintf(f, "/real_unicodeshow_native\n");
-  fprintf(f, "{\n");
-  fprintf(f, "  /ccode exch def\n");
-  fprintf(f, "  /NativeFont where {\n");
-  fprintf(f, "    pop\n");
-  fprintf(f, "    NativeFont findfont /FontName get /Courier eq {\n");
-  fprintf(f, "      false\n");
-  fprintf(f, "    } {\n");
-  fprintf(f, "      NativeFont findfont csize scalefont setfont\n");
-  fprintf(f, "      /Unicode2NativeDict where {\n");
-  fprintf(f, "        pop\n");
-  fprintf(f, "        Unicode2NativeDict ccode known {\n");
-  fprintf(f, "          Unicode2NativeDict ccode get show\n");
-  fprintf(f, "          true\n");
-  fprintf(f, "        } {\n");
-  fprintf(f, "          false\n");
-  fprintf(f, "        } ifelse\n");
-  fprintf(f, "      } {\n");
-  fprintf(f, "	  false\n");
-  fprintf(f, "      } ifelse\n");
-  fprintf(f, "    } ifelse\n");
-  fprintf(f, "  } {\n");
-  fprintf(f, "    false\n");
-  fprintf(f, "  } ifelse\n");
-  fprintf(f, "} bind def\n");
-  fprintf(f, "\n");
-  fprintf(f, "/real_glyph_unicodeshow\n");
-  fprintf(f, "{\n");
-  fprintf(f, "  /ccode exch def\n");
-  fprintf(f, "      /UniDict where {\n");
-  fprintf(f, "        pop\n");
-  fprintf(f, "        UniDict ccode known {\n");
-  fprintf(f, "          UniDict ccode get glyphshow\n");
-  fprintf(f, "          true\n");
-  fprintf(f, "        } {\n");
-  fprintf(f, "          false\n");
-  fprintf(f, "        } ifelse\n");
-  fprintf(f, "      } {\n");
-  fprintf(f, "	  false\n");
-  fprintf(f, "      } ifelse\n");
-  fprintf(f, "} bind def\n");
-  fprintf(f, "/real_unicodeshow_cid\n");
-  fprintf(f, "{\n");
-  fprintf(f, "  /ccode exch def\n");
-  fprintf(f, "  /UCS2Font where {\n");
-  fprintf(f, "    pop\n");
-  fprintf(f, "    UCS2Font findfont /FontName get /Courier eq {\n");
-  fprintf(f, "      false\n");
-  fprintf(f, "    } {\n");
-  fprintf(f, "      UCS2Font findfont csize scalefont setfont\n");
-  fprintf(f, "      ccode mbshow\n");
-  fprintf(f, "      true\n");
-  fprintf(f, "    } ifelse\n");
-  fprintf(f, "  } {\n");
-  fprintf(f, "    false\n");
-  fprintf(f, "  } ifelse\n");
-  fprintf(f, "} bind def\n");
-  fprintf(f, "\n");
-  fprintf(f, "/unicodeshow \n");
-  fprintf(f, "{\n");
-  fprintf(f, "  /cfont currentfont def\n");
-  fprintf(f, "  /str exch def\n");
-  fprintf(f, "  /i 0 def\n");
-  fprintf(f, "  str length /ls exch def\n");
-  fprintf(f, "  {\n");
-  fprintf(f, "    i 1 add ls ge {exit} if\n");
-  fprintf(f, "    str i get /c1 exch def\n");
-  fprintf(f, "    str i 1 add get /c2 exch def\n");
-  fprintf(f, "    /c c2 256 mul c1 add def\n");
-  fprintf(f, "    c2 1 ge \n");
-  fprintf(f, "    {\n");
-  fprintf(f, "      c unicodeshow1\n");
-  fprintf(f, "      {\n");
-  fprintf(f, "        %% do nothing\n");
-  fprintf(f, "      } {\n");
-  fprintf(f, "        c real_unicodeshow_cid	%% try CID \n");
-  fprintf(f, "        {\n");
-  fprintf(f, "          %% do nothing\n");
-  fprintf(f, "        } {\n");
-  fprintf(f, "          c unicodeshow2\n");
-  fprintf(f, "          {\n");
-  fprintf(f, "            %% do nothing\n");
-  fprintf(f, "          } {\n");
-  fprintf(f, "            draw_undefined_char\n");
-  fprintf(f, "          } ifelse\n");
-  fprintf(f, "        } ifelse\n");
-  fprintf(f, "      } ifelse\n");
-  fprintf(f, "    } {\n");
-  fprintf(f, "      %% ascii\n");
-  fprintf(f, "      cfont setfont\n");
-  fprintf(f, "      str i 1 getinterval show\n");
-  fprintf(f, "    } ifelse\n");
-  fprintf(f, "    /i i 2 add def\n");
-  fprintf(f, "  } loop\n");
-  fprintf(f, "}  bind def\n");
-  fprintf(f, "\n");
-
-  fprintf(f, "/u2nadd {Unicode2NativeDict 3 1 roll put} bind def\n");
-  fprintf(f, "\n");
-
-  fprintf(f, "/Unicode2NativeDictdef 0 dict def\n");
-  fprintf(f, "/default_ls {\n");
-  fprintf(f, "  /Unicode2NativeDict Unicode2NativeDictdef def\n");
-  fprintf(f, "  /UCS2Font   /Courier def\n");
-  fprintf(f, "  /NativeFont /Courier def\n");
-  fprintf(f, "  /unicodeshow1 { real_glyph_unicodeshow } bind def\n");
-  fprintf(f, "  /unicodeshow2 { real_unicodeshow_native } bind def\n");
-  fprintf(f, "} bind def\n");
-
-  fprintf(f, "\n");
+    "\n"
+    );
 
   // read the printer properties file
-  InitUnixPrinterProps();
+  NS_LoadPersistentPropertiesFromURISpec(getter_AddRefs(mPrinterProps),
+    NS_LITERAL_CSTRING("resource:/res/unixpsfonts.properties"));
 
   // setup prolog for each langgroup
   initlanggroup();
@@ -2006,21 +1950,16 @@ FILE *f;
       mPrintSetup->num_copies);
   }
   fprintf(f,"/pagelevel save def\n");
+  // Rescale the coordinate system from points to twips.
+  scale(1.0 / TWIPS_PER_POINT_FLOAT, 1.0 / TWIPS_PER_POINT_FLOAT);
+  // Rotate and shift the coordinate system for landscape
   if (mPrintContext->prSetup->landscape){
-    fprintf(f, "%d 0 translate 90 rotate\n",PAGE_TO_POINT_I(mPrintContext->prSetup->height));
+    fprintf(f, "90 rotate 0 -%d translate\n", mPrintContext->prSetup->height);
   }
-  fprintf(f, "%d 0 translate\n", PAGE_TO_POINT_I(mPrintContext->prSetup->left));
-  fprintf(f, "0 %d translate\n", PAGE_TO_POINT_I(mPrintContext->prSetup->top));
+
+  // Try to turn on automatic stroke adjust
+  fputs("true Msetstrokeadjust\n", f);
   fprintf(f, "%%%%EndPageSetup\n");
-#if 0
-  annotate_page( mPrintContext->prSetup->header, 0, -1, pn);
-#endif
-  fprintf(f, "newpath 0 %d moveto ", PAGE_TO_POINT_I(mPrintContext->prSetup->top));
-  fprintf(f, "%d 0 rlineto 0 %d rlineto -%d 0 rlineto ",
-			PAGE_TO_POINT_I(mPrintContext->prInfo->page_width),
-			PAGE_TO_POINT_I(mPrintContext->prInfo->page_height),
-			PAGE_TO_POINT_I(mPrintContext->prInfo->page_width));
-  fprintf(f, " closepath clip newpath\n");
 
   // need to reset all U2Ntable
   gLangGroups->Enumerate(ResetU2Ntable, nsnull);
@@ -2033,18 +1972,7 @@ FILE *f;
 void 
 nsPostScriptObj::end_page()
 {
-#if 0
-  annotate_page( mPrintContext->prSetup->footer,
-		   mPrintContext->prSetup->height-mPrintContext->prSetup->bottom-mPrintContext->prSetup->top,
-		   1, pn);
-  fprintf(mPrintContext->prSetup->out, "pagelevel restore\nshowpage\n");
-#endif
-
   fprintf(mPrintContext->prSetup->tmpBody, "pagelevel restore\n");
-  annotate_page(mPrintContext->prSetup->header, mPrintContext->prSetup->top/2, -1, mPageNumber);
-  annotate_page( mPrintContext->prSetup->footer,
-				   mPrintContext->prSetup->height - mPrintContext->prSetup->bottom/2,
-				   1, mPageNumber);
   fprintf(mPrintContext->prSetup->tmpBody, "showpage\n");
   mPageNumber++;
 }
@@ -2056,6 +1984,7 @@ nsPostScriptObj::end_page()
 nsresult 
 nsPostScriptObj::end_document()
 {
+  nsresult rv;
   PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("nsPostScriptObj::end_document()\n"));
 
   // insurance against breakage
@@ -2074,94 +2003,90 @@ nsPostScriptObj::end_document()
   /* Reset file pointer to the beginning of the temp tmpBody file... */
   fseek(mPrintContext->prSetup->tmpBody, 0, SEEK_SET);
 
+  /* Copy the document script (body) to the end of the prolog (header) */
   while ((length = fread(buffer, 1, sizeof(buffer),
           mPrintContext->prSetup->tmpBody)) > 0)  {
     fwrite(buffer, 1, length, f);
   }
 
+  /* Close the script file handle and dispose of the temporary file */
   if (mPrintSetup->tmpBody) {
     fclose(mPrintSetup->tmpBody);
     mPrintSetup->tmpBody = nsnull;
   }
-  if (mPrintSetup->tmpBody_filename)
-    free((void *)mPrintSetup->tmpBody_filename);
+  mDocScript->Remove(PR_FALSE);
+  mDocScript = nsnull;
   
+  // Finish up the document.
   // n_pages is zero so use mPageNumber
   fprintf(f, "%%%%Trailer\n");
   fprintf(f, "%%%%Pages: %d\n", (int) mPageNumber - 1);
   fprintf(f, "%%%%EOF\n");
 
-  if (mPrintSetup->filename) {
+  if (!mPrintSetup->print_cmd) {
     PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("print to file completed.\n"));
+    fclose(mPrintSetup->out);
+    rv = NS_OK;
   }  
   else {
     PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("piping job to '%s'\n", mPrintSetup->print_cmd));
-
-    FILE  *pipe;
-    char   buf[256];
-    size_t len;
         
 #ifdef VMS
-    /* We can't print from a pipe, so we need to create a temporary file */
-    int VMSstatus;
-    char VMSPrintCommand[1024];
-    mPrintSetup->filename = tempnam("SYS$SCRATCH:","MOZ_P");
-    pipe = fopen(mPrintSetup->filename, "w");
-#else
-    pipe = popen(mPrintSetup->print_cmd, "w");
-#endif /* VMS */
-    /* XXX: We should look at |errno| in this case and return something
-     * more specific here... */
-    if (!pipe)
-      return NS_ERROR_GFX_PRINTER_CMD_FAILURE;
-    
-    size_t job_size = 0;
-    
-    /* Reset file pointer to the beginning of the temp file... */
-    fseek(mPrintSetup->out, 0, SEEK_SET);
+    // VMS can't print to a pipe, so issue a print command for the
+    // mDocProlog file.
 
-    do {
-      len = fread(buf, 1, sizeof(buf), mPrintSetup->out);
-      fwrite(buf, 1, len, pipe);
-      
-      job_size += len;
-    } while(len == sizeof(buf));
+    fclose(mPrintSetup->out);
 
-#ifdef VMS
-    fclose(pipe);
-    /* Now we can print the temporary file */
-    PR_snprintf(VMSPrintCommand, sizeof(VMSPrintCommand), "%s %s.",
-      mPrintSetup->print_cmd, mPrintSetup->filename);
-    PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("VMS print command '%s'\n", 
-      VMSPrintCommand));
-    VMSstatus = system(VMSPrintCommand);
-    free((void *)mPrintSetup->filename);
-    mPrintSetup->filename = NULL;
-    PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("VMS print status = %d\n",
-      VMSstatus));
-    if (!WIFEXITED(VMSstatus))
-      return NS_ERROR_GFX_PRINTER_CMD_FAILURE;
-#else
-    pclose(pipe);
-#endif /* VMS */
-    PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("piping done, copied %ld bytes.\n", job_size));
-    if (errno != 0) {
-      return NS_ERROR_GFX_PRINTER_CMD_FAILURE;
+    nsCAutoString prologFile;
+    rv = mDocProlog->GetNativePath(prologFile);
+    if (NS_SUCCEEDED(rv)) {
+      char *VMSPrintCommand =
+        PR_smprintf("%s %s.", mPrintSetup->print_cmd, prologFile.get());
+      if (!VMSPrintCommand)
+        rv = NS_ERROR_OUT_OF_MEMORY;
+      else {
+        PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("VMS print command '%s'\n", 
+          VMSPrintCommand));
+        int VMSstatus = system(VMSPrintCommand);
+        PR_smprintf_free(VMSPrintCommand);
+        PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("VMS print status = %d\n",
+          VMSstatus));
+        rv = WIFEXITED(VMSstatus) ? NS_OK : NS_ERROR_GFX_PRINTER_CMD_FAILURE;
+      }
     }
+#else
+    // On *nix, popen() the print command and pipe the contents of
+    // mDocProlog into it.
+
+    FILE  *pipe;
+
+    pipe = popen(mPrintSetup->print_cmd, "w");
+    if (!pipe)
+      rv = NS_ERROR_GFX_PRINTER_CMD_FAILURE;
+    else {
+      unsigned long job_size = 0;
+    
+      /* Reset file pointer to the beginning of the temp file... */
+      fseek(mPrintSetup->out, 0, SEEK_SET);
+
+      while ((length = fread(buffer, 1, sizeof(buffer), mPrintSetup->out)) > 0)
+      {
+        fwrite(buffer, 1, length, pipe);
+        job_size += length;
+      }
+      fclose(mPrintSetup->out);
+      PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG,
+          ("piping done, copied %ld bytes.\n", job_size));
+      int exitStatus = pclose(pipe);
+      rv = WIFEXITED(exitStatus) ? NS_OK : NS_ERROR_GFX_PRINTER_CMD_FAILURE;
+    }
+#endif
+    mDocProlog->Remove(PR_FALSE);
   }
+  mPrintSetup->out = nsnull;
+  mDocProlog = nsnull;
   
-  return NS_OK;
-}
-
-/** ---------------------------------------------------
- *  See documentation in nsPostScriptObj.h
- *	@update 2/1/99 dwc
- */
-void
-nsPostScriptObj::annotate_page(const char *aTemplate,
-                               int y, int delta_dir, int pn)
-{
-
+  return rv;
 }
 
 /** ---------------------------------------------------
@@ -2321,19 +2246,9 @@ nsPostScriptObj::show(const PRUnichar* txt, int len,
  *	@update 2/1/99 dwc
  */
 void 
-nsPostScriptObj::moveto(int x, int y)
+nsPostScriptObj::moveto(nscoord x, nscoord y)
 {
-  XL_SET_NUMERIC_LOCALE();
-  y -= mPrintContext->prInfo->page_topy;
-
-  // invert y
- // y = (mPrintContext->prInfo->page_height - y - 1) + mPrintContext->prSetup->bottom;
-
-  y = (mPrintContext->prInfo->page_height - y - 1);
-  
-  fprintf(mPrintContext->prSetup->tmpBody, "%g %g moveto\n",
-		PAGE_TO_POINT_F(x), PAGE_TO_POINT_F(y));
-  XL_RESTORE_NUMERIC_LOCALE();
+  fprintf(mPrintContext->prSetup->tmpBody, "%d %d moveto\n", x, y);
 }
 
 /** ---------------------------------------------------
@@ -2341,80 +2256,28 @@ nsPostScriptObj::moveto(int x, int y)
  *	@update 2/1/99 dwc
  */
 void 
-nsPostScriptObj::moveto_loc(int x, int y)
+nsPostScriptObj::lineto(nscoord aX, nscoord aY)
 {
-  /* This routine doesn't care about the clip region in the page */
-
-  XL_SET_NUMERIC_LOCALE();
-
-  // invert y
-  y = (mPrintContext->prSetup->height - y - 1);
-
-  fprintf(mPrintContext->prSetup->tmpBody, "%g %g moveto\n",
-		PAGE_TO_POINT_F(x), PAGE_TO_POINT_F(y));
-  XL_RESTORE_NUMERIC_LOCALE();
-}
-
-
-/** ---------------------------------------------------
- *  See documentation in nsPostScriptObj.h
- *	@update 2/1/99 dwc
- */
-void 
-nsPostScriptObj::lineto( int aX1, int aY1)
-{
-  XL_SET_NUMERIC_LOCALE();
-
-  aY1 -= mPrintContext->prInfo->page_topy;
-  //aY1 = (mPrintContext->prInfo->page_height - aY1 - 1) + mPrintContext->prSetup->bottom;
-  aY1 = (mPrintContext->prInfo->page_height - aY1 - 1)  ;
-
-  fprintf(mPrintContext->prSetup->tmpBody, "%g %g lineto\n",
-		PAGE_TO_POINT_F(aX1), PAGE_TO_POINT_F(aY1));
-
-  XL_RESTORE_NUMERIC_LOCALE();
+  fprintf(mPrintContext->prSetup->tmpBody, "%d %d lineto\n", aX, aY);
 }
 
 /** ---------------------------------------------------
  *  See documentation in nsPostScriptObj.h
- *	@update 2/1/99 dwc
+ *    @param aWidth  Width of the ellipse implied by the arc
+ *           aHeight Height of the ellipse
+ *           aStartAngle  Angle for the start of the arc
+ *           aEndAngle    Angle for the end of the arc
  */
 void 
-nsPostScriptObj::ellipse( int aWidth, int aHeight)
+nsPostScriptObj::arc(nscoord aWidth, nscoord aHeight,
+  float aStartAngle,float aEndAngle)
 {
-  XL_SET_NUMERIC_LOCALE();
-
-  // Ellipse definition
-  fprintf(mPrintContext->prSetup->tmpBody,"%g %g ",
-                PAGE_TO_POINT_F(aWidth)/2, PAGE_TO_POINT_F(aHeight)/2);
-  fprintf(mPrintContext->prSetup->tmpBody,
-                " matrix currentmatrix currentpoint translate\n");
-  fprintf(mPrintContext->prSetup->tmpBody,
-          "     3 1 roll scale newpath 0 0 1 0 360 arc setmatrix  \n");
-  XL_RESTORE_NUMERIC_LOCALE();
-}
-
-/** ---------------------------------------------------
- *  See documentation in nsPostScriptObj.h
- *	@update 2/1/99 dwc
- */
-void 
-nsPostScriptObj::arc( int aWidth, int aHeight,float aStartAngle,float aEndAngle)
-{
-
-  XL_SET_NUMERIC_LOCALE();
   // Arc definition
-  fprintf(mPrintContext->prSetup->tmpBody,"%g %g ",
-                PAGE_TO_POINT_F(aWidth)/2, PAGE_TO_POINT_F(aHeight)/2);
   fprintf(mPrintContext->prSetup->tmpBody,
-                " matrix currentmatrix currentpoint translate\n");
-  fprintf(mPrintContext->prSetup->tmpBody,
-          "     3 1 roll scale newpath 0 0 1 %g %g arc setmatrix  \n",aStartAngle,aEndAngle);
-
-  XL_RESTORE_NUMERIC_LOCALE();
-
-
-  
+      "%s %s matrix currentmatrix currentpoint translate\n"
+      " 3 1 roll scale newpath 0 0 1 %s %s arc setmatrix\n",
+      fpCString(aWidth * 0.5).get(), fpCString(aHeight * 0.5).get(),
+      fpCString(aStartAngle).get(), fpCString(aEndAngle).get());
 }
 
 /** ---------------------------------------------------
@@ -2422,13 +2285,10 @@ nsPostScriptObj::arc( int aWidth, int aHeight,float aStartAngle,float aEndAngle)
  *	@update 2/1/99 dwc
  */
 void 
-nsPostScriptObj::box( int aW, int aH)
+nsPostScriptObj::box(nscoord aX, nscoord aY, nscoord aW, nscoord aH)
 {
-  XL_SET_NUMERIC_LOCALE();
   fprintf(mPrintContext->prSetup->tmpBody,
-          "%g 0 rlineto 0 %g rlineto %g 0 rlineto ",
-          PAGE_TO_POINT_F(aW), -PAGE_TO_POINT_F(aH), -PAGE_TO_POINT_F(aW));
-  XL_RESTORE_NUMERIC_LOCALE();
+    "%d %d %d %d Mrect ", aX, aY, aW, aH);
 }
 
 /** ---------------------------------------------------
@@ -2436,13 +2296,11 @@ nsPostScriptObj::box( int aW, int aH)
  *	@update 2/1/99 dwc
  */
 void 
-nsPostScriptObj::box_subtract( int aW, int aH)
+nsPostScriptObj::box_subtract(nscoord aX, nscoord aY, nscoord aW, nscoord aH)
 {
-  XL_SET_NUMERIC_LOCALE();
   fprintf(mPrintContext->prSetup->tmpBody,
-          "0 %g rlineto %g 0 rlineto 0 %g rlineto  ",
-          PAGE_TO_POINT_F(-aH), PAGE_TO_POINT_F(aW), PAGE_TO_POINT_F(aH));
-  XL_RESTORE_NUMERIC_LOCALE();
+    "%d %d moveto 0 %d rlineto %d 0 rlineto 0 %d rlineto closepath ",
+    aX, aY, aH, aW, -aH);
 }
 
 /** ---------------------------------------------------
@@ -2510,26 +2368,14 @@ nsPostScriptObj::initclip()
  *	@update 2/1/99 dwc
  */
 void 
-nsPostScriptObj::line( int aX1, int aY1, int aX2, int aY2, int aThick)
+nsPostScriptObj::line(nscoord aX1, nscoord aY1,
+  nscoord aX2, nscoord aY2, nscoord aThick)
 {
-  XL_SET_NUMERIC_LOCALE();
-  fprintf(mPrintContext->prSetup->tmpBody,
-          "gsave %g setlinewidth\n ",PAGE_TO_POINT_F(aThick));
-
-  aY1 -= mPrintContext->prInfo->page_topy;
- // aY1 = (mPrintContext->prInfo->page_height - aY1 - 1) + mPrintContext->prSetup->bottom;
-  aY1 = (mPrintContext->prInfo->page_height - aY1 - 1) ;
-  aY2 -= mPrintContext->prInfo->page_topy;
- // aY2 = (mPrintContext->prInfo->page_height - aY2 - 1) + mPrintContext->prSetup->bottom;
-  aY2 = (mPrintContext->prInfo->page_height - aY2 - 1) ;
-
-  fprintf(mPrintContext->prSetup->tmpBody, "%g %g moveto %g %g lineto\n",
-		    PAGE_TO_POINT_F(aX1), PAGE_TO_POINT_F(aY1),
-		    PAGE_TO_POINT_F(aX2), PAGE_TO_POINT_F(aY2));
+  fprintf(mPrintContext->prSetup->tmpBody, "gsave %d setlinewidth\n ", aThick);
+  fprintf(mPrintContext->prSetup->tmpBody, " %d %d moveto %d %d lineto\n",
+    aX1, aY1, aX2, aY2);
   stroke();
-
   fprintf(mPrintContext->prSetup->tmpBody, "grestore\n");
-  XL_RESTORE_NUMERIC_LOCALE();
 }
 
 /** ---------------------------------------------------
@@ -2572,181 +2418,178 @@ nsPostScriptObj::graphics_restore()
   fprintf(mPrintContext->prSetup->tmpBody, " grestore \n");
 }
 
+
+/** ---------------------------------------------------
+ *  Output postscript to scale the current coordinate system
+ *    @param aX   X scale factor
+ *           aY   Y scale factor
+ */
+void
+nsPostScriptObj::scale(float aX, float aY)
+{
+  fprintf(mPrintContext->prSetup->tmpBody, "%s %s scale\n",
+      fpCString(aX).get(), fpCString(aX).get());
+}
+
 /** ---------------------------------------------------
  *  See documentation in nsPostScriptObj.h
  *	@update 2/1/99 dwc
  */
 void 
-nsPostScriptObj::translate(int x, int y)
+nsPostScriptObj::translate(nscoord x, nscoord y)
 {
-    XL_SET_NUMERIC_LOCALE();
-    y -= mPrintContext->prInfo->page_topy;
-    // Y inversion
-    //y = (mPrintContext->prInfo->page_height - y - 1) + mPrintContext->prSetup->bottom;
-    y = (mPrintContext->prInfo->page_height - y - 1) ;
-
-    fprintf(mPrintContext->prSetup->tmpBody, "%g %g translate\n", PAGE_TO_POINT_F(x), PAGE_TO_POINT_F(y));
-    XL_RESTORE_NUMERIC_LOCALE();
+    fprintf(mPrintContext->prSetup->tmpBody, "%d %d translate\n", x, y);
 }
 
 
-/** ---------------------------------------------------
- *  See documentation in nsPostScriptObj.h
- *  Special notes, this on window will blow up since we can not get the bits in a DDB
- *	@update 2/1/99 dwc
- */
-void 
-nsPostScriptObj::grayimage(nsIImage *aImage,int aX,int aY, int aWidth,int aHeight)
+  /** ---------------------------------------------------
+   *  Draw an image. This involves two coordinate systems, one for the
+   *  page and one for the image. dRect is in the page coordinate system;
+   *  it describes the rectangle which the image should occupy on the page.
+   *  sRect describes the same rectangle, only in image space; it's the
+   *  portion of the image which should appear on the page. iRect describes
+   *  the position and dimensions of the actual pixel data within image
+   *  space.
+   *
+   *  In the simple case, sRect and iRect will be the same, and their (x,y)
+   *  values will be (0,0). But images may have a virtual size larger than
+   *  the pixel rectangle, so iRect's position may not be (0,0) and its
+   *  dimensions may be smaller than sRect's. Similarly, it's possible that
+   *  only part of the image is being printed, in which case sRect's
+   *  position may not be (0,0) and its dimensions may not span the entire
+   *  iRect rectangle. So in the general case, iRect and sRect may be
+   *  completely arbitrary relative to each other and to the image-space
+   *  origin.
+   *
+   *    @update 3/14/2004 kherron
+   *    @param anImage  Image to draw
+   *    @param dRect    Rectangle describing where on the page the image
+   *                    should appear. Units are twips.
+   *    @param sRect    Rectangle describing the portion of the image that
+   *                    appears on the page, i.e. the part of the image's
+   *                    coordinate space that maps to dRect.
+   *    @param iRect    Rectangle describing the portion of the image's
+   *                    coordinate space covered by the image pixel data.
+   */
+
+void
+nsPostScriptObj::draw_image(nsIImage *anImage,
+    const nsRect& sRect, const nsRect& iRect, const nsRect& dRect)
 {
-PRInt32 rowData,bytes_Per_Pix,x,y;
-PRInt32 width,height,bytewidth,cbits,n;
-PRUint8 *theBits,*curline;
-PRBool isTopToBottom;
-PRInt32 sRow, eRow, rStep; 
-
-  XL_SET_NUMERIC_LOCALE();
-  bytes_Per_Pix = aImage->GetBytesPix();
-
-  if(bytes_Per_Pix == 1)
-    return ;
-
-  rowData = aImage->GetLineStride();
-  height = aImage->GetHeight();
-  width = aImage->GetWidth();
-  bytewidth = 3*width;
-  cbits = 8;
-
   FILE *f = mPrintContext->prSetup->tmpBody;
-  fprintf(f, "gsave\n");
-  fprintf(f, "/rowdata %d string def\n",bytewidth/3);
-  translate(aX, aY + aHeight);
-  fprintf(f, "%g %g scale\n",
-          PAGE_TO_POINT_F(aWidth), PAGE_TO_POINT_F(aHeight));
-  fprintf(f, "%d %d ", width, height);
-  fprintf(f, "%d ", cbits);
-  fprintf(f, "[%d 0 0 %d 0 0]\n", width,height);
-  fprintf(f, " { currentfile rowdata readhexstring pop }\n");
-  fprintf(f, " image\n");
-
-  aImage->LockImagePixels(PR_FALSE);
-  theBits = aImage->GetBits();
-  n = 0;
-  if ( ( isTopToBottom = aImage->GetIsRowOrderTopToBottom()) == PR_TRUE ) {
-	sRow = height - 1;
-        eRow = 0;
-        rStep = -1;
-  } else {
-	sRow = 0;
-        eRow = height;
-        rStep = 1;
-  }
-
-  y = sRow;
-  while ( 1 ) {
-    curline = theBits + (y*rowData);
-    for(x=0;x<bytewidth;x+=3){
-      if (n > 71) {
-          fprintf(mPrintContext->prSetup->tmpBody,"\n");
-          n = 0;
-      }
-      fprintf(mPrintContext->prSetup->tmpBody, "%02x", (int) (0xff & *curline));
-      curline+=3; 
-      n += 2;
-    }
-    y += rStep;
-    if ( isTopToBottom == PR_TRUE && y < eRow ) break;
-    if ( isTopToBottom == PR_FALSE && y >= eRow ) break;
-  }
-  aImage->UnlockImagePixels(PR_FALSE);
-
-  fprintf(mPrintContext->prSetup->tmpBody, "\ngrestore\n");
-  XL_RESTORE_NUMERIC_LOCALE();
-
-}
-
-/** ---------------------------------------------------
- *  See documentation in nsPostScriptObj.h
- *  Special notes, this on window will blow up since we can not get the bits in a DDB
- *	@update 2/1/99 dwc
- */
-void 
-nsPostScriptObj::colorimage(nsIImage *aImage,int aX,int aY, int aWidth,int aHeight)
-{
-PRInt32 rowData,bytes_Per_Pix,x,y;
-PRInt32 width,height,bytewidth,cbits,n;
-PRUint8 *theBits,*curline;
-PRBool isTopToBottom;
-PRInt32 sRow, eRow, rStep; 
-
-  // No point in scaling images to 0--some printers choke on it (bug 191684)
-  if (aWidth == 0 || aHeight == 0) {
+  
+  // If a final image dimension is 0 pixels, just return (see bug 191684)
+  if ((0 == dRect.width) || (0 == dRect.height)) {
     return;
   }
 
-  XL_SET_NUMERIC_LOCALE();
+  anImage->LockImagePixels(PR_FALSE);
+  PRUint8 *theBits = anImage->GetBits();
 
-  if(mPrintSetup->color == PR_FALSE ){
-    this->grayimage(aImage,aX,aY,aWidth,aHeight);
+  // Image data is unavailable, or it has no height or width.
+  // There's nothing to print, so just return.
+  if (!theBits || (0 == iRect.width) || (0 == iRect.height)) {
+    anImage->UnlockImagePixels(PR_FALSE);
     return;
   }
 
-  bytes_Per_Pix = aImage->GetBytesPix();
+  // Save the current graphic state and define a PS variable that
+  // can hold one line of pixel data.
+  fprintf(f, "gsave\n/rowdata %d string def\n",
+     mPrintSetup->color ? iRect.width * 3 : iRect.width);
+ 
+  // Translate the coordinate origin to the corner of the rectangle where
+  // the image should appear, set up a clipping region, and scale the
+  // coordinate system to the image's final size.
+  translate(dRect.x, dRect.y);
+  box(0, 0, dRect.width, dRect.height);
+  clip();
+  fprintf(f, "%d %d scale\n", dRect.width, dRect.height);
 
-  if(bytes_Per_Pix == 1)
-    return ;
+  // Describe how the pixel data is to be interpreted: pixels per row,
+  // rows, and bits per pixel (per component in color).
+  fprintf(f, "%d %d 8 ", iRect.width, iRect.height);
 
-  rowData = aImage->GetLineStride();
-  height = aImage->GetHeight();
-  width = aImage->GetWidth();
-  bytewidth = 3*width;
-  cbits = 8;
+  // Output the transformation matrix for the image. This is a bit tricky
+  // to understand. PS image-drawing operations involve two transformation
+  // matrices: (1) A Transformation matrix associated with the image
+  // describes how to map the pixel data (width x height) onto a unit square,
+  // and (2) the document's TM maps the unit square to the desired size and
+  // position. The image TM is technically an inverse TM, i.e. it describes
+  // how to map the unit square onto the pixel array.
+  //
+  // sRect and dRect define the same rectangle, only in different coordinate
+  // systems. Following the translate & scale operations above, the origin
+  // is at [sRect.x, sRect.y]. The "real" origin of image space is thus at
+  // [-sRect.x, -sRect.y] and the pixel data should start at
+  // [-sRect.x + iRect.x, -sRect.y + iRect.y]. These are negated because the
+  // TM is supposed to be an inverse TM.
+  nscoord tmTX = sRect.x - iRect.x;
+  nscoord tmTY = sRect.y - iRect.y;
 
-  FILE *f = mPrintContext->prSetup->tmpBody;
-  fprintf(f, "gsave\n");
-  fprintf(f, "/rowdata %d string def\n",bytewidth);
-  translate(aX, aY + aHeight);
-  fprintf(f, "%g %g scale\n",
-          PAGE_TO_POINT_F(aWidth), PAGE_TO_POINT_F(aHeight));
-  fprintf(f, "%d %d ", width, height);
-  fprintf(f, "%d ", cbits);
-  fprintf(f, "[%d 0 0 %d 0 0]\n", width,height);
-  fprintf(f, " { currentfile rowdata readhexstring pop }\n");
-  fprintf(f, " false 3 colorimage\n");
+  // In document space, the target rectangle is [dRect.width,
+  // dRect.height]; in image space it's [sRect.width, sRect.height]. So
+  // the proper scale factor is [1/sRect.width, 1/sRect.height], but
+  // again, the output should be an inverse TM so these are inverted.
+  nscoord tmSX = sRect.width;
+  nscoord tmSY = sRect.height;
 
-  aImage->LockImagePixels(PR_FALSE);
-  theBits = aImage->GetBits();
-  n = 0;
-  if ( ( isTopToBottom = aImage->GetIsRowOrderTopToBottom()) == PR_TRUE ) {
-	sRow = height - 1;
-        eRow = 0;
-        rStep = -1;
-  } else {
-	sRow = 0;
-        eRow = height;
-        rStep = 1;
+  // If the image is being stretched and clipped, it's possible that only
+  // a fraction of a pixel is supposed to be visible, resulting in a 
+  // dimension of zero after rounding. 0 isn't a valid scaling factor.
+  // But something should appear on the page, unlike the case where dRect
+  // or iRect is zero-sized, so force the dimension to 1. See bug 236801.
+  if (0 == tmSX)
+    tmSX = 1;
+  if (0 == tmSY)
+    tmSY = 1;
+
+  // If the image data is in the wrong order, invert the TM, causing
+  // the image to be drawn inverted.
+  if (!anImage->GetIsRowOrderTopToBottom()) {
+    tmTY += tmSY;
+    tmSY = -tmSY;
   }
+  fprintf(f, "[ %d 0 0 %d %d %d ]\n", tmSX, tmSY, tmTX, tmTY);
 
-  y = sRow;
-  while ( 1 ) {
-    curline = theBits + (y*rowData);
-    for(x=0;x<bytewidth;x++){
-      if (n > 71) {
-          fprintf(f,"\n");
-          n = 0;
+  // Output the data-reading procedure and the appropriate image command.
+  fputs(" { currentfile rowdata readhexstring pop }", f);
+  if (mPrintSetup->color)
+    fputs(" false 3 colorimage\n", f);
+  else
+    fputs(" image\n", f);
+
+  // Output the image data. The entire image is written, even
+  // if it's partially clipped in the document.
+  int outputCount = 0;
+  PRInt32 bytesPerRow = anImage->GetLineStride();
+
+  for (nscoord y = 0; y < iRect.height; y++) {
+    // calculate the starting point for this row of pixels
+    PRUint8 *row = theBits                // Pixel buffer start
+      + y * bytesPerRow;                  // Rows already output
+
+    for (nscoord x = 0; x < iRect.width; x++) {
+      PRUint8 *pixel = row + (x * 3);
+      if (mPrintSetup->color)
+        outputCount +=
+          fprintf(f, "%02x%02x%02x", pixel[0], pixel[1], pixel[2]);
+      else
+        outputCount +=
+          fprintf(f, "%02x", NS_RGB_TO_GRAY(pixel[0], pixel[1], pixel[2]));
+      if (outputCount >= 72) {
+        fputc('\n', f);
+        outputCount = 0;
       }
-      fprintf(f, "%02x", (int) (0xff & *curline++));
-      n += 2;
     }
-    y += rStep;
-    if ( isTopToBottom == PR_TRUE && y < eRow ) break;
-    if ( isTopToBottom == PR_FALSE && y >= eRow ) break;
   }
-  aImage->UnlockImagePixels(PR_FALSE);
+  anImage->UnlockImagePixels(PR_FALSE);
 
-  fprintf(f, "\ngrestore\n");
-  XL_RESTORE_NUMERIC_LOCALE();
-
+  // Free the PS data buffer and restore the previous graphics state.
+  fputs("\n/rowdata where { /rowdata undef } if\n", f);
+  fputs("grestore\n", f);
 }
+
 
 /** ---------------------------------------------------
  *  See documentation in nsPostScriptObj.h
@@ -2757,32 +2600,31 @@ nsPostScriptObj::setcolor(nscolor aColor)
 {
 float greyBrightness;
 
-  XL_SET_NUMERIC_LOCALE();
-
   /* For greyscale postscript, find the average brightness of red, green, and
    * blue.  Using this average value as the brightness for red, green, and
    * blue is a simple way to make the postscript greyscale instead of color.
    */
 
   if(mPrintSetup->color == PR_FALSE ) {
-    greyBrightness=(NS_PS_RED(aColor)+NS_PS_GREEN(aColor)+NS_PS_BLUE(aColor))/3;
-    fprintf(mPrintContext->prSetup->tmpBody,"%3.2f %3.2f %3.2f setrgbcolor\n",
-    greyBrightness,greyBrightness,greyBrightness);
+    greyBrightness=NS_PS_GRAY(NS_RGB_TO_GRAY(NS_GET_R(aColor),
+                                             NS_GET_G(aColor),
+                                             NS_GET_B(aColor)));
+    fprintf(mPrintContext->prSetup->tmpBody, "%s setgray\n",
+      fpCString(greyBrightness).get());
   } else {
-    fprintf(mPrintContext->prSetup->tmpBody,"%3.2f %3.2f %3.2f setrgbcolor\n",
-    NS_PS_RED(aColor), NS_PS_GREEN(aColor), NS_PS_BLUE(aColor));
+    fprintf(mPrintContext->prSetup->tmpBody, "%s %s %s setrgbcolor\n",
+      fpCString(NS_PS_RED(aColor)).get(),
+      fpCString(NS_PS_GREEN(aColor)).get(),
+      fpCString(NS_PS_BLUE(aColor)).get());
   }
 
-  XL_RESTORE_NUMERIC_LOCALE();
 }
 
 
 void nsPostScriptObj::setfont(const nsCString aFontName, PRUint32 aHeight)
 {
   fprintf(mPrintContext->prSetup->tmpBody,
-          "/%s findfont %d scalefont setfont\n",
-          aFontName.get(),
-          NS_TWIPS_TO_POINTS(aHeight));
+          "%d /%s Msf\n", aHeight, aFontName.get());
 }
 
 /** ---------------------------------------------------
@@ -2798,9 +2640,9 @@ int postscriptFont = 0;
 
 //    fprintf(mPrintContext->prSetup->out, "%% aFontIndex = %d, Family = %s, aStyle = %d, 
 //        aWeight=%d, postscriptfont = %d\n", aFontIndex, &aFamily, aStyle, aWeight, postscriptFont);
-  fprintf(mPrintContext->prSetup->tmpBody,"%d",NS_TWIPS_TO_POINTS(aHeight));
-	
-  
+  fprintf(mPrintContext->prSetup->tmpBody,"%d", aHeight);
+
+ 
   if( aFontIndex >= 0) {
     postscriptFont = aFontIndex;
   } else {
@@ -2900,24 +2742,6 @@ nsPostScriptObj::setlanggroup(nsIAtom * aLangGroup)
   } else {
     fprintf(f, "default_ls\n");
   }
-}
-
-PRBool
-nsPostScriptObj::InitUnixPrinterProps()
-{
-  nsCOMPtr<nsIPersistentProperties> printerprops_tmp;
-  const char propertyURL[] = "resource:/res/unixpsfonts.properties";
-  nsCOMPtr<nsIURI> uri;
-  NS_ENSURE_SUCCESS(NS_NewURI(getter_AddRefs(uri), NS_LITERAL_CSTRING(propertyURL)), PR_FALSE);
-  nsCOMPtr<nsIInputStream> in;
-  NS_ENSURE_SUCCESS(NS_OpenURI(getter_AddRefs(in), uri), PR_FALSE);
-  NS_ENSURE_SUCCESS(nsComponentManager::CreateInstance(
-    NS_PERSISTENTPROPERTIES_CONTRACTID, nsnull,
-    NS_GET_IID(nsIPersistentProperties), getter_AddRefs(printerprops_tmp)),
-    PR_FALSE);
-  NS_ENSURE_SUCCESS(printerprops_tmp->Load(in), PR_FALSE);
-  mPrinterProps = printerprops_tmp;
-  return PR_TRUE;
 }
 
 PRBool
@@ -3134,3 +2958,4 @@ nsPostScriptObj::initlanggroup()
   gPrefs->EnumerateChildren(kUnicodeFontPrefix,
 	    PrefEnumCallback, (void *) this);
 }
+

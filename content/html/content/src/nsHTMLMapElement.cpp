@@ -48,7 +48,7 @@
 #include "nsCOMPtr.h"
 
 
-class nsHTMLMapElement : public nsGenericHTMLContainerElement,
+class nsHTMLMapElement : public nsGenericHTMLElement,
                          public nsIDOMHTMLMapElement
 {
 public:
@@ -59,21 +59,19 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLElement::)
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLMapElement
   NS_DECL_NSIDOMHTMLMAPELEMENT
 
-  NS_IMETHOD GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                      nsChangeHint& aHint) const;
-  NS_IMETHOD SetDocument(nsIDocument* aDocument, PRBool aDeep,
-                         PRBool aCompileEventHandlers);
+  virtual void SetDocument(nsIDocument* aDocument, PRBool aDeep,
+                           PRBool aCompileEventHandlers);
 
 protected:
   GenericElementCollection* mAreas;
@@ -82,7 +80,7 @@ protected:
 
 nsresult
 NS_NewHTMLMapElement(nsIHTMLContent** aInstancePtrResult,
-                     nsINodeInfo *aNodeInfo)
+                     nsINodeInfo *aNodeInfo, PRBool aFromParser)
 {
   NS_ENSURE_ARG_POINTER(aInstancePtrResult);
 
@@ -126,35 +124,36 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLMapElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLMapElement
-NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLMapElement,
-                                    nsGenericHTMLContainerElement)
+NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLMapElement, nsGenericHTMLElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLMapElement)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLMapElement)
 NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
-NS_IMETHODIMP 
+void
 nsHTMLMapElement::SetDocument(nsIDocument* aDocument, PRBool aDeep,
                               PRBool aCompileEventHandlers)
 {
-  nsCOMPtr<nsIHTMLDocument> htmlDoc(do_QueryInterface(mDocument));
-  nsresult rv;
-
-  if (htmlDoc) {
-    htmlDoc->RemoveImageMap(this);
-  }
-
-  rv = nsGenericHTMLContainerElement::SetDocument(aDocument, aDeep,
-                                                  aCompileEventHandlers);
-
-  // Since we changed the document, gotta re-QI
-  htmlDoc = do_QueryInterface(mDocument);
-
-  if (NS_SUCCEEDED(rv) && htmlDoc) {
-    htmlDoc->AddImageMap(this);
-  }
+  PRBool documentChanging = (aDocument != mDocument);
   
-  return rv;
+  if (documentChanging) {
+    nsCOMPtr<nsIHTMLDocument> htmlDoc(do_QueryInterface(mDocument));
+
+    if (htmlDoc) {
+      htmlDoc->RemoveImageMap(this);
+    }
+  }
+
+  nsGenericHTMLElement::SetDocument(aDocument, aDeep, aCompileEventHandlers);
+  
+  if (documentChanging) {
+    // Since we changed the document, gotta re-QI
+    nsCOMPtr<nsIHTMLDocument> htmlDoc(do_QueryInterface(mDocument));
+
+    if (htmlDoc) {
+      htmlDoc->AddImageMap(this);
+    }
+  }
 }
 
 NS_IMETHODIMP
@@ -176,7 +175,7 @@ nsHTMLMapElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   if (NS_FAILED(rv))
     return rv;
 
-  CopyInnerTo(this, it, aDeep);
+  CopyInnerTo(it, aDeep);
 
   *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
 
@@ -209,23 +208,3 @@ nsHTMLMapElement::GetAreas(nsIDOMHTMLCollection** aAreas)
 
 
 NS_IMPL_STRING_ATTR(nsHTMLMapElement, Name, name)
-
-
-NS_IMETHODIMP
-nsHTMLMapElement::GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                           nsChangeHint& aHint) const
-{
-  static const AttributeImpactEntry attributes[] = {
-    { &nsHTMLAtoms::name, NS_STYLE_HINT_RECONSTRUCT_ALL },
-    { nsnull, NS_STYLE_HINT_NONE }
-  };
-
-  static const AttributeImpactEntry* const map[] = {
-    attributes,
-    sCommonAttributeMap,
-  };
-
-  FindAttributeImpact(aAttribute, aHint, map, NS_ARRAY_LENGTH(map));
-  
-  return NS_OK;
-}

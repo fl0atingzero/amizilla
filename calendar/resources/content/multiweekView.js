@@ -127,34 +127,28 @@ function MultiweekView( calendarWindow )
    {
       onSelectionChanged : function( EventSelectionArray )
       {
-         
-         dump( "\nIn Multiweek view, on selection changed : " + EventSelectionArray.length );
           if( EventSelectionArray.length > 0 )
          {
             setTimeout( "gCalendarWindow.multiweekView.clearSelectedDate();", 1 );
 
-            //dump( "\nIn Multiweek view, eventSelectionArray.length is "+EventSelectionArray.length );
             var i = 0;
             
             for( i = 0; i < EventSelectionArray.length; i++ )
             {
-	      //dump( "\nin Multiweek view, going to try and get the event boxes with name 'multiweek-view-event-box-"+EventSelectionArray[i].id+"'" );
-	      //dump( "\nin Multiweek view, going to try and get"+EventSelectionArray[i].due+"'" );
+               var EventBoxes;
                if( EventSelectionArray[i].due ) 
 		 {
-		   var EventBoxes = document.getElementsByAttribute( "name", "multiweek-view-todo-box-"+EventSelectionArray[i].id );		   
+		   EventBoxes = document.getElementsByAttribute( "name", "multiweek-view-todo-box-"+EventSelectionArray[i].id );		   
 		 }
 	       else
 		 {
-		   var EventBoxes = document.getElementsByAttribute( "name", "multiweek-view-event-box-"+EventSelectionArray[i].id );
+		   EventBoxes = document.getElementsByAttribute( "name", "multiweek-view-event-box-"+EventSelectionArray[i].id );
 		 }
-               //dump( "\nIn Multiweek view, found "+EventBoxes.length+" matches for the selected event." );
                for ( j = 0; j < EventBoxes.length; j++ ) 
                {
                   EventBoxes[j].setAttribute( "eventselected", "true" );
                }
             }
-            //dump( "\nAll Done in Selection for Multiweek View" );
          }
          else
          {
@@ -329,11 +323,6 @@ MultiweekView.prototype.refreshEvents = function multiweekView_refreshEvents( )
 
                // end calendar color change by CofC
                     
-         if( calendarEventDisplay.event.categories && calendarEventDisplay.event.categories != "" )
-         {
-            eventBox.setAttribute( calendarEventDisplay.event.categories, "true" );
-         }
-            
          eventBox.setAttribute( "eventbox", "multiweekview" );
          eventBox.setAttribute( "onclick", "monthEventBoxClickEvent( this, event )" );
          eventBox.setAttribute( "ondblclick", "monthEventBoxDoubleClickEvent( this, event )" );
@@ -587,11 +576,12 @@ MultiweekView.prototype.refreshDisplay = function multiweekView_refreshDisplay( 
       document.getElementById( "multiweek-view-header-day-"+i ).value = NewArrayOfDayNames[ (i-1) ];
    }
    
-   for( var weekIndex = 1 ;  weekIndex <= this.WeeksInView ; ++weekIndex )
+   var weekIndex;
+   for( weekIndex = 1 ;  weekIndex <= this.WeeksInView ; ++weekIndex )
    {
      document.getElementById( "multiweek-week-" + weekIndex + "-row" ).removeAttribute( "collapsed" );
    }
-   for( var weekIndex = this.WeeksInView + 1 ; weekIndex <= 6 ; ++weekIndex )
+   for( weekIndex = this.WeeksInView + 1 ; weekIndex <= 6 ; ++weekIndex )
    {
      document.getElementById( "multiweek-week-" + weekIndex + "-row" ).setAttribute( "collapsed", "true" );
    }
@@ -646,7 +636,7 @@ MultiweekView.prototype.refreshDisplay = function multiweekView_refreshDisplay( 
    var mondayDate ;
    var newoffset = (Offset >= 5) ? 8 -Offset : 1 - Offset ;
 
-   for( var weekIndex = 0; weekIndex < this.WeeksInView; ++weekIndex )
+   for( weekIndex = 0; weekIndex < this.WeeksInView; ++weekIndex )
    {
      weekNumberItem = this.weekNumberItemArray[ weekIndex+1 ] ;
      mondayDate = new Date( this.firstDateOfView.getFullYear(), 
@@ -893,9 +883,7 @@ MultiweekView.prototype.clickDay = function multiweekView_clickDay( event )
    if(   dayBoxItem.selectable == true && event.detail == 1 )
    {
       // change the selected date and redraw it
-      var newDate = dayBoxItem.date;
-
-      this.calendarWindow.setSelectedDate( newDate );
+      this.calendarWindow.setSelectedDate( dayBoxItem.date );
 
       //changing the selection will redraw the day as selected (colored blue) in the month view.
       //therefor, this has to happen after setSelectedDate
@@ -939,6 +927,8 @@ MultiweekView.prototype.doubleClickDay = function multiweekView_doubleClickDay( 
 
 MultiweekView.prototype.clearSelectedEvent = function multiweekView_clearSelectedEvent( )
 {
+  debug("clearSelectedEvent");
+
    var ArrayOfBoxes = document.getElementsByAttribute( "eventselected", "true" );
 
    for( i = 0; i < ArrayOfBoxes.length; i++ )
@@ -1023,12 +1013,6 @@ MultiweekView.prototype.setNumberOfEventsToShow = function multiweekView_setNumb
   
    //calculate the number of events to show.
   var numberOfEventsToShow = parseInt(  ( MultiweekViewBoxHeight - MultiweekViewLabelHeight - 14) / EventBoxHeight )
-//     dump( "\nNactual"+( MultiweekViewBoxHeight - MultiweekViewLabelHeight ) / EventBoxHeight );
-//     dump( "\nM MultiweekViewBoxHeight: "+MultiweekViewBoxHeight );
-//     dump( "\nM MultiweekViewLabelHeight: "+MultiweekViewLabelHeight );
-//     dump( "\nM EventBoxHeight"+EventBoxHeight );
-//     dump( "\nM EventDotBoxHeight"+ EventDotBoxHeight );
-//     dump( "\nNnew : "+ numberOfEventsToShow) ;
   this.numberOfEventsToShow = numberOfEventsToShow ;
 
   // remove created event boxes
@@ -1041,10 +1025,8 @@ MultiweekView.prototype.setNumberOfEventsToShow = function multiweekView_setNumb
 /* Change the number of weeks in the view */
 MultiweekView.prototype.changeNumberOfWeeks = function multiweekView_changeNumberOfWeeks(el) 
 {
-  dump("\nnb Weeks " + el.getAttribute("value")) ;
   var v=el.getAttribute("value") ;
   this.WeeksInView = parseInt(v) ;
-  dump("\nnb Weeks " + this.WeeksInView ) ;
   this.refreshDisplay() ;
 }
 
@@ -1054,7 +1036,7 @@ MultiweekView.prototype.setFictitiousEvents = function multiweekView_setFictitio
 {
   var dayBoxItem = this.dayBoxItemArray[ 3 ];
   if( !dayBoxItem ) 
-     return false;
+     return;
   // Make a box item to hold the event
   var eventBox = document.createElement( "box" );
   eventBox.setAttribute( "id", "multiweek-view-event-box-fictitious" );
@@ -1085,4 +1067,11 @@ MultiweekView.prototype.setFictitiousEvents = function multiweekView_setFictitio
   eventBox.setAttribute( "id", "multiweek-view-event-box-fictitious-dot" );
   eventDotBox.appendChild( eventBox );
   dotBoxHolder.appendChild( eventDotBox );
+}
+
+
+function debug( Text )
+{
+   dump( "\nmultiweekView.js: "+ Text);
+
 }

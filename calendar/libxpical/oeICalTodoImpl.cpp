@@ -35,6 +35,10 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* This file implements an XPCOM object which represents a calendar task(todo) object. It is a derivation
+of the event object which adds fields exclusive to tasks.
+*/
+
 #ifndef WIN32
 #include <unistd.h>
 #endif
@@ -43,6 +47,9 @@
 #include "oeICalTodoImpl.h"
 #include "nsMemory.h"
 #include "nsCOMPtr.h"
+#include "nsIPrefBranch.h"
+#include "nsIPrefService.h"
+#include "nsIServiceManager.h"
 
 #define strcasecmp strcmp
 
@@ -54,7 +61,7 @@
 #define RECUR_YEARLY 5
 
 /* Implementation file */
-NS_IMPL_ISUPPORTS1(oeICalTodoImpl, oeIICalTodo)
+NS_IMPL_ISUPPORTS2(oeICalTodoImpl, oeIICalTodo, oeIICalEvent)
 
 icaltimetype ConvertFromPrtime( PRTime indate );
 PRTime ConvertToPrtime ( icaltimetype indate );
@@ -83,15 +90,30 @@ oeICalTodoImpl::oeICalTodoImpl()
     mEvent = new oeICalEventImpl();
     NS_ADDREF( mEvent );
 
+    mEvent->SetType( XPICAL_VTODO_COMPONENT );
+
     /* member initializers and constructor code */
     nsresult rv;
-	if( NS_FAILED( rv = NS_NewDateTime((oeIDateTime**) &m_due ))) {
-        m_due = nsnull;
-	}
 	if( NS_FAILED( rv = NS_NewDateTime((oeIDateTime**) &m_completed ))) {
         m_completed = nsnull;
 	}
     m_percent = 0;
+
+    //Some defaults are different for todos, apply them
+    nsCOMPtr<nsIPrefBranch> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+    if ( NS_SUCCEEDED(rv) && prefBranch ) {
+        nsXPIDLCString tmpstr;
+        PRInt32 tmpint;
+        rv = prefBranch->GetIntPref("calendar.alarms.onfortodos", &tmpint);
+        if (NS_SUCCEEDED(rv))
+            SetAlarm( tmpint );
+        rv = prefBranch->GetIntPref("calendar.alarms.todoalarmlen", &tmpint);
+        if (NS_SUCCEEDED(rv))
+            SetAlarmLength( tmpint );
+        rv = prefBranch->GetCharPref("calendar.alarms.todoalarmunit", getter_Copies(tmpstr));
+        if (NS_SUCCEEDED(rv))
+            SetAlarmUnits( PromiseFlatCString( tmpstr ).get() );
+    }
 }
 
 oeICalTodoImpl::~oeICalTodoImpl()
@@ -100,8 +122,6 @@ oeICalTodoImpl::~oeICalTodoImpl()
     printf( "oeICalTodoImpl::~oeICalTodoImpl()\n");
 #endif
     /* destructor code */
-    if( m_due )
-        m_due->Release();
     if( m_completed )
         m_completed->Release();
     mEvent->Release();
@@ -119,9 +139,7 @@ bool oeICalTodoImpl::matchId( const char *id ) {
 /* readonly attribute oeIDateTime due; */
 NS_IMETHODIMP oeICalTodoImpl::GetDue(oeIDateTime * *due)
 {
-    *due = m_due;
-    NS_ADDREF(*due);
-    return NS_OK;
+    return mEvent->GetEnd( due );
 }
 
 /* areadonly attribute oeIDateTime completed; */
@@ -272,16 +290,6 @@ bool oeICalTodoImpl::ParseIcalComponent( icalcomponent *comp )
         m_completed->m_datetime = icaltime_null_time();
     }
 
-    //due
-    prop = icalcomponent_get_first_property( vtodo, ICAL_DUE_PROPERTY );
-    if (prop != 0) {
-        icaltimetype due;
-        due = icalproperty_get_due( prop );
-        m_due->m_datetime = due;
-    } else {
-        m_due->m_datetime = icaltime_null_time();
-    }
-
     return true;
 }
 
@@ -315,7 +323,6 @@ icalcomponent* oeICalTodoImpl::AsIcalComponent()
     //prodid
     prop = icalproperty_new_prodid( ICALEVENT_PRODID );
     icalcomponent_add_property( newcalendar, prop );
-
     icalcomponent *vtodo = icalcomponent_new_vtodo();
     icalcomponent *vevent = icalcomponent_get_first_component( basevcal, ICAL_VEVENT_COMPONENT );
     for( prop = icalcomponent_get_first_property( vevent, ICAL_ANY_PROPERTY );
@@ -324,48 +331,34 @@ icalcomponent* oeICalTodoImpl::AsIcalComponent()
         icalproperty *newprop;
         icalproperty_kind propkind = icalproperty_isa( prop );
         if( propkind == ICAL_X_PROPERTY ) {
-            //do nothing
-/*            newprop = icalproperty_new_x( icalproperty_get_value_as_string( prop ) );
+            newprop = icalproperty_new_x( icalproperty_get_value_as_string( prop ) );
+            icalproperty_set_x_name( newprop, icalproperty_get_x_name( prop ));
             icalparameter *oldpar = icalproperty_get_first_parameter( prop, ICAL_MEMBER_PARAMETER );
-            icalparameter *newpar = icalparameter_new_clone( oldpar );
-            icalproperty_add_parameter( newprop, newpar );*/
-            continue;
-        } else if( propkind == ICAL_DTEND_PROPERTY || propkind == ICAL_RRULE_PROPERTY) {
-            //do nothing
-            continue;
+            icalparameter *newpar = icalparameter_new_member( icalparameter_get_member( oldpar ) );
+            icalproperty_add_parameter( newprop, newpar );
+        } else if( propkind == ICAL_DTEND_PROPERTY ) {
+            //Change DTEND to DUE
+            newprop = icalproperty_new_due( icalproperty_get_dtend( prop ) );
+            icalparameter *oldpar = icalproperty_get_first_parameter( prop, ICAL_TZID_PARAMETER );
+            if( oldpar ) {
+                icalparameter *newpar = icalparameter_new_tzid( icalparameter_get_tzid( oldpar ) );
+                icalproperty_add_parameter( newprop, newpar );
+            }
         } else {
             newprop = icalproperty_new_clone( prop );
         }
         icalcomponent_add_property( vtodo, newprop );
     }
+    icalcomponent *nestedcomp;
+    for( nestedcomp = icalcomponent_get_first_component( vevent, ICAL_ANY_COMPONENT );
+         nestedcomp != 0 ;
+         nestedcomp = icalcomponent_get_next_component( vevent, ICAL_ANY_COMPONENT ) ) {
+        icalcomponent_add_component( vtodo, icalcomponent_new_clone(nestedcomp) );
+    }
     icalcomponent_free( basevcal );
     //percent
     if( m_percent != 0) {
         prop = icalproperty_new_percentcomplete( m_percent );
-        icalcomponent_add_property( vtodo, prop );
-    }
-
-    /* This isn't really needed
-    //Create due if does not exist
-    if( icaltime_is_null_time( m_due->m_datetime ) ) {
-        prop = icalcomponent_get_first_property( vtodo, ICAL_DTSTART_PROPERTY );
-        if( prop ) {
-            m_due->m_datetime = icalproperty_get_dtstart( prop );
-            //Set to the same as start date 23:59
-            m_due->SetHour( 23 ); m_due->SetMinute( 59 );
-        }
-    }
-
-    PRBool m_allday;
-    GetAllDay ( &m_allday );
-    if( m_allday ) {
-        m_due->SetHour( 23 );
-        m_due->SetMinute( 59 );
-    }*/
-
-    //due
-    if( m_due && !icaltime_is_null_time( m_due->m_datetime ) ) {
-        prop = icalproperty_new_due( m_due->m_datetime );
         icalcomponent_add_property( vtodo, prop );
     }
 
@@ -379,6 +372,10 @@ icalcomponent* oeICalTodoImpl::AsIcalComponent()
     icalcomponent_add_component( newcalendar, vtodo );
 
     return newcalendar;
+}
+
+oeICalEventImpl *oeICalTodoImpl::GetBaseEvent() {
+    return mEvent;
 }
 
 /* End of implementation class template. */

@@ -80,7 +80,7 @@ function open() {
 		browser.loadUrl( url );
 	} else {
 		/* User wants new window. */
-        window.openDialog( "chrome:/navigator/content/", "_blank", "chrome,dialog=no,all", url );
+        window.openDialog( "chrome://navigator/content/", "_blank", "chrome,dialog=no,all", url );
 	}
 
 	/* Close dialog. */
@@ -105,7 +105,7 @@ function help() {
 }
 
 function strresTest() {
-  var Bundle = srGetStrBundle("resource:/res/strres.properties");
+  var Bundle = srGetStrBundle("resource://gre/res/strres.properties");
   var	ostr1 = Bundle.GetStringFromName("file");
   dump("\n--** JS strBundle GetStringFromName file=" + ostr1 +
       "len=" + ostr1.length + "**--\n");

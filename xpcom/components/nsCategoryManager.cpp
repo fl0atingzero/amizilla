@@ -95,6 +95,10 @@ protected:
       mCount(0),
       mSimpleCurItem(0),
       mStringCurItem(0) { }
+
+  // A virtual destructor is needed here because subclasses of
+  // BaseStringEnumerator do not implement their own Release() method.
+
   virtual ~BaseStringEnumerator()
   {
     if (mArray)
@@ -107,7 +111,7 @@ protected:
   PRUint32 mStringCurItem;
 };
 
-NS_IMPL_ISUPPORTS2(BaseStringEnumerator, nsISimpleEnumerator, nsIUTF8StringEnumerator);
+NS_IMPL_ISUPPORTS2(BaseStringEnumerator, nsISimpleEnumerator, nsIUTF8StringEnumerator)
 
 NS_IMETHODIMP
 BaseStringEnumerator::HasMoreElements(PRBool *_retval)
@@ -440,7 +444,7 @@ CategoryEnumerator::enumfunc_createenumerator(const char* aStr, CategoryNode* aN
 // nsCategoryManager implementations
 //
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsCategoryManager, nsICategoryManager);
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsCategoryManager, nsICategoryManager)
 
 nsCategoryManager*
 nsCategoryManager::Create()
@@ -788,7 +792,7 @@ NS_CreateServicesFromCategory(const char *category,
             // try an observer, if it implements it.
             nsCOMPtr<nsIObserver> observer = do_QueryInterface(instance, &rv);
             if (NS_SUCCEEDED(rv) && observer)
-                observer->Observe(origin, observerTopic, NS_LITERAL_STRING("").get());
+                observer->Observe(origin, observerTopic, EmptyString().get());
         }
     }
     return (nFailed ? NS_ERROR_FAILURE : NS_OK);

@@ -45,8 +45,6 @@
 #include "nsIMsgIncomingServer.h"
 #include "nsIDBFolderInfo.h"
 
-static NS_DEFINE_CID(kCImapHostSessionList, NS_IIMAPHOSTSESSIONLIST_CID);
-
 nsImapMoveCopyMsgTxn::nsImapMoveCopyMsgTxn() :
     m_idsAreUids(PR_FALSE), m_isMove(PR_FALSE), m_srcIsPop3(PR_FALSE)
 {
@@ -75,8 +73,8 @@ nsImapMoveCopyMsgTxn::Init(
   m_srcMsgIdString = srcMsgIdString;
   m_idsAreUids = idsAreUids;
   m_isMove = isMove;
-  m_srcFolder = getter_AddRefs(NS_GetWeakReference(srcFolder));
-  m_dstFolder = getter_AddRefs(NS_GetWeakReference(dstFolder));
+  m_srcFolder = do_GetWeakReference(srcFolder);
+  m_dstFolder = do_GetWeakReference(dstFolder);
   m_eventQueue = do_QueryInterface(eventQueue, &rv);
   if (urlListener)
     m_urlListener = do_QueryInterface(urlListener, &rv);
@@ -245,106 +243,104 @@ nsImapMoveCopyMsgTxn::UndoTransaction(void)
 NS_IMETHODIMP
 nsImapMoveCopyMsgTxn::RedoTransaction(void)
 {
-	nsresult rv;
-	nsCOMPtr<nsIImapService> imapService = do_GetService(NS_IMAPSERVICE_CONTRACTID, &rv);
+  nsresult rv;
+  nsCOMPtr<nsIImapService> imapService = do_GetService(NS_IMAPSERVICE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv,rv);
-
+  
   if (m_isMove || !m_dstFolder)
+  {
+    if (m_srcIsPop3)
     {
-        if (m_srcIsPop3)
-        {
-            rv = RedoMailboxDelete();
-            if (NS_FAILED(rv)) return rv;
-        }
-        else
-        {
-            nsCOMPtr<nsIMsgFolder> srcFolder = do_QueryReferent(m_srcFolder, &rv);
-            if (NS_FAILED(rv) || !srcFolder) 
-              return rv;
-            nsCOMPtr<nsIUrlListener> srcListener =
-                do_QueryInterface(srcFolder, &rv); 
-            if (NS_FAILED(rv)) 
-              return rv;
-
-            PRBool deletedMsgs = PR_FALSE;  //default will be false unless imapDeleteModel;
-            nsMsgImapDeleteModel deleteModel;
-            rv = GetImapDeleteModel(srcFolder, &deleteModel);
-            
-            // protect against a bogus undo txn without any source keys
-            // see bug #179856 for details
-            NS_ASSERTION(m_srcKeyArray.GetSize(), "no source keys");
-            if (!m_srcKeyArray.GetSize())
-              return NS_ERROR_UNEXPECTED;
-
-            if (NS_SUCCEEDED(rv) && deleteModel == nsMsgImapDeleteModels::IMAPDelete)
-              rv = CheckForToggleDelete(srcFolder, m_srcKeyArray.GetAt(0), &deletedMsgs);
-
-            // ** make sire we are in the selected state; use lite select
-            // folder so we won't hit preformace hard
-            rv = imapService->LiteSelectFolder(m_eventQueue, srcFolder,
-                                               srcListener, nsnull);
-            if (NS_FAILED(rv)) 
-              return rv;
-            if (deletedMsgs)
-              rv = imapService->SubtractMessageFlags(
-                   m_eventQueue, srcFolder, srcListener, nsnull,
-                   m_srcMsgIdString.get(), kImapMsgDeletedFlag,
-                   m_idsAreUids);
-            else
-              rv = imapService->AddMessageFlags(m_eventQueue, srcFolder,
+      rv = RedoMailboxDelete();
+      if (NS_FAILED(rv)) return rv;
+    }
+    else
+    {
+      nsCOMPtr<nsIMsgFolder> srcFolder = do_QueryReferent(m_srcFolder, &rv);
+      if (NS_FAILED(rv) || !srcFolder) 
+        return rv;
+      nsCOMPtr<nsIUrlListener> srcListener =
+        do_QueryInterface(srcFolder, &rv); 
+      if (NS_FAILED(rv)) 
+        return rv;
+      
+      PRBool deletedMsgs = PR_FALSE;  //default will be false unless imapDeleteModel;
+      nsMsgImapDeleteModel deleteModel;
+      rv = GetImapDeleteModel(srcFolder, &deleteModel);
+      
+      // protect against a bogus undo txn without any source keys
+      // see bug #179856 for details
+      NS_ASSERTION(m_srcKeyArray.GetSize(), "no source keys");
+      if (!m_srcKeyArray.GetSize())
+        return NS_ERROR_UNEXPECTED;
+      
+      if (NS_SUCCEEDED(rv) && deleteModel == nsMsgImapDeleteModels::IMAPDelete)
+        rv = CheckForToggleDelete(srcFolder, m_srcKeyArray.GetAt(0), &deletedMsgs);
+      
+      // ** make sire we are in the selected state; use lite select
+      // folder so we won't hit preformace hard
+      rv = imapService->LiteSelectFolder(m_eventQueue, srcFolder,
+        srcListener, nsnull);
+      if (NS_FAILED(rv)) 
+        return rv;
+      if (deletedMsgs)
+        rv = imapService->SubtractMessageFlags(m_eventQueue, srcFolder, 
                                                 srcListener, nsnull,
-                                                m_srcMsgIdString.get(),
-                                                kImapMsgDeletedFlag,
+                                                m_srcMsgIdString.get(), kImapMsgDeletedFlag,
                                                 m_idsAreUids);
-        }
+      else
+        rv = imapService->AddMessageFlags(m_eventQueue, srcFolder,
+                                          srcListener, nsnull, m_srcMsgIdString.get(),
+                                          kImapMsgDeletedFlag, m_idsAreUids);
     }
-    if (m_dstKeyArray.GetSize() > 0)
-    {
-        nsCOMPtr<nsIMsgFolder> dstFolder = do_QueryReferent(m_dstFolder, &rv);
-        if (NS_FAILED(rv) || !dstFolder) return rv;
-
-        nsCOMPtr<nsIUrlListener> dstListener;
-
-        dstListener = do_QueryInterface(dstFolder, &rv); 
-        if (NS_FAILED(rv)) 
-          return rv;
-        // ** make sure we are in the selected state; use lite select
-        // folder so we won't hit preformace hard
-        rv = imapService->LiteSelectFolder(m_eventQueue, dstFolder,
-                                           dstListener, nsnull);
-        if (NS_FAILED(rv)) 
-          return rv;
-        rv = imapService->SubtractMessageFlags(m_eventQueue, dstFolder,
-                                               dstListener, nsnull,
-                                               m_dstMsgIdString.get(),
-                                               kImapMsgDeletedFlag,
-                                               m_idsAreUids);
-        if (NS_FAILED(rv)) 
-          return rv;
-        nsMsgImapDeleteModel deleteModel;
-        rv = GetImapDeleteModel(dstFolder, &deleteModel);
-        if (NS_FAILED(rv) || deleteModel == nsMsgImapDeleteModels::MoveToTrash)
-            rv = imapService->GetHeaders(m_eventQueue, dstFolder,
-                                         dstListener, nsnull,
-                                         m_dstMsgIdString.get(),
-                                         PR_TRUE);
-    }
-	return rv;
+  }
+  if (m_dstKeyArray.GetSize() > 0)
+  {
+    nsCOMPtr<nsIMsgFolder> dstFolder = do_QueryReferent(m_dstFolder, &rv);
+    if (NS_FAILED(rv) || !dstFolder) return rv;
+    
+    nsCOMPtr<nsIUrlListener> dstListener;
+    
+    dstListener = do_QueryInterface(dstFolder, &rv); 
+    if (NS_FAILED(rv)) 
+      return rv;
+    // ** make sure we are in the selected state; use lite select
+    // folder so we won't hit preformace hard
+    rv = imapService->LiteSelectFolder(m_eventQueue, dstFolder,
+      dstListener, nsnull);
+    if (NS_FAILED(rv)) 
+      return rv;
+    rv = imapService->SubtractMessageFlags(m_eventQueue, dstFolder,
+      dstListener, nsnull,
+      m_dstMsgIdString.get(),
+      kImapMsgDeletedFlag,
+      m_idsAreUids);
+    if (NS_FAILED(rv)) 
+      return rv;
+    nsMsgImapDeleteModel deleteModel;
+    rv = GetImapDeleteModel(dstFolder, &deleteModel);
+    if (NS_FAILED(rv) || deleteModel == nsMsgImapDeleteModels::MoveToTrash)
+      rv = imapService->GetHeaders(m_eventQueue, dstFolder,
+      dstListener, nsnull,
+      m_dstMsgIdString.get(),
+      PR_TRUE);
+  }
+  return rv;
 }
 
 nsresult
 nsImapMoveCopyMsgTxn::SetCopyResponseUid(nsMsgKeyArray* aKeyArray,
-										 const char* aMsgIdString)
+                                         const char* aMsgIdString)
 {
-	if (!aKeyArray || !aMsgIdString) return NS_ERROR_NULL_POINTER;
-	m_dstKeyArray.CopyArray(aKeyArray);
-	m_dstMsgIdString = aMsgIdString;
-	if (m_dstMsgIdString.Last() == ']')
-	{
-		PRInt32 len = m_dstMsgIdString.Length();
-		m_dstMsgIdString.SetLength(len - 1);
-	}
-	return NS_OK;
+  if (!aKeyArray || !aMsgIdString) return NS_ERROR_NULL_POINTER;
+  m_dstKeyArray.CopyArray(aKeyArray);
+  m_dstMsgIdString = aMsgIdString;
+  if (m_dstMsgIdString.Last() == ']')
+  {
+    PRInt32 len = m_dstMsgIdString.Length();
+    m_dstMsgIdString.SetLength(len - 1);
+  }
+  return NS_OK;
 }
 
 nsresult

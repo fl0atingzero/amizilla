@@ -72,11 +72,13 @@ public:
     return mRefCnt;
   }
 
+  nsIPresContext* PresContext() const { return mRuleNode->GetPresContext(); }
+
   nsStyleContext* GetParent() const { return mParent; }
 
   nsStyleContext* GetFirstChild() const { return mChild; }
 
-  already_AddRefed<nsIAtom> GetPseudoType() const;
+  nsIAtom* GetPseudoType() const { return mPseudoTag; }
 
   already_AddRefed<nsStyleContext> 
   FindChildWithRules(const nsIAtom* aPseudoTag, nsRuleNode* aRules);
@@ -137,7 +139,7 @@ public:
 
   const nsStyleStruct* PeekStyleData(nsStyleStructID aSID);
 
-  nsStyleStruct* GetUniqueStyleData(nsIPresContext* aPresContext, const nsStyleStructID& aSID);
+  nsStyleStruct* GetUniqueStyleData(const nsStyleStructID& aSID);
 
   void ClearStyleData(nsIPresContext* aPresContext);
 

@@ -50,7 +50,6 @@
 #include "nsStyleConsts.h"
 
 #include "nsCOMPtr.h"
-#include "nsIStyleSet.h"
 
 #define CSS_IF_DELETE(ptr)  if (nsnull != ptr)  { delete ptr; ptr = nsnull; }
 
@@ -120,6 +119,20 @@ nsCSSValueList::~nsCSSValueList(void)
 {
   MOZ_COUNT_DTOR(nsCSSValueList);
   CSS_IF_DELETE(mNext);
+}
+
+/* static */ PRBool
+nsCSSValueList::Equal(nsCSSValueList* aList1, nsCSSValueList* aList2)
+{
+  if (aList1 == aList2)
+    return PR_TRUE;
+    
+  nsCSSValueList *p1 = aList1, *p2 = aList2;
+  for ( ; p1 && p2; p1 = p1->mNext, p2 = p2->mNext) {
+    if (p1->mValue != p2->mValue)
+      return PR_FALSE;
+  }
+  return !p1 && !p2; // true if same length, false otherwise
 }
 
 // --- nsCSSColor -----------------
@@ -194,6 +207,23 @@ nsCSSShadow::~nsCSSShadow(void)
 {
   MOZ_COUNT_DTOR(nsCSSShadow);
   CSS_IF_DELETE(mNext);
+}
+
+/* static */ PRBool
+nsCSSShadow::Equal(nsCSSShadow* aList1, nsCSSShadow* aList2)
+{
+  if (aList1 == aList2)
+    return PR_TRUE;
+
+  nsCSSShadow *p1 = aList1, *p2 = aList2;
+  for ( ; p1 && p2; p1 = p1->mNext, p2 = p2->mNext) {
+    if (p1->mColor != p2->mColor ||
+        p1->mXOffset != p2->mXOffset ||
+        p1->mYOffset != p2->mYOffset ||
+        p1->mRadius != p2->mRadius)
+      return PR_FALSE;
+  }
+  return !p1 && !p2; // true if same length, false otherwise
 }
 
 // --- nsCSSText -----------------
@@ -507,7 +537,19 @@ nsCSSMargin::nsCSSMargin(void)
 
 nsCSSMargin::nsCSSMargin(const nsCSSMargin& aCopy)
   : mMargin(aCopy.mMargin),
+    mMarginStart(aCopy.mMarginStart),
+    mMarginEnd(aCopy.mMarginEnd),
+    mMarginLeftLTRSource(aCopy.mMarginLeftLTRSource),
+    mMarginLeftRTLSource(aCopy.mMarginLeftRTLSource),
+    mMarginRightLTRSource(aCopy.mMarginRightLTRSource),
+    mMarginRightRTLSource(aCopy.mMarginRightRTLSource),
     mPadding(aCopy.mPadding), 
+    mPaddingStart(aCopy.mPaddingStart),
+    mPaddingEnd(aCopy.mPaddingEnd),
+    mPaddingLeftLTRSource(aCopy.mPaddingLeftLTRSource),
+    mPaddingLeftRTLSource(aCopy.mPaddingLeftRTLSource),
+    mPaddingRightLTRSource(aCopy.mPaddingRightLTRSource),
+    mPaddingRightRTLSource(aCopy.mPaddingRightRTLSource),
     mBorderWidth(aCopy.mBorderWidth),
     mBorderColor(aCopy.mBorderColor),
     mBorderColors(aCopy.mBorderColors),
@@ -827,6 +869,21 @@ nsCSSCounterData::~nsCSSCounterData(void)
   CSS_IF_DELETE(mNext);
 }
 
+/* static */ PRBool
+nsCSSCounterData::Equal(nsCSSCounterData* aList1, nsCSSCounterData* aList2)
+{
+  if (aList1 == aList2)
+    return PR_TRUE;
+
+  nsCSSCounterData *p1 = aList1, *p2 = aList2;
+  for ( ; p1 && p2; p1 = p1->mNext, p2 = p2->mNext) {
+    if (p1->mCounter != p2->mCounter ||
+        p1->mValue != p2->mValue)
+      return PR_FALSE;
+  }
+  return !p1 && !p2; // true if same length, false otherwise
+}
+
 nsCSSQuotes::nsCSSQuotes(void)
   : mNext(nsnull)
 {
@@ -846,6 +903,21 @@ nsCSSQuotes::~nsCSSQuotes(void)
 {
   MOZ_COUNT_DTOR(nsCSSQuotes);
   CSS_IF_DELETE(mNext);
+}
+
+/* static */ PRBool
+nsCSSQuotes::Equal(nsCSSQuotes* aList1, nsCSSQuotes* aList2)
+{
+  if (aList1 == aList2)
+    return PR_TRUE;
+
+  nsCSSQuotes *p1 = aList1, *p2 = aList2;
+  for ( ; p1 && p2; p1 = p1->mNext, p2 = p2->mNext) {
+    if (p1->mOpen != p2->mOpen ||
+        p1->mClose != p2->mClose)
+      return PR_FALSE;
+  }
+  return !p1 && !p2; // true if same length, false otherwise
 }
 
 // --- nsCSSContent -----------------
@@ -1030,7 +1102,7 @@ void nsCSSAural::List(FILE* out, PRInt32 aIndent) const
   mPauseBefore.AppendToString(buffer, eCSSProperty_pause_before);
   mPitch.AppendToString(buffer, eCSSProperty_pitch);
   mPitchRange.AppendToString(buffer, eCSSProperty_pitch_range);
-  mPlayDuring.AppendToString(buffer, eCSSProperty_play_during);
+  mPlayDuring.AppendToString(buffer, eCSSProperty_play_during_uri);
   mPlayDuringFlags.AppendToString(buffer, eCSSProperty_play_during_flags);
   mRichness.AppendToString(buffer, eCSSProperty_richness);
   mSpeak.AppendToString(buffer, eCSSProperty_speak);
@@ -1092,9 +1164,12 @@ nsCSSSVG::nsCSSSVG(void)
 }
 
 nsCSSSVG::nsCSSSVG(const nsCSSSVG& aCopy)
-    : mFill(aCopy.mFill),
+    : mDominantBaseline(aCopy.mDominantBaseline),
+      mFill(aCopy.mFill),
       mFillOpacity(aCopy.mFillOpacity),
       mFillRule(aCopy.mFillRule),
+      mPointerEvents(aCopy.mPointerEvents),
+      mShapeRendering(aCopy.mShapeRendering),
       mStroke(aCopy.mStroke),
       mStrokeDasharray(aCopy.mStrokeDasharray),
       mStrokeDashoffset(aCopy.mStrokeDashoffset),
@@ -1102,7 +1177,9 @@ nsCSSSVG::nsCSSSVG(const nsCSSSVG& aCopy)
       mStrokeLinejoin(aCopy.mStrokeLinejoin),
       mStrokeMiterlimit(aCopy.mStrokeMiterlimit),
       mStrokeOpacity(aCopy.mStrokeOpacity),
-      mStrokeWidth(aCopy.mStrokeWidth)
+      mStrokeWidth(aCopy.mStrokeWidth),
+      mTextAnchor(aCopy.mTextAnchor),
+      mTextRendering(aCopy.mTextRendering)
 {
   MOZ_COUNT_CTOR(nsCSSSVG);
 }
@@ -1119,9 +1196,12 @@ void nsCSSSVG::List(FILE* out, PRInt32 aIndent) const
 
   nsAutoString buffer;
 
+  mDominantBaseline.AppendToString(buffer, eCSSProperty_dominant_baseline);
   mFill.AppendToString(buffer, eCSSProperty_fill);
   mFillOpacity.AppendToString(buffer, eCSSProperty_fill_opacity);
   mFillRule.AppendToString(buffer, eCSSProperty_fill_rule);
+  mPointerEvents.AppendToString(buffer, eCSSProperty_pointer_events);
+  mShapeRendering.AppendToString(buffer, eCSSProperty_shape_rendering);
   mStroke.AppendToString(buffer, eCSSProperty_stroke);
   mStrokeDasharray.AppendToString(buffer, eCSSProperty_stroke_dasharray);
   mStrokeDashoffset.AppendToString(buffer, eCSSProperty_stroke_dashoffset);
@@ -1130,6 +1210,8 @@ void nsCSSSVG::List(FILE* out, PRInt32 aIndent) const
   mStrokeMiterlimit.AppendToString(buffer, eCSSProperty_stroke_miterlimit);
   mStrokeOpacity.AppendToString(buffer, eCSSProperty_stroke_opacity);
   mStrokeWidth.AppendToString(buffer, eCSSProperty_stroke_width);
+  mTextAnchor.AppendToString(buffer, eCSSProperty_text_anchor);
+  mTextRendering.AppendToString(buffer, eCSSProperty_text_rendering);
   fputs(NS_LossyConvertUCS2toASCII(buffer).get(), out);
 }
 #endif

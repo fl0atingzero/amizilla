@@ -40,7 +40,6 @@
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsIPrefBranchInternal.h"
-#include "nsIPref.h"
 #include "nsILocalFile.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsAppDirectoryServiceDefs.h"
@@ -88,7 +87,7 @@ public:
     
     nsresult        Install();
     nsresult        Remove();
-    nsresult        ReadPrefs();
+    nsresult        ReadPrefs(nsIPrefBranch* branch);
     
     PRBool          DiskCacheEnabled();
     PRInt32         DiskCacheCapacity()         { return mDiskCacheCapacity; }
@@ -108,7 +107,7 @@ private:
     PRInt32                 mMemoryCacheCapacity;
 };
 
-NS_IMPL_ISUPPORTS1(nsCacheProfilePrefObserver, nsIObserver);
+NS_IMPL_ISUPPORTS1(nsCacheProfilePrefObserver, nsIObserver)
 
 
 nsresult
@@ -134,10 +133,7 @@ nsCacheProfilePrefObserver::Install()
     
     
     // install preferences observer
-    nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
-    if (!prefs) return NS_ERROR_FAILURE;
-
-    nsCOMPtr<nsIPrefBranchInternal> branch = do_QueryInterface(prefs);
+    nsCOMPtr<nsIPrefBranchInternal> branch = do_GetService(NS_PREFSERVICE_CONTRACTID);
     if (!branch) return NS_ERROR_FAILURE;
 
     char * prefList[] = { 
@@ -168,7 +164,7 @@ nsCacheProfilePrefObserver::Install()
         mHaveProfile = PR_TRUE;
     }
 
-    rv = ReadPrefs();
+    rv = ReadPrefs(branch);
     
     return NS_SUCCEEDED(rv) ? rv2 : rv;
 }
@@ -195,11 +191,7 @@ nsCacheProfilePrefObserver::Remove()
 
 
     // remove Pref Service observers
-    nsCOMPtr<nsIPrefService> prefService = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-    if (NS_FAILED(rv)) return rv;
-
-    nsCOMPtr<nsIPrefBranchInternal> prefInternal = do_QueryInterface(prefService, &rv);
-    if (NS_FAILED(rv)) return rv;
+    nsCOMPtr<nsIPrefBranchInternal> prefInternal = do_GetService(NS_PREFSERVICE_CONTRACTID);
 
     // remove Disk cache pref observers
     rv  = prefInternal->RemoveObserver(DISK_CACHE_ENABLE_PREF, this);
@@ -247,7 +239,8 @@ nsCacheProfilePrefObserver::Observe(nsISupports *     subject,
     } else if (!strcmp("profile-after-change", topic)) {
         // profile after change
         mHaveProfile = PR_TRUE;
-        ReadPrefs();
+        nsCOMPtr<nsIPrefBranch> branch = do_GetService(NS_PREFSERVICE_CONTRACTID);
+        ReadPrefs(branch);
         nsCacheService::OnProfileChanged();
     
     } else if (!strcmp(NS_PREFBRANCH_PREFCHANGE_TOPIC_ID, topic)) {
@@ -303,15 +296,9 @@ nsCacheProfilePrefObserver::Observe(nsISupports *     subject,
 
 
 nsresult
-nsCacheProfilePrefObserver::ReadPrefs()
+nsCacheProfilePrefObserver::ReadPrefs(nsIPrefBranch* branch)
 {
     nsresult rv = NS_OK;
-
-    nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
-    if (!prefs)  return NS_ERROR_FAILURE;
-    
-    nsCOMPtr<nsIPrefBranch> branch = do_QueryInterface(prefs);
-    if (!branch)  return NS_ERROR_FAILURE;
 
 #ifdef NECKO_DISK_CACHE
     // read disk cache device prefs
@@ -385,7 +372,7 @@ nsCacheProfilePrefObserver::MemoryCacheEnabled()
 
 nsCacheService *   nsCacheService::gService = nsnull;
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsCacheService, nsICacheService);
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsCacheService, nsICacheService)
 
 nsCacheService::nsCacheService()
     : mCacheServiceLock(nsnull),
@@ -919,11 +906,11 @@ nsCacheService::ActivateEntry(nsCacheRequest * request,
     }
 
     if (!entry) {
-		if (! (request->AccessRequested() & nsICache::ACCESS_WRITE)) {
-			// this is a READ-ONLY request
-		    rv = NS_ERROR_CACHE_KEY_NOT_FOUND;
-			goto error;
-		}
+        if (! (request->AccessRequested() & nsICache::ACCESS_WRITE)) {
+            // this is a READ-ONLY request
+            rv = NS_ERROR_CACHE_KEY_NOT_FOUND;
+            goto error;
+        }
 
         entry = new nsCacheEntry(request->mKey,
                                  request->IsStreamBased(),
@@ -1243,8 +1230,8 @@ nsCacheService::SetMemoryCacheCapacity(PRInt32  capacity)
  * If browser.cache.memory.capacity is negative or not present, we use a
  * formula that grows less than linearly with the amount of system memory.
  *
- * RAM	Cache
- * ---	-----
+ *   RAM   Cache
+ *   ---   -----
  *   32 Mb   2 Mb
  *   64 Mb   4 Mb
  *  128 Mb   8 Mb
@@ -1262,8 +1249,10 @@ nsCacheService::SetMemoryCacheCapacity(PRInt32  capacity)
 #elif defined(__hpux)
 #include <sys/pstat.h>
 #elif defined(XP_MACOSX)
+extern "C" {
 #include <mach/mach_init.h>
 #include <mach/mach_host.h>
+}
 #elif defined(XP_OS2)
 #define INCL_DOSMISC
 #include <os2.h>

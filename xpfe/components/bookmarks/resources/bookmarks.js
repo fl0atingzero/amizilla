@@ -97,20 +97,28 @@ function initServices()
 
   kPREFContractID  = "@mozilla.org/preferences-service;1";
   kPREFIID         = Components.interfaces.nsIPrefService;
-  PREF             = Components.classes[kPREFContractID].getService(kPREFIID)
-                               .getBranch(null);
+  try {
+    PREF             = Components.classes[kPREFContractID].getService(kPREFIID)
+                                 .getBranch(null);
+  } catch (e) {}
 
   kSOUNDContractID = "@mozilla.org/sound;1";
   kSOUNDIID        = Components.interfaces.nsISound;
-  SOUND            = Components.classes[kSOUNDContractID].createInstance(kSOUNDIID);
+  try {
+    SOUND            = Components.classes[kSOUNDContractID].createInstance(kSOUNDIID);
+  } catch (e) {}
 
   kWINDOWContractID = "@mozilla.org/appshell/window-mediator;1";
   kWINDOWIID        = Components.interfaces.nsIWindowMediator;
-  WINDOWSVC         = Components.classes[kWINDOWContractID].getService(kWINDOWIID);
+  try {
+    WINDOWSVC         = Components.classes[kWINDOWContractID].getService(kWINDOWIID);
+  } catch (e) {}
 
   kDSContractID     = "@mozilla.org/widget/dragservice;1";
   kDSIID            = Components.interfaces.nsIDragService;
-  DS                = Components.classes[kDSContractID].getService(kDSIID);
+  try {
+    DS                = Components.classes[kDSContractID].getService(kDSIID);
+  } catch (e) {}
 }
 
 function initBMService()
@@ -294,7 +302,7 @@ var BookmarksCommand = {
                   "bm_properties"];
       break;
     case "FolderGroup":
-      commands = ["bm_open", "bm_expandfolder", "bm_separator",
+      commands = ["bm_open", "bm_openinnewwindow", "bm_expandfolder", "bm_separator",
                   "bm_newfolder", "bm_sortfolder", "bm_sortfolderbyname", "bm_separator",
                   "bm_cut", "bm_copy", "bm_paste", "bm_movebookmark", "bm_separator",
                   "bm_rename", "bm_delete", "bm_separator",
@@ -563,28 +571,33 @@ var BookmarksCommand = {
 
   openGroupBookmark: function (aURI, aTargetBrowser)
   {
-    if (aTargetBrowser == "current" || aTargetBrowser == "tab") {
-      var w        = getTopWin();
-      var browser  = w.document.getElementById("content");
-      var resource = RDF.GetResource(aURI);
-      var urlArc   = RDF.GetResource(NC_NS+"URL");
-      RDFC.Init(BMDS, resource);
-      var containerChildren = RDFC.GetElements();
-      var tabPanels = browser.mPanelContainer.childNodes;
-      var tabCount  = tabPanels.length;
-      var index = 0;
-      var URIs = [];
-      while (containerChildren.hasMoreElements()) {
-        var res = containerChildren.getNext().QueryInterface(kRDFRSCIID);
-        var target = BMDS.GetTarget(res, urlArc, true);
-        if (target) {
-          URIs.push({ URI: target.QueryInterface(kRDFLITIID).Value });
-          ++index;
-        }
+    var w = getTopWin();
+    if (!w) // no browser window open, so we have to open in new window
+      aTargetBrowser="window";
+
+    var resource = RDF.GetResource(aURI);
+    var urlArc   = RDF.GetResource(NC_NS+"URL");
+    RDFC.Init(BMDS, resource);
+    var containerChildren = RDFC.GetElements();
+    var URIs = [];
+    while (containerChildren.hasMoreElements()) {
+      var res = containerChildren.getNext().QueryInterface(kRDFRSCIID);
+      var target = BMDS.GetTarget(res, urlArc, true);
+      if (target) {
+        if (aTargetBrowser == "window")
+          URIs.push(target.QueryInterface(kRDFLITIID).Value);
+        else
+          URIs.push({ URI: target.QueryInterface(kRDFLITIID).Value });        
       }
-      browser.loadGroup(URIs);
+    }
+    if (aTargetBrowser == "window") {
+      // This opens the URIs in separate tabs of a new window
+      openDialog(getBrowserURL(), "_blank", "chrome,all,dialog=no", URIs.join("\n"));
     } else {
-      dump("Open Group in new window: not implemented...\n");
+      var browser = w.getBrowser();
+      var tab = browser.loadGroup(URIs);
+      if (!PREF.getBoolPref("browser.tabs.loadInBackground"))
+        browser.selectedTab = tab;
     }
   },
 
@@ -801,7 +814,7 @@ var BookmarksController = {
     case "cmd_bm_redo":
       return BMSVC.transactionManager.numberOfRedoItems > 0;
     case "cmd_bm_paste":
-      if (!BookmarksUtils.isValidTargetContainer(aTarget.parent))
+      if (!(aTarget && BookmarksUtils.isValidTargetContainer(aTarget.parent)))
         return false;
       const kClipboardContractID = "@mozilla.org/widget/clipboard;1";
       const kClipboardIID = Components.interfaces.nsIClipboard;
@@ -840,7 +853,8 @@ var BookmarksController = {
     case "cmd_bm_newbookmark":
     case "cmd_bm_newfolder":
     case "cmd_bm_newseparator":
-      return BookmarksUtils.isValidTargetContainer(aTarget.parent);
+      return (aTarget &&
+              BookmarksUtils.isValidTargetContainer(aTarget.parent));
     case "cmd_bm_properties":
     case "cmd_bm_rename":
     case "cmd_bm_sortfolderbyname":
@@ -960,10 +974,9 @@ var BookmarksController = {
                     "cmd_bm_sortfolder", "cmd_bm_sortfolderbyname",
                     "cmd_undo", "cmd_redo", "cmd_bm_undo", "cmd_bm_redo"];
     for (var i = 0; i < commands.length; ++i) {
-      var enabled = this.isCommandEnabled(commands[i], aSelection, aTarget);
       var commandNode = document.getElementById(commands[i]);
-     if (commandNode) { 
-        if (enabled) 
+      if (commandNode) {
+        if (this.isCommandEnabled(commands[i], aSelection, aTarget))
           commandNode.removeAttribute("disabled");
         else 
           commandNode.setAttribute("disabled", "true");
@@ -1028,9 +1041,9 @@ var BookmarksUtils = {
       var BUNDLESVC = Components.classes["@mozilla.org/intl/stringbundle;1"]
                                 .getService(Components.interfaces.nsIStringBundleService);
       var bookmarksBundle  = "chrome://communicator/locale/bookmarks/bookmarks.properties";
-      this._bundle         = BUNDLESVC.createBundle(bookmarksBundle, LOCALESVC.GetApplicationLocale());
+      this._bundle         = BUNDLESVC.createBundle(bookmarksBundle, LOCALESVC.getApplicationLocale());
       var brandBundle      = "chrome://global/locale/brand.properties";
-      this._brandShortName = BUNDLESVC.createBundle(brandBundle,     LOCALESVC.GetApplicationLocale())
+      this._brandShortName = BUNDLESVC.createBundle(brandBundle,     LOCALESVC.getApplicationLocale())
                                       .GetStringFromName("brandShortName");
     }
    
@@ -1063,12 +1076,7 @@ var BookmarksUtils = {
       node = BMDS.GetTarget(aInput, arc, true);
     else
       node = aDS .GetTarget(aInput, arc, true);
-    try {
-      return node.QueryInterface(kRDFRSCIID).Value;
-    }
-    catch (e) {
-      return node? node.QueryInterface(kRDFLITIID).Value : "";
-    }    
+    return (node instanceof kRDFRSCIID) || (node instanceof kRDFLITIID) ? node.Value : "";
   },
 
   getResource: function (aName)
@@ -1309,7 +1317,7 @@ var BookmarksUtils = {
         transaction.index[i]  = RDFC.IndexOf(aSelection.item[i]);
       }
     }
-    if (aAction != "move" && !BookmarksUtils.all(transaction.isValid))
+    if (SOUND && aAction != "move" && !BookmarksUtils.all(transaction.isValid))
       SOUND.beep();
     var isCancelled = !BookmarksUtils.any(transaction.isValid);
     if (!isCancelled) {
@@ -1354,7 +1362,7 @@ var BookmarksUtils = {
         transaction.parent[i] = aSelection.parent[i];
       } 
     }
-    if (!BookmarksUtils.all(transaction.isValid))
+    if (SOUND && !BookmarksUtils.all(transaction.isValid))
       SOUND.beep();
     var isCancelled = !BookmarksUtils.any(transaction.isValid);
     if (!isCancelled) {
@@ -1371,7 +1379,7 @@ var BookmarksUtils = {
     var isCancelled = !BookmarksUtils.any(transaction.isValid);
     if (!isCancelled) {
       BMSVC.transactionManager.doTransaction(transaction);
-    } else
+    } else if (SOUND)
       SOUND.beep();
     return !isCancelled;
   }, 
@@ -1502,7 +1510,7 @@ var BookmarksUtils = {
       var name = "";
       var charset;
       try {
-        var doc = webNav.document;
+        var doc = new XPCNativeWrapper(webNav.document, "title", "characterSet");
         name = doc.title || url;
         charset = doc.characterSet;
       } catch (e) {
@@ -1531,8 +1539,9 @@ var BookmarksUtils = {
     var url = aDocShell.currentURI.spec;
     var title, docCharset = null;
     try {
-      title = aDocShell.document.title || url;
-      docCharset = aDocShell.document.characterSet;
+      var doc = new XPCNativeWrapper(aDocShell.document, "title", "characterSet");
+      title = doc.title || url;
+      docCharset = doc.characterSet;
     }
     catch (e) {
       title = url;
@@ -1590,12 +1599,21 @@ BookmarkTransaction.prototype = {
     if (this.item.length > this.BATCH_LIMIT) {
       this.BMDS.endUpdateBatch();
     }
-  }
+  },
+
+  // nsITransaction method stubs
+  doTransaction: function() {},
+  undoTransaction: function() {},
+  redoTransaction: function() { this.doTransaction(); },
+  get isTransient() { return false; },
+  merge: function(aTransaction) { return false; },
+
+  // debugging helper
+  get wrappedJSObject() { return this; }
 }
 
 function BookmarkInsertTransaction (aAction)
 {
-  this.wrappedJSObject = this;
   this.type    = "insert";
   this.action  = aAction;
   this.item    = null;
@@ -1607,8 +1625,6 @@ function BookmarkInsertTransaction (aAction)
 BookmarkInsertTransaction.prototype =
 {
   __proto__: BookmarkTransaction.prototype,
-
-  isTransient: false,
 
   doTransaction: function ()
   {
@@ -1634,24 +1650,12 @@ BookmarkInsertTransaction.prototype =
       }
     }
     this.endUpdateBatch();
-  },
-   
-  redoTransaction: function ()
-  {
-    this.doTransaction();
-  },
-
-  merge               : function (aTransaction) {return false},
-  QueryInterface      : function (aUID)         {return this},
-  getHelperForLanguage: function (aCount)       {return null},
-  getInterfaces       : function (aCount)       {return null},
-  canCreateWrapper    : function (aIID)         {return "AllAccess"}
+  }
 
 }
 
 function BookmarkRemoveTransaction (aAction)
 {
-  this.wrappedJSObject = this;
   this.type    = "remove";
   this.action  = aAction;
   this.item    = null;
@@ -1663,8 +1667,6 @@ function BookmarkRemoveTransaction (aAction)
 BookmarkRemoveTransaction.prototype =
 {
   __proto__: BookmarkTransaction.prototype,
-
-  isTransient: false,
 
   doTransaction: function ()
   {
@@ -1688,24 +1690,12 @@ BookmarkRemoveTransaction.prototype =
       }
     }
     this.endUpdateBatch();
-  },
-   
-  redoTransaction: function ()
-  {
-    this.doTransaction();
-  },
-
-  merge               : function (aTransaction) {return false},
-  QueryInterface      : function (aUID)         {return this},
-  getHelperForLanguage: function (aCount)       {return null},
-  getInterfaces       : function (aCount)       {return null},
-  canCreateWrapper    : function (aIID)         {return "AllAccess"}
+  }
 
 }
 
 function BookmarkMoveTransaction (aAction, aSelection, aTarget)
 {
-  this.wrappedJSObject = this;
   this.type      = "move";
   this.action    = aAction;
   this.selection = aSelection;
@@ -1716,8 +1706,6 @@ function BookmarkMoveTransaction (aAction, aSelection, aTarget)
 BookmarkMoveTransaction.prototype =
 {
   __proto__: BookmarkTransaction.prototype,
-
-  isTransient: false,
 
   beginUpdateBatch: function()
   {
@@ -1741,19 +1729,12 @@ BookmarkMoveTransaction.prototype =
     this.endUpdateBatch();
   },
 
-  undoTransaction     : function () {},
-  redoTransaction     : function () {},
-  merge               : function (aTransaction) {return false},
-  QueryInterface      : function (aUID)         {return this},
-  getHelperForLanguage: function (aCount)       {return null},
-  getInterfaces       : function (aCount)       {return null},
-  canCreateWrapper    : function (aIID)         {return "AllAccess"}
+  redoTransaction     : function () {}
 
 }
 
 function BookmarkImportTransaction (aAction)
 {
-  this.wrappedJSObject = this;
   this.type    = "import";
   this.action  = aAction;
   this.item    = [];
@@ -1765,12 +1746,6 @@ function BookmarkImportTransaction (aAction)
 BookmarkImportTransaction.prototype =
 {
   __proto__: BookmarkTransaction.prototype,
-
-  isTransient: false,
-
-  doTransaction: function ()
-  {
-  },
 
   undoTransaction: function ()
   {
@@ -1794,12 +1769,6 @@ BookmarkImportTransaction.prototype =
       }
     }
     this.endUpdateBatch();
-  },
-
-  merge               : function (aTransaction) {return false},
-  QueryInterface      : function (aUID)         {return this},
-  getHelperForLanguage: function (aCount)       {return null},
-  getInterfaces       : function (aCount)       {return null},
-  canCreateWrapper    : function (aIID)         {return "AllAccess"}
+  }
 
 }

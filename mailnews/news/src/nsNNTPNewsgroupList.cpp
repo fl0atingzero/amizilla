@@ -95,7 +95,6 @@
 // update status on header download once per second
 #define MIN_STATUS_UPDATE_INTERVAL PR_USEC_PER_SEC
 
-static NS_DEFINE_CID(kCNewsDB, NS_NEWSDB_CID);
 
 nsNNTPNewsgroupList::nsNNTPNewsgroupList()
   : m_finishingXover(PR_FALSE),
@@ -110,6 +109,8 @@ nsNNTPNewsgroupList::nsNNTPNewsgroupList()
     m_lastMsgToDownload(0),
     m_set(nsnull)
 {
+    memset(&m_knownArts, 0, sizeof(m_knownArts));
+    m_lastStatusUpdate = LL_Zero();
 }
 
 nsNNTPNewsgroupList::~nsNNTPNewsgroupList()

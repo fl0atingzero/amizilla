@@ -73,11 +73,11 @@
 #include "nsITimer.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsPIDOMWindow.h"
+#include "nsIScriptSecurityManager.h"
 #include "nsIEventListenerManager.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMCrypto.h"
 #include "nsIDOMPkcs11.h"
-#include "nsISidebar.h"
 #include "nsIPrincipal.h"
 #include "nsPluginArray.h"
 #include "nsMimeTypeArray.h"
@@ -130,28 +130,32 @@ public:
   NS_DECL_ISUPPORTS
 
   // nsIScriptGlobalObject
-  NS_IMETHOD SetContext(nsIScriptContext *aContext);
-  NS_IMETHOD GetContext(nsIScriptContext **aContext);
-  NS_IMETHOD SetNewDocument(nsIDOMDocument *aDocument,
-                            PRBool aRemoveEventListeners,
-                            PRBool aClearScopeHint);
-  NS_IMETHOD SetDocShell(nsIDocShell* aDocShell);
-  NS_IMETHOD GetDocShell(nsIDocShell** aDocShell);
-  NS_IMETHOD SetOpenerWindow(nsIDOMWindowInternal *aOpener);
-  NS_IMETHOD SetGlobalObjectOwner(nsIScriptGlobalObjectOwner* aOwner);
-  NS_IMETHOD GetGlobalObjectOwner(nsIScriptGlobalObjectOwner** aOwner);
-  NS_IMETHOD HandleDOMEvent(nsIPresContext* aPresContext, nsEvent* aEvent,
-                            nsIDOMEvent** aDOMEvent, PRUint32 aFlags,
-                            nsEventStatus* aEventStatus);
-  NS_IMETHOD_(JSObject *) GetGlobalJSObject();
-  NS_IMETHOD OnFinalize(JSObject *aJSObject);
-  NS_IMETHOD SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts);
+  virtual void SetContext(nsIScriptContext *aContext);
+  virtual nsIScriptContext *GetContext();
+  virtual nsresult SetNewDocument(nsIDOMDocument *aDocument,
+                                  PRBool aRemoveEventListeners,
+                                  PRBool aClearScopeHint);
+  virtual void SetDocShell(nsIDocShell* aDocShell);
+  virtual nsIDocShell *GetDocShell();
+  virtual void SetOpenerWindow(nsIDOMWindowInternal *aOpener);
+  virtual void SetGlobalObjectOwner(nsIScriptGlobalObjectOwner* aOwner);
+  virtual nsIScriptGlobalObjectOwner *GetGlobalObjectOwner();
+  virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext,
+                                  nsEvent* aEvent, nsIDOMEvent** aDOMEvent,
+                                  PRUint32 aFlags,
+                                  nsEventStatus* aEventStatus);
+  virtual JSObject *GetGlobalJSObject();
+  virtual void OnFinalize(JSObject *aJSObject);
+  virtual void SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts);
 
   // nsIScriptObjectPrincipal
   NS_IMETHOD GetPrincipal(nsIPrincipal **prin);
 
   // nsIDOMWindow
   NS_DECL_NSIDOMWINDOW
+
+  // nsIDOMWindow2
+  NS_DECL_NSIDOMWINDOW2
 
   // nsIDOMWindowInternal
   NS_DECL_NSIDOMWINDOWINTERNAL
@@ -190,6 +194,8 @@ public:
 
   NS_IMETHOD ReallyCloseWindow();
   NS_IMETHOD IsLoadingOrRunningTimeout(PRBool* aResult);
+  NS_IMETHOD IsPopupSpamWindow(PRBool *aResult);
+  NS_IMETHOD SetPopupSpamWindow(PRBool aPopup);
 
   NS_IMETHOD GetFrameElementInternal(nsIDOMElement** aFrameElement);
   NS_IMETHOD SetFrameElementInternal(nsIDOMElement* aFrameElement);
@@ -217,7 +223,7 @@ protected:
   void ClearControllers();
 
   // Get the parent, returns null if this is a toplevel window
-  void GetParentInternal(nsIDOMWindowInternal **parent);
+  nsIDOMWindowInternal *GetParentInternal();
 
   // Window Control Functions
   NS_IMETHOD OpenInternal(const nsAString& aUrl,
@@ -243,7 +249,11 @@ protected:
   nsresult GetScrollInfo(nsIScrollableView** aScrollableView, float* aP2T,
                          float* aT2P);
   nsresult SecurityCheckURL(const char *aURL);
-  PRBool   CheckForAbusePoint();
+  PRUint32 CheckForAbusePoint();
+  PRBool   CheckOpenAllow(PRUint32 aAbuseLevel, const nsAString &aName);
+  void     FireAbuseEvents(PRBool aBlocked, PRBool aWindow,
+                           const nsAString &aPopupURL,
+                           const nsAString &aPopupWindowFeatures);
 
   void FlushPendingNotifications(PRBool aFlushReflows);
   void EnsureReflowFlushAndPaint();
@@ -279,7 +289,6 @@ protected:
   nsCOMPtr<nsIDOMWindowInternal> mOpener;
   nsCOMPtr<nsIControllers>      mControllers;
   nsCOMPtr<nsIEventListenerManager> mListenerManager;
-  nsCOMPtr<nsISidebar>          mSidebar;
   JSObject*                     mJSObject;
   nsRefPtr<NavigatorImpl>       mNavigator;
   nsRefPtr<ScreenImpl>          mScreen;
@@ -303,12 +312,14 @@ protected:
   PRPackedBool                  mFullScreen;
   PRPackedBool                  mIsClosed;
   PRPackedBool                  mOpenerWasCleared;
+  PRPackedBool                  mIsPopupSpam;
   PRTime                        mLastMouseButtonAction;
   nsString                      mStatus;
   nsString                      mDefaultStatus;
 
   nsIScriptGlobalObjectOwner*   mGlobalObjectOwner; // Weak Reference
   nsIDocShell*                  mDocShell;  // Weak Reference
+  nsEvent*                      mCurrentEvent;
   PRUint32                      mMutationBits;
   nsCOMPtr<nsIChromeEventHandler> mChromeEventHandler; // [Strong] We break it when we get torn down.
   nsCOMPtr<nsIDOMCrypto>        mCrypto;
@@ -407,8 +418,8 @@ struct nsTimeoutImpl
   // True if the timeout was cleared
   PRPackedBool mCleared;
 
-  // Alignment padding, unused
-  PRPackedBool mSpareAndUnused;
+  // True if this is one of the timeouts that are currently running
+  PRPackedBool mRunning;
 
   // Returned as value of setTimeout()
   PRUint32 mPublicId;
@@ -482,7 +493,7 @@ public:
 
   NS_DECL_ISUPPORTS
 
-  NS_IMETHOD_(void)       SetDocShell(nsIDocShell *aDocShell);
+  void SetDocShell(nsIDocShell *aDocShell);
 
   // nsIDOMLocation
   NS_DECL_NSIDOMLOCATION
@@ -491,7 +502,10 @@ public:
   NS_DECL_NSIDOMNSLOCATION
 
 protected:
-  nsresult GetURI(nsIURI** aURL);
+  // In the case of jar: uris, we sometimes want the place the jar was
+  // fetched from as the URI instead of the jar: uri itself.  Pass in
+  // PR_TRUE for aGetInnermostURI when that's the case.
+  nsresult GetURI(nsIURI** aURL, PRBool aGetInnermostURI = PR_FALSE);
   nsresult GetWritableURI(nsIURI** aURL);
   nsresult SetURI(nsIURI* aURL);
   nsresult SetHrefWithBase(const nsAString& aHref, nsIURI* aBase,
@@ -508,5 +522,9 @@ protected:
 
   nsIDocShell *mDocShell; // Weak Reference
 };
+
+/* factory function */
+nsresult NS_NewScriptGlobalObject(PRBool aIsChrome,
+                                  nsIScriptGlobalObject **aResult);
 
 #endif /* nsGlobalWindow_h___ */

@@ -68,14 +68,10 @@
 #include "nspr.h"
 #include "plstr.h"
 #include "nsCOMPtr.h"
-//#include "nsJSPrincipals.h"
-//#include "nsSystemPrincipal.h"
-//#include "nsCodebasePrincipal.h"
-#include "nsCertificatePrincipal.h"
+#include "nsIPrincipal.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsISignatureVerifier.h"
 
-//#include "nsScriptSecurityManager.h"
 
 extern "C" int XP_PROGRESS_STARTING_JAVA;
 extern "C" int XP_PROGRESS_STARTING_JAVA_DONE;
@@ -90,11 +86,8 @@ static NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
 static NS_DEFINE_CID(kJVMManagerCID, NS_JVMMANAGER_CID);
 
 static NS_DEFINE_CID(kPluginManagerCID, NS_PLUGINMANAGER_CID);
-static NS_DEFINE_IID(kPluginHostIID, NS_IPLUGINHOST_IID);
-static NS_DEFINE_IID(kPluginManagerIID, NS_IPLUGINMANAGER_IID);
 
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
-static NS_DEFINE_IID(kIEventQueueServiceIID, NS_IEVENTQUEUESERVICE_IID);
 
 // FIXME -- need prototypes for these functions!!! XXX
 #ifdef XP_MAC
@@ -110,16 +103,13 @@ static NS_DEFINE_IID(kIJVMManagerIID, NS_IJVMMANAGER_IID);
 static NS_DEFINE_IID(kIThreadManagerIID, NS_ITHREADMANAGER_IID);
 static NS_DEFINE_IID(kILiveConnectManagerIID, NS_ILIVECONNECTMANAGER_IID);
 static NS_DEFINE_IID(kIJVMPluginIID, NS_IJVMPLUGIN_IID);
-static NS_DEFINE_IID(kIPluginIID, NS_IPLUGIN_IID);
-static NS_DEFINE_IID(kISymantecDebugManagerIID, NS_ISYMANTECDEBUGMANAGER_IID);
-static NS_DEFINE_IID(kIPluginManagerIID, NS_IPLUGINMANAGER_IID);
 
 #define PLUGIN_REGIONAL_URL "chrome://global-region/locale/region.properties"
 
 
 ////////////////////////////////////////////////////////////////////////////////
 
-NS_IMPL_AGGREGATED(nsJVMManager);
+NS_IMPL_AGGREGATED(nsJVMManager)
 
 extern "C" {
 static nsIJVMPlugin* GetRunningJVM(void);
@@ -828,53 +818,39 @@ nsJVMManager::EnsurePrefCallbackRegistered(void)
 nsresult
 nsJVMManager::GetChrome(nsIWebBrowserChrome **theChrome)
 {
-    NS_ENSURE_ARG_POINTER(theChrome);
+    *theChrome = nsnull;
 
-    nsresult rv = NS_ERROR_FAILURE;
-    nsCOMPtr<nsIWindowWatcher> windowWatcher;
-    nsCOMPtr<nsIDOMWindow> domWindow;
-    nsCOMPtr<nsIDocShell> docShell;
-    nsCOMPtr<nsIScriptGlobalObject> scriptObject;
-    nsCOMPtr<nsIPresContext> presContext;
-    nsCOMPtr<nsIDocShellTreeItem> treeItem;
-    nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
-    nsCOMPtr<nsISupports> cont;
-    nsCOMPtr<nsIWebBrowserChrome> chrome;
-
-    windowWatcher =
+    nsresult rv;
+    nsCOMPtr<nsIWindowWatcher> windowWatcher =
         do_GetService(NS_WINDOWWATCHER_CONTRACTID, &rv);
-    if (!windowWatcher) {
+    if (NS_FAILED(rv)) {
         return rv;
     }
-    rv = windowWatcher->GetActiveWindow(getter_AddRefs(domWindow));
-    if (!domWindow) {
-        return rv;
-    }
-    scriptObject = do_QueryInterface(domWindow, &rv);
+    nsCOMPtr<nsIDOMWindow> domWindow;
+    windowWatcher->GetActiveWindow(getter_AddRefs(domWindow));
+    nsCOMPtr<nsIScriptGlobalObject> scriptObject =
+        do_QueryInterface(domWindow, &rv);
     if (!scriptObject) {
         return rv;
     }
-    rv = scriptObject->GetDocShell(getter_AddRefs(docShell));
+    nsIDocShell *docShell = scriptObject->GetDocShell();
     if (!docShell) {
-        return rv;
+        return NS_OK;
     }
+    nsCOMPtr<nsIPresContext> presContext;
     rv = docShell->GetPresContext(getter_AddRefs(presContext));
     if (!presContext) {
         return rv;
     }
-    rv = presContext->GetContainer(getter_AddRefs(cont));
-    if (!cont) {
-        return rv;
-    }
-    treeItem = do_QueryInterface(cont, &rv);
+    nsCOMPtr<nsISupports> container(presContext->GetContainer());
+    nsCOMPtr<nsIDocShellTreeItem> treeItem = do_QueryInterface(container, &rv);
     if (!treeItem) {
         return rv;
     }
-    rv = treeItem->GetTreeOwner(getter_AddRefs(treeOwner));
-    if (!treeOwner) {
-        return rv;
-    }
-    chrome = do_GetInterface(treeOwner, &rv);
+    nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
+    treeItem->GetTreeOwner(getter_AddRefs(treeOwner));
+
+    nsCOMPtr<nsIWebBrowserChrome> chrome = do_GetInterface(treeOwner, &rv);
     *theChrome = (nsIWebBrowserChrome *) chrome.get();
     NS_IF_ADDREF(*theChrome);
     return rv;
@@ -962,7 +938,7 @@ nsJVMManager::IsAllPermissionGranted(
 {
     nsresult rv      = NS_OK;
 
-    nsIPrincipal* pIPrincipal = NULL;
+    nsCOMPtr<nsIPrincipal> pIPrincipal;
   
     // Get the Script Security Manager.
 
@@ -974,18 +950,12 @@ nsJVMManager::IsAllPermissionGranted(
     // The fingerprint is a one way hash of this certificate. It is used
     // as the key to store the principal in the principal database.
 
-    rv = secMan->GetCertificatePrincipal(lastFP, &pIPrincipal);
+    rv = secMan->GetCertificatePrincipal(lastFP, nsnull,
+                                         getter_AddRefs(pIPrincipal));
     if (NS_FAILED(rv)) return PR_FALSE;
 
-    // Get the nsICertificatePrincipal interface so that we can set the
-    // common name. The common name is a user meaningful string.
-    
-    nsCOMPtr<nsICertificatePrincipal> pICertificate = do_QueryInterface(pIPrincipal, &rv);
-    if (NS_FAILED(rv) || !pICertificate) return PR_FALSE;
-
     // Set the common name.
-
-    rv = pICertificate->SetCommonName(lastCN);
+    rv = pIPrincipal->SetCommonName(lastCN);
 
     PRInt16 ret;
 

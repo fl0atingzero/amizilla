@@ -29,8 +29,8 @@ REQUIRES	= string \
 		  xpcom \
 		  dom \
 		  widget \
-		  layout \
 		  content \
+		  necko \
 		  xuldoc \
 		  caps \
 		  xpconnect \

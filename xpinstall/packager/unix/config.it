@@ -7,6 +7,13 @@ Title=Mozilla Installer
 
 
 ;-------------------------------------------------------------------------
+[Cleanup On Upgrade]
+;-------------------------------------------------------------------------
+ObjectToIgnore0=plugins
+ObjectToIgnore1=install.log
+
+
+;-------------------------------------------------------------------------
 [Dialog Welcome]
 ;-------------------------------------------------------------------------
 Show Dialog=TRUE
@@ -48,7 +55,7 @@ C7=Component8
 ; *** LOCALIZE ME BABY ***
 Description Short=Complete
 ; *** LOCALIZE ME BABY ***
-Description Long=Navigator, Mail & News, Chatzilla, Debugger, and Inspector
+Description Long=Navigator, Mail & News, Spellchecker, Chatzilla, Debugger, and Inspector
 C0=Component0
 C1=Component1
 C2=Component2
@@ -60,6 +67,7 @@ C7=Component7
 C8=Component8
 C9=Component9
 C10=Component10
+C11=Component11
 
 [Setup Type2]
 ; *** LOCALIZE ME BABY ***
@@ -90,6 +98,7 @@ C7=Component7
 C8=Component8
 C9=Component9
 C10=Component10
+C11=Component11
 
 
 ;-------------------------------------------------------------------------
@@ -210,6 +219,16 @@ $InstallSizeArchive$:inspector.xpi
 Attributes=SELECTED
 URL0=$URLPath$
 
+[Component11]
+Description Short=Spellchecker
+; *** LOCALIZE ME BABY ***
+Description Long=Spellchecker
+Archive=spellcheck.xpi
+$InstallSize$:spellcheck
+$InstallSizeArchive$:spellcheck.xpi
+Attributes=SELECTED
+URL0=$URLPath$
+
 ;-------------------------------------------------------------------------
 [Dialog Start Install]
 ;-------------------------------------------------------------------------
@@ -221,10 +240,17 @@ XPInstall Engine=xpcom.xpi
 
 
 ;-------------------------------------------------------------------------
-[RunApp0]
+[PostInstallRun0]
 ;-------------------------------------------------------------------------
-Target=mozilla
-Arguments=-installer
+Target=run-mozilla.sh
+Arguments=regxpcom
+
+
+;-------------------------------------------------------------------------
+[PostInstallRun1]
+;-------------------------------------------------------------------------
+Target=run-mozilla.sh
+Arguments=regchrome
 
 
 ;-------------------------------------------------------------------------
@@ -232,4 +258,4 @@ Arguments=-installer
 ;-------------------------------------------------------------------------
 Filename=mozilla-bin
 ; *** LOCALIZE ME BABY ***
-Message=An older installation of Mozilla was detected.  Please choose to delete the directory contents of your current Mozilla installation by pressing the 'Delete' button.  Alternatively, please press the 'Cancel' button and choose a different destination directory.  
+Message=The selected directory already contains a Mozilla installation. To delete %s completely, please press the 'Delete Directory' button. Information in your Mozilla profile(s) should not be affected. Or, please press the 'Cancel' button and choose a different destination directory.

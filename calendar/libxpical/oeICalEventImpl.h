@@ -34,6 +34,9 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+ 
+ /* Header file for oeICalEventImpl.cpp containing its CID and CONTRACTID.*/
+
 #ifndef _OEICALEVENTIMPL_H_
 #define _OEICALEVENTIMPL_H_
 
@@ -118,7 +121,10 @@ public:
     icaltimetype CalculateEventTime( icaltimetype alarmtime );
     void ChopAndAddEventToEnum( struct icaltimetype startdate, nsISimpleEnumerator **eventlist, 
                                                bool isallday, bool isbeginning );
+    void SetType( Componenttype type );
+
 private:
+    Componenttype m_type;
     char *m_id;
     char *m_syncid;
     nsCString m_title;
@@ -133,6 +139,7 @@ private:
     bool m_allday;
     bool m_hasalarm;
     unsigned long m_alarmlength;
+    icalparameter_related m_alarmtriggerrelation;
     char *m_alarmunits;
     char *m_alarmemail;
     char *m_inviteemail;
@@ -150,10 +157,12 @@ private:
     oeDateTimeImpl *m_stamp;
     oeDateTimeImpl *m_recurend;
     icaltimetype m_lastalarmack;
+    icaltimetype m_lastmodified;
     nsVoidArray m_exceptiondates;
     nsVoidArray m_snoozetimes;
     icaltimetype CalculateAlarmTime( icaltimetype date );
     bool IsExcepted( PRTime date );
+    icaldurationtype GetLength();
     nsCOMPtr<nsISupportsArray> m_attachments;
     nsCOMPtr<nsISupportsArray> m_contacts;
     oeIICal *m_calendar;

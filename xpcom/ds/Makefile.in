@@ -37,11 +37,9 @@ REQUIRES	= \
 
 CSRCS = \
 		pldhash.c \
-		plvector.c \
 		$(NULL)
 
 CPPSRCS		= \
-		nsArena.cpp \
 		nsAtomTable.cpp \
 		nsAtomService.cpp \
 		nsByteBuffer.cpp \
@@ -53,8 +51,6 @@ CPPSRCS		= \
 		nsFixedSizeAllocator.cpp \
 		nsHashSets.cpp \
 		nsHashtable.cpp \
-		nsHashtableEnumerator.cpp \
-		nsObserver.cpp \
 		nsObserverList.cpp \
 		nsObserverService.cpp \
 		nsProperties.cpp \
@@ -62,9 +58,7 @@ CPPSRCS		= \
 		nsQuickSort.cpp \
 		nsRecyclingAllocator.cpp \
 		nsStaticNameTable.cpp \
-		nsStatistics.cpp \
 		nsStringEnumerator.cpp \
-		nsStringService.cpp \
 		nsSupportsArray.cpp \
 		nsSupportsArrayEnumerator.cpp \
 		nsSupportsPrimitives.cpp \
@@ -95,8 +89,6 @@ EXPORTS		= \
 		nsHashSets.h \
 		nsHashKeys.h \
 		nsHashtable.h \
-		nsHashtableEnumerator.h \
-		nsIArena.h \
 		nsIByteBuffer.h \
 		nsIUnicharBuffer.h \
 		nsInt64.h \
@@ -104,6 +96,7 @@ EXPORTS		= \
 		nsObserverService.h \
 		nsQuickSort.h \
 		nsRecyclingAllocator.h \
+		nsRefPtrHashtable.h \
 		nsStaticNameTable.h \
 		nsStaticAtom.h \
 		nsSupportsArray.h \
@@ -112,16 +105,15 @@ EXPORTS		= \
 		nsTime.h \
 		nsUnitConversion.h \
 		nsVariant.h \
-		nsVector.h \
 		nsVoidArray.h \
 		pldhash.h \
-		plvector.h \
 		nsTextFormatter.h \
 		nsValueArray.h \
 		nsArray.h \
 		nsArrayEnumerator.h \
 		nsCOMArray.h \
 		nsStringEnumerator.h \
+		nsAutoBuffer.h \
 		$(NULL)			
 
 XPIDLSRCS	= \
@@ -135,7 +127,6 @@ XPIDLSRCS	= \
 		nsIVariant.idl \
 		nsISerializable.idl \
 		nsIStringEnumerator.idl \
-		nsIStringService.idl \
 		nsISupportsArray.idl \
 		nsISupportsIterators.idl \
 		nsITimelineService.idl \
@@ -147,7 +138,6 @@ SDK_XPIDLSRCS   = \
 		nsIObserver.idl		   \
 		nsIProperties.idl          \
 		nsISimpleEnumerator.idl	   \
-		nsIStringService.idl       \
 		nsISupportsPrimitives.idl  \
 		$(NULL)
 

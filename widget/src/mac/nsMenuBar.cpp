@@ -92,9 +92,7 @@ extern PRInt16 gCurrentMenuDepth;
 
 // CIDs
 #include "nsWidgetsCID.h"
-static NS_DEFINE_CID(kMenuBarCID, NS_MENUBAR_CID);
 static NS_DEFINE_CID(kMenuCID, NS_MENU_CID);
-static NS_DEFINE_CID(kMenuItemCID, NS_MENUITEM_CID);
 
 void InstallDefProc( short dpPath, ResType dpType, short dpID, Ptr dpAddr);
 
@@ -129,7 +127,7 @@ nsMenuBar::nsMenuBar()
   
   ::ClearMenuBar(); 
   mRefCnt = 1;      // NS_GetWeakReference does an addref then a release, so this +1 is needed
-  gMacMenubar = getter_AddRefs(NS_GetWeakReference((nsIMenuBar *)this));
+  gMacMenubar = do_GetWeakReference((nsIMenuBar *)this);
   mRefCnt = 0;
   // copy from nsMenu.cpp
   ScriptCode ps[1];
@@ -300,12 +298,12 @@ nsEventStatus
 nsMenuBar::MenuConstruct( const nsMenuEvent & aMenuEvent, nsIWidget* aParentWindow, 
                             void * menubarNode, void * aWebShell )
 {
-  mWebShellWeakRef = getter_AddRefs(NS_GetWeakReference(NS_STATIC_CAST(nsIWebShell*, aWebShell)));
+  mWebShellWeakRef = do_GetWeakReference(NS_STATIC_CAST(nsIWebShell*, aWebShell));
   nsIDOMNode* aDOMNode  = NS_STATIC_CAST(nsIDOMNode*, menubarNode);
   mMenuBarContent = do_QueryInterface(aDOMNode);           // strong ref
   
   if(gFirstMenuBar) {
-      gOriginalMenuBar = getter_AddRefs(NS_GetWeakReference((nsIMenuBar *)this));
+      gOriginalMenuBar = do_GetWeakReference((nsIMenuBar *)this);
       
 	  gFirstMenuBar = false;
 	  // Add the 4 Golden Hierarchical Menus to the MenuList        
@@ -372,15 +370,12 @@ nsMenuBar::MenuConstruct( const nsMenuEvent & aMenuEvent, nsIWidget* aParentWind
   // set this as a nsMenuListener on aParentWindow
   aParentWindow->AddMenuListener((nsIMenuListener *)this);
   
-  PRInt32 count;
-  mMenuBarContent->ChildCount(count);
-  for ( int i = 0; i < count; ++i ) { 
-    nsCOMPtr<nsIContent> menu;
-    mMenuBarContent->ChildAt ( i, *getter_AddRefs(menu) );
+  PRUint32 count = mMenuBarContent->GetChildCount();
+  for ( PRUint32 i = 0; i < count; ++i ) { 
+    nsIContent *menu = mMenuBarContent->GetChildAt(i);
     if ( menu ) {
-      nsCOMPtr<nsIAtom> tag;
-      menu->GetTag ( *getter_AddRefs(tag) );
-      if (tag == nsWidgetAtoms::menu) {
+      if (menu->Tag() == nsWidgetAtoms::menu &&
+          menu->IsContentOfType(nsIContent::eXUL)) {
         nsAutoString menuName;
         nsAutoString menuAccessKey(NS_LITERAL_STRING(" "));
         menu->GetAttr(kNameSpaceID_None, nsWidgetAtoms::label, menuName);
@@ -479,8 +474,7 @@ NS_METHOD nsMenuBar::AddMenu(nsIMenu * aMenu)
       nsCOMPtr<nsIContent> menu;
       aMenu->GetMenuContent(getter_AddRefs(menu));
       if (menu) {
-        nsCOMPtr<nsIDocument> doc;
-        menu->GetDocument(getter_AddRefs(doc));
+        nsCOMPtr<nsIDocument> doc = menu->GetDocument();
         if (doc) {
           nsCOMPtr<nsIDOMDocument> domdoc ( do_QueryInterface(doc) );
           if ( domdoc ) {
@@ -581,7 +575,7 @@ NS_METHOD nsMenuBar::SetNativeData(void* aData)
 //-------------------------------------------------------------------------
 NS_METHOD nsMenuBar::Paint()
 {
-  gMacMenubar = getter_AddRefs(NS_GetWeakReference((nsIMenuBar *)this));
+  gMacMenubar = do_GetWeakReference((nsIMenuBar *)this);
   
   ::SetMenuBar(mMacMBarHandle);
   // Now we have blown away the merged Help menu, so we have to rebuild it
@@ -625,19 +619,19 @@ NS_IMPL_NSIDOCUMENTOBSERVER_STATE_STUB(nsMenuBar)
 NS_IMPL_NSIDOCUMENTOBSERVER_STYLE_STUB(nsMenuBar)
 
 NS_IMETHODIMP
-nsMenuBar::BeginUpdate( nsIDocument * aDocument )
+nsMenuBar::BeginUpdate( nsIDocument * aDocument, nsUpdateType aUpdateType )
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMenuBar::EndUpdate( nsIDocument * aDocument )
+nsMenuBar::EndUpdate( nsIDocument * aDocument, nsUpdateType aUpdateType )
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMenuBar::ContentChanged( nsIDocument * aDocument, nsIContent * aContent, nsISupports * aSubContent)
+nsMenuBar::CharacterDataChanged( nsIDocument * aDocument, nsIContent * aContent, PRBool aAppend)
 {
   return NS_OK;
 }
@@ -656,8 +650,7 @@ nsMenuBar::ContentAppended( nsIDocument * aDocument, nsIContent  * aContainer,
     if ( obs )
       obs->ContentInserted ( aDocument, aContainer, aNewIndexInContainer );
     else {
-      nsCOMPtr<nsIContent> parent;
-      aContainer->GetParent(getter_AddRefs(parent));
+      nsCOMPtr<nsIContent> parent = aContainer->GetParent();
       if(parent) {
         Lookup ( parent, getter_AddRefs(obs) );
         if ( obs )
@@ -685,13 +678,13 @@ nsMenuBar::DocumentWillBeDestroyed( nsIDocument * aDocument )
 
 NS_IMETHODIMP
 nsMenuBar::AttributeChanged( nsIDocument * aDocument, nsIContent * aContent, PRInt32 aNameSpaceID,
-                              nsIAtom * aAttribute, PRInt32 aModType, nsChangeHint aHint)
+                              nsIAtom * aAttribute, PRInt32 aModType )
 {
   // lookup and dispatch to registered thang.
   nsCOMPtr<nsIChangeObserver> obs;
   Lookup ( aContent, getter_AddRefs(obs) );
   if ( obs )
-    obs->AttributeChanged ( aDocument, aNameSpaceID, aAttribute, (PRInt32)aHint );
+    obs->AttributeChanged ( aDocument, aNameSpaceID, aAttribute );
 
   return NS_OK;
 }
@@ -710,8 +703,7 @@ nsMenuBar::ContentRemoved( nsIDocument * aDocument, nsIContent * aContainer,
     if ( obs )
       obs->ContentRemoved ( aDocument, aChild, aIndexInContainer );
     else {
-      nsCOMPtr<nsIContent> parent;
-      aContainer->GetParent(getter_AddRefs(parent));
+      nsCOMPtr<nsIContent> parent = aContainer->GetParent();
       if(parent) {
         Lookup ( parent, getter_AddRefs(obs) );
         if ( obs )
@@ -736,8 +728,7 @@ nsMenuBar::ContentInserted( nsIDocument * aDocument, nsIContent * aContainer,
     if ( obs )
       obs->ContentInserted ( aDocument, aChild, aIndexInContainer );
     else {
-      nsCOMPtr<nsIContent> parent;
-      aContainer->GetParent(getter_AddRefs(parent));
+      nsCOMPtr<nsIContent> parent = aContainer->GetParent();
       if(parent) {
         Lookup ( parent, getter_AddRefs(obs) );
         if ( obs )

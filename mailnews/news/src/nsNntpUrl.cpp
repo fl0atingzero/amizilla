@@ -65,7 +65,6 @@
 #include "nsINntpService.h"
 #include "nsIMsgMessageService.h"
 
-static NS_DEFINE_CID(kCNewsDB, NS_NEWSDB_CID);
     
 nsNntpUrl::nsNntpUrl()
 {
@@ -224,8 +223,8 @@ NS_IMETHODIMP nsNntpUrl::GetUri(char ** aURI)
 }
 
 
-NS_IMPL_GETSET(nsNntpUrl, AddDummyEnvelope, PRBool, m_addDummyEnvelope);
-NS_IMPL_GETSET(nsNntpUrl, CanonicalLineEnding, PRBool, m_canonicalLineEnding);
+NS_IMPL_GETSET(nsNntpUrl, AddDummyEnvelope, PRBool, m_addDummyEnvelope)
+NS_IMPL_GETSET(nsNntpUrl, CanonicalLineEnding, PRBool, m_canonicalLineEnding)
 
 NS_IMETHODIMP nsNntpUrl::SetMessageFile(nsIFileSpec * aFileSpec)
 {

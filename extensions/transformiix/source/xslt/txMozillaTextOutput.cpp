@@ -48,6 +48,7 @@
 #include "nsIDocumentTransformer.h"
 #include "nsNetUtil.h"
 #include "nsIDOMNSDocument.h"
+#include "nsIParser.h"
 
 static NS_DEFINE_CID(kXMLDocumentCID, NS_XMLDOCUMENT_CID);
 
@@ -168,23 +169,31 @@ void txMozillaTextOutput::createResultDocument(nsIDOMDocument* aSourceDocument,
     }
 
     // Reset and set up document
-    nsCOMPtr<nsILoadGroup> loadGroup;
     nsCOMPtr<nsIChannel> channel;
     nsCOMPtr<nsIDocument> sourceDoc = do_QueryInterface(aSourceDocument);
-    sourceDoc->GetDocumentLoadGroup(getter_AddRefs(loadGroup));
+    nsCOMPtr<nsILoadGroup> loadGroup = sourceDoc->GetDocumentLoadGroup();
     nsCOMPtr<nsIIOService> serv = do_GetService(NS_IOSERVICE_CONTRACTID);
     if (serv) {
         // Create a temporary channel to get nsIDocument->Reset to
         // do the right thing. We want the output document to get
         // much of the input document's characteristics.
-        nsCOMPtr<nsIURI> docURL;
-        sourceDoc->GetDocumentURL(getter_AddRefs(docURL));
-        serv->NewChannelFromURI(docURL, getter_AddRefs(channel));
+        serv->NewChannelFromURI(sourceDoc->GetDocumentURI(),
+                                getter_AddRefs(channel));
     }
     doc->Reset(channel, loadGroup);
-    nsCOMPtr<nsIURI> baseURL;
-    sourceDoc->GetBaseURL(getter_AddRefs(baseURL));
-    doc->SetBaseURL(baseURL);
+    doc->SetBaseURI(sourceDoc->GetBaseURI());
+
+    // Set the charset
+    if (!mOutputFormat.mEncoding.IsEmpty()) {
+        doc->SetDocumentCharacterSet(
+            NS_LossyConvertUTF16toASCII(mOutputFormat.mEncoding));
+        doc->SetDocumentCharacterSetSource(kCharsetFromOtherComponent);
+    }
+    else {
+        doc->SetDocumentCharacterSet(sourceDoc->GetDocumentCharacterSet());
+        doc->SetDocumentCharacterSetSource(
+            sourceDoc->GetDocumentCharacterSetSource());
+    }
 
     // Notify the contentsink that the document is created
     nsCOMPtr<nsITransformObserver> observer = do_QueryReferent(mObserver);
@@ -230,17 +239,9 @@ void txMozillaTextOutput::createResultDocument(nsIDOMDocument* aSourceDocument,
             return;
         }
 
-        rv = rootContent->SetDocument(doc, PR_FALSE, PR_TRUE);
-        NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to set the document");
-        if (NS_FAILED(rv)) {
-            return;
-        }
+        rootContent->SetDocument(doc, PR_FALSE, PR_TRUE);
 
-        rv = doc->SetRootContent(rootContent);
-        NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to set the root content");
-        if (NS_FAILED(rv)) {
-            return;
-        }
+        doc->SetRootContent(rootContent);
 
         mDocument->CreateElementNS(XHTML_NSURI,
                                    NS_LITERAL_STRING("head"),

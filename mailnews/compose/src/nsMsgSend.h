@@ -195,18 +195,16 @@ public:
   // internal callback only. This way, no thread boundry issues and
   // we can get away without all of the listener array code.
   //
-  void (*m_attachments_done_callback) (
-									   nsresult                 status,
-									   const PRUnichar              *error_msg,
-									   struct nsMsgAttachedFile *attachments);
+  void (*m_attachments_done_callback) (nsresult  status, 
+        const PRUnichar *error_msg, struct nsMsgAttachedFile *attachments);
   
   //
   // Define QueryInterface, AddRef and Release for this class 
   //
-	NS_DECL_ISUPPORTS
+  NS_DECL_ISUPPORTS
 
   nsMsgComposeAndSend();
-	virtual     ~nsMsgComposeAndSend();
+  virtual     ~nsMsgComposeAndSend();
 
 
   // Delivery and completion callback routines...
@@ -235,28 +233,29 @@ public:
   //
   // FCC operations...
   //
-  nsresult    MimeDoFCC (nsFileSpec           *input_file,  
-			                   nsMsgDeliverMode     mode,
-			                   const char           *bcc_header,
-			                   const char           *fcc_header,
-			                   const char           *news_url);
+  nsresult    MimeDoFCC (nsFileSpec *input_file,  
+    nsMsgDeliverMode mode,
+    const char *bcc_header,
+    const char *fcc_header,
+    const char *news_url);
   
   // Init() will allow for either message creation without delivery or full
   // message creation and send operations
   //
   nsresult    Init(
-                   nsIMsgIdentity  *aUserIdentity,
-			             nsMsgCompFields  *fields,
+                   nsIMsgIdentity   *aUserIdentity,
+                   const char       *aAccountKey,
+                   nsMsgCompFields  *fields,
                    nsFileSpec       *sendFileSpec,
-			             PRBool           digest_p,
-			             PRBool           dont_deliver_p,
-			             nsMsgDeliverMode mode,
+                   PRBool           digest_p,
+                   PRBool           dont_deliver_p,
+                   nsMsgDeliverMode mode,
                    nsIMsgDBHdr      *msgToReplace,
-			             const char       *attachment1_type,
-			             const char       *attachment1_body,
-			             PRUint32         attachment1_body_length,
-			             const nsMsgAttachmentData   *attachments,
-			             const nsMsgAttachedFile     *preloaded_attachments,
+                   const char       *attachment1_type,
+                   const char       *attachment1_body,
+                   PRUint32         attachment1_body_length,
+                   const nsMsgAttachmentData   *attachments,
+                   const nsMsgAttachedFile     *preloaded_attachments,
                    const char       *password);
 
   //
@@ -270,7 +269,7 @@ public:
   //
   // Attachment processing...
   //
-  int         HackAttachments(const struct nsMsgAttachmentData *attachments,
+  nsresult    HackAttachments(const struct nsMsgAttachmentData *attachments,
 					                    const struct nsMsgAttachedFile *preloaded_attachments);
   nsresult    CountCompFieldAttachments();
   nsresult    AddCompFieldLocalAttachments();
@@ -299,6 +298,7 @@ public:
   //
   nsMsgKey                  m_messageKey;        // jt -- Draft/Template support; newly created key
   nsCOMPtr<nsIMsgIdentity>  mUserIdentity;
+  nsCString                 mAccountKey;
   nsCOMPtr<nsMsgCompFields> mCompFields;         // All needed composition fields (header, etc...)
   nsFileSpec                *mTempFileSpec;      // our temporary file
   
@@ -411,6 +411,9 @@ private:
   // generates a message id for our message, if necessary
   void GenerateMessageId( );
 
+  // add default custom headers to the message
+  nsresult AddDefaultCustomHeaders();
+  
   nsCOMPtr<nsIMsgSendReport>  mSendReport;
   nsCString                   mSmtpPassword;            // store the smtp Password use during a send
 };

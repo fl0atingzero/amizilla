@@ -66,37 +66,6 @@ public:
   NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICLIPVIEW_IID)
 };
 
-//Flag to determine whether the view will check if events can be handled
-//by its children or just handle the events itself
-#define NS_VIEW_FLAG_DONT_CHECK_CHILDREN  0x0001
-
-// indicates that the view is or contains a placeholder view
-#define NS_VIEW_FLAG_CONTAINS_PLACEHOLDER 0x0002
-
-//the view is transparent
-#define NS_VIEW_FLAG_TRANSPARENT          0x0004
-
-//indicates that the view should not be bitblt'd when moved
-//or scrolled and instead must be repainted
-#define NS_VIEW_FLAG_DONT_BITBLT          0x0010
-
-// indicates that the view is using auto z-indexing
-#define NS_VIEW_FLAG_AUTO_ZINDEX          0x0020
-
-// indicates that the view is a floating view.
-#define NS_VIEW_FLAG_FLOATING             0x0040
-
-// set if our widget resized. 
-#define NS_VIEW_FLAG_WIDGET_RESIZED       0x0080
-
-// set if our widget moved. 
-#define NS_VIEW_FLAG_WIDGET_MOVED         0x0100
-#define NS_VIEW_FLAG_CLIPCHILDREN         0x0200
-
-// if set it indicates that this view should be 
-// displayed above z-index:auto views if this view 
-// is z-index:auto also
-#define NS_VIEW_FLAG_TOPMOST              0x0400
 
 class nsView : public nsIView
 {
@@ -108,38 +77,6 @@ public:
   // nsISupports
   NS_IMETHOD  QueryInterface(const nsIID& aIID, void** aInstancePtr);
 
-  // nsIView
-  NS_IMETHOD  Init(nsIViewManager* aManager,
-      						 const nsRect &aBounds,
-                   const nsIView *aParent,
-      						 nsViewVisibility aVisibilityFlag = nsViewVisibility_kShow);
-  NS_IMETHOD  GetViewManager(nsIViewManager *&aViewMgr) const;
-  NS_IMETHOD  GetPosition(nscoord *x, nscoord *y) const;
-  NS_IMETHOD  GetBounds(nsRect &aBounds) const;
-  NS_IMETHOD  GetVisibility(nsViewVisibility &aVisibility) const;
-  NS_IMETHOD  GetZIndex(PRBool &aAuto, PRInt32 &aZIndex, PRBool &aTopMost) const;
-  PRInt32     GetZIndex() const { return mZIndex; }
-  PRBool      GetZIndexIsAuto() const { return (mVFlags & NS_VIEW_FLAG_AUTO_ZINDEX) != 0; }
-  NS_IMETHOD  GetFloating(PRBool &aFloatingView) const;
-  NS_IMETHOD  GetParent(nsIView *&aParent) const;
-  NS_IMETHOD  GetFirstChild(nsIView* &aChild) const;
-  NS_IMETHOD  GetNextSibling(nsIView *&aNextSibling) const;
-  NS_IMETHOD  GetOpacity(float &aOpacity) const;
-  NS_IMETHOD  HasTransparency(PRBool &aTransparent) const;
-  NS_IMETHOD  SetClientData(void *aData);
-  NS_IMETHOD  GetClientData(void *&aData) const;
-  NS_IMETHOD  GetOffsetFromWidget(nscoord *aDx, nscoord *aDy, nsIWidget *&aWidget);
-  NS_IMETHOD  CreateWidget(const nsIID &aWindowIID,
-                           nsWidgetInitData *aWidgetInitData = nsnull,
-                           nsNativeWidget aNative = nsnull,
-                           PRBool aEnableDragDrop = PR_TRUE,
-                           PRBool aResetVisibility = PR_TRUE,
-                           nsContentType aContentType = eContentTypeInherit);
-  NS_IMETHOD  GetWidget(nsIWidget *&aWidget) const;
-  NS_IMETHOD  HasWidget(PRBool *aHasWidget) const;
-  NS_IMETHOD  List(FILE* out = stdout, PRInt32 aIndent = 0) const;
-
-  NS_IMETHOD  Destroy();
   /**
    * Called to indicate that the specified rect of the view
    * needs to be drawn via the rendering context. The rect
@@ -162,19 +99,6 @@ public:
    */
   NS_IMETHOD  Paint(nsIRenderingContext& rc, const nsIRegion& region,
                     PRUint32 aPaintFlags, PRBool &aResult);
-  /**
-   * Called to indicate that the specified event should be handled
-   * by the view. This method should return nsEventStatus_eConsumeDoDefault
-   * or nsEventStatus_eConsumeNoDefault if the event has been handled.
-   *
-   * This is a hook giving the view a chance to handle the event specially.
-   * By default we just bounce the event back to the view manager for display
-   * list processing.
-   *
-   * @param event event to process
-   * @result processing status
-   */
-  virtual nsEventStatus HandleEvent(nsViewManager* aVM, nsGUIEvent *aEvent, PRBool aCaptured);
 
   /**
    * Called to indicate that the position of the view has been changed.
@@ -196,7 +120,7 @@ public:
    * This checks whether the view is a placeholder for some view that has
    * been reparented to a different geometric parent.
    */
-  virtual PRBool IsZPlaceholderView() { return PR_FALSE; }
+  virtual PRBool IsZPlaceholderView() const { return PR_FALSE; }
 
   /**
    * Called to set the clip of the children of this view.
@@ -204,15 +128,34 @@ public:
    * All of the children of this view will be clipped using
    * the specified rectangle
    */
-  void SetClipChildren(PRBool aDoClip) {
-    mVFlags = (mVFlags & ~NS_VIEW_FLAG_CLIPCHILDREN) | (aDoClip ? NS_VIEW_FLAG_CLIPCHILDREN : 0);
+  void SetClipChildrenToRect(const nsRect* aRect) {
+    if (!aRect) {
+      delete mClipRect;
+      mClipRect = nsnull;
+    } else {
+      if (mClipRect) {
+        *mClipRect = *aRect;
+      } else {
+        mClipRect = new nsRect(*aRect);
+      }
+    }
   }
-  void SetChildClip(const nsRect &aRect) { mChildClip = aRect; }
+  void SetClipChildrenToBounds(PRBool aDoClip) {
+    mVFlags = (mVFlags & ~NS_VIEW_FLAG_CLIP_CHILDREN_TO_BOUNDS)
+      | (aDoClip ? NS_VIEW_FLAG_CLIP_CHILDREN_TO_BOUNDS : 0);
+  }
+  void SetClipPlaceholdersToBounds(PRBool aDoClip) {
+    mVFlags = (mVFlags & ~NS_VIEW_FLAG_CLIP_PLACEHOLDERS_TO_BOUNDS)
+      | (aDoClip ? NS_VIEW_FLAG_CLIP_PLACEHOLDERS_TO_BOUNDS : 0);
+  }
+
   /**
    * Called to get the dimensions and position of the clip for the children of this view.
    */
-  PRBool GetClipChildren() const { return (mVFlags & NS_VIEW_FLAG_CLIPCHILDREN) != 0; }
-  void GetChildClip(nsRect &aRect) const { aRect = mChildClip; }
+  const nsRect* GetClipChildrenToRect() const
+  { return mClipRect; }
+  PRBool GetClipChildrenToBounds(PRBool aPlaceholders) const
+  { return (mVFlags & (aPlaceholders ? NS_VIEW_FLAG_CLIP_PLACEHOLDERS_TO_BOUNDS : NS_VIEW_FLAG_CLIP_CHILDREN_TO_BOUNDS)) != 0; }
 
   /**
    * Called to indicate that the visibility of a view has been
@@ -269,18 +212,12 @@ public:
    * @return error status
    */
   NS_IMETHOD  SetWidget(nsIWidget *aWidget);
+
   /**
-   * Return a rectangle containing the view's bounds adjusted for it's ancestors clipping
-   * @param aClippedRect views bounds adjusted for ancestors clipping. If aEmpty is TRUE it
-   * aClippedRect is set to an empty rect.
-   * @param aIsClipped returns with PR_TRUE if view's rectangle is clipped by an ancestor
-   * @param aEmpty returns with PR_TRUE if view's rectangle is 'clipped out'
+   * @return the view's dimensions after clipping by ancestors is applied
+   * (the rect is relative to the view's origin)
    */
-  NS_IMETHOD  GetClippedRect(nsRect& aClippedRect, PRBool& aIsClipped, PRBool& aEmpty) const;
-
-
-  // XXX Temporary for Bug #19416
-  NS_IMETHOD IgnoreSetPosition(PRBool aShouldIgnore);
+  nsRect GetClippedRect();
 
   /**
    * Sync your widget size and position with the view
@@ -291,28 +228,26 @@ public:
   // Helper function to get the view that's associated with a widget
   static nsView*  GetViewFor(nsIWidget* aWidget);
 
-   // Helper function to determine if the view instance is the root view
-  PRBool IsRoot();
-
-   // Helper function to determine if the view point is inside of a view
-  PRBool PointIsInside(nsView& aView, nscoord x, nscoord y) const;
-
   // Helper function to get mouse grabbing off this view (by moving it to the
   // parent, if we can)
   void DropMouseGrabbing();
 
-public: // NOT in nsIView, so only available in view module
+public:
+  // NOT in nsIView, so only available in view module
+  nsZPlaceholderView* GetZParent() const { return mZParent; }
+  // These are also present in nsIView, but these versions return nsView and nsViewManager
+  // instead of nsIView and nsIViewManager.
   nsView* GetFirstChild() const { return mFirstChild; }
   nsView* GetNextSibling() const { return mNextSibling; }
   nsView* GetParent() const { return mParent; }
-  nsZPlaceholderView* GetZParent() const { return mZParent; }
   nsViewManager* GetViewManager() const { return mViewManager; }
-  nsViewVisibility GetVisibility() const { return mVis; }
-  void* GetClientData() const { return mClientData; }
-  PRBool GetFloating() const { return (mVFlags & NS_VIEW_FLAG_FLOATING) != 0; }
-
-  PRInt32 GetChildCount() const { return mNumKids; }
-  nsView* GetChild(PRInt32 aIndex) const;
+  // These are superceded by a better interface in nsIView
+  PRInt32 GetZIndex() const { return mZIndex; }
+  PRBool GetZIndexIsAuto() const { return (mVFlags & NS_VIEW_FLAG_AUTO_ZINDEX) != 0; }
+  // This is a better interface than GetDimensions(nsRect&) above
+  nsRect GetDimensions() const { nsRect r = mDimBounds; r.MoveBy(-mPosX, -mPosY); return r; }
+  // These are defined exactly the same in nsIView, but for now they have to be redeclared
+  // here because of stupid C++ method hiding rules
 
   void InsertChild(nsView *aChild, nsView *aSibling);
   void RemoveChild(nsView *aChild);
@@ -327,36 +262,28 @@ public: // NOT in nsIView, so only available in view module
   void SetTopMost(PRBool aTopMost) { aTopMost ? mVFlags |= NS_VIEW_FLAG_TOPMOST : mVFlags &= ~NS_VIEW_FLAG_TOPMOST; }
   PRBool IsTopMost() { return((mVFlags & NS_VIEW_FLAG_TOPMOST) != 0); }
 
+  // Don't use this method when you want to adjust an nsPoint.
+  // Just write "pt += view->GetPosition();"
+  // When everything's converted to nsPoint, this can go away.
   void ConvertToParentCoords(nscoord* aX, nscoord* aY) const { *aX += mPosX; *aY += mPosY; }
+  // Don't use this method when you want to adjust an nsPoint.
+  // Just write "pt -= view->GetPosition();"
+  // When everything's converted to nsPoint, this can go away.
   void ConvertFromParentCoords(nscoord* aX, nscoord* aY) const { *aX -= mPosX; *aY -= mPosY; }
+  void ResetWidgetPosition(PRBool aRecurse);
+  void SetPositionIgnoringChildWidgets(nscoord aX, nscoord aY);
+  nsresult LoadWidget(const nsCID &aClassIID);
 
 protected:
   virtual ~nsView();
-  virtual nsresult LoadWidget(const nsCID &aClassIID);
 
 protected:
-  nsViewManager     *mViewManager;
-  nsView            *mParent;
-  nsIWidget         *mWindow;
-
   nsZPlaceholderView*mZParent;
 
-  //XXX should there be pointers to last child so backward walking is fast?
-  nsView            *mNextSibling;
-  nsView            *mFirstChild;
-  void              *mClientData;
-  PRInt32           mZIndex;
-  nsViewVisibility  mVis;
-  PRInt32           mNumKids;
-  nscoord           mPosX, mPosY;
-  nsRect            mDimBounds; // relative to parent
-  nsRect            mChildClip;
-  float             mOpacity;
-  PRUint32          mVFlags;
-  nsIRegion*        mDirtyRegion;
-  // Bug #19416
-  PRPackedBool      mShouldIgnoreSetPosition;
-  PRPackedBool      mChildRemoved;
+  // mClipRect is relative to the view's origin.
+  nsRect*         mClipRect;
+  nsIRegion*      mDirtyRegion;
+  PRPackedBool    mChildRemoved;
 
 private:
   NS_IMETHOD_(nsrefcnt) AddRef(void);

@@ -36,14 +36,11 @@
 #include "nsHttpAuthCache.h"
 #include "nsStandardURL.h"
 #include "nsIHttpChannel.h"
-#include "nsIHttpNotify.h"
 #include "nsIURL.h"
 #include "nsIStandardURL.h"
 #include "nsICacheService.h"
 #include "nsICategoryManager.h"
 #include "nsCategoryManagerUtils.h"
-#include "nsIObserverService.h"
-#include "nsINetModRegEntry.h"
 #include "nsICacheService.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranchInternal.h"
@@ -75,9 +72,8 @@ extern PRThread *gSocketThread;
 #endif
 
 static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID);
-static NS_DEFINE_CID(kStandardURLCID, NS_STANDARDURL_CID);
-static NS_DEFINE_CID(kNetModuleMgrCID, NS_NETMODULEMGR_CID);
 static NS_DEFINE_CID(kStreamConverterServiceCID, NS_STREAMCONVERTERSERVICE_CID);
+static NS_DEFINE_CID(kCookieServiceCID, NS_COOKIESERVICE_CID);
 static NS_DEFINE_CID(kCacheServiceCID, NS_CACHESERVICE_CID);
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 static NS_DEFINE_CID(kSocketProviderServiceCID, NS_SOCKETPROVIDERSERVICE_CID);
@@ -91,9 +87,11 @@ static NS_DEFINE_CID(kSocketProviderServiceCID, NS_SOCKETPROVIDERSERVICE_CID);
 #define INTL_ACCEPT_LANGUAGES   "intl.accept_languages"
 #define INTL_ACCEPT_CHARSET     "intl.charset.default"
 #define NETWORK_ENABLEIDN       "network.enableIDN"
+#define BROWSER_PREF_PREFIX     "browser.cache."
 
 #define UA_PREF(_pref) UA_PREF_PREFIX _pref
 #define HTTP_PREF(_pref) HTTP_PREF_PREFIX _pref
+#define BROWSER_PREF(_pref) BROWSER_PREF_PREFIX _pref
 
 //-----------------------------------------------------------------------------
 
@@ -142,11 +140,13 @@ nsHttpHandler::nsHttpHandler()
     , mMaxPersistentConnectionsPerProxy(4)
     , mMaxPipelinedRequests(2)
     , mRedirectionLimit(10)
+    , mPhishyUserPassLength(1)
     , mLastUniqueID(NowInSeconds())
     , mSessionStartTime(0)
     , mUserAgentIsDirty(PR_TRUE)
     , mUseCache(PR_TRUE)
     , mSendSecureXSiteReferrer(PR_TRUE)
+    , mEnablePersistentHttpsCaching(PR_FALSE)
 {
 #if defined(PR_LOGGING)
     gHttpLog = PR_NewLogModule("nsHttp");
@@ -192,19 +192,19 @@ nsHttpHandler::Init()
     InitUserAgentComponents();
 
     // monitor some preference changes
-    nsCOMPtr<nsIPrefBranch> prefBranch;
-    GetPrefBranch(getter_AddRefs(prefBranch));
+    nsCOMPtr<nsIPrefBranchInternal> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID);
     if (prefBranch) {
-        nsCOMPtr<nsIPrefBranchInternal> pbi = do_QueryInterface(prefBranch);
-        if (pbi) {
-            pbi->AddObserver(HTTP_PREF_PREFIX, this, PR_TRUE);
-            pbi->AddObserver(UA_PREF_PREFIX, this, PR_TRUE);
-            pbi->AddObserver(INTL_ACCEPT_LANGUAGES, this, PR_TRUE); 
-            pbi->AddObserver(INTL_ACCEPT_CHARSET, this, PR_TRUE);
-            pbi->AddObserver(NETWORK_ENABLEIDN, this, PR_TRUE);
-        }
+        prefBranch->AddObserver(HTTP_PREF_PREFIX, this, PR_TRUE);
+        prefBranch->AddObserver(UA_PREF_PREFIX, this, PR_TRUE);
+        prefBranch->AddObserver(INTL_ACCEPT_LANGUAGES, this, PR_TRUE); 
+        prefBranch->AddObserver(INTL_ACCEPT_CHARSET, this, PR_TRUE);
+        prefBranch->AddObserver(NETWORK_ENABLEIDN, this, PR_TRUE);
+        prefBranch->AddObserver(BROWSER_PREF("disk_cache_ssl"), this, PR_TRUE);
+
         PrefsChanged(prefBranch, nsnull);
     }
+
+    mMisc = NS_LITERAL_CSTRING("rv:" MOZILLA_VERSION);
 
 #if DEBUG
     // dump user agent prefs
@@ -238,13 +238,12 @@ nsHttpHandler::Init()
                                   NS_STATIC_CAST(nsISupports*,NS_STATIC_CAST(void*,this)),
                                   NS_HTTP_STARTUP_TOPIC);    
     
-    nsCOMPtr<nsIObserverService> observerSvc =
-        do_GetService("@mozilla.org/observer-service;1", &rv);
-    if (observerSvc) {
-        observerSvc->AddObserver(this, "profile-change-net-teardown", PR_TRUE);
-        observerSvc->AddObserver(this, "profile-change-net-restore", PR_TRUE);
-        observerSvc->AddObserver(this, "session-logout", PR_TRUE);
-        observerSvc->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, PR_TRUE);
+    mObserverService = do_GetService("@mozilla.org/observer-service;1");
+    if (mObserverService) {
+        mObserverService->AddObserver(this, "profile-change-net-teardown", PR_TRUE);
+        mObserverService->AddObserver(this, "profile-change-net-restore", PR_TRUE);
+        mObserverService->AddObserver(this, "session-logout", PR_TRUE);
+        mObserverService->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, PR_TRUE);
     }
  
     StartPruneDeadConnectionsTimer();
@@ -416,19 +415,6 @@ nsHttpHandler::GetCacheSession(nsCacheStoragePolicy storagePolicy,
 }
 
 nsresult
-nsHttpHandler::GetProxyObjectManager(nsIProxyObjectManager **result)
-{
-    if (!mProxyMgr) {
-        nsresult rv;
-        mProxyMgr = do_GetService(NS_XPCOMPROXY_CONTRACTID, &rv);
-        if (NS_FAILED(rv)) return rv;
-    }
-    *result = mProxyMgr;
-    NS_ADDREF(*result);
-    return NS_OK;
-}
-
-nsresult
 nsHttpHandler::GetEventQueueService(nsIEventQueueService **result)
 {
     if (!mEventQueueService) {
@@ -454,6 +440,14 @@ nsHttpHandler::GetStreamConverterService(nsIStreamConverterService **result)
     return NS_OK;
 }
 
+nsICookieService *
+nsHttpHandler::GetCookieService()
+{
+    if (!mCookieService)
+        mCookieService = do_GetService(kCookieServiceCID);
+    return mCookieService;
+}
+
 nsresult
 nsHttpHandler::GetMimeService(nsIMIMEService **result)
 {
@@ -475,84 +469,12 @@ nsHttpHandler::GetIOService(nsIIOService** result)
 }
 
 
-nsresult
-nsHttpHandler::OnModifyRequest(nsIHttpChannel *chan)
+void
+nsHttpHandler::NotifyObservers(nsIHttpChannel *chan, const char *event)
 {
-    nsresult rv;
-
-    LOG(("nsHttpHandler::OnModifyRequest [chan=%x]\n", chan));
-
-    if (!mNetModuleMgr) {
-        mNetModuleMgr = do_GetService(kNetModuleMgrCID, &rv);
-        if (NS_FAILED(rv)) return rv;
-    }
-
-    nsCOMPtr<nsISimpleEnumerator> modules;
-    rv = mNetModuleMgr->EnumerateModules(
-            NS_NETWORK_MODULE_MANAGER_HTTP_REQUEST_CONTRACTID,
-            getter_AddRefs(modules));
-    if (NS_FAILED(rv)) return rv;
-
-    nsCOMPtr<nsISupports> sup;
-
-    // notify each module...
-    while (NS_SUCCEEDED(modules->GetNext(getter_AddRefs(sup)))) {
-        nsCOMPtr<nsINetModRegEntry> entry = do_QueryInterface(sup, &rv);
-        if (NS_FAILED(rv)) return rv;
-
-        nsCOMPtr<nsINetNotify> netNotify;
-        rv = entry->GetSyncProxy(getter_AddRefs(netNotify));
-        if (NS_FAILED(rv)) return rv;
-
-        nsCOMPtr<nsIHttpNotify> httpNotify = do_QueryInterface(netNotify, &rv);
-        if (NS_FAILED(rv)) return rv;
-
-        // fire off the notification, ignore the return code.
-        httpNotify->OnModifyRequest(chan);
-    }
-    
-    return NS_OK;
-}
-
-nsresult
-nsHttpHandler::OnExamineResponse(nsIHttpChannel *chan)
-{
-    nsresult rv;
-
-    LOG(("nsHttpHandler::OnExamineResponse [chan=%x]\n", chan));
-
-    if (!mNetModuleMgr) {
-        mNetModuleMgr = do_GetService(kNetModuleMgrCID, &rv);
-        if (NS_FAILED(rv)) return rv;
-    }
-
-    nsCOMPtr<nsISimpleEnumerator> modules;
-    rv = mNetModuleMgr->EnumerateModules(
-            NS_NETWORK_MODULE_MANAGER_HTTP_RESPONSE_CONTRACTID,
-            getter_AddRefs(modules));
-    if (NS_FAILED(rv)) return rv;
-
-    nsCOMPtr<nsISupports> sup;
-    nsCOMPtr<nsINetModRegEntry> entry;
-    nsCOMPtr<nsINetNotify> netNotify;
-    nsCOMPtr<nsIHttpNotify> httpNotify;
-
-    // notify each module...
-    while (NS_SUCCEEDED(modules->GetNext(getter_AddRefs(sup)))) {
-        entry = do_QueryInterface(sup, &rv);
-        if (NS_FAILED(rv)) return rv;
-
-        rv = entry->GetSyncProxy(getter_AddRefs(netNotify));
-        if (NS_FAILED(rv)) return rv;
-
-        httpNotify = do_QueryInterface(netNotify, &rv);
-        if (NS_FAILED(rv)) return rv;
-
-        // fire off the notification, ignore the return code.
-        httpNotify->OnExamineResponse(chan);
-    }
-    
-    return NS_OK;
+    LOG(("nsHttpHandler::NotifyObservers [chan=%x event=\"%s\"]\n", chan, event));
+    if (mObserverService)
+        mObserverService->NotifyObservers(chan, event, nsnull);
 }
 
 //-----------------------------------------------------------------------------
@@ -662,10 +584,6 @@ void
 nsHttpHandler::InitUserAgentComponents()
 {
 
-    // Gather Application name and Version.
-    mAppName.Adopt(nsCRT::strdup(UA_APPNAME));
-    mAppVersion.Adopt(nsCRT::strdup(UA_APPVERSION));
-
       // Gather platform.
     mPlatform.Adopt(nsCRT::strdup(
 #if defined(MOZ_WIDGET_PHOTON)
@@ -772,6 +690,22 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     // UA components
     //
 
+    // Gather application values.
+    if (PREF_CHANGED(UA_PREF("appName"))) {
+        prefs->GetCharPref(UA_PREF("appName"),
+            getter_Copies(mAppName));
+        if (mAppName.IsEmpty())
+            mAppName.Adopt(nsCRT::strdup(UA_APPNAME));
+        mUserAgentIsDirty = PR_TRUE;
+    }
+    if (PREF_CHANGED(UA_PREF("appVersion"))) {
+        prefs->GetCharPref(UA_PREF("appVersion"),
+            getter_Copies(mAppVersion));
+        if (mAppVersion.IsEmpty())
+            mAppVersion.Adopt(nsCRT::strdup(UA_APPVERSION));
+        mUserAgentIsDirty = PR_TRUE;
+    }
+
     // Gather vendor values.
     if (PREF_CHANGED(UA_PREF("vendor"))) {
         prefs->GetCharPref(UA_PREF("vendor"),
@@ -803,12 +737,6 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     if (PREF_CHANGED(UA_PREF("productComment"))) {
         prefs->GetCharPref(UA_PREF("productComment"),
             getter_Copies(mProductComment));
-        mUserAgentIsDirty = PR_TRUE;
-    }
-
-    // Gather misc value.
-    if (PREF_CHANGED(UA_PREF("misc"))) {
-        prefs->GetCharPref(UA_PREF("misc"), getter_Copies(mMisc));
         mUserAgentIsDirty = PR_TRUE;
     }
 
@@ -1016,11 +944,11 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     }
 
     if (PREF_CHANGED(HTTP_PREF("default-socket-type"))) {
-        nsXPIDLCString val;
+        nsXPIDLCString sval;
         rv = prefs->GetCharPref(HTTP_PREF("default-socket-type"),
-                                getter_Copies(val));
+                                getter_Copies(sval));
         if (NS_SUCCEEDED(rv)) {
-            if (val.IsEmpty())
+            if (sval.IsEmpty())
                 mDefaultSocketType.Adopt(0);
             else {
                 // verify that this socket type is actually valid
@@ -1028,14 +956,28 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
                         do_GetService(kSocketProviderServiceCID, &rv));
                 if (NS_SUCCEEDED(rv)) {
                     nsCOMPtr<nsISocketProvider> sp;
-                    rv = sps->GetSocketProvider(val, getter_AddRefs(sp));
+                    rv = sps->GetSocketProvider(sval, getter_AddRefs(sp));
                     if (NS_SUCCEEDED(rv)) {
                         // OK, this looks like a valid socket provider.
-                        mDefaultSocketType.Assign(val);
+                        mDefaultSocketType.Assign(sval);
                     }
                 }
             }
         }
+    }
+
+    // enable Persistent caching for HTTPS - bug#205921    
+    if (PREF_CHANGED(BROWSER_PREF("disk_cache_ssl"))) {
+        cVar = PR_FALSE;
+        rv = prefs->GetBoolPref(BROWSER_PREF("disk_cache_ssl"), &cVar);
+        if (NS_SUCCEEDED(rv))
+            mEnablePersistentHttpsCaching = cVar;
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("phishy-userpass-length"))) {
+        rv = prefs->GetIntPref(HTTP_PREF("phishy-userpass-length"), &val);
+        if (NS_SUCCEEDED(rv))
+            mPhishyUserPassLength = (PRUint8) CLAMP(val, 0, 0xff);
     }
 
     //
@@ -1087,16 +1029,6 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     }
 
 #undef PREF_CHANGED
-}
-
-void
-nsHttpHandler::GetPrefBranch(nsIPrefBranch **result)
-{
-    *result = nsnull;
-    nsCOMPtr<nsIPrefService> prefService =
-        do_GetService(NS_PREFSERVICE_CONTRACTID);
-    if (prefService)
-        prefService->GetBranch(nsnull, result);
 }
 
 /**
@@ -1619,7 +1551,7 @@ nsHttpHandler::Observe(nsISupports *subject,
                        const char *topic,
                        const PRUnichar *data)
 {
-    LOG(("nsHttpHandler::Observe [topic=\"%s\")]\n", topic));
+    LOG(("nsHttpHandler::Observe [topic=\"%s\"]\n", topic));
 
     if (strcmp(topic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) == 0) {
         nsCOMPtr<nsIPrefBranch> prefBranch = do_QueryInterface(subject);

@@ -55,7 +55,7 @@
 #include "icaltimezone.h"
 
 #ifdef WIN32
-#include <Windows.h>
+#include <windows.h>
 
 #define snprintf      _snprintf
 #define strcasecmp    stricmp
@@ -794,6 +794,13 @@ int icaltime_is_valid_time(struct icaltimetype t){
 	return 1;
     }
 
+}
+
+/**	@brief Returns true if time is a DATE
+ */
+int icaltime_is_date(const struct icaltimetype t) {
+
+	return t.is_date;
 }
 
 int icaltime_is_null_time(struct icaltimetype t)

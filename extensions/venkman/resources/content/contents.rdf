@@ -48,7 +48,7 @@
   <RDF:Description about="urn:mozilla:package:venkman"
         chrome:displayName="JavaScript Debugger"
         chrome:author="mozilla.org"
-        chrome:localeVersion="1.5a"
+#expand         chrome:localeVersion="__MOZILLA_LOCALE_VERSION__"
         chrome:name="venkman">
   </RDF:Description>
 

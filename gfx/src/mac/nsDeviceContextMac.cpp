@@ -275,7 +275,7 @@ NS_IMETHODIMP nsDeviceContextMac :: GetSystemFont(nsSystemFontID aID, nsFont *aF
     case eSystemFont_Tooltips:
     case eSystemFont_Widget:
       float  dev2app;
-      GetDevUnitsToAppUnits(dev2app);
+      dev2app = DevUnitsToAppUnits();
 
       aFont->style       = NS_FONT_STYLE_NORMAL;
       aFont->weight      = NS_FONT_WEIGHT_NORMAL;
@@ -395,6 +395,8 @@ NS_IMETHODIMP nsDeviceContextMac :: GetSystemFont(nsSystemFontID aID, nsFont *aF
 
   }
 
+  aFont->systemFont = PR_TRUE;
+
   return status;
 }
 
@@ -436,17 +438,6 @@ NS_IMETHODIMP nsDeviceContextMac::GetDepth(PRUint32& aDepth)
     
   return NS_OK;
 }
-
-/** ---------------------------------------------------
- *  See documentation in nsIDeviceContext.h
- *	@update 12/9/98 dwc
- */
-NS_IMETHODIMP nsDeviceContextMac :: ConvertPixel(nscolor aColor, PRUint32 & aPixel)
-{
-  aPixel = aColor;
-  return NS_OK;
-}
-
 
 /** ---------------------------------------------------
  *  See documentation in nsIDeviceContext.h
@@ -1029,7 +1020,11 @@ PRUint32 nsDeviceContextMac::GetScreenResolution()
 		if (NS_SUCCEEDED(prefs->GetIntPref("browser.display.screen_resolution", &intVal)) && intVal > 0) {
 			mPixelsPerInch = intVal;
 		}
-#ifdef XP_MACOSX
+#if 0
+// the code here will ignore the default setting of 96dpi and
+// instead force approximately 84dpi. There's no real reason for this
+// and we shipped Camino0.7 with 96dpi and got no complaints. As
+// a result, I'm removing it, but leaving the code for posterity.
 		else {
 			short hppi, vppi;
 			::ScreenRes(&hppi, &vppi);

@@ -33,12 +33,16 @@ LIBRARY_NAME	= docshell
 EXPORT_LIBRARY = 1
 GRE_MODULE	= 1
 
+PACKAGE_FILE = docshell.pkg
+
 REQUIRES	= xpcom \
 		  string \
 		  dom \
+		  js \
 		  shistory \
 		  necko \
 		  gfx \
+		  content \
 		  layout \
 		  webshell \
 		  widget \
@@ -51,9 +55,7 @@ REQUIRES	= xpcom \
 		  composer \
 		  editor \
 		  commandhandler \
-		  $(NULL)
-
-REQUIRES += \
+		  history \
 		  uriloader \
 		  exthandler \
 		  helperAppDlg \
@@ -62,14 +64,12 @@ REQUIRES += \
 		  prefetch \
 		  $(NULL)
 
+EXPORTS = \
+		  nsDocShellCID.h \
+		  $(NULL)
+
 ifeq ($(OS_ARCH),WINNT)
 EXTRA_DSO_LIBS	= gkgfx
-endif
-
-ifdef MOZ_PHOENIX
-REQUIRES += history
-else
-REQUIRES += appcomps
 endif
 
 CPPSRCS		= \
@@ -114,3 +114,6 @@ ifeq ($(OS_ARCH),WINNT)
 OS_LIBS		+= $(call EXPAND_LIBNAME, shell32)
 endif
 
+ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
+EXTRA_DSO_LDOPTS	+= $(TK_LIBS)
+endif

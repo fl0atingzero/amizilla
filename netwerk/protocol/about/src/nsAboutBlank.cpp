@@ -41,7 +41,7 @@
 #include "nsIStringStream.h"
 #include "nsNetUtil.h"
 
-NS_IMPL_ISUPPORTS1(nsAboutBlank, nsIAboutModule);
+NS_IMPL_ISUPPORTS1(nsAboutBlank, nsIAboutModule)
 
 static const char kBlankPage[] = "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">"
 "<html><head><title></title></head><body></body></html>";
@@ -58,7 +58,7 @@ nsAboutBlank::NewChannel(nsIURI *aURI, nsIChannel **result)
 
     rv = NS_NewInputStreamChannel(&channel, aURI, in,
                                   NS_LITERAL_CSTRING("text/html"), 
-                                  NS_LITERAL_CSTRING(""));
+                                  EmptyCString());
     if (NS_FAILED(rv)) return rv;
 
     *result = channel;

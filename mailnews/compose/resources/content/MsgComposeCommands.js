@@ -54,6 +54,7 @@ var sNameProperty = null;
    in the other js file.
 */
 var msgWindow = Components.classes["@mozilla.org/messenger/msgwindow;1"].createInstance();
+msgWindow = msgWindow.QueryInterface(Components.interfaces.nsIMsgWindow);
 
 
 /**
@@ -82,7 +83,7 @@ var gSendFormat;
 var gLogComposePerformance;
 
 var gMsgIdentityElement;
-var gMsgAddressingWidgetTreeElement;
+var gMsgAddressingWidgetElement;
 var gMsgSubjectElement;
 var gMsgAttachmentElement;
 var gMsgHeadersToolbarElement;
@@ -95,6 +96,7 @@ var gCharsetConvertManager;
 
 var gLastWindowToHaveFocus;
 var gReceiptOptionChanged;
+var gAttachVCardOptionChanged;
 
 var gMailSession;
 
@@ -139,6 +141,7 @@ function InitializeGlobalVariables()
 
   gLastWindowToHaveFocus = null;
   gReceiptOptionChanged = false;
+  gAttachVCardOptionChanged = false;
 }
 InitializeGlobalVariables();
 
@@ -180,6 +183,7 @@ function enableEditableFields()
 var gComposeRecyclingListener = {
   onClose: function() {
     //Reset recipients and attachments
+    ReleaseAutoCompleteState();
     awResetAllRows();
     RemoveAllAttachments();
 
@@ -579,6 +583,7 @@ function updateComposeItems() {
 }
 
 function updateEditItems() {
+  goUpdateCommand("cmd_pasteNoFormatting");
   goUpdateCommand("cmd_pasteQuote");
   goUpdateCommand("cmd_delete");
   goUpdateCommand("cmd_selectAll");
@@ -779,6 +784,19 @@ function setupLdapAutocompleteSession()
                     Components.interfaces.nsISupportsString).data;
             } catch (ex) {
                 // if we don't have this pref, no big deal
+            }
+
+            // set the LDAP protocol version correctly
+            var protocolVersion;
+            try { 
+                protocolVersion = sPrefs.getCharPref(autocompleteDirectory + 
+                                                      ".protocolVersion");
+            } catch (ex) {
+                // if we don't have this pref, no big deal
+            }
+            if (protocolVersion == "2") {
+                LDAPSession.version = 
+                    Components.interfaces.nsILDAPConnection.VERSION2;
             }
 
             // find out if we need to authenticate, and if so, tell the LDAP
@@ -1082,7 +1100,7 @@ function GetArgs(originalData)
       args[argname] = argvalue.substring(1, argvalue.length - 1);
     else
       try {
-        args[argname] = unescape(argvalue);
+        args[argname] = decodeURIComponent(argvalue);
       } catch (e) {args[argname] = argvalue;}
     dump("[" + argname + "=" + args[argname] + "]\n");
   }
@@ -1216,6 +1234,8 @@ function ComposeStartup(recycled, aParams)
       }
       document.getElementById("returnReceiptMenu").setAttribute('checked', 
                                          gMsgCompose.compFields.returnReceipt);
+      document.getElementById("cmd_attachVCard").setAttribute('checked', 
+                                         gMsgCompose.compFields.attachVCard);
 
       // If recycle, editor is already created
       if (!recycled) 
@@ -1255,9 +1275,10 @@ function ComposeStartup(recycled, aParams)
           {
             var cleanBody;
             try {
-              cleanBody = unescape(body);
+              cleanBody = decodeURI(body);
             } catch(e) { cleanBody = body;}
 
+            // XXX : need to do html-escaping here !
             msgCompFields.body = "<BR><A HREF=\"" + body + "\">" + cleanBody + "</A><BR>";
           }
           else
@@ -1499,8 +1520,8 @@ function GetCharsetUIString()
     if (gCharsetTitle == null) {
       try {
         // check if we have a converter for this charset
-        var charsetAlias = gCharsetConvertManager.GetCharsetAlias(charset);
-        var encoderList = gCharsetConvertManager.GetEncoderList();
+        var charsetAlias = gCharsetConvertManager.getCharsetAlias(charset);
+        var encoderList = gCharsetConvertManager.getEncoderList();
         var found = false;
         while (encoderList.hasMore()) {
             if (charsetAlias == encoderList.getNext()) {
@@ -1647,6 +1668,7 @@ function GenericSendMessage( msgType )
           var dlgText = sComposeMsgsBundle.getString("12553");  // NS_ERROR_MSG_MULTILINGUAL_SEND
           if (!gPromptService.confirm(window, dlgTitle, dlgText))
             return;
+          fallbackCharset.value = "UTF-8";
         }
         if (fallbackCharset && 
             fallbackCharset.value && fallbackCharset.value != "")
@@ -1663,7 +1685,9 @@ function GenericSendMessage( msgType )
           progress.registerListener(progressListener);
           gSendOrSaveOperationInProgress = true;
         }
-        gMsgCompose.SendMsg(msgType, getCurrentIdentity(), progress);
+        msgWindow.SetDOMWindow(window);
+
+        gMsgCompose.SendMsg(msgType, getCurrentIdentity(), getCurrentAccountKey(), msgWindow, progress);
       }
       catch (ex) {
         dump("failed to SendMsg: " + ex + "\n");
@@ -1730,6 +1754,8 @@ function Save()
 function SaveAsFile(saveAs)
 {
   dump("SaveAsFile from XUL\n");
+  var subject = document.getElementById('msgSubject').value;
+  GetCurrentEditor().setDocumentTitle(subject);
   if (gMsgCompose.bodyConvertible() == nsIMsgCompConvertible.Plain)
     SaveDocument(saveAs, false, "text/plain");
   else
@@ -1787,11 +1813,11 @@ function PriorityMenuSelect(target)
     if (msgCompFields)
       switch (target.getAttribute('id'))
       {
-        case "priority_lowest":  msgCompFields.priority = "lowest";   break;
-        case "priority_low":     msgCompFields.priority = "low";      break;
-        case "priority_normal":  msgCompFields.priority = "normal";   break;
-        case "priority_high":    msgCompFields.priority = "high";     break;
-        case "priotity_highest": msgCompFields.priority = "highest";  break;
+        case "priority_lowest":  msgCompFields.priority = "Lowest";   break;
+        case "priority_low":     msgCompFields.priority = "Low";      break;
+        case "priority_normal":  msgCompFields.priority = "Normal";   break;
+        case "priority_high":    msgCompFields.priority = "High";     break;
+        case "priotity_highest": msgCompFields.priority = "Highest";  break;
       }
   }
 }
@@ -1858,6 +1884,17 @@ function ToggleReturnReceipt(target)
     }
 }
 
+function ToggleAttachVCard(target)
+{
+    var msgCompFields = gMsgCompose.compFields;
+    if (msgCompFields)
+    {
+        msgCompFields.attachVCard = ! msgCompFields.attachVCard;
+        target.setAttribute('checked', msgCompFields.attachVCard);
+        gAttachVCardOptionChanged = true;
+    }
+}
+
 function queryISupportsArray(supportsArray, iid) {
     var result = new Array;
     for (var i=0; i<supportsArray.Count(); i++) {
@@ -1917,6 +1954,8 @@ function FillIdentityListPopup(popup)
 
   for (var i in accounts) {
     var server = accounts[i].incomingServer;
+    if (!server)
+       continue;
     var identites = queryISupportsArray(accounts[i].identities, Components.interfaces.nsIMsgIdentity);
     for (var j in identites) {
       var identity = identites[j];
@@ -1924,6 +1963,7 @@ function FillIdentityListPopup(popup)
       item.className = "identity-popup-item";
       item.setAttribute("label", identity.identityName);
       item.setAttribute("value", identity.key);
+      item.setAttribute("accountkey", accounts[i].key);
       item.setAttribute("accountname", " - " + server.prettyName);
       popup.appendChild(item);
     }
@@ -1941,6 +1981,13 @@ function getCurrentIdentity()
     var identity = gAccountManager.getIdentity(identityKey);
 
     return identity;
+}
+
+function getCurrentAccountKey()
+{
+    // get the accounts key
+    var identityList = document.getElementById("msgIdentity");
+    return identityList.selectedItem.getAttribute("accountkey");
 }
 
 function getIdentityForKey(key)
@@ -2054,6 +2101,16 @@ function SetContentAndBodyAsUnmodified()
   gContentChanged = false;
 }
 
+function ReleaseAutoCompleteState()
+{
+  for (i=1; i <= awGetMaxRecipients(); i++) 
+    document.getElementById("addressCol2#" + i).removeSession(gLDAPSession);
+
+  gSessionAdded = false;
+  gLDAPSession = null;  
+  gAutocompleteSession = null;
+}
+
 function MsgComposeCloseWindow(recycleIt)
 {
   if (gMsgCompose)
@@ -2147,7 +2204,7 @@ function AddAttachment(attachment)
     var item = document.createElement("listitem");
 
     if (!attachment.name)
-      attachment.name = gMsgCompose.AttachmentPrettyName(attachment.url);
+      attachment.name = gMsgCompose.AttachmentPrettyName(attachment.url, attachment.urlCharset);
 
     // for security reasons, don't allow *-message:// uris to leak out
     // we don't want to reveal the .slt path (for mailbox://), or the username or hostname
@@ -2165,7 +2222,7 @@ function AddAttachment(attachment)
     item.setAttribute("label", attachment.name);    //use for display only
     item.attachment = attachment;   //full attachment object stored here
     try {
-      item.setAttribute("tooltiptext", unescape(attachment.url));
+      item.setAttribute("tooltiptext", decodeURI(attachment.url));
     } catch(e) {
       item.setAttribute("tooltiptext", attachment.url);
     }
@@ -2284,20 +2341,15 @@ function FocusOnFirstAttachment()
   var bucketList = document.getElementById("attachmentBucket");
 
   if (bucketList && bucketList.hasChildNodes())
-    bucketTree.selectItem(bucketList.firstChild);
+    bucketList.selectItem(bucketList.firstChild);
 }
 
 function AttachmentElementHasItems()
 {
-  var element = document.getElementById("bucketList");
+  var element = document.getElementById("attachmentBucket");
 
   return element ? element.childNodes.length : 0;
 }  
-
-function AttachVCard()
-{
-  dump("AttachVCard()\n");
-}
 
 function DetermineHTMLAction(convertible)
 {
@@ -2409,6 +2461,7 @@ function LoadIdentity(startup)
           var prevReplyTo = prevIdentity.replyTo;
           var prevBcc = "";
           var prevReceipt = prevIdentity.requestReturnReceipt;
+          var prevAttachVCard = prevIdentity.attachVCard;
 
           if (prevIdentity.doBcc)
             prevBcc += prevIdentity.doBccList;
@@ -2416,6 +2469,8 @@ function LoadIdentity(startup)
           var newReplyTo = gCurrentIdentity.replyTo;
           var newBcc = "";
           var newReceipt = gCurrentIdentity.requestReturnReceipt;
+          var newAttachVCard = gCurrentIdentity.attachVCard;
+
           if (gCurrentIdentity.doBcc)
             newBcc += gCurrentIdentity.doBccList;          
 
@@ -2430,6 +2485,13 @@ function LoadIdentity(startup)
             document.getElementById("returnReceiptMenu").setAttribute('checked',msgCompFields.returnReceipt);
           }
 
+          if (!gAttachVCardOptionChanged &&
+              prevAttachVCard == msgCompFields.attachVCard &&
+              prevAttachVCard != newAttachVCard)
+          {
+            msgCompFields.attachVCard = newAttachVCard;
+            document.getElementById("cmd_attachVCard").setAttribute('checked',msgCompFields.attachVCard);
+          }
 
           if (newReplyTo != prevReplyTo)
           {
@@ -2525,7 +2587,7 @@ function subjectKeyPress(event)
 {  
   switch(event.keyCode) {
   case 9:
-    if (!event.shiftKey) {
+    if (!event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
       window.content.focus();
       event.preventDefault();
     }
@@ -2536,18 +2598,10 @@ function subjectKeyPress(event)
   }
 }
 
-function editorKeyPress(event)
-{
-  if (event.keyCode == 9) {
-    if (event.shiftKey && !event.getPreventDefault()) {
-      document.getElementById('msgSubject').focus();
-      event.preventDefault();
-    }
-  }
-}
-
 function AttachmentBucketClicked(event)
 {
+  event.currentTarget.focus();
+
   if (event.button != 0)
     return;
 
@@ -2692,9 +2746,9 @@ function DisplaySaveFolderDlg(folderURI)
 
 
 
-function SetMsgAddressingWidgetTreeElementFocus()
+function SetMsgAddressingWidgetElementFocus()
 {
-  var element = document.getElementById("msgRecipient#" + awGetNumberOfRecipients());
+  var element = awGetInputElement(awGetNumberOfRecipients());
   awSetFocus(awGetNumberOfRecipients(), element);
 }
 
@@ -2719,12 +2773,12 @@ function SetMsgBodyFrameFocus()
   window.content.focus();
 }
 
-function GetMsgAddressingWidgetTreeElement()
+function GetMsgAddressingWidgetElement()
 {
-  if (!gMsgAddressingWidgetTreeElement)
-    gMsgAddressingWidgetTreeElement = document.getElementById("addressingWidgetTree");
+  if (!gMsgAddressingWidgetElement)
+    gMsgAddressingWidgetElement = document.getElementById("addressingWidget");
 
-  return gMsgAddressingWidgetTreeElement;
+  return gMsgAddressingWidgetElement;
 }
 
 function GetMsgIdentityElement()
@@ -2770,10 +2824,10 @@ function IsMsgHeadersToolbarCollapsed()
 
 function WhichElementHasFocus()
 {
-  var msgIdentityElement             = GetMsgIdentityElement();
-  var msgAddressingWidgetTreeElement = GetMsgAddressingWidgetTreeElement();
-  var msgSubjectElement              = GetMsgSubjectElement();
-  var msgAttachmentElement           = GetMsgAttachmentElement();
+  var msgIdentityElement         = GetMsgIdentityElement();
+  var msgAddressingWidgetElement = GetMsgAddressingWidgetElement();
+  var msgSubjectElement          = GetMsgSubjectElement();
+  var msgAttachmentElement       = GetMsgAttachmentElement();
 
   if (top.document.commandDispatcher.focusedWindow == content)
     return content;
@@ -2782,7 +2836,7 @@ function WhichElementHasFocus()
   while (currentNode)
   {
     if (currentNode == msgIdentityElement ||
-        currentNode == msgAddressingWidgetTreeElement ||
+        currentNode == msgAddressingWidgetElement ||
         currentNode == msgSubjectElement ||
         currentNode == msgAttachmentElement)
       return currentNode;
@@ -2797,7 +2851,7 @@ function WhichElementHasFocus()
 // one element to another in the mail compose window.
 // The default element to switch to when going in either
 // direction (shift or no shift key pressed), is the
-// AddressingWidgetTreeElement.
+// AddressingWidgetElement.
 //
 // The only exception is when the MsgHeadersToolbar is
 // collapsed, then the focus will always be on the body of
@@ -2810,7 +2864,7 @@ function SwitchElementFocus(event)
   {
     if (IsMsgHeadersToolbarCollapsed())
       SetMsgBodyFrameFocus();
-    else if (focusedElement == gMsgAddressingWidgetTreeElement)
+    else if (focusedElement == gMsgAddressingWidgetElement)
       SetMsgIdentityElementFocus();
     else if (focusedElement == gMsgIdentityElement)
       SetMsgBodyFrameFocus();
@@ -2826,13 +2880,13 @@ function SwitchElementFocus(event)
     else if (focusedElement == gMsgAttachmentElement)
       SetMsgSubjectElementFocus();
     else
-      SetMsgAddressingWidgetTreeElementFocus();
+      SetMsgAddressingWidgetElementFocus();
   }
   else
   {
     if (IsMsgHeadersToolbarCollapsed())
       SetMsgBodyFrameFocus();
-    else if (focusedElement == gMsgAddressingWidgetTreeElement)
+    else if (focusedElement == gMsgAddressingWidgetElement)
       SetMsgSubjectElementFocus();
     else if (focusedElement == gMsgSubjectElement)
     {
@@ -2848,7 +2902,7 @@ function SwitchElementFocus(event)
     else if (focusedElement == content)
       SetMsgIdentityElementFocus();
     else
-      SetMsgAddressingWidgetTreeElementFocus();
+      SetMsgAddressingWidgetElementFocus();
   }
 }
 

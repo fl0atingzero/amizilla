@@ -47,12 +47,15 @@
 #include "nsParser.h"
 #include "CNavDTD.h"
 #include "COtherDTD.h"
-#include "nsViewSourceHTML.h"
 #include "nsHTMLEntities.h"
 #include "nsHTMLTokenizer.h"
 //#include "nsTextTokenizer.h"
 #include "nsElementTable.h"
 #include "nsParserService.h"
+
+#ifdef MOZ_VIEW_SOURCE
+#include "nsViewSourceHTML.h"
+#endif
 
 #ifdef NS_DEBUG
 #include "nsLoggingSink.h"
@@ -69,8 +72,11 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsExpatDriver)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsParser)
 NS_GENERIC_FACTORY_CONSTRUCTOR(CNavDTD)
 NS_GENERIC_FACTORY_CONSTRUCTOR(CTransitionalDTD)
-NS_GENERIC_FACTORY_CONSTRUCTOR(CViewSourceHTML)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsParserService)
+
+#ifdef MOZ_VIEW_SOURCE
+NS_GENERIC_FACTORY_CONSTRUCTOR(CViewSourceHTML)
+#endif
 
 static const nsModuleComponentInfo gComponents[] = {
 
@@ -83,7 +89,9 @@ static const nsModuleComponentInfo gComponents[] = {
   { "Navigator HTML DTD", NS_CNAVDTD_CID, NULL, CNavDTDConstructor },
   { "Transitional DTD", NS_CTRANSITIONAL_DTD_CID, NULL,
     CTransitionalDTDConstructor },
+#ifdef MOZ_VIEW_SOURCE
   { "ViewSource DTD", NS_VIEWSOURCE_DTD_CID, NULL, CViewSourceHTMLConstructor },
+#endif
   { "ParserService",
     NS_PARSERSERVICE_CID,
     NS_PARSER_CONTRACTID_PREFIX "/parser-service;1",
@@ -100,7 +108,11 @@ Initialize(nsIModule* aSelf)
     nsresult rv = nsHTMLTags::AddRefTable();
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsHTMLEntities::AddRefTable();
+    rv = nsHTMLEntities::AddRefTable();
+    if (NS_FAILED(rv)) {
+      nsHTMLTags::ReleaseTable();
+      return rv;
+    }
     InitializeElementTable();
     CNewlineToken::AllocNewline();
     gInitialized = PR_TRUE;

@@ -35,8 +35,7 @@ class nsMathMLmoFrame : public nsMathMLTokenFrame {
 public:
   friend nsresult NS_NewMathMLmoFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame);
 
-  NS_IMETHOD
-  GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
 
   virtual void
   SetAdditionalStyleContext(PRInt32          aIndex, 
@@ -73,8 +72,7 @@ public:
                    nsIContent*     aContent,
                    PRInt32         aNameSpaceID,
                    nsIAtom*        aAttribute,
-                   PRInt32         aModType, 
-                   PRInt32         aHint);
+                   PRInt32         aModType);
 
   // This method is called by the parent frame to ask <mo> 
   // to stretch itself.

@@ -43,10 +43,11 @@ nsCSSKeywords.h \
 nsCSSPropList.h \
 nsCSSProperty.h \
 nsCSSProps.h \
+nsFrameManager.h \
+nsFrameManagerBase.h \
 nsHTMLAtomList.h \
 nsHTMLAtoms.h \
 nsHTMLValue.h \
-nsHTMLUtils.h \
 nsImageMapUtils.h \
 nsLayoutAtomList.h \
 nsLayoutAtoms.h \

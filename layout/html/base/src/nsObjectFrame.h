@@ -84,8 +84,7 @@ public:
                           nsGUIEvent*     aEvent,
                           nsEventStatus*  aEventStatus);
 
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
-  
+  virtual nsIAtom* GetType() const;
   virtual PRBool SupportsVisibilityHidden() { return PR_FALSE; }
 
 #ifdef DEBUG
@@ -94,9 +93,6 @@ public:
 
   NS_IMETHOD Destroy(nsIPresContext* aPresContext);
 
-  NS_IMETHOD ContentChanged(nsIPresContext* aPresContext,
-                            nsIContent*     aChild,
-                            nsISupports*    aSubContent);
   NS_IMETHOD GetPluginInstance(nsIPluginInstance*& aPluginInstance);
 
   /* fail on any requests to get a cursor from us because plugins set their own! see bug 118877 */
@@ -120,17 +116,16 @@ public:
                         nscoord aWidth,
                         nscoord aHeight,
                         PRBool aViewOnly);
-  nsresult GetFullURL(nsIURI*& aFullURL);
+  nsIURI* GetFullURL() { return mFullURL; }
   
   PRBool IsSupportedImage(nsIContent* aContent);
-  void IsSupportedDocument(nsIContent* aContent, PRBool* aDoc);
+  PRBool IsSupportedDocument(nsIContent* aContent);
 
   // for a given aRoot, this walks the frame tree looking for the next outFrame
-  nsresult GetNextObjectFrame(nsIPresContext* aPresContext,
-                              nsIFrame* aRoot,
-                              nsIObjectFrame** outFrame);
+  static nsIObjectFrame* GetNextObjectFrame(nsIPresContext* aPresContext,
+                                            nsIFrame* aRoot);
 
-  void FixUpURLS(const nsString &name, nsString &value);
+  void FixUpURLS(const nsString &name, nsAString &value);
 
 protected:
   // nsISupports
@@ -146,8 +141,6 @@ protected:
   void GetDesiredSize(nsIPresContext* aPresContext,
                       const nsHTMLReflowState& aReflowState,
                       nsHTMLReflowMetrics& aDesiredSize);
-
-  nsresult SetFullURL(nsIURI* aURL);
 
   nsresult InstantiateWidget(nsIPresContext*          aPresContext,
                              nsHTMLReflowMetrics&     aMetrics,
@@ -171,18 +164,14 @@ protected:
                        nsReflowStatus&          aStatus,
                        nsIFrame*                child);
  
-  nsresult GetBaseURL(nsIURI* &aURL);
-
   // check attributes and optionally CSS to see if we should display anything
   PRBool IsHidden(PRBool aCheckVisibilityStyle = PR_TRUE) const;
 
-  nsresult NotifyContentObjectWrapper();
+  void NotifyContentObjectWrapper();
 
-  nsresult GetWindowOriginInPixels(nsIPresContext * aPresContext, PRBool aWindoless, nsPoint* aOrigin);
+  nsPoint GetWindowOriginInPixels(PRBool aWindowless);
 
   friend class nsPluginInstanceOwner;
-  
-  nsIPresContext *mPresContext;  // weak ref
 private:
   nsPluginInstanceOwner *mInstanceOwner;
   nsCOMPtr<nsIURI>      mFullURL;

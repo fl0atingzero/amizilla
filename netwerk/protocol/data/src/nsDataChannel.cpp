@@ -43,6 +43,7 @@
 #include "nsNetUtil.h"
 #include "nsILoadGroup.h"
 #include "plbase64.h"
+#include "prmem.h"
 #include "nsIPipe.h"
 #include "nsIInputStream.h"
 #include "nsIOutputStream.h"
@@ -51,15 +52,13 @@
 #include "nsNetSegmentUtils.h"
 #include "nsCRT.h"
 #include "nsEscape.h"
-
-static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
-
+#include "nsNetCID.h"
 
 // nsDataChannel methods
-nsDataChannel::nsDataChannel() {
-    mStatus = NS_OK;
-    mContentLength = -1;
-    mLoadFlags = nsIRequest::LOAD_NORMAL;
+nsDataChannel::nsDataChannel() :
+    mContentLength(-1),
+    mOpened(PR_FALSE)
+{
 }
 
 nsDataChannel::~nsDataChannel() {
@@ -75,42 +74,17 @@ NS_IMPL_ISUPPORTS5(nsDataChannel,
 nsresult
 nsDataChannel::Init(nsIURI* uri)
 {
-    nsresult rv;
-
     // Data urls contain all the data within the url string itself.
     mUrl = uri;
+
+    nsresult rv;
+    mPump = do_CreateInstance(NS_INPUTSTREAMPUMP_CONTRACTID, &rv);
+    if (NS_FAILED(rv))
+      return rv;
 
     rv = ParseData();
 
     return rv;
-}
-
-typedef struct _writeData {
-    PRUint32 dataLen;
-    char *data;
-} writeData;
-
-static NS_METHOD
-nsReadData(nsIOutputStream* out,
-           void* closure, // the data from
-           char* toRawSegment, // where to put the data
-           PRUint32 offset, // where to start
-           PRUint32 count, // how much data is there
-           PRUint32 *readCount) { // how much data was read
-  nsresult rv = NS_OK;
-  writeData *dataToWrite = (writeData*)closure;
-  PRUint32 write = PR_MIN(count, dataToWrite->dataLen - offset);
-
-  *readCount = 0;
-
-  if (offset == dataToWrite->dataLen)
-      return NS_OK;     // *readCount == 0 is EOF
-
-  memcpy(toRawSegment, dataToWrite->data + offset, write);
-
-  *readCount = write;
-
-  return rv;
 }
 
 nsresult
@@ -125,7 +99,7 @@ nsDataChannel::ParseData() {
     if (NS_FAILED(rv)) return rv;
 
     // move past "data:"
-    const char *buffer = strstr(spec.get(), "data:");
+    char *buffer = (char *) strstr(spec.BeginWriting(), "data:");
     if (!buffer) {
         // malfored url
         return NS_ERROR_MALFORMED_URI;
@@ -133,13 +107,13 @@ nsDataChannel::ParseData() {
     buffer += 5;
 
     // First, find the start of the data
-    char *comma = PL_strchr(buffer, ',');
+    char *comma = strchr(buffer, ',');
     if (!comma) return NS_ERROR_FAILURE;
 
     *comma = '\0';
 
     // determine if the data is base64 encoded.
-    char *base64 = PL_strstr(buffer, ";base64");
+    char *base64 = strstr(buffer, ";base64");
     if (base64) {
         lBase64 = PR_TRUE;
         *base64 = '\0';
@@ -151,7 +125,7 @@ nsDataChannel::ParseData() {
         mContentCharset = NS_LITERAL_CSTRING("US-ASCII");
     } else {
         // everything else is content type
-        char *semiColon = PL_strchr(buffer, ';');
+        char *semiColon = (char *) strchr(buffer, ';');
         if (semiColon)
             *semiColon = '\0';
         
@@ -191,7 +165,6 @@ nsDataChannel::ParseData() {
     
     nsCOMPtr<nsIInputStream> bufInStream;
     nsCOMPtr<nsIOutputStream> bufOutStream;
-    writeData* dataToWrite = nsnull;
     
     // create an unbounded pipe.
     rv = NS_NewPipe(getter_AddRefs(bufInStream),
@@ -200,13 +173,6 @@ nsDataChannel::ParseData() {
                     PR_TRUE, PR_TRUE);
     if (NS_FAILED(rv))
         goto cleanup;
-
-    PRUint32 wrote;
-    dataToWrite = (writeData*)nsMemory::Alloc(sizeof(writeData));
-    if (!dataToWrite) {
-        rv = NS_ERROR_OUT_OF_MEMORY;
-        goto cleanup;
-    }
 
     PRUint32 dataLen;
     dataLen = nsUnescapeCount(dataBuffer);
@@ -232,23 +198,14 @@ nsDataChannel::ParseData() {
             goto cleanup;
         }
 
-        dataToWrite->dataLen = resultLen;
-        dataToWrite->data = decodedData;
+        rv = bufOutStream->Write(decodedData, resultLen, (PRUint32*)&mContentLength);
 
-        rv = bufOutStream->WriteSegments(nsReadData, dataToWrite, dataToWrite->dataLen, &wrote);
-
-        nsMemory::Free(decodedData);
+        PR_Free(decodedData);
     } else {
-        dataToWrite->dataLen = dataLen;
-        dataToWrite->data = dataBuffer;
-
-        rv = bufOutStream->WriteSegments(nsReadData, dataToWrite, dataLen, &wrote);
+        rv = bufOutStream->Write(dataBuffer, dataLen, (PRUint32*)&mContentLength);
     }
     if (NS_FAILED(rv))
         goto cleanup;
-
-    // Initialize the content length of the data...
-    mContentLength = dataToWrite->dataLen;
 
     rv = bufInStream->QueryInterface(NS_GET_IID(nsIInputStream), getter_AddRefs(mDataStream));
     if (NS_FAILED(rv))
@@ -259,8 +216,6 @@ nsDataChannel::ParseData() {
     rv = NS_OK;
 
  cleanup:
-    if (dataToWrite)
-        nsMemory::Free(dataToWrite);
     if (cleanup)
         nsMemory::Free(dataBuffer);
     return rv;
@@ -293,17 +248,13 @@ nsDataChannel::GetName(nsACString &result)
 NS_IMETHODIMP
 nsDataChannel::IsPending(PRBool *result)
 {
-    // This request is pending if there is an active stream listener...
-
-    *result = (mListener) ? PR_TRUE : PR_FALSE;
-    return NS_OK;
+    return mPump->IsPending(result);
 }
 
 NS_IMETHODIMP
 nsDataChannel::GetStatus(nsresult *status)
 {
-    *status = mStatus;
-    return NS_OK;
+    return mPump->GetStatus(status);
 }
 
 NS_IMETHODIMP
@@ -311,22 +262,46 @@ nsDataChannel::Cancel(nsresult status)
 {
     NS_ASSERTION(NS_FAILED(status), "shouldn't cancel with a success code");
 
-    mStatus = status;
-    return NS_OK;
+    return mPump->Cancel(status);
 }
 
 NS_IMETHODIMP
 nsDataChannel::Suspend(void)
 {
-    // This channel is not suspendable...
-    return NS_ERROR_FAILURE;
+    return mPump->Suspend();
 }
 
 NS_IMETHODIMP
 nsDataChannel::Resume(void)
 {
-    // This channel is not resumable...
-    return NS_ERROR_FAILURE;
+    return mPump->Resume();
+}
+
+NS_IMETHODIMP
+nsDataChannel::GetLoadGroup(nsILoadGroup* *aLoadGroup)
+{
+    *aLoadGroup = mLoadGroup;
+    NS_IF_ADDREF(*aLoadGroup);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDataChannel::SetLoadGroup(nsILoadGroup* aLoadGroup)
+{
+    mLoadGroup = aLoadGroup;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDataChannel::GetLoadFlags(PRUint32 *aLoadFlags)
+{
+    return mPump->GetLoadFlags(aLoadFlags);
+}
+
+NS_IMETHODIMP
+nsDataChannel::SetLoadFlags(PRUint32 aLoadFlags)
+{
+    return mPump->SetLoadFlags(aLoadFlags);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -362,68 +337,30 @@ nsDataChannel::Open(nsIInputStream **_retval)
 {
     NS_ENSURE_ARG_POINTER(_retval);
     NS_ADDREF(*_retval = mDataStream);
+    mOpened = PR_TRUE;
     return NS_OK;
 }
 
 NS_IMETHODIMP
 nsDataChannel::AsyncOpen(nsIStreamListener *aListener, nsISupports *ctxt)
 {
-    nsresult rv;
-    nsCOMPtr<nsIEventQueue> eventQ;
-    nsCOMPtr<nsIStreamListener> listener;
-
-    nsCOMPtr<nsIEventQueueService> eventQService = 
-             do_GetService(kEventQueueServiceCID, &rv);
-    if (NS_FAILED(rv)) return rv;
-
-    rv = eventQService->GetThreadEventQueue(NS_CURRENT_THREAD, getter_AddRefs(eventQ));
-    if (NS_FAILED(rv)) return rv;
-
-    // we'll just fire everything off at once because we've already got all
-    // the data.
-    rv = NS_NewAsyncStreamListener(getter_AddRefs(listener), this, eventQ);
-    if (NS_FAILED(rv)) return rv;
-
     // Hold onto the real consumer...
     mListener = aListener;
+    mOpened = PR_TRUE;
 
-    // Add the request to the loadgroup (if available)
-    if (mLoadGroup) {
+    nsresult rv = mPump->Init(mDataStream, -1, -1, 0, 0, PR_FALSE);
+    if (NS_FAILED(rv))
+        return rv;
+
+    // Add to load group
+    if (mLoadGroup)
         mLoadGroup->AddRequest(this, nsnull);
-    }
 
-    // Next, queue up asynchronous stream notifications for OnStartRequest,
-    // a single OnDataAvailable (containing all of the data) and an
-    // OnStopRequest...
-    //
+    // Start the read
+    return mPump->AsyncRead(this, ctxt);
+
     // These notifications will be processed when control returns to the
     // message pump and the PLEvents are processed...
-    //
-    mStatus = listener->OnStartRequest(this, ctxt);
-
-    // Only fire OnDataAvailable(...) if OnStartRequest(...) succeeded!
-    if (NS_SUCCEEDED(mStatus)) {
-        mStatus = listener->OnDataAvailable(this, ctxt, mDataStream,
-                                            0, mContentLength);
-    }
-    // Always fire OnStopRequest(...) even if an error occurred!
-    (void) listener->OnStopRequest(this, ctxt, mStatus);
-
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDataChannel::GetLoadFlags(PRUint32 *aLoadFlags)
-{
-    *aLoadFlags = mLoadFlags;
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDataChannel::SetLoadFlags(PRUint32 aLoadFlags)
-{
-    mLoadFlags = aLoadFlags;
-    return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -437,7 +374,10 @@ nsDataChannel::GetContentType(nsACString &aContentType)
 NS_IMETHODIMP
 nsDataChannel::SetContentType(const nsACString &aContentType)
 {
-    mContentType = aContentType;
+    // Ignore content-type hints
+    if (mOpened) {
+        mContentType = aContentType;
+    }
     return NS_OK;
 }
 
@@ -451,7 +391,10 @@ nsDataChannel::GetContentCharset(nsACString &aContentCharset)
 NS_IMETHODIMP
 nsDataChannel::SetContentCharset(const nsACString &aContentCharset)
 {
-    mContentCharset = aContentCharset;
+    // Ignore content-charset hints
+    if (mOpened) {
+        mContentCharset = aContentCharset;
+    }
     return NS_OK;
 }
 
@@ -466,21 +409,6 @@ NS_IMETHODIMP
 nsDataChannel::SetContentLength(PRInt32 aContentLength)
 {
     mContentLength = aContentLength;
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDataChannel::GetLoadGroup(nsILoadGroup* *aLoadGroup)
-{
-    *aLoadGroup = mLoadGroup;
-    NS_IF_ADDREF(*aLoadGroup);
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDataChannel::SetLoadGroup(nsILoadGroup* aLoadGroup)
-{
-    mLoadGroup = aLoadGroup;
     return NS_OK;
 }
 
@@ -529,35 +457,26 @@ nsDataChannel::GetSecurityInfo(nsISupports **sec)
 NS_IMETHODIMP
 nsDataChannel::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
 {
-    if (NS_SUCCEEDED(mStatus)) {
-        mStatus = mListener->OnStartRequest(request, ctxt);
+    if (mListener) {
+        return mListener->OnStartRequest(this, ctxt);
     }
-
-    return mStatus;
+    return NS_OK;
 }
 
 NS_IMETHODIMP
 nsDataChannel::OnStopRequest(nsIRequest *request, nsISupports *ctxt,
                              nsresult status)
 {
-    // If the request has already failed for some reason, then pass out that
-    // failure code...
-    //
-    if (NS_SUCCEEDED(mStatus)) {
-        mStatus = status;
-    }
-
     if (mListener) {
-        (void) mListener->OnStopRequest(request, ctxt, mStatus);
+        mListener->OnStopRequest(this, ctxt, status);
+
+        // Drop the reference to the stream listener -- it is no longer needed.
+        mListener = nsnull;
     }
 
-    // Drop the reference to the stream listener -- it is no longer needed.
-    mListener = nsnull;
-
-    // Remove this request from the load group -- it is complete.
-    if (mLoadGroup) {
-        mLoadGroup->RemoveRequest(this, nsnull, mStatus);
-    }
+    // Remove from Loadgroup
+    if (mLoadGroup)
+        mLoadGroup->RemoveRequest(this, nsnull, status);
 
     return NS_OK;
 }
@@ -571,11 +490,10 @@ nsDataChannel::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
                                nsIInputStream *input,
                                PRUint32 offset, PRUint32 count)
 {
-    if (NS_SUCCEEDED(mStatus)) {
-        mStatus = mListener->OnDataAvailable(request, ctxt, input,
-                                             offset, count);
+    if (mListener) {
+        return mListener->OnDataAvailable(this, ctxt, input,
+                                          offset, count);
     }
-
-    return mStatus;
+    return NS_OK;
 }
 

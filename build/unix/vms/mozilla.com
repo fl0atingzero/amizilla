@@ -91,6 +91,9 @@ $    define /user VMS_NULL_DL_NAME 'ipc_shr'
 $ else
 $    define /user VMS_NULL_DL_NAME SYS$SHARE:TCPIP$IPC_SHR.EXE
 $ endif
+$ define /user GETADDRINFO     TCPIP$GETADDRINFO
+$ define /user FREEADDRINFO    TCPIP$FREEADDRINFO
+$ define /user GETNAMEINFO     TCPIP$GETNAMEINFO
 $ define /user GETIPNODEBYNAME TCPIP$GETIPNODEBYNAME
 $ define /user GETIPNODEBYADDR TCPIP$GETIPNODEBYADDR
 $ define /user FREEHOSTENT     TCPIP$FREEHOSTENT
@@ -127,7 +130,7 @@ $ define /user VMS_OPEN_ARGS_4 " ",-
 	"rfm=stmlf", "rat=cr"
 $!
 $ if f$trnlnm("USER") .eqs. "" then define /user user "''moz_user'"
-$ if f$trnlnm("LOGNAME") .eqs. "" then define /user logname "''moz_cwd'"
+$ if f$trnlnm("LOGNAME") .eqs. "" then define /user logname "''moz_user'"
 $ define /user MOZILLA_FIVE_HOME "''moz_unix'"
 $ define /user VMS_USE_VMS_DEF_PROT 1
 $ define /user VMS_ACCESS_FIX_WOK 1

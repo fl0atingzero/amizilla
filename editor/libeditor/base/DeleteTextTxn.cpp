@@ -51,7 +51,6 @@ DeleteTextTxn::DeleteTextTxn()
 ,mElement()
 ,mOffset(0)
 ,mNumCharsToDelete(0)
-,mDeletedText(0)
 ,mRangeUpdater(nsnull)
 {
 }
@@ -78,7 +77,7 @@ NS_IMETHODIMP DeleteTextTxn::Init(nsIEditor *aEditor,
   aElement->GetLength(&count);
   NS_ASSERTION(count>=aNumCharsToDelete, "bad arg, numCharsToDelete.  Not enough characters in node");
   NS_ASSERTION(count>=aOffset+aNumCharsToDelete, "bad arg, numCharsToDelete.  Not enough characters in node");
-  mDeletedText.SetLength(0);
+  mDeletedText.Truncate();
   mRangeUpdater = aRangeUpdater;
   return NS_OK;
 }
@@ -130,15 +129,13 @@ NS_IMETHODIMP DeleteTextTxn::UndoTransaction(void)
   NS_ASSERTION(mEditor && mElement, "bad state");
   if (!mEditor || !mElement) { return NS_ERROR_NOT_INITIALIZED; }
 
-  nsresult result;
-  result = mElement->InsertData(mOffset, mDeletedText);
-  return result;
+  return mElement->InsertData(mOffset, mDeletedText);
 }
 
 NS_IMETHODIMP DeleteTextTxn::Merge(nsITransaction *aTransaction, PRBool *aDidMerge)
 {
-  if (nsnull!=aDidMerge)
-    *aDidMerge=PR_FALSE;
+  if (aDidMerge)
+    *aDidMerge = PR_FALSE;
   return NS_OK;
 }
 

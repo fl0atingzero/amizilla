@@ -106,8 +106,8 @@
  * @name Standard Error Handling Macros
  */
 
-#define NS_FAILED(_nsresult) ((_nsresult) & 0x80000000)
-#define NS_SUCCEEDED(_nsresult) (!((_nsresult) & 0x80000000))
+#define NS_FAILED(_nsresult) (NS_UNLIKELY((_nsresult) & 0x80000000))
+#define NS_SUCCEEDED(_nsresult) (NS_LIKELY(!((_nsresult) & 0x80000000)))
 
 /**
  * @name Severity Code.  This flag identifies the level of warning
@@ -276,6 +276,8 @@
 #define NS_ERROR_FILE_READ_ONLY                 NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 19)
 #define NS_ERROR_FILE_DIR_NOT_EMPTY             NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 20)
 #define NS_ERROR_FILE_ACCESS_DENIED             NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_FILES, 21)
+
+#define NS_SUCCESS_FILE_DIRECTORY_EMPTY         NS_ERROR_GENERATE_SUCCESS(NS_ERROR_MODULE_FILES, 1)
 
  /* Result codes used by nsIVariant */
 

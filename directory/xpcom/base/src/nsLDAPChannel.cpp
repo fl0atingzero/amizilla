@@ -637,10 +637,10 @@ nsLDAPChannel::AsyncOpen(nsIStreamListener* aListener,
     
     // initialize it with the defaults
     // XXXdmose - need to deal with bind name
-    //
+    // Need to deal with VERSION2 pref - don't know how to get it from here.
     rv = mConnection->Init(host.get(), port,
                            (options & nsILDAPURL::OPT_SECURE) ? PR_TRUE 
-                           : PR_FALSE, NS_LITERAL_CSTRING(""), this, nsnull);
+                           : PR_FALSE, EmptyCString(), this, nsnull, nsILDAPConnection::VERSION3);
     switch (rv) {
     case NS_OK:
         break;
@@ -672,7 +672,7 @@ nsLDAPChannel::AsyncOpen(nsIStreamListener* aListener,
     // kick off a bind operation 
     // 
     PR_LOG(gLDAPLogModule, PR_LOG_DEBUG, ("initiating SimpleBind\n"));
-    rv = mCurrentOperation->SimpleBind(NS_LITERAL_CSTRING(""));
+    rv = mCurrentOperation->SimpleBind(EmptyCString());
     if (NS_FAILED(rv)) {
 
         // XXXdmose better error handling / passthrough; deal with password
@@ -947,7 +947,7 @@ nsLDAPChannel::OnLDAPSearchEntry(nsILDAPMessage *aMessage)
         // print all values of this attribute
         //
         for ( PRUint32 j=0 ; j < valueCount; j++ ) {
-            entry.Append(NS_ConvertASCIItoUCS2(attrs[i]));
+            AppendASCIItoUTF16(attrs[i], entry);
             entry.Append(NS_LITERAL_STRING(": "));
             entry.Append(vals[j]);
             entry.Append(NS_LITERAL_STRING("\n"));

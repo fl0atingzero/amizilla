@@ -41,6 +41,7 @@
 
 #include "nsMai.h"
 #include "nsAccessibleWrap.h"
+#include "nsAppRootAccessible.h"
 #include "nsString.h"
 
 #include "nsMaiInterfaceComponent.h"
@@ -53,6 +54,18 @@
 #include "nsMaiInterfaceTable.h"
 
 /* MaiAtkObject */
+
+enum {
+  ACTIVATE,
+  CREATE,
+  DEACTIVATE,
+  DESTROY,
+  MAXIMIZE,
+  MINIMIZE,
+  RESIZE,
+  RESTORE,
+  LAST_SIGNAL
+};
 
 /**
  * This MaiAtkObject is a thin wrapper, in the MAI namespace, for AtkObject
@@ -71,6 +84,8 @@ struct MaiAtkObjectClass
 {
     AtkObjectClass parent_class;
 };
+
+static guint mai_atk_object_signals [LAST_SIGNAL] = { 0, };
 
 #ifdef MAI_LOGGING
 PRInt32 sMaiAtkObjCreated = 0;
@@ -191,9 +206,11 @@ nsAccessibleWrap::~nsAccessibleWrap()
         MAI_ATK_OBJECT(mMaiAtkObject)->accWrap = nsnull;
         g_object_unref(mMaiAtkObject);
     }
-    if (mInterfaces)
+    if (mInterfaces) {
         for (int index = 0; index < MAI_INTERFACE_NUM; ++index)
             delete mInterfaces[index];
+        delete [] mInterfaces;
+    }
 }
 
 NS_IMETHODIMP nsAccessibleWrap::GetNativeInterface(void **aOutAccessible)
@@ -249,7 +266,7 @@ nsAccessibleWrap::CreateMaiInterfaces(void)
 
     // Add Action interface if the action count is more than zero.
     PRUint8 actionCount = 0;
-    rv = GetAccNumActions(&actionCount);
+    rv = GetNumActions(&actionCount);
     if (NS_SUCCEEDED(rv) && actionCount > 0) {
         MaiInterfaceAction *maiInterfaceAction = new MaiInterfaceAction(this);
         NS_ENSURE_TRUE(maiInterfaceAction, NS_ERROR_OUT_OF_MEMORY);
@@ -441,50 +458,50 @@ Returned AtkStatusSet never contain the following AtkStates.
 ******************************************************************************/
 
 void
-nsAccessibleWrap::TranslateStates(PRUint32 aAccState, void *aAtkStateSet)
+nsAccessibleWrap::TranslateStates(PRUint32 aState, void *aAtkStateSet)
 {
     if (!aAtkStateSet)
         return;
     AtkStateSet *state_set = NS_STATIC_CAST(AtkStateSet *, aAtkStateSet);
 
-    if (aAccState & nsIAccessible::STATE_SELECTED)
+    if (aState & nsIAccessible::STATE_SELECTED)
         atk_state_set_add_state (state_set, ATK_STATE_SELECTED);
 
-    if (aAccState & nsIAccessible::STATE_FOCUSED)
+    if (aState & nsIAccessible::STATE_FOCUSED)
         atk_state_set_add_state (state_set, ATK_STATE_FOCUSED);
 
-    if (aAccState & nsIAccessible::STATE_PRESSED)
+    if (aState & nsIAccessible::STATE_PRESSED)
         atk_state_set_add_state (state_set, ATK_STATE_PRESSED);
 
-    if (aAccState & nsIAccessible::STATE_CHECKED)
+    if (aState & nsIAccessible::STATE_CHECKED)
         atk_state_set_add_state (state_set, ATK_STATE_CHECKED);
 
-    if (aAccState & nsIAccessible::STATE_EXPANDED)
+    if (aState & nsIAccessible::STATE_EXPANDED)
         atk_state_set_add_state (state_set, ATK_STATE_EXPANDED);
 
-    if (aAccState & nsIAccessible::STATE_COLLAPSED)
+    if (aState & nsIAccessible::STATE_COLLAPSED)
         atk_state_set_add_state (state_set, ATK_STATE_EXPANDABLE);
                    
     // The control can't accept input at this time
-    if (aAccState & nsIAccessible::STATE_BUSY)
+    if (aState & nsIAccessible::STATE_BUSY)
         atk_state_set_add_state (state_set, ATK_STATE_BUSY);
 
-    if (aAccState & nsIAccessible::STATE_FOCUSABLE)
+    if (aState & nsIAccessible::STATE_FOCUSABLE)
         atk_state_set_add_state (state_set, ATK_STATE_FOCUSABLE);
 
-    if (!(aAccState & nsIAccessible::STATE_INVISIBLE))
+    if (!(aState & nsIAccessible::STATE_INVISIBLE))
         atk_state_set_add_state (state_set, ATK_STATE_VISIBLE);
 
-    if (aAccState & nsIAccessible::STATE_SELECTABLE)
+    if (aState & nsIAccessible::STATE_SELECTABLE)
         atk_state_set_add_state (state_set, ATK_STATE_SELECTABLE);
 
-    if (aAccState & nsIAccessible::STATE_SIZEABLE)
+    if (aState & nsIAccessible::STATE_SIZEABLE)
         atk_state_set_add_state (state_set, ATK_STATE_RESIZABLE);
 
-    if (aAccState & nsIAccessible::STATE_MULTISELECTABLE)
+    if (aState & nsIAccessible::STATE_MULTISELECTABLE)
         atk_state_set_add_state (state_set, ATK_STATE_MULTISELECTABLE);
 
-    if (!(aAccState & nsIAccessible::STATE_UNAVAILABLE))
+    if (!(aState & nsIAccessible::STATE_UNAVAILABLE))
         atk_state_set_add_state (state_set, ATK_STATE_ENABLED);
 
     // The following state is
@@ -492,39 +509,45 @@ nsAccessibleWrap::TranslateStates(PRUint32 aAccState, void *aAtkStateSet)
     // This is only the states that there isn't already a mapping for in MSAA
     // See www.accessmozilla.org/article.php?sid=11 for information on the
     // mappings between accessibility API state
-    if (aAccState & nsIAccessible::STATE_INVALID)
+    if (aState & nsIAccessible::STATE_INVALID)
         atk_state_set_add_state (state_set, ATK_STATE_INVALID);
 
-    if (aAccState & nsIAccessible::STATE_ACTIVE)
+    if (aState & nsIAccessible::STATE_ACTIVE)
         atk_state_set_add_state (state_set, ATK_STATE_ACTIVE);
 
-    if (aAccState & nsIAccessible::STATE_EXPANDABLE)
+    if (aState & nsIAccessible::STATE_EXPANDABLE)
         atk_state_set_add_state (state_set, ATK_STATE_EXPANDABLE);
 
-    if (aAccState & nsIAccessible::STATE_MODAL)
+    if (aState & nsIAccessible::STATE_MODAL)
         atk_state_set_add_state (state_set, ATK_STATE_MODAL);
 
-    if (aAccState & nsIAccessible::STATE_MULTI_LINE)
+    if (aState & nsIAccessible::STATE_MULTI_LINE)
         atk_state_set_add_state (state_set, ATK_STATE_MULTI_LINE);
 
-    if (aAccState & nsIAccessible::STATE_SENSITIVE)
+    if (aState & nsIAccessible::STATE_SENSITIVE)
         atk_state_set_add_state (state_set, ATK_STATE_SENSITIVE);
 
-    if (aAccState & nsIAccessible::STATE_RESIZABLE)
+    if (aState & nsIAccessible::STATE_RESIZABLE)
         atk_state_set_add_state (state_set, ATK_STATE_RESIZABLE);
 
-    if (aAccState & nsIAccessible::STATE_SHOWING)
+    if (aState & nsIAccessible::STATE_SHOWING)
         atk_state_set_add_state (state_set, ATK_STATE_SHOWING);
 
-    if (aAccState & nsIAccessible::STATE_SINGLE_LINE)
+    if (aState & nsIAccessible::STATE_SINGLE_LINE)
         atk_state_set_add_state (state_set, ATK_STATE_SINGLE_LINE);
 
-    if (aAccState & nsIAccessible::STATE_TRANSIENT)
+    if (aState & nsIAccessible::STATE_TRANSIENT)
         atk_state_set_add_state (state_set, ATK_STATE_TRANSIENT);
 
-    if (aAccState & nsIAccessible::STATE_VERTICAL)
+    if (aState & nsIAccessible::STATE_VERTICAL)
         atk_state_set_add_state (state_set, ATK_STATE_VERTICAL);
 
+}
+
+PRBool nsAccessibleWrap::IsValidObject()
+{
+    // to ensure we are not shut down
+    return (mDOMNode != nsnull);
 }
 
 /* static functions for ATK callbacks */
@@ -547,6 +570,72 @@ classInitCB(AtkObjectClass *aClass)
     aClass->initialize = initializeCB;
 
     gobject_class->finalize = finalizeCB;
+
+    mai_atk_object_signals [ACTIVATE] =
+    g_signal_new ("activate",
+                  MAI_TYPE_ATK_OBJECT,
+                  G_SIGNAL_RUN_LAST,
+                  0, /* default signal handler */
+                  NULL, NULL,
+                  g_cclosure_marshal_VOID__VOID,
+                  G_TYPE_NONE, 0);
+    mai_atk_object_signals [CREATE] =
+    g_signal_new ("create",
+                  MAI_TYPE_ATK_OBJECT,
+                  G_SIGNAL_RUN_LAST,
+                  0, /* default signal handler */
+                  NULL, NULL,
+                  g_cclosure_marshal_VOID__VOID,
+                  G_TYPE_NONE, 0);
+    mai_atk_object_signals [DEACTIVATE] =
+    g_signal_new ("deactivate",
+                  MAI_TYPE_ATK_OBJECT,
+                  G_SIGNAL_RUN_LAST,
+                  0, /* default signal handler */
+                  NULL, NULL,
+                  g_cclosure_marshal_VOID__VOID,
+                  G_TYPE_NONE, 0);
+    mai_atk_object_signals [DESTROY] =
+    g_signal_new ("destroy",
+                  MAI_TYPE_ATK_OBJECT,
+                  G_SIGNAL_RUN_LAST,
+                  0, /* default signal handler */
+                  NULL, NULL,
+                  g_cclosure_marshal_VOID__VOID,
+                  G_TYPE_NONE, 0);
+    mai_atk_object_signals [MAXIMIZE] =
+    g_signal_new ("maximize",
+                  MAI_TYPE_ATK_OBJECT,
+                  G_SIGNAL_RUN_LAST,
+                  0, /* default signal handler */
+                  NULL, NULL,
+                  g_cclosure_marshal_VOID__VOID,
+                  G_TYPE_NONE, 0);
+    mai_atk_object_signals [MINIMIZE] =
+    g_signal_new ("minimize",
+                  MAI_TYPE_ATK_OBJECT,
+                  G_SIGNAL_RUN_LAST,
+                  0, /* default signal handler */
+                  NULL, NULL,
+                  g_cclosure_marshal_VOID__VOID,
+                  G_TYPE_NONE, 0);
+    mai_atk_object_signals [RESIZE] =
+    g_signal_new ("resize",
+                  MAI_TYPE_ATK_OBJECT,
+                  G_SIGNAL_RUN_LAST,
+                  0, /* default signal handler */
+                  NULL, NULL,
+                  g_cclosure_marshal_VOID__VOID,
+                  G_TYPE_NONE, 0);
+    mai_atk_object_signals [RESTORE] =
+    g_signal_new ("restore",
+                  MAI_TYPE_ATK_OBJECT,
+                  G_SIGNAL_RUN_LAST,
+                  0, /* default signal handler */
+                  NULL, NULL,
+                  g_cclosure_marshal_VOID__VOID,
+                  G_TYPE_NONE, 0);
+
 }
 
 void
@@ -611,7 +700,7 @@ getNameCB(AtkObject *aAtkObj)
             NS_REINTERPRET_CAST(MaiAtkObject*, aAtkObj)->accWrap;
 
         /* nsIAccessible is responsible for the non-NULL name */
-        nsresult rv = accWrap->GetAccName(uniName);
+        nsresult rv = accWrap->GetName(uniName);
         NS_ENSURE_SUCCESS(rv, nsnull);
         len = uniName.Length();
         if (len > 0) {
@@ -639,7 +728,7 @@ getDescriptionCB(AtkObject *aAtkObj)
             NS_REINTERPRET_CAST(MaiAtkObject*, aAtkObj)->accWrap;
 
         /* nsIAccessible is responsible for the non-NULL description */
-        nsresult rv = accWrap->GetAccDescription(uniDesc);
+        nsresult rv = accWrap->GetDescription(uniDesc);
         NS_ENSURE_SUCCESS(rv, nsnull);
         len = uniDesc.Length();
         if (len > 0) {
@@ -663,16 +752,25 @@ getRoleCB(AtkObject *aAtkObj)
             NS_REINTERPRET_CAST(MaiAtkObject*, aAtkObj)->accWrap;
 
         PRUint32 accRole;
-        nsresult rv = accWrap->GetAccRole(&accRole);
+        nsresult rv = accWrap->GetRole(&accRole);
         NS_ENSURE_SUCCESS(rv, ATK_ROLE_INVALID);
 
         //the cross-platform Accessible object returns the same value for
-        //both "ATK_ROLE_MENU_ITEM" and "ATK_ROLE_MENU"
-        if (accRole == ATK_ROLE_MENU_ITEM) {
+        //both "ROLE_MENUITEM" and "ROLE_MENUPOPUP"
+        if (accRole == nsIAccessible::ROLE_MENUITEM) {
             PRInt32 childCount = 0;
-            accWrap->GetAccChildCount(&childCount);
+            accWrap->GetChildCount(&childCount);
             if (childCount > 0)
-                accRole = ATK_ROLE_MENU;
+                accRole = nsIAccessible::ROLE_MENUPOPUP;
+        }
+        else if (accRole == nsIAccessible::ROLE_LINK) {
+            //ATK doesn't have role-link now
+            //register it on runtime
+            static AtkRole linkRole = (AtkRole)0;
+            if (linkRole == 0) {
+                linkRole = atk_role_register("hyper link");
+            }
+            accRole = linkRole;
         }
         aAtkObj->role = NS_STATIC_CAST(AtkRole, accRole);
     }
@@ -687,12 +785,12 @@ getParentCB(AtkObject *aAtkObj)
         NS_REINTERPRET_CAST(MaiAtkObject*, aAtkObj)->accWrap;
 
     nsCOMPtr<nsIAccessible> accParent;
-    nsresult rv = accWrap->GetAccParent(getter_AddRefs(accParent));
+    nsresult rv = accWrap->GetParent(getter_AddRefs(accParent));
     if (NS_FAILED(rv) || !accParent)
         return nsnull;
-    nsIAccessible *tmpAccParent = accParent;
+    nsIAccessible *tmpParent = accParent;
     nsAccessibleWrap *accWrapParent = NS_STATIC_CAST(nsAccessibleWrap *,
-                                                     tmpAccParent);
+                                                     tmpParent);
 
     AtkObject *parentAtkObj = accWrapParent->GetAtkObject();
     if (parentAtkObj && !aAtkObj->accessible_parent) {
@@ -709,7 +807,7 @@ getChildCountCB(AtkObject *aAtkObj)
         NS_REINTERPRET_CAST(MaiAtkObject*, aAtkObj)->accWrap;
 
     PRInt32 count = 0;
-    accWrap->GetAccChildCount(&count);
+    accWrap->GetChildCount(&count);
     return count;
 }
 
@@ -754,13 +852,13 @@ getIndexInParentCB(AtkObject *aAtkObj)
     NS_ENSURE_SUCCESS(accWrap->GetUniqueID(&accId), -1);
 
     nsCOMPtr<nsIAccessible> accParent;
-    nsresult rv = accWrap->GetAccParent(getter_AddRefs(accParent));
+    nsresult rv = accWrap->GetParent(getter_AddRefs(accParent));
     if (NS_FAILED(rv) || !accParent)
         return -1;
 
     nsCOMPtr<nsIAccessible> accChild;
     nsCOMPtr<nsIAccessible> accTmpChild;
-    accWrap->GetAccFirstChild(getter_AddRefs(accChild));
+    accWrap->GetFirstChild(getter_AddRefs(accChild));
 
     PRInt32 currentIndex = -1;
     void *currentAccId = nsnull;
@@ -772,7 +870,7 @@ getIndexInParentCB(AtkObject *aAtkObj)
             if (currentAccId == accId)
                 break;
         }
-        accChild->GetAccNextSibling(getter_AddRefs(accTmpChild));
+        accChild->GetNextSibling(getter_AddRefs(accTmpChild));
         accChild = accTmpChild;
     }
     return currentIndex;
@@ -781,20 +879,20 @@ getIndexInParentCB(AtkObject *aAtkObj)
 AtkStateSet *
 refStateSetCB(AtkObject *aAtkObj)
 {
-    NS_ENSURE_SUCCESS(CheckMaiAtkObject(aAtkObj), nsnull);
-    nsAccessibleWrap *accWrap =
-        NS_REINTERPRET_CAST(MaiAtkObject*, aAtkObj)->accWrap;
-
     AtkStateSet *state_set = nsnull;
     state_set = ATK_OBJECT_CLASS(parent_class)->ref_state_set(aAtkObj);
 
+    NS_ENSURE_SUCCESS(CheckMaiAtkObject(aAtkObj), state_set);
+    nsAccessibleWrap *accWrap =
+        NS_REINTERPRET_CAST(MaiAtkObject*, aAtkObj)->accWrap;
+
     PRUint32 accState = 0;
-    nsresult rv = accWrap->GetAccState(&accState);
+    nsresult rv = accWrap->GetState(&accState);
     NS_ENSURE_SUCCESS(rv, state_set);
 
     if (accState == 0) {
-        nsresult rv = accWrap->GetAccExtState(&accState);
-        NS_ENSURE_SUCCESS(rv, state_set);
+        nsresult rv = accWrap->GetExtState(&accState);
+        //NS_ENSURE_SUCCESS(rv, state_set);
         if (accState == 0)
             return state_set;
     }
@@ -808,9 +906,12 @@ CheckMaiAtkObject(AtkObject *aAtkObj)
 {
     NS_ENSURE_ARG(MAI_IS_ATK_OBJECT(aAtkObj));
     nsAccessibleWrap * tmpAccWrap = MAI_ATK_OBJECT(aAtkObj)->accWrap;
-    NS_ENSURE_TRUE(tmpAccWrap != nsnull, NS_ERROR_INVALID_POINTER);
-    NS_ENSURE_TRUE(tmpAccWrap->GetAtkObject() == aAtkObj,
-                   NS_ERROR_FAILURE);
+    if (tmpAccWrap == nsnull)
+        return NS_ERROR_INVALID_POINTER;
+    if (tmpAccWrap != nsAppRootAccessible::Create() && !tmpAccWrap->IsValidObject())
+        return NS_ERROR_INVALID_POINTER;
+    if (tmpAccWrap->GetAtkObject() != aAtkObj)
+        return NS_ERROR_FAILURE;
     return NS_OK;
 }
 

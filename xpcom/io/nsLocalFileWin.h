@@ -50,7 +50,6 @@ public:
     NS_DEFINE_STATIC_CID_ACCESSOR(NS_LOCAL_FILE_CID)
     
     nsLocalFile();
-    virtual ~nsLocalFile();
 
     static NS_METHOD nsLocalFileConstructor(nsISupports* outer, const nsIID& aIID, void* *aInstancePtr);
 
@@ -68,6 +67,8 @@ public:
     static void GlobalShutdown();
 
 private:
+    nsLocalFile(const nsLocalFile& other);
+    ~nsLocalFile() {}
 
     // this is the flag which indicates if I can used cached information about the file
     PRPackedBool mDirty;
@@ -85,7 +86,7 @@ private:
 
     static PRBool mFSCharsetIsUTF8;
 
-    void MakeDirty();
+    void MakeDirty() { mDirty = PR_TRUE; }
     nsresult ResolveAndStat(PRBool resolveTerminal);
     nsresult ResolvePath(const char* workingPath, PRBool resolveTerminal, char** resolvedPath);
     

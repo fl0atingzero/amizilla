@@ -38,7 +38,7 @@
 #include "nsArray.h"
 
 NS_IMPL_THREADSAFE_ISUPPORTS2(nsNSSASN1Tree, nsIASN1Tree, 
-                                                 nsITreeView);
+                                                 nsITreeView)
 
 nsNSSASN1Tree::nsNSSASN1Tree() 
 :mTopNode(nsnull)
@@ -363,11 +363,11 @@ nsNSSASN1Tree::ToggleOpenState(PRInt32 index)
   n->seq->GetIsExpanded(&IsExpanded);
   PRInt32 rowCountChange;
   if (IsExpanded) {
-    rowCountChange = 1-CountVisibleNodes(n);
+    rowCountChange = -CountVisibleNodes(n->child);
     n->seq->SetIsExpanded(PR_FALSE);
   } else {
     n->seq->SetIsExpanded(PR_TRUE);
-    rowCountChange = CountVisibleNodes(n)-1;
+    rowCountChange = CountVisibleNodes(n->child);
   }
   if (mTree)
     mTree->RowCountChanged(index, rowCountChange);

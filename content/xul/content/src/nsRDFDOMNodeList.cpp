@@ -48,10 +48,7 @@
 
 */
 
-#include "nsDOMCID.h"
 #include "nsIDOMNode.h"
-#include "nsIServiceManager.h"
-#include "nsISupportsArray.h"
 #include "nsRDFDOMNodeList.h"
 #include "nsContentUtils.h"
 
@@ -60,54 +57,11 @@
 
 
 nsRDFDOMNodeList::nsRDFDOMNodeList(void)
-    : //mInner(nsnull), Not being used?
-      mElements(nsnull)
 {
 }
 
 nsRDFDOMNodeList::~nsRDFDOMNodeList(void)
 {
-#ifdef DEBUG_REFS
-    --gInstanceCount;
-    fprintf(stdout, "%d - RDF: nsRDFDOMNodeList\n", gInstanceCount);
-#endif
-
-    NS_IF_RELEASE(mElements);
-    //delete mInner; Not being used?
-}
-
-nsresult
-nsRDFDOMNodeList::Create(nsRDFDOMNodeList** aResult)
-{
-    nsRDFDOMNodeList* list = new nsRDFDOMNodeList();
-    if (! list)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    nsresult rv;
-    if (NS_FAILED(rv = list->Init())) {
-        delete list;
-        return rv;
-    }
-
-    NS_ADDREF(list);
-    *aResult = list;
-    return NS_OK;
-}
-
-nsresult
-nsRDFDOMNodeList::CreateWithArray(nsISupportsArray* aArray,
-                                  nsRDFDOMNodeList** aResult)
-{
-    nsRDFDOMNodeList* list = new nsRDFDOMNodeList();
-    if (! list)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    list->mElements = aArray;
-    NS_IF_ADDREF(aArray);
-
-    NS_ADDREF(list);
-    *aResult = list;
-    return NS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -117,14 +71,13 @@ nsRDFDOMNodeList::CreateWithArray(nsISupportsArray* aArray,
 // QueryInterface implementation for nsRDFDOMNodeList
 NS_INTERFACE_MAP_BEGIN(nsRDFDOMNodeList)
     NS_INTERFACE_MAP_ENTRY(nsIDOMNodeList)
-    NS_INTERFACE_MAP_ENTRY(nsIRDFNodeList)
     NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMNodeList)
     NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(XULNodeList)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_ADDREF(nsRDFDOMNodeList);
-NS_IMPL_RELEASE(nsRDFDOMNodeList);
+NS_IMPL_ADDREF(nsRDFDOMNodeList)
+NS_IMPL_RELEASE(nsRDFDOMNodeList)
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -137,10 +90,7 @@ nsRDFDOMNodeList::GetLength(PRUint32* aLength)
     if (! aLength)
         return NS_ERROR_NULL_POINTER;
 
-    PRUint32 cnt;
-    nsresult rv = mElements->Count(&cnt);
-    if (NS_FAILED(rv)) return rv;
-    *aLength = cnt;
+    *aLength = mElements.Count();
     return NS_OK;
 }
 
@@ -148,11 +98,13 @@ nsRDFDOMNodeList::GetLength(PRUint32* aLength)
 NS_IMETHODIMP
 nsRDFDOMNodeList::Item(PRUint32 aIndex, nsIDOMNode** aReturn)
 {
-    // It's ok to access past the end of the array here, if we do that
-    // we simply return nsnull, as per the DOM spec.
+    if (aIndex >= (PRUint32) mElements.Count()) {
+        // We simply return nsnull, as per the DOM spec.
+        *aReturn = nsnull;
+        return NS_OK;
+    }
 
-    // Cast is okay because we're in a closed system.
-    *aReturn = (nsIDOMNode*) mElements->ElementAt(aIndex);
+    NS_ADDREF(*aReturn = mElements[aIndex]);
     return NS_OK;
 }
 
@@ -161,34 +113,21 @@ nsRDFDOMNodeList::Item(PRUint32 aIndex, nsIDOMNode** aReturn)
 // Implementation methods
 
 nsresult
-nsRDFDOMNodeList::Init(void)
-{
-    nsresult rv;
-    if (NS_FAILED(rv = NS_NewISupportsArray(&mElements))) {
-        NS_ERROR("unable to create elements array");
-        return rv;
-    }
-
-    return NS_OK;
-}
-
-
-NS_IMETHODIMP
 nsRDFDOMNodeList::AppendNode(nsIDOMNode* aNode)
 {
     NS_PRECONDITION(aNode != nsnull, "null ptr");
     if (! aNode)
         return NS_ERROR_NULL_POINTER;
 
-    return mElements->AppendElement(aNode);
+    return mElements.AppendObject(aNode);
 }
 
-NS_IMETHODIMP
+nsresult
 nsRDFDOMNodeList::RemoveNode(nsIDOMNode* aNode)
 {
     NS_PRECONDITION(aNode != nsnull, "null ptr");
     if (! aNode)
         return NS_ERROR_NULL_POINTER;
 
-    return mElements->RemoveElement(aNode);
+    return mElements.RemoveObject(aNode);
 }

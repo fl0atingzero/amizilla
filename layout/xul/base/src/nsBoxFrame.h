@@ -143,8 +143,7 @@ public:
                               nsIContent*     aChild,
                               PRInt32         aNameSpaceID,
                               nsIAtom*        aAttribute,
-                              PRInt32         aModType, 
-                              PRInt32         aHint);
+                              PRInt32         aModType);
 
 
   NS_IMETHOD Reflow(nsIPresContext*          aPresContext,
@@ -172,7 +171,7 @@ public:
                                   nsIAtom*        aListName,
                                   nsIFrame*       aChildList);
 
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
 #endif
@@ -251,6 +250,12 @@ protected:
     nsresult RegUnregAccessKey(nsIPresContext* aPresContext,
                                PRBool aDoReg);
     void FireDOMEvent(nsIPresContext *aPresContext, const nsAString& aDOMEventName);
+    virtual nsresult GetFrameForPointChild(nsIPresContext*   aPresContext,
+                                           const nsPoint&    aPoint,
+                                           nsFramePaintLayer aWhichLayer,    
+                                           nsIFrame*         aChild,
+                                           PRBool            aCheckMouseThrough,
+                                           nsIFrame**        aFrame);
 
 private: 
     nsresult SetDebug(nsIPresContext* aPresContext, PRBool aDebug);

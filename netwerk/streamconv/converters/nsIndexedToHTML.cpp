@@ -47,6 +47,7 @@
 #include "nsURLHelper.h"
 #include "nsCRT.h"
 #include "nsIPlatformCharset.h"
+#include "nsInt64.h"
 
 NS_IMPL_THREADSAFE_ISUPPORTS4(nsIndexedToHTML,
                               nsIDirIndexListener,
@@ -129,8 +130,6 @@ nsIndexedToHTML::AsyncConvertData(const PRUnichar *aFromType,
     return Init(aListener);
 }
 
-static NS_NAMED_LITERAL_STRING(tableHeading,"<table>\n");
-
 NS_IMETHODIMP
 nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
     nsresult rv;
@@ -166,14 +165,25 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
     // would muck up the XUL display
     // - bbaetz
 
-    // ftp urls don't always end in a /
     PRBool isScheme = PR_FALSE;
     if (NS_SUCCEEDED(uri->SchemeIs("ftp", &isScheme)) && isScheme) {
+
+        // ftp urls don't always end in a /
+        // make sure they do
+        // but look out for /%2F as path
+        nsCAutoString path;
+        rv = uri->GetPath(path);
+        if (NS_FAILED(rv)) return rv;
+        if (baseUri.Last() != '/' && !path.EqualsIgnoreCase("/%2F")) {
+            baseUri.Append('/');
+            path.Append('/');
+            uri->SetPath(path);
+        }
+
         // strip out the password here, so it doesn't show in the page title
         // This is done by the 300: line generation in ftp, but we don't use
         // that - see above
         
-        // if there was a password, strip it out
         nsCAutoString pw;
         rv = uri->GetPassword(pw);
         if (NS_FAILED(rv)) return rv;
@@ -181,31 +191,18 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
              nsCOMPtr<nsIURI> newUri;
              rv = uri->Clone(getter_AddRefs(newUri));
              if (NS_FAILED(rv)) return rv;
-             rv = newUri->SetPassword(NS_LITERAL_CSTRING(""));
+             rv = newUri->SetPassword(EmptyCString());
              if (NS_FAILED(rv)) return rv;
              rv = newUri->GetAsciiSpec(titleUri);
              if (NS_FAILED(rv)) return rv;
-             if (titleUri.Last() != '/')
+             if (titleUri.Last() != '/' && !path.EqualsIgnoreCase("/%2F"))
                  titleUri.Append('/');
         }
 
-        if (baseUri.Last() != '/')
-            baseUri.Append('/');
-
-        nsCString::const_iterator start, finish;
-        baseUri.BeginReading(start);
-        baseUri.EndReading(finish);
-        finish.advance(-2); // don't count the last /
-        
-        // No RFindChar
-        while(finish != start && *finish != '/')
-            --finish;
-
-        if (Distance(start, finish) > (sizeof("ftp://") - 1)) {
-            ++finish; // include the end '/'
-            parentStr = Substring(start, finish);
+        if (!path.Equals("//") && !path.EqualsIgnoreCase("/%2F")) {
+            rv = uri->Resolve(NS_LITERAL_CSTRING(".."),parentStr);
+            if (NS_FAILED(rv)) return rv;
         }
-
     } else if (NS_SUCCEEDED(uri->SchemeIs("file", &isScheme)) && isScheme) {
         nsCOMPtr<nsIFileURL> fileUrl = do_QueryInterface(uri);
         nsCOMPtr<nsIFile> file;
@@ -241,9 +238,25 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
     } else if (NS_SUCCEEDED(uri->SchemeIs("gopher", &isScheme)) && isScheme) {
         mExpectAbsLoc = PR_TRUE;
     }
+    else {
+        // default behavior for other protocols is to assume the channel's
+        // URL references a directory ending in '/' -- fixup if necessary.
+        nsCAutoString path;
+        rv = uri->GetPath(path);
+        if (NS_FAILED(rv)) return rv;
+        if (baseUri.Last() != '/') {
+            baseUri.Append('/');
+            path.Append('/');
+            uri->SetPath(path);
+        }
+        if (!path.Equals("/")) {
+            rv = uri->Resolve(NS_LITERAL_CSTRING(".."), parentStr);
+            if (NS_FAILED(rv)) return rv;
+        }
+    }
 
     nsString buffer;
-    buffer.Assign(NS_LITERAL_STRING("<?xml version=\"1.0\""));
+    buffer.Assign(NS_LITERAL_STRING("<?xml version=\"1.0\" encoding=\""));
     
     // Get the encoding from the parser
     // XXX - this won't work for any encoding set via a 301: line in the
@@ -255,11 +268,9 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
     rv = mParser->GetEncoding(getter_Copies(encoding));
     if (NS_FAILED(rv)) return rv;
 
-    buffer.Append(NS_LITERAL_STRING(" encoding=\"") +
-                  NS_ConvertASCIItoUCS2(encoding) +
-                  NS_LITERAL_STRING("\""));
+    AppendASCIItoUTF16(encoding, buffer);
 
-    buffer.Append(NS_LITERAL_STRING("?>\n") +
+    buffer.Append(NS_LITERAL_STRING("\"?>\n") +
                   NS_LITERAL_STRING("<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" ") +
                   NS_LITERAL_STRING("\"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd\">\n"));
 
@@ -301,7 +312,7 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
     buffer.Append(strNCR);
 
     buffer.Append(NS_LITERAL_STRING("</title><base href=\""));    
-    buffer.Append(NS_ConvertASCIItoUCS2(baseUri));
+    AppendASCIItoUTF16(baseUri, buffer);
     buffer.Append(NS_LITERAL_STRING("\"/>\n"));
 
     buffer.Append(NS_LITERAL_STRING("<style type=\"text/css\">\n") +
@@ -326,7 +337,7 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
     
     ConvertNonAsciiToNCR(title, strNCR);
     buffer.Append(strNCR);
-    buffer.Append(NS_LITERAL_STRING("</h1>\n<hr/>") + tableHeading);
+    buffer.Append(NS_LITERAL_STRING("</h1>\n<hr/><table>\n"));
 
     //buffer.Append(NS_LITERAL_STRING("<tr><th>Name</th><th>Size</th><th>Last modified</th></tr>\n"));
 
@@ -337,9 +348,9 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
         if (NS_FAILED(rv)) return rv;
         
         ConvertNonAsciiToNCR(parentText, strNCR);
-        buffer.Append(NS_LITERAL_STRING("<tr><td colspan=\"3\"><a href=\"") +
-                      NS_ConvertASCIItoUCS2(parentStr) +
-                      NS_LITERAL_STRING("\">") +
+        buffer.Append(NS_LITERAL_STRING("<tr><td colspan=\"3\"><a href=\""));
+        AppendASCIItoUTF16(parentStr, buffer);
+        buffer.Append(NS_LITERAL_STRING("\">") +
                       strNCR +
                       NS_LITERAL_STRING("</a></td></tr>\n"));
     }
@@ -512,18 +523,18 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
     }
     NS_EscapeURL(utf8UnEscapeSpec.get(), utf8UnEscapeSpec.Length(), escFlags, escapeBuf);
   
-    pushBuffer.Append(NS_ConvertUTF8toUCS2(escapeBuf));
+    AppendUTF8toUTF16(escapeBuf, pushBuffer);
     
     pushBuffer.Append(NS_LITERAL_STRING("\"><img src=\""));
 
     switch (type) {
     case nsIDirIndex::TYPE_DIRECTORY:
     case nsIDirIndex::TYPE_SYMLINK:
-        pushBuffer.Append(NS_LITERAL_STRING("resource:/res/html/gopher-menu.gif\" alt=\"Directory: "));
+        pushBuffer.Append(NS_LITERAL_STRING("resource://gre/res/html/gopher-menu.gif\" alt=\"Directory: "));
         break;
     case nsIDirIndex::TYPE_FILE:
     case nsIDirIndex::TYPE_UNKNOWN:
-        pushBuffer.Append(NS_LITERAL_STRING("resource:/res/html/gopher-unknown.gif\" alt=\"File: "));
+        pushBuffer.Append(NS_LITERAL_STRING("resource://gre/res/html/gopher-unknown.gif\" alt=\"File: "));
         break;
     }
     pushBuffer.Append(NS_LITERAL_STRING("\"/>"));
@@ -536,10 +547,10 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
 
     pushBuffer.Append(NS_LITERAL_STRING("</a></td>\n <td>"));
 
-    PRUint32 size;
+    PRInt64 size;
     aIndex->GetSize(&size);
     
-    if (size != PRUint32(-1) &&
+    if (LL_NE(size, LL_INIT(0, -1)) &&
         type != nsIDirIndex::TYPE_DIRECTORY &&
         type != nsIDirIndex::TYPE_SYMLINK) {
         nsAutoString  sizeString;
@@ -579,19 +590,20 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
     // Split this up to avoid slow layout performance with large tables
     // - bug 85381
     if (++mRowCount > ROWS_PER_TABLE) {
-        pushBuffer.Append(NS_LITERAL_STRING("</table>\n") + tableHeading);
+        pushBuffer.Append(NS_LITERAL_STRING("</table>\n<table>\n"));
         mRowCount = 0;
     }
     
     return FormatInputStream(aRequest, aCtxt, pushBuffer);
 }
 
-void nsIndexedToHTML::FormatSizeString(PRUint32 inSize, nsString& outSizeString)
+void nsIndexedToHTML::FormatSizeString(PRInt64 inSize, nsString& outSizeString)
 {
+    nsInt64 size(inSize);
     outSizeString.Truncate();
-    if (inSize > 0) {
+    if (size > nsInt64(0)) {
         // round up to the nearest Kilobyte
-        PRUint32  upperSize = (inSize + 1023) / 1024;
+        PRInt64  upperSize = (size + nsInt64(1023)) / nsInt64(1024);
         outSizeString.AppendInt(upperSize);
         outSizeString.Append(NS_LITERAL_STRING(" KB"));
     }

@@ -562,9 +562,6 @@
           --this.mSessionReturns;
 
           var firstReturn = this.mSessionReturns == (this.sessionCount-1) - this.mFailureCount;
-          
-          if (firstReturn)
-            this.clearResults(false); // clear results, but don't repaint yet
 
           this.mLastStatus[aSessionName] = aStatus;
 
@@ -577,6 +574,8 @@
               aResults.searchString != this.currentSearchString)
           {
             this.mLastResults[aSessionName] = null;
+            if (firstReturn)
+              this.clearResults(false);
             this.searchFailed();
             return;
           } else if (aStatus == 
@@ -584,6 +583,11 @@
             ++this.mFailureItems;
           }
           
+          if (firstReturn) {
+            if (this.view.mTree)
+              this.view.mTree.beginUpdateBatch();
+            this.clearResults(false); // clear results, but don't repaint yet
+          }
           this.mLastResults[aSessionName] = aResults;
 
           this.autoFillInput(aSessionName, aResults, false);
@@ -594,6 +598,8 @@
           // be sure to add our result elements before calling openResultPopuup as we need
           // to know the total # of results found so far.
           this.addResultElements(aSessionName, aResults);      
+          if (firstReturn && this.view.mTree)
+            this.view.mTree.endUpdateBatch();
           this.openResultPopup();
          
           // if this is the last session to return... 
@@ -884,8 +890,7 @@
             case KeyEvent.DOM_VK_DOWN:
               if (!aEvent.altKey) {
                 this.clearTimer();
-                killEvent = true;
-                this.keyNavigation(aEvent);
+                killEvent = this.keyNavigation(aEvent);
                 break;
               }
             // Alt+Down falls through to history popup toggling code
@@ -904,8 +909,7 @@
             case KeyEvent.DOM_VK_UP:
               if (!aEvent.ctrlKey && !aEvent.metaKey) {
                 this.clearTimer();
-                killEvent = true;
-                this.keyNavigation(aEvent);
+                killEvent = this.keyNavigation(aEvent);
               }
               break;
           }
@@ -929,10 +933,13 @@
               k == KeyEvent.DOM_VK_PAGE_UP || k == KeyEvent.DOM_VK_PAGE_DOWN)
           {
             // up/down keys while menu is closed will open menu
-            if (!this.mMenuOpen && (this.view.rowCount > 0 || this.alwaysOpenPopup)) {
+            if (!this.mMenuOpen) {
+              if (!this.view.rowCount && !this.alwaysOpenPopup)
+                return false;
+
               this.mNeedToFinish = true;
               this.openResultPopup();
-              return;
+              return true;
             }
             
             this.userAction = "scrolling";
@@ -966,6 +973,7 @@
             this.mInputElt.setSelectionRange(this.value.length, this.value.length);
             this.ignoreInputEvent = false;
           }
+          return true;
         ]]></body>
       </method>
 
@@ -1060,7 +1068,7 @@
       <method name="clearResultElements">
         <parameter name="aInvalidate"/>
         <body><![CDATA[
-          this.view.clearResults(aInvalidate);
+          this.view.clearResults();
           if (aInvalidate)
             this.resultsPopup.adjustHeight();
 
@@ -1172,13 +1180,14 @@
             return this.mSelectedIndex;
           },
           
-          clearResults: function(aInvalidate)
+          clearResults: function()
           {
+            var oldCount = this.mRowCount;
             this.mRowCount = 0;  
             this.mResults = [];
             
-            if (aInvalidate && this.mTree)
-              this.mTree.invalidate();
+            if (this.mTree)
+              this.mTree.rowCountChanged(0, -oldCount);
           },
           
           addResults: function(aResults)
@@ -1188,7 +1197,7 @@
             this.mRowCount += aResults.items.Count();
             
             if (this.mTree)
-              this.mTree.rowCountChanged(oldCount, this.mRowCount);
+              this.mTree.rowCountChanged(oldCount, this.mRowCount - oldCount);
           },
           
           createAtom: function(aVal)
@@ -1413,7 +1422,6 @@
               this.tree.removeAttribute("collapsed");
             this.tree.setAttribute("height", height);
           }
-          this.tree.setAttribute("hidescrollbar", view.rowCount <= rows);
         ]]></body>
       </method>
 
@@ -1480,17 +1488,12 @@
         this.textbox.mMenuOpen = false;
         this.selectedIndex = null;
       </handler>
+
+      <handler event="mousedown" phase="capturing" preventdefault="true"/>
     </handlers>
   </binding>
 
   <binding id="autocomplete-tree" extends="chrome://global/content/bindings/tree.xml#tree">
-    <content>
-      <children includes="treecols"/>
-      <xul:treerows class="autocomplete-treerows tree-rows" xbl:inherits="hidescrollbar" flex="1">
-        <children/>
-      </xul:treerows>
-    </content>
-
     <implementation>
       <property name="textbox"
                 onget="return this.__AUTOCOMPLETE_BOX__;"/>
@@ -1534,15 +1537,6 @@
     </handlers>
   </binding>
 
-  <binding id="autocomplete-treerows">
-    <content onmousedown="event.preventDefault()">
-      <xul:hbox flex="1" class="tree-bodybox">
-        <children/>
-      </xul:hbox>
-      <xul:scrollbar xbl:inherits="hidescrollbar" orient="vertical" class="tree-scrollbar"/>
-    </content>
-  </binding>
-
   <binding id="autocomplete-history-popup"
            extends="chrome://global/content/bindings/popup.xml#popup-scrollbars">
     <resources>
@@ -1550,9 +1544,18 @@
       <stylesheet src="chrome://global/skin/autocomplete.css"/>
     </resources>
     
+    <implementation>
+      <method name="removeOpenAttribute">
+        <parameter name="parentNode"/>
+        <body><![CDATA[
+          parentNode.removeAttribute("open");
+        ]]></body>
+      </method>
+    </implementation>
+
     <handlers>
       <handler event="popuphiding"><![CDATA[
-        parentNode.removeAttribute("open");
+        setTimeout(this.removeOpenAttribute, 0, this.parentNode);
       ]]></handler>
     </handlers>
   </binding>
@@ -1576,9 +1579,9 @@
         <body><![CDATA[
           var textbox = document.getBindingParent(this);
           var kids = textbox.getElementsByTagName("menupopup");
-          if (kids.item(0)) {   // Open history popup
+          if (kids.item(0) && textbox.getAttribute("open") != "true") { // Open history popup
             kids[0].showPopup(textbox, -1, -1, "popup", "bottomleft", "topleft");
-            textbox.setAttribute("open", true);
+            textbox.setAttribute("open", "true");
           }
         ]]></body>
       </method>

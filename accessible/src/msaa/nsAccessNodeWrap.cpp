@@ -47,7 +47,8 @@
 #include "nsIDOMViewCSS.h"
 #include "nsIFrame.h"
 #include "nsINameSpaceManager.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsIPresShell.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIServiceManager.h"
@@ -61,7 +62,6 @@ LPFNNOTIFYWINEVENT nsAccessNodeWrap::gmNotifyWinEvent = nsnull;
 LPFNGETGUITHREADINFO nsAccessNodeWrap::gmGetGUIThreadInfo = nsnull;
 
 PRBool nsAccessNodeWrap::gIsEnumVariantSupportDisabled = 0;
-static NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
 
 /* For documentation of the accessibility architecture, 
  * see http://lxr.mozilla.org/seamonkey/source/accessible/accessible-docs.html
@@ -154,10 +154,11 @@ STDMETHODIMP nsAccessNodeWrap::get_nodeInfo(
   *aUniqueID = 0; // magic value of 0 means we're on the document node.
   if (content) {
     content->GetNameSpaceID(&nameSpaceID);
-    // This is a unique ID for every content node.
-    // The 3rd party accessibility application can compare this to the childID we return for 
-    // events such as focus events, to correlate back to data nodes in their internal object model.
-    content->GetContentID(NS_STATIC_CAST(PRUint32*, aUniqueID));
+    // This is a unique ID for every content node.  The 3rd party
+    // accessibility application can compare this to the childID we
+    // return for events such as focus events, to correlate back to
+    // data nodes in their internal object model.
+    *aUniqueID = content->ContentID();
   }
   *aNameSpaceID = NS_STATIC_CAST(short, nameSpaceID);
 
@@ -186,16 +187,16 @@ STDMETHODIMP nsAccessNodeWrap::get_attributes(
   if (!content) 
     return E_FAIL;
 
-  PRInt32 numAttribs;
-  content->GetAttrCount(numAttribs);
+  PRUint32 numAttribs = content->GetAttrCount();
+
   if (numAttribs > aMaxAttribs)
     numAttribs = aMaxAttribs;
   *aNumAttribs = NS_STATIC_CAST(unsigned short, numAttribs);
 
-  PRInt32 index, nameSpaceID;
+  PRInt32 nameSpaceID;
   nsCOMPtr<nsIAtom> nameAtom, prefixAtom;
 
-  for (index = 0; index < numAttribs; index++) {
+  for (PRUint32 index = 0; index < numAttribs; index++) {
     aNameSpaceIDs[index] = 0; aAttribValues[index] = aAttribNames[index] = nsnull;
     nsAutoString attributeValue;
     const char *pszAttributeName; 
@@ -225,10 +226,7 @@ STDMETHODIMP nsAccessNodeWrap::get_attributesForNames(
   if (!domElement || !content) 
     return E_FAIL;
 
-  nsCOMPtr<nsIDocument> doc;
-  content->GetDocument(getter_AddRefs(doc));
-  
-  if (!doc)
+  if (!content->GetDocument())
     return E_FAIL;
 
   nsCOMPtr<nsINameSpaceManager> nameSpaceManager =
@@ -267,15 +265,13 @@ NS_IMETHODIMP nsAccessNodeWrap::GetComputedStyleDeclaration(nsIDOMCSSStyleDeclar
 
   nsCOMPtr<nsIDocument> doc;
   if (content) 
-    content->GetDocument(getter_AddRefs(doc));
+    doc = content->GetDocument();
 
   if (!doc) {
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsIScriptGlobalObject> global;
-  doc->GetScriptGlobalObject(getter_AddRefs(global));
-  nsCOMPtr<nsIDOMViewCSS> viewCSS(do_QueryInterface(global));
+  nsCOMPtr<nsIDOMViewCSS> viewCSS(do_QueryInterface(doc->GetScriptGlobalObject()));
 
   if (!viewCSS)
     return NS_ERROR_FAILURE;   
@@ -383,7 +379,7 @@ ISimpleDOMNode* nsAccessNodeWrap::MakeAccessNode(nsIDOMNode *node)
   nsCOMPtr<nsIDocument> doc;
 
   if (content) 
-    content->GetDocument(getter_AddRefs(doc));
+    doc = content->GetDocument();
   else {
     // Get the document via QueryInterface, since there is no content node
     doc = do_QueryInterface(node);
@@ -410,6 +406,9 @@ ISimpleDOMNode* nsAccessNodeWrap::MakeAccessNode(nsIDOMNode *node)
   }
   else {
     newNode = new nsAccessNodeWrap(node, mWeakShell);
+    if (!newNode)
+      return NULL;
+
     newNode->Init();
     iNode = NS_STATIC_CAST(ISimpleDOMNode*, newNode);
     iNode->AddRef();
@@ -489,9 +488,8 @@ nsAccessNodeWrap::get_childAt(unsigned aChildIndex,
   if (!content)
     return E_FAIL;  // Node already shut down
 
-  nsCOMPtr<nsIContent> childContent;
-  content->ChildAt(aChildIndex, getter_AddRefs(childContent));
-  nsCOMPtr<nsIDOMNode> node(do_QueryInterface(childContent));
+  nsCOMPtr<nsIDOMNode> node =
+    do_QueryInterface(content->GetChildAt(aChildIndex));
 
   if (!node)
     return E_FAIL; // No such child
@@ -532,9 +530,9 @@ void nsAccessNodeWrap::InitAccessibility()
     return;
   }
 
-  nsCOMPtr<nsIPref> prefService(do_GetService(kPrefCID));
-  if (prefService) {
-    prefService->GetBoolPref("accessibility.disableenumvariant", &gIsEnumVariantSupportDisabled);
+  nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
+  if (prefBranch) {
+    prefBranch->GetBoolPref("accessibility.disableenumvariant", &gIsEnumVariantSupportDisabled);
   }
 
   if (!gmUserLib) {

@@ -39,9 +39,9 @@
 #define nsEventQueueService_h__
 
 #include "nsIEventQueueService.h"
-#include "nsHashtable.h"
-
-class nsIEventQueue;
+#include "nsInterfaceHashtable.h"
+#include "nsHashKeys.h"
+#include "nsIEventQueue.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -49,10 +49,8 @@ class nsEventQueueServiceImpl : public nsIEventQueueService
 {
 public:
   nsEventQueueServiceImpl();
-  virtual ~nsEventQueueServiceImpl();
 
-  static NS_METHOD
-  Create(nsISupports *aOuter, REFNSIID aIID, void **aResult);
+  nsresult Init();
 
   // nsISupports interface...
   NS_DECL_ISUPPORTS
@@ -61,6 +59,8 @@ public:
   NS_DECL_NSIEVENTQUEUESERVICE
 
 private:
+  ~nsEventQueueServiceImpl();
+
              /* Create a queue for the given thread if one does not exist.
                 Addref the descriptor in any case. parameter aNative is
                 ignored if the queue already exists. */
@@ -68,8 +68,8 @@ private:
   NS_IMETHOD MakeNewQueue(PRThread* thread, PRBool aNative, nsIEventQueue **aQueue);
   inline nsresult GetYoungestEventQueue(nsIEventQueue *queue, nsIEventQueue **aResult);
 
-  nsSupportsHashtable mEventQTable;
-  PRMonitor           *mEventQMonitor;
+  nsInterfaceHashtable<nsVoidPtrHashKey, nsIEventQueue> mEventQTable;
+  PRMonitor *mEventQMonitor;
 };
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -20,8 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Adam Lock <adamlock@netscape.com>
  *
+ *   Adam Lock <adamlock@eircom.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -110,7 +110,7 @@ LRESULT CPPageDlg::OnInitDialog(UINT uMsg, WPARAM wParam,  LPARAM lParam, BOOL& 
         nsCOMPtr<nsIMIMEInfo> mimeInfo;
         nsCAutoString contentType;
         contentType.AssignWithConversion(mType);
-        mimeService->GetFromMIMEType(contentType.get(), getter_AddRefs(mimeInfo));
+        mimeService->GetFromTypeAndExtension(contentType.get(), nsnull, getter_AddRefs(mimeInfo));
         if (mimeInfo)
         {
             nsXPIDLString description;

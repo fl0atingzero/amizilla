@@ -38,7 +38,7 @@
 
 #include "nsDocAccessibleWrap.h"
 #include "ISimpleDOMDocument_i.c"
-#include "nsIAccessibleEventReceiver.h"
+#include "nsIAccessibleEvent.h"
 #include "nsIPresShell.h"
 #include "nsIViewManager.h"
 #include "nsIWidget.h"
@@ -126,11 +126,9 @@ STDMETHODIMP nsDocAccessibleWrap::get_accChild(
       // If child ID from event can't be found in this window, ask parent.
       // This is especially relevant for times when a xul menu item
       // has focus, but the system thinks the content window has focus.
-      nsCOMPtr<nsIDocument> parentDoc;
-      mDocument->GetParentDocument(getter_AddRefs(parentDoc));
+      nsIDocument* parentDoc = mDocument->GetParentDocument();
       if (parentDoc) {
-        nsCOMPtr<nsIPresShell> parentShell;
-        parentDoc->GetShellAt(0, getter_AddRefs(parentShell));
+        nsIPresShell *parentShell = parentDoc->GetShellAt(0);
         nsCOMPtr<nsIWeakReference> weakParentShell(do_GetWeakReference(parentShell));
         if (weakParentShell) {
           nsCOMPtr<nsIAccessibleDocument> parentDocAccessible;
@@ -166,7 +164,7 @@ NS_IMETHODIMP nsDocAccessibleWrap::FireToolkitEvent(PRUint32 aEvent, nsIAccessib
   // Remove this until we can figure out which focus events are coming at
   // the same time as native window focus events, although
   // perhaps 2 duplicate focus events on the window isn't really a problem
-  if (aEvent == EVENT_FOCUS) {
+  if (aEvent == nsIAccessibleEvent::EVENT_FOCUS) {
     // Don't fire accessible focus event for documents, 
     // Microsoft Windows will generate those from native window focus events
     nsCOMPtr<nsIAccessibleDocument> accessibleDoc(do_QueryInterface(aAccessible));
@@ -178,22 +176,22 @@ NS_IMETHODIMP nsDocAccessibleWrap::FireToolkitEvent(PRUint32 aEvent, nsIAccessib
   PRInt32 childID, worldID = OBJID_CLIENT;
   PRUint32 role = ROLE_SYSTEM_TEXT; // Default value
 
-  if (NS_SUCCEEDED(aAccessible->GetAccRole(&role)) && role == ROLE_SYSTEM_CARET) {
+  if (NS_SUCCEEDED(aAccessible->GetRole(&role)) && role == ROLE_SYSTEM_CARET) {
     childID = CHILDID_SELF;
     worldID = OBJID_CARET;
   }
   else 
     childID = GetChildIDFor(aAccessible); // get the id for the accessible
 
-  if (role == ROLE_SYSTEM_PANE && aEvent == EVENT_STATE_CHANGE) {
+  if (role == ROLE_SYSTEM_PANE && aEvent == nsIAccessibleEvent::EVENT_STATE_CHANGE) {
     // Something on the document has changed
     // Clear out the cache in this subtree
   }
 
   HWND hWnd = NS_REINTERPRET_CAST(HWND, mWnd);
-  if (gmGetGUIThreadInfo && (aEvent == EVENT_FOCUS || 
-      aEvent == EVENT_MENUPOPUPSTART ||
-      aEvent == EVENT_MENUPOPUPEND)) {
+  if (gmGetGUIThreadInfo && (aEvent == nsIAccessibleEvent::EVENT_FOCUS || 
+      aEvent == nsIAccessibleEvent::EVENT_MENUPOPUPSTART ||
+      aEvent == nsIAccessibleEvent::EVENT_MENUPOPUPEND)) {
     GUITHREADINFO guiInfo;
     guiInfo.cbSize = sizeof(GUITHREADINFO);
     if (gmGetGUIThreadInfo(NULL, &guiInfo)) {

@@ -42,6 +42,8 @@
 #include "nscore.h"
 #include "nsString.h"
 #include "nsISupports.h"
+#include "nsCOMPtr.h"
+#include "jsapi.h"
 
 class nsIScriptGlobalObject;
 class nsIScriptSecurityManager;
@@ -52,9 +54,9 @@ class nsIAtom;
 typedef void (*nsScriptTerminationFunc)(nsISupports* aRef);
 
 #define NS_ISCRIPTCONTEXT_IID \
-{ /* 8f6bca7d-ce42-11d1-b724-00600891d8c9 */ \
-  0x8f6bca7d, 0xce42, 0x11d1, \
-  {0xb7, 0x24, 0x00, 0x60, 0x08, 0x91, 0xd8, 0xc9} }
+{ /* b3fd8821-b46d-4160-913f-cc8fe8176f5f */ \
+  0xb3fd8821, 0xb46d, 0x4160, \
+  {0x91, 0x3f, 0xcc, 0x8f, 0xe8, 0x17, 0x6f, 0x5f} }
 
 /**
  * It is used by the application to initialize a runtime and run scripts.
@@ -63,7 +65,8 @@ typedef void (*nsScriptTerminationFunc)(nsISupports* aRef);
  * should be removed in a short time. Ideally this interface will be
  * language neutral</I>
  */
-class nsIScriptContext : public nsISupports {
+class nsIScriptContext : public nsISupports
+{
 public:
   NS_DEFINE_STATIC_IID_ACCESSOR(NS_ISCRIPTCONTEXT_IID)
 
@@ -75,7 +78,7 @@ public:
    *                     nsnull to use a default scope
    * @param aPrincipal the principal that produced the script
    * @param aURL the URL or filename for error messages
-   * @param aLineNo the starting line number for the script for error messages
+   * @param aLineNo the starting line number of the script for error messages
    * @param aVersion the script language version to use when executing
    * @param aRetValue the result of executing the script
    * @param aIsUndefined true if the result of executing the script is the
@@ -84,23 +87,23 @@ public:
    * @return NS_OK if the script was valid and got executed
    *
    **/
-  NS_IMETHOD EvaluateString(const nsAString& aScript,
-                            void *aScopeObject,
-                            nsIPrincipal *aPrincipal,
-                            const char *aURL,
-                            PRUint32 aLineNo,
-                            const char* aVersion,
-                            nsAString& aRetValue,
-                            PRBool* aIsUndefined) = 0;
+  virtual nsresult EvaluateString(const nsAString& aScript,
+                                  void *aScopeObject,
+                                  nsIPrincipal *aPrincipal,
+                                  const char *aURL,
+                                  PRUint32 aLineNo,
+                                  const char* aVersion,
+                                  nsAString& aRetValue,
+                                  PRBool* aIsUndefined) = 0;
 
-  NS_IMETHOD EvaluateStringWithValue(const nsAString& aScript,
-                                     void *aScopeObject,
-                                     nsIPrincipal *aPrincipal,
-                                     const char *aURL,
-                                     PRUint32 aLineNo,
-                                     const char* aVersion,
-                                     void* aRetValue,
-                                     PRBool* aIsUndefined) = 0;
+  virtual nsresult EvaluateStringWithValue(const nsAString& aScript,
+                                           void *aScopeObject,
+                                           nsIPrincipal *aPrincipal,
+                                           const char *aURL,
+                                           PRUint32 aLineNo,
+                                           const char* aVersion,
+                                           void* aRetValue,
+                                           PRBool* aIsUndefined) = 0;
 
   /**
    * Compile a script.
@@ -111,7 +114,7 @@ public:
    *                     or nsnull to use a default scope
    * @param aPrincipal the principal that produced the script
    * @param aURL the URL or filename for error messages
-   * @param aLineNo the starting line number for the script for error messages
+   * @param aLineNo the starting line number of the script for error messages
    * @param aVersion the script language version to use when executing
    * @param aScriptObject an executable object that's the result of compiling
    *                      the script.  The caller is responsible for GC rooting
@@ -120,14 +123,14 @@ public:
    * @return NS_OK if the script source was valid and got compiled
    *
    **/
-  NS_IMETHOD CompileScript(const PRUnichar* aText,
-                           PRInt32 aTextLength,
-                           void* aScopeObject,
-                           nsIPrincipal* aPrincipal,
-                           const char* aURL,
-                           PRUint32 aLineNo,
-                           const char* aVersion,
-                           void** aScriptObject) = 0;
+  virtual nsresult CompileScript(const PRUnichar* aText,
+                                 PRInt32 aTextLength,
+                                 void* aScopeObject,
+                                 nsIPrincipal* aPrincipal,
+                                 const char* aURL,
+                                 PRUint32 aLineNo,
+                                 const char* aVersion,
+                                 void** aScriptObject) = 0;
 
   /**
    * Execute a precompiled script object.
@@ -143,10 +146,10 @@ public:
    * @return NS_OK if the script was valid and got executed
    *
    */
-  NS_IMETHOD ExecuteScript(void* aScriptObject,
-                           void* aScopeObject,
-                           nsAString* aRetValue,
-                           PRBool* aIsUndefined) = 0;
+  virtual nsresult ExecuteScript(void* aScriptObject,
+                                 void* aScopeObject,
+                                 nsAString* aRetValue,
+                                 PRBool* aIsUndefined) = 0;
 
   /**
    * Compile the event handler named by atom aName, with function body aBody
@@ -159,6 +162,8 @@ public:
    *        and ASCII, and should not be longer than 63 chars.  This bound on
    *        length is enforced only by assertions, so caveat caller!
    * @param aBody the event handler function's body
+   * @param aURL the URL or filename for error messages
+   * @param aLineNo the starting line number of the script for error messages
    * @param aShared flag telling whether the compiled event handler will be
    *        shared via nsIScriptEventHandlerOwner, in which case any static
    *        link compiled into it based on aTarget should be cleared, both
@@ -170,11 +175,13 @@ public:
    *
    * @return NS_OK if the function body was valid and got compiled
    */
-  NS_IMETHOD CompileEventHandler(void* aTarget,
-                                 nsIAtom* aName,
-                                 const nsAString& aBody,
-                                 PRBool aShared,
-                                 void** aHandler) = 0;
+  virtual nsresult CompileEventHandler(void* aTarget,
+                                       nsIAtom* aName,
+                                       const nsAString& aBody,
+                                       const char* aURL,
+                                       PRUint32 aLineNo,
+                                       PRBool aShared,
+                                       void** aHandler) = 0;
 
   /**
    * Call the function object with given args and return its boolean result,
@@ -188,9 +195,9 @@ public:
    * @param aBoolResult out parameter returning boolean function result, or
    *        true if the result was not boolean.
    **/
-  NS_IMETHOD CallEventHandler(void* aTarget, void* aHandler,
-                              PRUint32 argc, void* argv,
-                              PRBool* aBoolResult, PRBool aReverseReturnResult) = 0;
+  virtual nsresult CallEventHandler(JSObject* aTarget, JSObject* aHandler,
+                                    uintN argc, jsval* argv,
+                                    jsval* rval) = 0;
 
   /**
    * Bind an already-compiled event handler function to a name in the given
@@ -208,19 +215,19 @@ public:
    *        CompileEventHandler
    * @return NS_OK if the function was successfully bound to the name
    */
-  NS_IMETHOD BindCompiledEventHandler(void* aTarget,
-                                      nsIAtom* aName,
-                                      void* aHandler) = 0;
+  virtual nsresult BindCompiledEventHandler(void* aTarget,
+                                            nsIAtom* aName,
+                                            void* aHandler) = 0;
 
-  NS_IMETHOD CompileFunction(void* aTarget,
-                             const nsCString& aName,
-                             PRUint32 aArgCount,
-                             const char** aArgArray,
-                             const nsAString& aBody,
-                             const char* aURL,
-                             PRUint32 aLineNo,
-                             PRBool aShared,
-                             void** aFunctionObject) = 0;
+  virtual nsresult CompileFunction(void* aTarget,
+                                   const nsACString& aName,
+                                   PRUint32 aArgCount,
+                                   const char** aArgArray,
+                                   const nsAString& aBody,
+                                   const char* aURL,
+                                   PRUint32 aLineNo,
+                                   PRBool aShared,
+                                   void** aFunctionObject) = 0;
 
 
   /**
@@ -228,19 +235,19 @@ public:
    * be a context specific to a particular scripting language.
    *
    **/
-  NS_IMETHOD SetDefaultLanguageVersion(const char* aVersion) = 0;
+  virtual void SetDefaultLanguageVersion(const char* aVersion) = 0;
 
   /**
    * Return the global object.
    *
    **/
-  NS_IMETHOD GetGlobalObject(nsIScriptGlobalObject** aGlobalObject) = 0;
+  virtual nsIScriptGlobalObject *GetGlobalObject() = 0;
 
   /**
    * Return the native script context
    *
    **/
-  NS_IMETHOD_(void*) GetNativeContext() = 0;
+  virtual void *GetNativeContext() = 0;
 
   /**
    * Init this context.
@@ -250,16 +257,16 @@ public:
    * @return NS_OK if context initialization was successful
    *
    **/
-  NS_IMETHOD InitContext(nsIScriptGlobalObject *aGlobalObject) = 0;
+  virtual nsresult InitContext(nsIScriptGlobalObject *aGlobalObject) = 0;
 
   /**
    * Check to see if context is as yet intialized. Used to prevent
    * reentrancy issues during the initialization process.
    *
-   * @return NS_OK if initialized, NS_ERROR_NOT_INITIALIZED if not
+   * @return PR_TRUE if initialized, PR_FALSE if not
    *
    */
-  NS_IMETHOD IsContextInitialized() = 0;
+  virtual PRBool IsContextInitialized() = 0;
 
   /**
    * For garbage collected systems, do a synchronous collection pass.
@@ -267,13 +274,7 @@ public:
    *
    * @return NS_OK if the method is successful
    */
-  NS_IMETHOD GC() = 0;
-
-  /**
-   * Get the security manager for this context.
-   * @return NS_OK if the method is successful
-   */
-  NS_IMETHOD GetSecurityManager(nsIScriptSecurityManager** aInstancePtr) = 0;
+  virtual void GC() = 0;
 
   /**
    * Inform the context that a script was evaluated.
@@ -287,7 +288,7 @@ public:
    *    calls to the termination function.
    * @return NS_OK if the method is successful
    */
-  NS_IMETHOD ScriptEvaluated(PRBool aTerminated) = 0;
+  virtual void ScriptEvaluated(PRBool aTerminated) = 0;
 
   /**
    * Let the script context know who its owner is.
@@ -295,7 +296,7 @@ public:
    * will be told when the owner goes away.
    * @return NS_OK if the method is successful
    */
-  NS_IMETHOD SetOwner(nsIScriptContextOwner* owner) = 0;
+  virtual void SetOwner(nsIScriptContextOwner* owner) = 0;
 
   /**
    * Get the script context of the owner. The method
@@ -303,7 +304,7 @@ public:
    * XPCOM rules, even though the internal reference itself
    * is a "weak" reference.
    */
-  NS_IMETHOD GetOwner(nsIScriptContextOwner** owner) = 0;
+  virtual nsIScriptContextOwner *GetOwner() = 0;
 
   /**
    * Called to specify a function that should be called when the current
@@ -311,27 +312,43 @@ public:
    * of script state needs to be happen, but should be deferred till
    * the end of script evaluation.
    */
-  NS_IMETHOD SetTerminationFunction(nsScriptTerminationFunc aFunc,
-                                    nsISupports* aRef) = 0;
+  virtual void SetTerminationFunction(nsScriptTerminationFunc aFunc,
+                                      nsISupports* aRef) = 0;
 
   /**
    * Called to disable/enable script execution in this context.
    */
-  NS_IMETHOD GetScriptsEnabled(PRBool *aEnabled) = 0;
-  NS_IMETHOD SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts) = 0;
+  virtual PRBool GetScriptsEnabled() = 0;
+  virtual void SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts) = 0;
 
   /** 
    * Called to set/get information if the script context is
    * currently processing a script tag
    */
-  NS_IMETHOD GetProcessingScriptTag(PRBool * aResult) =0;
-  NS_IMETHOD SetProcessingScriptTag(PRBool  aResult) =0;
+  virtual PRBool GetProcessingScriptTag() = 0;
+  virtual void SetProcessingScriptTag(PRBool aResult) = 0;
 
   /**
    * Tell the context whether or not to GC when destroyed.
    */
-  NS_IMETHOD SetGCOnDestruction(PRBool aGCOnDestruction) = 0;
+  virtual void SetGCOnDestruction(PRBool aGCOnDestruction) = 0;
 };
+
+inline nsIScriptContext *
+GetScriptContextFromJSContext(JSContext *cx)
+{
+  if (!(::JS_GetOptions(cx) & JSOPTION_PRIVATE_IS_NSISUPPORTS)) {
+    return nsnull;
+  }
+
+  nsCOMPtr<nsIScriptContext> scx =
+    do_QueryInterface(NS_STATIC_CAST(nsISupports *,
+                                     ::JS_GetContextPrivate(cx)));
+
+  // This will return a pointer to something that's about to be
+  // released, but that's ok here.
+  return scx;
+}
 
 #endif // nsIScriptContext_h__
 

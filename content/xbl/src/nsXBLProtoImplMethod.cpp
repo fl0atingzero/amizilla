@@ -47,61 +47,11 @@
 #include "nsXBLProtoImplMethod.h"
 #include "nsIScriptContext.h"
 
-static nsIJSRuntimeService* gJSRuntimeService = nsnull;
-static JSRuntime* gScriptRuntime = nsnull;
-static PRInt32 gScriptRuntimeRefcnt = 0;
+MOZ_DECL_CTOR_COUNTER(nsXBLProtoImplMethod)
 
-static nsresult
-AddJSGCRoot(void* aScriptObjectRef, const char* aName)
-{
-  if (++gScriptRuntimeRefcnt == 1 || !gScriptRuntime) {
-    CallGetService("@mozilla.org/js/xpc/RuntimeService;1",
-                   &gJSRuntimeService);
-    if (! gJSRuntimeService) {
-        NS_NOTREACHED("couldn't add GC root");
-        return NS_ERROR_FAILURE;
-    }
-
-    gJSRuntimeService->GetRuntime(&gScriptRuntime);
-    if (! gScriptRuntime) {
-        NS_NOTREACHED("couldn't add GC root");
-        return NS_ERROR_FAILURE;
-    }
-  }
-
-  PRBool ok;
-  ok = ::JS_AddNamedRootRT(gScriptRuntime, aScriptObjectRef, aName);
-  if (! ok) {
-    NS_NOTREACHED("couldn't add GC root");
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  return NS_OK;
-}
-
-static nsresult
-RemoveJSGCRoot(void* aScriptObjectRef)
-{
-  if (!gScriptRuntime) {
-    NS_NOTREACHED("couldn't remove GC root");
-    return NS_ERROR_FAILURE;
-  }
-
-  ::JS_RemoveRootRT(gScriptRuntime, aScriptObjectRef);
-
-  if (--gScriptRuntimeRefcnt == 0) {
-    NS_RELEASE(gJSRuntimeService);
-    gScriptRuntime = nsnull;
-  }
-
-  return NS_OK;
-}
-
-MOZ_DECL_CTOR_COUNTER(nsXBLProtoImplMethod);
-
-nsXBLProtoImplMethod::nsXBLProtoImplMethod(const PRUnichar* aName)
-:nsXBLProtoImplMember(aName), 
- mUncompiledMethod(nsnull)
+nsXBLProtoImplMethod::nsXBLProtoImplMethod(const PRUnichar* aName) :
+  nsXBLProtoImplMember(aName), 
+  mUncompiledMethod(nsnull)
 {
   MOZ_COUNT_CTOR(nsXBLProtoImplMethod);
 }
@@ -149,9 +99,24 @@ nsXBLProtoImplMethod::AddParameter(const nsAString& aText)
   mUncompiledMethod->AddParameter(aText);
 }
 
+void
+nsXBLProtoImplMethod::SetLineNumber(PRUint32 aLineNumber)
+{
+  if (!mUncompiledMethod) {
+    mUncompiledMethod = new nsXBLUncompiledMethod();
+    if (!mUncompiledMethod)
+      return;
+  }
+
+  mUncompiledMethod->SetLineNumber(aLineNumber);
+}
+
 nsresult
-nsXBLProtoImplMethod::InstallMember(nsIScriptContext* aContext, nsIContent* aBoundElement, 
-                                      void* aScriptObject, void* aTargetClassObject)
+nsXBLProtoImplMethod::InstallMember(nsIScriptContext* aContext,
+                                    nsIContent* aBoundElement, 
+                                    void* aScriptObject,
+                                    void* aTargetClassObject,
+                                    const nsCString& aClassStr)
 {
   JSContext* cx = (JSContext*) aContext->GetNativeContext();
   JSObject * scriptObject = (JSObject *) aScriptObject;
@@ -166,9 +131,11 @@ nsXBLProtoImplMethod::InstallMember(nsIScriptContext* aContext, nsIContent* aBou
   if (mJSMethodObject && targetClassObject) {
     nsDependentString name(mName);
     JSObject * method = ::JS_CloneFunctionObject(cx, mJSMethodObject, globalObject);
-    ::JS_DefineUCProperty(cx, targetClassObject, NS_REINTERPRET_CAST(const jschar*, mName), 
-                          name.Length(), OBJECT_TO_JSVAL(method),
-                          NULL, NULL, JSPROP_ENUMERATE);
+    if (!method ||
+        !::JS_DefineUCProperty(cx, targetClassObject, NS_REINTERPRET_CAST(const jschar*, mName), 
+                               name.Length(), OBJECT_TO_JSVAL(method),
+                               NULL, NULL, JSPROP_ENUMERATE))
+      return NS_ERROR_OUT_OF_MEMORY;
   }
   return NS_OK;
 }
@@ -180,8 +147,20 @@ nsXBLProtoImplMethod::CompileMember(nsIScriptContext* aContext, const nsCString&
   if (!aClassObject)
     return NS_OK; // Nothing to do.
 
-  if (!mName)
-    return NS_ERROR_FAILURE; // Without a valid name, we can't install the member.
+  // No parameters or body was supplied, so don't install method.
+  if (!mUncompiledMethod)
+    return NS_OK;
+
+  // Don't install method if no name or body was supplied.
+  if (!(mName && mUncompiledMethod->mBodyText.GetText())) {
+    delete mUncompiledMethod;
+    mUncompiledMethod = nsnull;
+    return NS_OK;
+  }
+
+  nsDependentString body(mUncompiledMethod->mBodyText.GetText());
+  if (body.IsEmpty())
+    return NS_OK;
 
   // We have a method.
   // Allocate an array for our arguments.
@@ -204,37 +183,40 @@ nsXBLProtoImplMethod::CompileMember(nsIScriptContext* aContext, const nsCString&
 
   // Now that we have a body and args, compile the function
   // and then define it.
-  nsDependentString body(mUncompiledMethod->mBodyText);
-  if (!body.IsEmpty()) {
-    nsCAutoString cname; cname.AssignWithConversion(mName);
-    nsCAutoString functionUri(aClassStr);
-    functionUri += ".";
-    functionUri += cname;
-    functionUri += "()";
-    
-    JSObject* methodObject = nsnull;
-    aContext->CompileFunction(aClassObject,
-                              cname,
-                              paramCount,
-                              (const char**)args,
-                              body, 
-                              functionUri.get(),
-                              0,
-                              PR_FALSE,
-                              (void **) &methodObject);
+  NS_ConvertUCS2toUTF8 cname(mName);
+  nsCAutoString functionUri(aClassStr);
+  PRInt32 hash = functionUri.RFindChar('#');
+  if (hash != kNotFound) {
+    functionUri.Truncate(hash);
+  }
 
-    // Destroy our uncompiled method and delete our arg list.
-    delete mUncompiledMethod;
-    delete [] args;
-    mJSMethodObject = methodObject;
+  JSObject* methodObject = nsnull;
+  nsresult rv = aContext->CompileFunction(aClassObject,
+                                          cname,
+                                          paramCount,
+                                          (const char**)args,
+                                          body, 
+                                          functionUri.get(),
+                                          mUncompiledMethod->mBodyText.GetLineNumber(),
+                                          PR_FALSE,
+                                          (void **) &methodObject);
 
-    if (methodObject) {
-      // Root the compiled prototype script object.
-      JSContext* cx = NS_REINTERPRET_CAST(JSContext*,
-                                          aContext->GetNativeContext());
-      if (!cx) return NS_ERROR_UNEXPECTED;
-      AddJSGCRoot(&mJSMethodObject, "nsXBLProtoImplMethod::mJSMethodObject");
-    }
+  // Destroy our uncompiled method and delete our arg list.
+  delete mUncompiledMethod;
+  delete [] args;
+  if (NS_FAILED(rv)) {
+    mUncompiledMethod = nsnull;
+    return rv;
+  }
+
+  mJSMethodObject = methodObject;
+
+  if (methodObject) {
+    // Root the compiled prototype script object.
+    JSContext* cx = NS_REINTERPRET_CAST(JSContext*,
+                                        aContext->GetNativeContext());
+    if (!cx) return NS_ERROR_UNEXPECTED;
+    AddJSGCRoot(&mJSMethodObject, "nsXBLProtoImplMethod::mJSMethodObject");
   }
   
   return NS_OK;

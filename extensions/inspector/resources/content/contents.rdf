@@ -12,8 +12,8 @@
         chrome:displayName="Document Inspector"
         chrome:author="Joe Hewitt"
         chrome:name="inspector"
-        chrome:localeVersion="1.5a"
-        chrome:skinVersion="1.2">
+#expand         chrome:localeVersion="__MOZILLA_LOCALE_VERSION__"
+#expand         chrome:skinVersion="__MOZILLA_SKIN_VERSION__">
   </RDF:Description>
 
   <!-- overlay information -->

@@ -106,11 +106,9 @@ public:
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
 #endif
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
 
-  NS_IMETHOD IsEmpty(nsCompatibility aCompatMode,
-                     PRBool aIsPre,
-                     PRBool* aResult);
+  virtual PRBool IsEmpty();
 
   // nsIHTMLReflow overrides
   NS_IMETHOD Reflow(nsIPresContext* aPresContext,
@@ -180,7 +178,7 @@ public:
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
 #endif
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
   NS_IMETHOD Reflow(nsIPresContext* aPresContext,
                     nsHTMLReflowMetrics& aDesiredSize,
                     const nsHTMLReflowState& aReflowState,
@@ -235,19 +233,16 @@ public:
                           nsIFrame* aOldFrame,
                           nsIFrame* aNewFrame);
 
-  NS_IMETHOD GetAdditionalChildListName(PRInt32   aIndex,
-                                        nsIAtom** aListName) const;
+  virtual nsIAtom* GetAdditionalChildListName(PRInt32 aIndex) const;
 
-  NS_IMETHOD FirstChild(nsIPresContext* aPresContext,
-                        nsIAtom*        aListName,
-                        nsIFrame**      aFirstChild) const;
+  virtual nsIFrame* GetFirstChild(nsIAtom* aListName) const;
 
   NS_IMETHOD Reflow(nsIPresContext*          aPresContext,
                     nsHTMLReflowMetrics&     aDesiredSize,
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
   
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
 
 protected:
   nsAbsoluteContainingBlock mAbsoluteContainer;

@@ -61,7 +61,7 @@
 #include "nsParserCIID.h"
 #include "nsIHTMLFragmentContentSink.h"
 #include "nsIEnumerator.h"
-#include "nsScriptSecurityManager.h"
+#include "nsIScriptSecurityManager.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptContext.h"
 #include "nsIHTMLDocument.h"
@@ -73,7 +73,6 @@
 
 #include "nsContentUtils.h"
 
-static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);
 static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
 
 PRMonitor*   nsRange::mMonitor = nsnull;
@@ -281,9 +280,8 @@ PRBool GetNodeBracketPoints(nsIContent* aNode,
     return PR_FALSE;
     
   nsCOMPtr<nsIDOMNode> theDOMNode( do_QueryInterface(aNode) );
-  PRInt32 indx;
   theDOMNode->GetParentNode(getter_AddRefs(*outParent));
-  
+
   if (!(*outParent)) // special case for root node
   {
     // can't make a parent/offset pair to represent start or 
@@ -293,8 +291,8 @@ PRBool GetNodeBracketPoints(nsIContent* aNode,
     nsCOMPtr<nsIContent> cN(do_QueryInterface(*outParent));
     if (!cN)
       return PR_FALSE;
-    cN->ChildCount(indx);
-    if (!indx) 
+    PRUint32 indx = cN->GetChildCount();
+    if (!indx)
       return PR_FALSE;
     *outStartOffset = 0;
     *outEndOffset = indx;
@@ -348,33 +346,7 @@ nsRangeUtils::~nsRangeUtils()
 /******************************************************
  * nsISupports
  ******************************************************/
- 
-NS_IMPL_ADDREF(nsRangeUtils)
-NS_IMPL_RELEASE(nsRangeUtils)
-
-nsresult nsRangeUtils::QueryInterface(const nsIID& aIID,
-                                     void** aInstancePtrResult)
-{
-  NS_PRECONDITION(aInstancePtrResult, "null pointer");
-  if (!aInstancePtrResult) 
-  {
-    return NS_ERROR_NULL_POINTER;
-  }
-  if (aIID.Equals(kISupportsIID)) 
-  {
-    *aInstancePtrResult = (void*)(nsISupports*)(nsIRangeUtils *)this;
-    NS_ADDREF_THIS();
-    return NS_OK;
-  }
-  if (aIID.Equals(NS_GET_IID(nsIRangeUtils))) 
-  {
-    *aInstancePtrResult = (void*)(nsIRangeUtils*)this;
-    NS_ADDREF_THIS();
-    return NS_OK;
-  }
-  return NS_NOINTERFACE;
-}
-
+NS_IMPL_ISUPPORTS1(nsRangeUtils, nsIRangeUtils)
 
 /******************************************************
  * nsIRangeUtils methods
@@ -634,18 +606,12 @@ nsresult nsRange::AddToListOf(nsIDOMNode* aNode)
 }
   
 
-nsresult nsRange::RemoveFromListOf(nsIDOMNode* aNode)
+void nsRange::RemoveFromListOf(nsIDOMNode* aNode)
 {
-  if (!aNode) 
-    return NS_ERROR_NULL_POINTER;
+  nsCOMPtr<nsIContent> content(do_QueryInterface(aNode));
 
-  nsresult res;
-  nsCOMPtr<nsIContent> cN = do_QueryInterface(aNode, &res);
-  if (NS_FAILED(res)) 
-    return res;
-
-  res = cN->RangeRemove(NS_STATIC_CAST(nsIDOMRange*,this));
-  return res;
+  if (content) 
+    content->RangeRemove(NS_STATIC_CAST(nsIDOMRange *, this));
 }
 
 
@@ -654,24 +620,24 @@ PRInt32 nsRange::GetNodeLength(nsIDOMNode *aNode)
 {
   if (!aNode)
     return 0;
-    
+
   PRUint16 nodeType;
-  PRUint32 len = -1;
-  
+  PRInt32 len = -1;
+
   aNode->GetNodeType(&nodeType);
   if( (nodeType == nsIDOMNode::CDATA_SECTION_NODE) ||
       (nodeType == nsIDOMNode::TEXT_NODE) )
   {
     nsCOMPtr<nsIDOMText> textText = do_QueryInterface(aNode);
     if (textText)
-      textText->GetLength(&len);
+      textText->GetLength((PRUint32 *)&len);
   }
   else
   {
     nsCOMPtr<nsIDOMNodeList> childList;
     nsresult res = aNode->GetChildNodes(getter_AddRefs(childList));
     if (NS_SUCCEEDED(res) && childList)
-      childList->GetLength(&len);
+      childList->GetLength((PRUint32 *)&len);
   }
   
   return len;
@@ -807,14 +773,14 @@ PRBool nsRange::IsIncreasing(nsIDOMNode* aStartN, PRInt32 aStartOffset,
   }
 
   // back through the ancestors, starting from the root, until first non-matching ancestor found
-  while (startIdx >= 0 && endIdx >= 0 &&
-         mStartAncestors->ElementAt(startIdx) == mEndAncestors->ElementAt(endIdx))
+  do
   {
     --startIdx;
     --endIdx;
     // numStartAncestors will only be <0 if one endpoint's node is the
     // common ancestor of the other
-  }
+  } while (startIdx >= 0 && endIdx >= 0 &&
+           mStartAncestors->ElementAt(startIdx) == mEndAncestors->ElementAt(endIdx));
   // now back up one and that's the last common ancestor from the root,
   // or the first common ancestor from the leaf perspective
   ++startIdx;
@@ -849,31 +815,19 @@ PRBool nsRange::IsIncreasing(nsIDOMNode* aStartN, PRInt32 aStartOffset,
 
 PRInt32 nsRange::IndexOf(nsIDOMNode* aChildNode)
 {
-  if (!aChildNode) 
+  // convert node to nsIContent, so that we can find the child index
+
+  nsCOMPtr<nsIContent> contentChild = do_QueryInterface(aChildNode);
+  if (!contentChild) 
     return 0;
 
-  // get the parent node
-  nsCOMPtr<nsIDOMNode> parentNode;
-  nsresult res = aChildNode->GetParentNode(getter_AddRefs(parentNode));
-  if (NS_FAILED(res)) 
-    return 0;
-  
-  // convert node and parent to nsIContent, so that we can find the child index
-  nsCOMPtr<nsIContent> contentParent = do_QueryInterface(parentNode, &res);
-  if (NS_FAILED(res)) 
+  nsIContent *parent = contentChild->GetParent();
+
+  if (!parent)
     return 0;
 
-  nsCOMPtr<nsIContent> contentChild = do_QueryInterface(aChildNode, &res);
-  if (NS_FAILED(res)) 
-    return 0;
-  
   // finally we get the index
-  PRInt32 theIndex = 0;
-  res = contentParent->IndexOf(contentChild,theIndex); 
-  if (NS_FAILED(res)) 
-    return 0;
-
-  return theIndex;
+  return parent->IndexOf(contentChild); 
 }
 
 nsresult nsRange::PopRanges(nsIDOMNode* aDestNode, PRInt32 aOffset, nsIContent* aSourceNode)
@@ -885,13 +839,13 @@ nsresult nsRange::PopRanges(nsIDOMNode* aDestNode, PRInt32 aOffset, nsIContent* 
   nsresult res = NS_NewContentIterator(getter_AddRefs(iter));
   iter->Init(aSourceNode);
 
-  nsCOMPtr<nsIContent> cN;
-  nsVoidArray* theRangeList;
-  
-  iter->CurrentNode(getter_AddRefs(cN));
-  while (cN && (NS_ENUMERATOR_FALSE == iter->IsDone()))
+  const nsVoidArray* theRangeList;
+
+  while (!iter->IsDone())
   {
-    cN->GetRangeList(&theRangeList);
+    nsIContent *cN = iter->GetCurrentNode();
+
+    theRangeList = cN->GetRangeList();
     if (theRangeList)
     {
        nsRange* theRange;
@@ -923,20 +877,15 @@ nsresult nsRange::PopRanges(nsIDOMNode* aDestNode, PRInt32 aOffset, nsIContent* 
             }          
           }
           // must refresh theRangeList - it might have gone away!
-          cN->GetRangeList(&theRangeList);
+          theRangeList = cN->GetRangeList();
           if (theRangeList)
             theCount = theRangeList->Count();
           else
             theCount = 0;
        } 
     }
-    res = iter->Next();
-    if (NS_FAILED(res)) // a little noise here to catch bugs
-    {
-      NS_NOTREACHED("nsRange::PopRanges() : iterator failed to advance");
-      return res;
-    }
-    iter->CurrentNode(getter_AddRefs(cN));
+
+    iter->Next();
   }
   
   return NS_OK;
@@ -1177,9 +1126,7 @@ nsresult nsRange::SelectNode(nsIDOMNode* aN)
       parent = aN;//parent is now equal to the node you passed in
       // which is the root.  start is zero, end is the number of children
       start = 0;
-      res = content->ChildCount(end);
-      if (NS_FAILED(res))
-        return NS_ERROR_DOM_RANGE_INVALID_NODE_TYPE_ERR;
+      end = content->GetChildCount();
     }
     else
     {
@@ -1240,236 +1187,213 @@ private:
   nsCOMPtr<nsIContentIterator>  mIter;
   RangeSubtreeIterState         mIterState;
 
-  nsCOMPtr<nsIDOMNode>          mStartCData;
-  nsCOMPtr<nsIDOMNode>          mEndCData;
+  nsCOMPtr<nsIDOMCharacterData> mStartCData;
+  nsCOMPtr<nsIDOMCharacterData> mEndCData;
 
 public:
 
-  RangeSubtreeIterator() : mIterState(eDone) {}
-  ~RangeSubtreeIterator() {}
-
-  nsresult Init(nsIDOMRange *aRange)
+  RangeSubtreeIterator()
+    : mIterState(eDone)
   {
-    NS_ENSURE_ARG_POINTER(aRange);
-
-    mIterState = eDone;
-
-    nsCOMPtr<nsIDOMNode> node;
-
-    // Grab the start point of the range and QI it to
-    // a CharacterData pointer. If it is CharacterData store
-    // a pointer to the node.
-
-    nsresult res = aRange->GetStartContainer(getter_AddRefs(node));
-    if (NS_FAILED(res)) return res;
-    if (!node) return NS_ERROR_FAILURE;
-
-    nsCOMPtr<nsIDOMCharacterData> cData = do_QueryInterface(node);
-    if (cData)
-      mStartCData = node;
-
-    // Grab the end point of the range and QI it to
-    // a CharacterData pointer. If it is CharacterData store
-    // a pointer to the node.
-
-    res = aRange->GetEndContainer(getter_AddRefs(node));
-    if (NS_FAILED(res)) return res;
-    if (!node) return NS_ERROR_FAILURE;
-
-    cData = do_QueryInterface(node);
-    if (cData)
-      mEndCData = node;
-
-    if (mStartCData && mStartCData == mEndCData)
-    {
-      // The range starts and stops in the same CharacterData
-      // node. Null out the end pointer so we only visit the
-      // node once!
-
-      mEndCData = nsnull;
-    }
-    else
-    {
-      // Now create a Content Subtree Iterator to be used
-      // for the subtrees between the end points!
-
-      res = NS_NewContentSubtreeIterator(getter_AddRefs(mIter));
-
-      if (NS_FAILED(res)) return res;
-      if (!mIter) return NS_ERROR_FAILURE;
-
-      res = mIter->Init(aRange);
-      if (NS_FAILED(res)) return res;
-
-      if (mIter->IsDone() != NS_ENUMERATOR_FALSE)
-      {
-        // The subtree iterator thinks there's nothing
-        // to iterate over, so just free it up so we
-        // don't accidentally call into it.
-
-        mIter = nsnull;
-      }
-    }
-
-    // Initialize the iterator by calling First().
-    // Note that we are ignoring the return value on purpose!
-
-    (void)First();
-
-    return NS_OK;
+  }
+  ~RangeSubtreeIterator()
+  {
   }
 
-  nsresult CurrentNode(nsIDOMNode **aNode)
-  {
-    NS_ENSURE_ARG_POINTER(aNode);
-
-    *aNode = nsnull;
-
-    nsresult res = NS_OK;
-
-    if (mIterState == eUseStartCData && mStartCData)
-      *aNode = mStartCData;
-    else if (mIterState == eUseEndCData && mEndCData)
-      *aNode = mEndCData;
-    else if (mIterState == eUseIterator && mIter)
-    {
-      nsCOMPtr<nsIContent> content;
-      res = mIter->CurrentNode(getter_AddRefs(content));
-      if (NS_FAILED(res)) return res;
-      if (!content) return NS_ERROR_FAILURE;
-      nsCOMPtr<nsIDOMNode> node(do_QueryInterface(content));
-      if (!node) return NS_ERROR_FAILURE;
-      *aNode = node;
-    }
-    else
-      res = NS_ERROR_FAILURE;
-
-    NS_IF_ADDREF(*aNode);
-
-    return res;
-  }
-
-  nsresult First()
-  {
-    nsresult res = NS_OK;
-
-    if (mStartCData)
-      mIterState = eUseStartCData;
-    else if (mIter)
-    {
-      res = mIter->First();
-      if (NS_FAILED(res)) return res;
-      mIterState = eUseIterator;
-    }
-    else if (mEndCData)
-      mIterState = eUseEndCData;
-    else
-      res = NS_ERROR_FAILURE;
-
-    return res;
-  }
-
-  nsresult Last()
-  {
-    nsresult res = NS_OK;
-
-    if (mEndCData)
-      mIterState = eUseEndCData;
-    else if (mIter)
-    {
-      res = mIter->Last();
-      if (NS_FAILED(res)) return res;
-      mIterState = eUseIterator;
-    }
-    else if (mStartCData)
-      mIterState = eUseStartCData;
-    else
-      res = NS_ERROR_FAILURE;
-
-    return res;
-  }
-
-  nsresult Next()
-  {
-    nsresult res = NS_OK;
-
-    if (mIterState == eUseStartCData)
-    {
-      if (mIter)
-      {
-        res = mIter->First();
-        if (NS_FAILED(res)) return res;
-        mIterState = eUseIterator;
-      }
-      else if (mEndCData)
-        mIterState = eUseEndCData;
-      else
-        mIterState = eDone;
-    }
-    else if (mIterState == eUseIterator)
-    {
-      res = mIter->Next();
-      if (NS_FAILED(res)) return res;
-
-      if (mIter->IsDone() != NS_ENUMERATOR_FALSE)
-      {
-        if (mEndCData)
-          mIterState = eUseEndCData;
-        else
-          mIterState = eDone;
-      }
-    }
-    else if (mIterState == eUseEndCData)
-      mIterState = eDone;
-    else
-      res = NS_ERROR_FAILURE;
-
-    return res;
-  }
-
-  nsresult Prev()
-  {
-    nsresult res = NS_OK;
-
-    if (mIterState == eUseEndCData)
-    {
-      if (mIter)
-      {
-        res = mIter->Last();
-        if (NS_FAILED(res)) return res;
-        mIterState = eUseIterator;
-      }
-      else if (mStartCData)
-        mIterState = eUseStartCData;
-      else
-        mIterState = eDone;
-    }
-    else if (mIterState == eUseIterator)
-    {
-      res = mIter->Prev();
-      if (NS_FAILED(res)) return res;
-
-      if (mIter->IsDone() != NS_ENUMERATOR_FALSE)
-      {
-        if (mStartCData)
-          mIterState = eUseStartCData;
-        else
-          mIterState = eDone;
-      }
-    }
-    else if (mIterState == eUseStartCData)
-      mIterState = eDone;
-    else
-      res = NS_ERROR_FAILURE;
-
-    return res;
-  }
+  nsresult Init(nsIDOMRange *aRange);
+  already_AddRefed<nsIDOMNode> GetCurrentNode();
+  void First();
+  void Last();
+  void Next();
+  void Prev();
 
   PRBool IsDone()
   {
     return mIterState == eDone;
   }
 };
+
+nsresult
+RangeSubtreeIterator::Init(nsIDOMRange *aRange)
+{
+  mIterState = eDone;
+
+  nsCOMPtr<nsIDOMNode> node;
+
+  // Grab the start point of the range and QI it to
+  // a CharacterData pointer. If it is CharacterData store
+  // a pointer to the node.
+
+  nsresult res = aRange->GetStartContainer(getter_AddRefs(node));
+  if (!node) return NS_ERROR_FAILURE;
+
+  mStartCData = do_QueryInterface(node);
+
+  // Grab the end point of the range and QI it to
+  // a CharacterData pointer. If it is CharacterData store
+  // a pointer to the node.
+
+  res = aRange->GetEndContainer(getter_AddRefs(node));
+  if (!node) return NS_ERROR_FAILURE;
+
+  mEndCData = do_QueryInterface(node);
+
+  if (mStartCData && mStartCData == mEndCData)
+  {
+    // The range starts and stops in the same CharacterData
+    // node. Null out the end pointer so we only visit the
+    // node once!
+
+    mEndCData = nsnull;
+  }
+  else
+  {
+    // Now create a Content Subtree Iterator to be used
+    // for the subtrees between the end points!
+
+    res = NS_NewContentSubtreeIterator(getter_AddRefs(mIter));
+    if (NS_FAILED(res)) return res;
+
+    res = mIter->Init(aRange);
+    if (NS_FAILED(res)) return res;
+
+    if (mIter->IsDone())
+    {
+      // The subtree iterator thinks there's nothing
+      // to iterate over, so just free it up so we
+      // don't accidentally call into it.
+
+      mIter = nsnull;
+    }
+  }
+
+  // Initialize the iterator by calling First().
+  // Note that we are ignoring the return value on purpose!
+
+  First();
+
+  return NS_OK;
+}
+
+already_AddRefed<nsIDOMNode>
+RangeSubtreeIterator::GetCurrentNode()
+{
+  nsIDOMNode *node = nsnull;
+
+  if (mIterState == eUseStartCData && mStartCData) {
+    NS_ADDREF(node = mStartCData);
+  } else if (mIterState == eUseEndCData && mEndCData)
+    NS_ADDREF(node = mEndCData);
+  else if (mIterState == eUseIterator && mIter)
+  {
+    nsIContent *content = mIter->GetCurrentNode();
+
+    if (content) {
+      CallQueryInterface(content, &node);
+    }
+  }
+
+  return node;
+}
+
+void
+RangeSubtreeIterator::First()
+{
+  if (mStartCData)
+    mIterState = eUseStartCData;
+  else if (mIter)
+  {
+    mIter->First();
+
+    mIterState = eUseIterator;
+  }
+  else if (mEndCData)
+    mIterState = eUseEndCData;
+  else
+    mIterState = eDone;
+}
+
+void
+RangeSubtreeIterator::Last()
+{
+  if (mEndCData)
+    mIterState = eUseEndCData;
+  else if (mIter)
+  {
+    mIter->Last();
+
+    mIterState = eUseIterator;
+  }
+  else if (mStartCData)
+    mIterState = eUseStartCData;
+  else
+    mIterState = eDone;
+}
+
+void
+RangeSubtreeIterator::Next()
+{
+  if (mIterState == eUseStartCData)
+  {
+    if (mIter)
+    {
+      mIter->First();
+
+      mIterState = eUseIterator;
+    }
+    else if (mEndCData)
+      mIterState = eUseEndCData;
+    else
+      mIterState = eDone;
+  }
+  else if (mIterState == eUseIterator)
+  {
+    mIter->Next();
+
+    if (mIter->IsDone())
+    {
+      if (mEndCData)
+        mIterState = eUseEndCData;
+      else
+        mIterState = eDone;
+    }
+  }
+  else
+    mIterState = eDone;
+}
+
+void
+RangeSubtreeIterator::Prev()
+{
+  if (mIterState == eUseEndCData)
+  {
+    if (mIter)
+    {
+      mIter->Last();
+
+      mIterState = eUseIterator;
+    }
+    else if (mStartCData)
+      mIterState = eUseStartCData;
+    else
+      mIterState = eDone;
+  }
+  else if (mIterState == eUseIterator)
+  {
+    mIter->Prev();
+
+    if (mIter->IsDone())
+    {
+      if (mStartCData)
+        mIterState = eUseStartCData;
+      else
+        mIterState = eDone;
+    }
+  }
+  else
+    mIterState = eDone;
+}
+
 
 // CollapseRangeAfterDelete() is a utiltiy method that is used by
 // DeleteContents() and ExtractContents() to collapse the range
@@ -1588,13 +1512,7 @@ nsresult nsRange::DeleteContents()
 
   // We delete backwards to avoid iterator problems!
 
-  res = iter.Last();
-  if (NS_FAILED(res)) return res;
-
-  nsCOMPtr<nsIDOMNode> node;
-  res = iter.CurrentNode(getter_AddRefs(node));
-  if (NS_FAILED(res)) return res;
-  if (!node) return NS_ERROR_FAILURE;
+  iter.Last();
 
   PRBool handled = PR_FALSE;
 
@@ -1602,13 +1520,14 @@ nsresult nsRange::DeleteContents()
   // end points, the subtree iterator should only give us back subtrees
   // that are completely contained between the range's end points.
 
-  while (node)
+  while (!iter.IsDone())
   {
+    nsCOMPtr<nsIDOMNode> node(iter.GetCurrentNode());
+
     // Before we delete anything, advance the iterator to the
     // next subtree.
 
-    res = iter.Prev();
-    if (NS_FAILED(res)) return res;
+    iter.Prev();
 
     handled = PR_FALSE;
 
@@ -1676,19 +1595,11 @@ nsresult nsRange::DeleteContents()
 
       nsCOMPtr<nsIDOMNode> parent, tmpNode;
 
-      res = node->GetParentNode(getter_AddRefs(parent));
-      if (NS_FAILED(res)) return res;
+      node->GetParentNode(getter_AddRefs(parent));
 
       res = parent->RemoveChild(node, getter_AddRefs(tmpNode));
       if (NS_FAILED(res)) return res;
     }
-
-    if (iter.IsDone())
-      break; // We must be done!
-
-    res = iter.CurrentNode(getter_AddRefs(node));
-    if (NS_FAILED(res)) return res;
-    if (!node) return NS_ERROR_FAILURE;
   }
 
   // XXX_kin: At this point we should be checking for the case
@@ -1882,14 +1793,7 @@ nsresult nsRange::CloneContents(nsIDOMDocumentFragment** aReturn)
     return NS_OK;
   }
 
-  res = iter.First();
-  if (NS_FAILED(res)) return res;
-
-  nsCOMPtr<nsIDOMNode> node;
-  res = iter.CurrentNode(getter_AddRefs(node));
-  if (NS_FAILED(res)) return res;
-  if (!node) return NS_ERROR_FAILURE;
-
+  iter.First();
 
   // With the exception of text nodes that contain one of the range
   // end points, the subtree iterator should only give us back subtrees
@@ -1900,15 +1804,14 @@ nsresult nsRange::CloneContents(nsIDOMDocumentFragment** aReturn)
   // parent hierarchy, adds a cloned version of the subtree, to it, then
   // correctly places this new subtree into the doc fragment.
 
-  while (node)
+  while (!iter.IsDone())
   {
+    nsCOMPtr<nsIDOMNode> node(iter.GetCurrentNode());
     // Clone the current subtree!
 
     nsCOMPtr<nsIDOMNode> clone;
     res = node->CloneNode(PR_TRUE, getter_AddRefs(clone));
-
     if (NS_FAILED(res)) return res;
-    if (!clone) return NS_ERROR_FAILURE;
 
     // If it's CharacterData, make sure we only clone what
     // is in the range.
@@ -1979,8 +1882,6 @@ nsresult nsRange::CloneContents(nsIDOMDocumentFragment** aReturn)
       // immediate parent of the subtree.
 
       res = closestAncestor->AppendChild(clone, getter_AddRefs(tmpNode));
-
-      if (NS_FAILED(res)) return res;
     }
     else
     {
@@ -1988,21 +1889,18 @@ nsresult nsRange::CloneContents(nsIDOMDocumentFragment** aReturn)
       // commonAncestor and node, so just append clone to commonCloneAncestor.
 
       res = commonCloneAncestor->AppendChild(clone, getter_AddRefs(tmpNode));
-
-      if (NS_FAILED(res)) return res;
     }
+    if (NS_FAILED(res)) return res;
 
     // Get the next subtree to be processed. The idea here is to setup
     // the parameters for the next iteration of the loop.
 
-    res = iter.Next();
+    iter.Next();
 
     if (iter.IsDone())
       break; // We must be done!
 
-    nsCOMPtr<nsIDOMNode> nextNode;
-    res = iter.CurrentNode(getter_AddRefs(nextNode));
-    if (NS_FAILED(res)) return res;
+    nsCOMPtr<nsIDOMNode> nextNode(iter.GetCurrentNode());
     if (!nextNode) return NS_ERROR_FAILURE;
 
     // Get node and nextNode's common parent.
@@ -2027,7 +1925,6 @@ nsresult nsRange::CloneContents(nsIDOMDocumentFragment** aReturn)
     }
 
     commonCloneAncestor = clone;
-    node = nextNode;
   }
 
   *aReturn = clonedFrag;
@@ -2269,13 +2166,13 @@ nsresult nsRange::ToString(nsAString& aReturn)
   iter->Init(this);
   
   nsString tempString;
-  nsCOMPtr<nsIContent> cN;
  
   // loop through the content iterator, which returns nodes in the range in 
   // close tag order, and grab the text from any text node
-  iter->CurrentNode(getter_AddRefs(cN));
-  while (cN && (NS_ENUMERATOR_FALSE == iter->IsDone()))
+  while (!iter->IsDone())
   {
+    nsIContent *cN = iter->GetCurrentNode();
+
 #ifdef DEBUG_range
     // If debug, dump it:
     cN->List(stdout);
@@ -2301,13 +2198,8 @@ nsresult nsRange::ToString(nsAString& aReturn)
         aReturn += tempString;
       }
     }
-    nsresult res = iter->Next();
-    if (NS_FAILED(res)) // a little noise here to catch bugs
-    {
-      NS_NOTREACHED("nsRange::ToString() : iterator failed to advance");
-      return res;
-    }
-    iter->CurrentNode(getter_AddRefs(cN));
+
+    iter->Next();
   }
 
 #ifdef DEBUG_range
@@ -2346,8 +2238,7 @@ nsresult nsRange::OwnerChildInserted(nsIContent* aParentNode, PRInt32 aOffset)
 
   nsCOMPtr<nsIContent> parent( do_QueryInterface(aParentNode) );
   // quick return if no range list
-  nsVoidArray *theRangeList;
-  parent->GetRangeList(&theRangeList);
+  const nsVoidArray *theRangeList = parent->GetRangeList();
   if (!theRangeList) return NS_OK;
 
   nsresult res;
@@ -2399,8 +2290,7 @@ nsresult nsRange::OwnerChildRemoved(nsIContent* aParentNode, PRInt32 aOffset, ns
   nsresult res = PopRanges(domNode, aOffset, removed);
 
   // quick return if no range list
-  nsVoidArray *theRangeList;
-  parent->GetRangeList(&theRangeList);
+  const nsVoidArray *theRangeList = parent->GetRangeList();
   if (!theRangeList) return NS_OK;
   
   PRInt32   count = theRangeList->Count();
@@ -2459,8 +2349,7 @@ nsresult nsRange::TextOwnerChanged(nsIContent* aTextNode, PRInt32 aStartChanged,
   if (!aTextNode) return NS_ERROR_UNEXPECTED;
 
   nsCOMPtr<nsIContent> textNode( do_QueryInterface(aTextNode) );
-  nsVoidArray *theRangeList;
-  aTextNode->GetRangeList(&theRangeList);
+  const nsVoidArray *theRangeList = aTextNode->GetRangeList();
   // the caller already checked to see if there was a range list
   
   nsCOMPtr<nsIDOMNode> domNode(do_QueryInterface(textNode));
@@ -2586,11 +2475,11 @@ nsRange::CreateContextualFragment(const nsAString& aFragment,
       // so that event handlers in the fragment do not get 
       // compiled with the system principal.
       nsCOMPtr<nsIJSContextStack> ContextStack;
-      nsCOMPtr<nsIScriptSecurityManager> secMan;
-      secMan = do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &result);
-      if (document && NS_SUCCEEDED(result)) {
+      if (document) {
         nsCOMPtr<nsIPrincipal> sysPrin;
         nsCOMPtr<nsIPrincipal> subjectPrin;
+
+        nsIScriptSecurityManager *secMan = nsContentUtils::GetSecurityManager();
 
         // Just to compare, not to use!
         result = secMan->GetSystemPrincipal(getter_AddRefs(sysPrin));
@@ -2600,22 +2489,20 @@ nsRange::CreateContextualFragment(const nsAString& aFragment,
         // (just in case...null subject principal will probably never happen)
         if (NS_SUCCEEDED(result) &&
            (!subjectPrin || sysPrin.get() == subjectPrin.get())) {
-          nsCOMPtr<nsIScriptGlobalObject> globalObj;
-          result = document->GetScriptGlobalObject(getter_AddRefs(globalObj));
-
-          nsCOMPtr<nsIScriptContext> scriptContext;
-          if (NS_SUCCEEDED(result) && globalObj) {
-            result = globalObj->GetContext(getter_AddRefs(scriptContext));
-          }
-
+          nsIScriptGlobalObject *globalObj = document->GetScriptGlobalObject();
           JSContext* cx = nsnull;
-          if (NS_SUCCEEDED(result) && scriptContext) {
-            cx = (JSContext*)scriptContext->GetNativeContext();
+
+          if (globalObj) {
+            nsIScriptContext *scriptContext = globalObj->GetContext();
+
+            if (scriptContext) {
+              cx = (JSContext*)scriptContext->GetNativeContext();
+            }
           }
 
-          if(cx) {
-            ContextStack = do_GetService("@mozilla.org/js/xpc/ContextStack;1", &result);
-            if(NS_SUCCEEDED(result)) {
+          if (cx) {
+            ContextStack = do_GetService("@mozilla.org/js/xpc/ContextStack;1");
+            if (ContextStack) {
               result = ContextStack->Push(cx);
             }
           }
@@ -2625,9 +2512,7 @@ nsRange::CreateContextualFragment(const nsAString& aFragment,
       nsDTDMode mode = eDTDMode_autodetect;
       nsCOMPtr<nsIHTMLDocument> htmlDoc(do_QueryInterface(domDocument));
       if (htmlDoc) {
-        nsCompatibility compatMode;
-        htmlDoc->GetCompatibilityMode(compatMode);
-        switch (compatMode) {
+        switch (htmlDoc->GetCompatibilityMode()) {
           case eCompatibility_NavQuirks:
             mode = eDTDMode_quirks;
             break;

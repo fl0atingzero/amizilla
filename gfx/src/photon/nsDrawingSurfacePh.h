@@ -58,28 +58,51 @@ public:
                   void **aBits, PRInt32 *aStride, PRInt32 *aWidthBytes,
                   PRUint32 aFlags);
   NS_IMETHOD Unlock(void);
-  NS_IMETHOD GetDimensions(PRUint32 *aWidth, PRUint32 *aHeight);
+
+	inline
+  NS_IMETHODIMP GetDimensions(PRUint32 *aWidth, PRUint32 *aHeight)
+		{
+		*aWidth = mWidth;
+		*aHeight = mHeight;
+		return NS_OK;
+		}
 
   inline NS_IMETHODIMP IsOffscreen( PRBool *aOffScreen ) { *aOffScreen = mIsOffscreen; return NS_OK; }
   inline NS_IMETHODIMP IsPixelAddressable( PRBool *aAddressable ) { *aAddressable = PR_FALSE; return NS_OK; }
-  NS_IMETHOD GetPixelFormat(nsPixelFormat *aFormat);
+
+	inline
+  NS_IMETHODIMP GetPixelFormat(nsPixelFormat *aFormat)
+		{ 
+		*aFormat = mPixFormat;
+		return NS_OK;
+		}
 
   //nsIDrawingSurfacePh interface
 
   /* Initialize a On-Screen Drawing Surface */
-  NS_IMETHOD Init( PhGC_t *aGC );
+	inline
+  NS_IMETHODIMP Init( PhDrawContext_t *aDC, PhGC_t *aGC )
+		{
+		mGC = aGC;
+		mIsOffscreen = PR_FALSE;
+		mDrawContext =  aDC;
+		return NS_OK;
+		}
 
   /* Initizlize a Off-Screen Drawing Surface */
-  NS_IMETHOD Init( PhGC_t *aGC, PRUint32 aWidth, PRUint32 aHeight, PRUint32 aFlags );
+  NS_IMETHOD Init( PRUint32 aWidth, PRUint32 aHeight, PRUint32 aFlags );
 
   /* Make this DrawingSurface active */
-  inline NS_IMETHODIMP Select( ) { PhDCSetCurrent( mDrawContext ); PgSetGC( mGC ); return NS_OK; }
+  inline PhDrawContext_t* Select( )
+		{
+		PhDCSetCurrent( mDrawContext );
+		PgSetGCCx( mDrawContext, mGC );
+		return mDrawContext;
+		}
 
   /* Flush the Off-Screen draw buffer to the pixmap or PgFlush the On-Screen */
-  inline NS_IMETHODIMP				Flush( void ) { return NS_OK; }
   inline PhGC_t								*GetGC( void ) { return mGC; }
   inline PhDrawContext_t			*GetDC( void ) { return mDrawContext; }
-  inline PRBool								IsActive( void ) { return mDrawContext == PhDCGetCurrent() ? PR_TRUE : PR_FALSE; }
   inline void									GetSize( PRUint32 *aWidth, PRUint32 *aHeight ) { *aWidth = mWidth; *aHeight = mHeight;}
 
 private:

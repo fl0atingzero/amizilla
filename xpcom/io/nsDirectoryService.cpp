@@ -109,13 +109,6 @@
 #define HOME_DIR NS_BEOS_HOME_DIR
 #endif
 
-// define default product directory
-#if defined(XP_WIN) || defined(XP_MAC) || defined(XP_OS2) || defined(XP_BEOS)
-#define DEFAULT_PRODUCT_DIR "Mozilla"
-#elif defined (XP_UNIX) || defined(XP_MACOSX)
-#define DEFAULT_PRODUCT_DIR ".mozilla"
-#endif
-
 //----------------------------------------------------------------------------------------
 nsresult 
 nsDirectoryService::GetCurrentProcessDirectory(nsILocalFile** aFile)
@@ -259,30 +252,28 @@ nsDirectoryService::GetCurrentProcessDirectory(nsILocalFile** aFile)
 
     if (moz5)
     {
-        localFile->InitWithNativePath(nsDependentCString(moz5));
-        localFile->Normalize();
-        *aFile = localFile;
-        return NS_OK;
-    }
-    else
-    {
-#if defined(DEBUG)
-        static PRBool firstWarning = PR_TRUE;
-
-        if(firstWarning) {
-            // Warn that MOZILLA_FIVE_HOME not set, once.
-            printf("Warning: MOZILLA_FIVE_HOME not set.\n");
-            firstWarning = PR_FALSE;
-        }
-#endif /* DEBUG */
-
-        // Fall back to current directory.
-        if (getcwd(buf, sizeof(buf)))
-        {
+        if (realpath(moz5, buf)) {
             localFile->InitWithNativePath(nsDependentCString(buf));
             *aFile = localFile;
             return NS_OK;
         }
+    }
+#if defined(DEBUG)
+    static PRBool firstWarning = PR_TRUE;
+
+    if(!moz5 && firstWarning) {
+        // Warn that MOZILLA_FIVE_HOME not set, once.
+        printf("Warning: MOZILLA_FIVE_HOME not set.\n");
+        firstWarning = PR_FALSE;
+    }
+#endif /* DEBUG */
+
+    // Fall back to current directory.
+    if (getcwd(buf, sizeof(buf)))
+    {
+        localFile->InitWithNativePath(nsDependentCString(buf));
+        *aFile = localFile;
+        return NS_OK;
     }
 
 #elif defined(XP_OS2)
@@ -328,8 +319,7 @@ nsDirectoryService::GetCurrentProcessDirectory(nsILocalFile** aFile)
 
 #endif
     
-    if (localFile)
-       delete localFile;
+    NS_RELEASE(localFile);
 
     NS_ERROR("unable to get current process directory");
     return NS_ERROR_FAILURE;
@@ -434,10 +424,10 @@ NS_METHOD
 nsDirectoryService::Create(nsISupports *outer, REFNSIID aIID, void **aResult)
 {
     NS_ENSURE_ARG_POINTER(aResult);
-    if (mService == nsnull)
+    if (!mService)
     {
         mService = new nsDirectoryService();
-        if (mService == NULL)
+        if (!mService)
             return NS_ERROR_OUT_OF_MEMORY;
     }
     return mService->QueryInterface(aIID, aResult);
@@ -643,9 +633,7 @@ nsDirectoryService::Get(const char* prop, const nsIID & uuid, void* *result)
     {
         nsCOMPtr<nsIFile> cloneFile;
         nsCOMPtr<nsIFile> cachedFile = do_QueryInterface(value);
-        
-        if (!cachedFile)
-            return NS_ERROR_NULL_POINTER;
+        NS_ASSERTION(cachedFile, "nsIFile expected");
 
         cachedFile->Clone(getter_AddRefs(cloneFile));
         return cloneFile->QueryInterface(uuid, result);
@@ -799,13 +787,15 @@ nsDirectoryService::GetFile(const char *prop, PRBool *persistent, nsIFile **_ret
     {
         rv = GetCurrentProcessDirectory(getter_AddRefs(localFile));
     }
+    // the GRE components directory is relative to the GRE directory
+    // by default; applications may override this behavior in special
+    // cases
     else if (inAtom == nsDirectoryService::sGRE_ComponentDirectory)
     {
-        rv = GetCurrentProcessDirectory(getter_AddRefs(localFile));
+        rv = Get(NS_GRE_DIR, nsILocalFile::GetIID(), getter_AddRefs(localFile));
         if (localFile)
              localFile->AppendNative(COMPONENT_DIRECTORY);
     }
-
     else if (inAtom == nsDirectoryService::sComponentDirectory)
     {
         rv = GetCurrentProcessDirectory(getter_AddRefs(localFile));
@@ -913,7 +903,7 @@ nsDirectoryService::GetFile(const char *prop, PRBool *persistent, nsIFile **_ret
             if NS_FAILED(rv)
             { 
                 // We got an error getting the DL folder from IC so try finding the user's Desktop folder
-                rv = GetOSXFolderType(kUserDomain, kSystemDesktopFolderType, getter_AddRefs(localFile));
+                rv = GetOSXFolderType(kUserDomain, kDesktopFolderType, getter_AddRefs(localFile));
             }
         }
         

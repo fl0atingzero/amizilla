@@ -156,7 +156,7 @@ NS_METHOD
 nsMenuX::Create(nsISupports * aParent, const nsAString &aLabel, const nsAString &aAccessKey, 
                 nsIChangeManager* aManager, nsIWebShell* aShell, nsIContent* aNode )
 {
-  mWebShellWeakRef = getter_AddRefs(NS_GetWeakReference(aShell));
+  mWebShellWeakRef = do_GetWeakReference(aShell);
   mMenuContent = aNode;
 
   // register this menu to be notified when changes are made to our content object
@@ -581,15 +581,12 @@ nsEventStatus nsMenuX::MenuConstruct(
     return nsEventStatus_eIgnore;
       
   // Iterate over the kids
-  PRInt32 count;
-  menuPopup->ChildCount(count);
-  for ( PRInt32 i = 0; i < count; ++i ) {
-    nsCOMPtr<nsIContent> child;
-    menuPopup->ChildAt(i, getter_AddRefs(child));
+  PRUint32 count = menuPopup->GetChildCount();
+  for ( PRUint32 i = 0; i < count; ++i ) {
+    nsIContent *child = menuPopup->GetChildAt(i);
     if ( child ) {
       // depending on the type, create a menu item, separator, or submenu
-      nsCOMPtr<nsIAtom> tag;
-      child->GetTag ( getter_AddRefs(tag) );
+      nsIAtom *tag = child->Tag();
       if ( tag == nsWidgetAtoms::menuitem )
         LoadMenuItem(this, child);
       else if ( tag == nsWidgetAtoms::menuseparator )
@@ -627,15 +624,12 @@ nsEventStatus nsMenuX::HelpMenuConstruct(
     return nsEventStatus_eIgnore;
       
   // Iterate over the kids
-  PRInt32 count;
-  menuPopup->ChildCount(count);
-  for ( PRInt32 i = 0; i < count; ++i ) {
-    nsCOMPtr<nsIContent> child;
-    menuPopup->ChildAt(i, getter_AddRefs(child));
+  PRUint32 count = menuPopup->GetChildCount();
+  for ( PRUint32 i = 0; i < count; ++i ) {
+    nsIContent *child = menuPopup->GetChildAt(i);
     if ( child ) {      
       // depending on the type, create a menu item, separator, or submenu
-      nsCOMPtr<nsIAtom> tag;
-      child->GetTag ( getter_AddRefs(tag) );
+      nsIAtom *tag = child->Tag();
       if ( tag == nsWidgetAtoms::menuitem )
         LoadMenuItem(this, child);
       else if ( tag == nsWidgetAtoms::menuseparator )
@@ -759,12 +753,7 @@ static pascal OSStatus MyMenuEventHandler(EventHandlerCallRef myHandler, EventRe
     if (listener) {
       MenuRef menuRef;
       ::GetEventParameter(event, kEventParamDirectObject, typeMenuRef, NULL, sizeof(menuRef), NULL, &menuRef);
-      nsMenuEvent menuEvent;
-      menuEvent.message = NS_MENU_SELECTED;
-      menuEvent.eventStructType = NS_MENU_EVENT;
-      menuEvent.point.x = 0;
-      menuEvent.point.y = 0;
-      menuEvent.widget = nsnull;
+      nsMenuEvent menuEvent(NS_MENU_SELECTED);
       menuEvent.time = PR_IntervalNow();
       menuEvent.mCommand = (PRUint32) menuRef;
       if (kind == kEventMenuOpening) {
@@ -877,11 +866,8 @@ void nsMenuX::LoadMenuItem( nsIMenu* inParentMenu, nsIContent* inMenuItemContent
     inMenuItemContent->GetAttr(kNameSpaceID_None, nsWidgetAtoms::key, keyValue);
 
     // Try to find the key node. Get the document so we can do |GetElementByID|
-    nsCOMPtr<nsIDocument> document;
-    inMenuItemContent->GetDocument(getter_AddRefs(document));
-    if ( !document ) 
-      return;
-    nsCOMPtr<nsIDOMDocument> domDocument = do_QueryInterface(document);
+    nsCOMPtr<nsIDOMDocument> domDocument =
+      do_QueryInterface(inMenuItemContent->GetDocument());
     if ( !domDocument )
       return;
 
@@ -952,7 +938,7 @@ nsMenuX::LoadSubMenu( nsIMenu * pParentMenu, nsIContent* inMenuItemContent )
     if (!webShell)
         return;
     nsCOMPtr<nsISupports> supports(do_QueryInterface(pParentMenu));
-    pnsMenu->Create(supports, menuName, NS_LITERAL_STRING(""), mManager, webShell, inMenuItemContent);
+    pnsMenu->Create(supports, menuName, EmptyString(), mManager, webShell, inMenuItemContent);
 
     // set if it's enabled or disabled
     nsAutoString disabled;
@@ -993,15 +979,7 @@ PRBool
 nsMenuX::OnCreate()
 {
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event;
-  event.eventStructType = NS_EVENT;
-  event.message = NS_XUL_POPUP_SHOWING;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_POPUP_SHOWING);
   
   nsCOMPtr<nsIContent> popupContent;
   GetMenuPopupContent(getter_AddRefs(popupContent));
@@ -1026,18 +1004,12 @@ nsMenuX::OnCreate()
   // a command attribute. If so, several apptributes must potentially
   // be updated.
   if (popupContent) {
-    nsCOMPtr<nsIDocument> doc;
-    popupContent->GetDocument(getter_AddRefs(doc));
-    nsCOMPtr<nsIDOMDocument> domDoc(do_QueryInterface(doc));
+    nsCOMPtr<nsIDOMDocument> domDoc(do_QueryInterface(popupContent->GetDocument()));
 
-    PRInt32 count;
-    popupContent->ChildCount(count);
-    for (PRInt32 i = 0; i < count; i++) {
-      nsCOMPtr<nsIContent> grandChild;
-      popupContent->ChildAt(i, getter_AddRefs(grandChild));
-      nsCOMPtr<nsIAtom> tag;
-      grandChild->GetTag(getter_AddRefs(tag));
-      if (tag.get() == nsWidgetAtoms::menuitem) {
+    PRUint32 count = popupContent->GetChildCount();
+    for (PRUint32 i = 0; i < count; i++) {
+      nsIContent *grandChild = popupContent->GetChildAt(i);
+      if (grandChild->Tag() == nsWidgetAtoms::menuitem) {
         // See if we have a command attribute.
         nsAutoString command;
         grandChild->GetAttr(kNameSpaceID_None, nsWidgetAtoms::command, command);
@@ -1089,15 +1061,7 @@ PRBool
 nsMenuX::OnCreated()
 {
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event;
-  event.eventStructType = NS_EVENT;
-  event.message = NS_XUL_POPUP_SHOWN;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_POPUP_SHOWN);
   
   nsCOMPtr<nsIContent> popupContent;
   GetMenuPopupContent(getter_AddRefs(popupContent));
@@ -1133,15 +1097,7 @@ nsMenuX::OnDestroy()
     return PR_TRUE;
 
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event;
-  event.eventStructType = NS_EVENT;
-  event.message = NS_XUL_POPUP_HIDING;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_POPUP_HIDING);
   
   nsCOMPtr<nsIWebShell>  webShell = do_QueryReferent(mWebShellWeakRef);
   if (!webShell) {
@@ -1171,15 +1127,7 @@ PRBool
 nsMenuX::OnDestroyed()
 {
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event;
-  event.eventStructType = NS_EVENT;
-  event.message = NS_XUL_POPUP_HIDDEN;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_POPUP_HIDDEN);
   
   nsCOMPtr<nsIWebShell>  webShell = do_QueryReferent(mWebShellWeakRef);
   if (!webShell) {
@@ -1224,17 +1172,15 @@ nsMenuX::GetMenuPopupContent(nsIContent** aResult)
   if ( !xblService )
     return;
   
-  PRInt32 count;
-  mMenuContent->ChildCount(count);
+  PRUint32 count = mMenuContent->GetChildCount();
 
   for (PRInt32 i = 0; i < count; i++) {
     PRInt32 dummy;
-    nsCOMPtr<nsIContent> child;
-    mMenuContent->ChildAt(i, getter_AddRefs(child));
+    nsIContent *child = mMenuContent->GetChildAt(i);
     nsCOMPtr<nsIAtom> tag;
     xblService->ResolveTag(child, &dummy, getter_AddRefs(tag));
-    if (tag && tag.get() == nsWidgetAtoms::menupopup) {
-      *aResult = child.get();
+    if (tag == nsWidgetAtoms::menupopup) {
+      *aResult = child;
       NS_ADDREF(*aResult);
       return;
     }
@@ -1303,8 +1249,7 @@ nsMenuX :: CountVisibleBefore ( PRUint32* outVisibleBefore )
 
 
 NS_IMETHODIMP
-nsMenuX::AttributeChanged(nsIDocument *aDocument, PRInt32 aNameSpaceID, nsIAtom *aAttribute,
-                               PRInt32 aHint)
+nsMenuX::AttributeChanged(nsIDocument *aDocument, PRInt32 aNameSpaceID, nsIAtom *aAttribute)
 {
   if (gConstructingMenu)
     return NS_OK;

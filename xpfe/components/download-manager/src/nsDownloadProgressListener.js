@@ -46,7 +46,7 @@ nsDownloadProgressListener.prototype = {
     elapsed: 0,
     rateChanges: 0,
     rateChangeLimit: 0,
-    priorRate: 0,
+    priorRate: "",
     lastUpdate: -500,
     doc: null,
     get document() {
@@ -59,7 +59,7 @@ nsDownloadProgressListener.prototype = {
     {
       if (aStateFlags & Components.interfaces.nsIWebProgressListener.STATE_STOP)
       {
-        var aDownloadID = aDownload.target.path;
+        var aDownloadID = aDownload.targetFile.path;
         var elt = this.doc.getElementById(aDownloadID).firstChild.firstChild;
 
         var timeRemainingCol = elt.nextSibling.nextSibling.nextSibling;
@@ -101,7 +101,7 @@ nsDownloadProgressListener.prototype = {
       else
         rate = 0;
 
-      var aDownloadID = aDownload.target.path
+      var aDownloadID = aDownload.targetFile.path
       var elt = this.doc.getElementById(aDownloadID).firstChild.firstChild;
       if (this.doc.getElementById("TimeElapsed").getAttribute("hidden") != "true") {
         elapsedCol = elt.nextSibling.nextSibling.nextSibling.nextSibling.nextSibling.nextSibling;
@@ -147,8 +147,8 @@ nsDownloadProgressListener.prototype = {
       if ( rate )
       {
         // rate is bytes/sec
-        var kRate = rate / 1024; // K bytes/sec;
-        kRate = parseInt( kRate * 10 + .5 ); // xxx (3 digits)
+        var kRate = (rate / 1024).toFixed(1); // kilobytes/sec
+		
         // Don't update too often!
         if ( kRate != this.priorRate )
         {
@@ -167,14 +167,11 @@ nsDownloadProgressListener.prototype = {
         else
           this.rateChanges = 0;
 
-         var fraction = kRate % 10;
-         kRate = parseInt( ( kRate - fraction ) / 10 );
-
-         // Insert 3 is the download rate (in kilobytes/sec).
-         rateMsg = replaceInsert( rateMsg, 1, kRate + "." + fraction );
+        // Insert 3 is the download rate (in kilobytes/sec).
+        rateMsg = replaceInsert( rateMsg, 1, kRate );
       }
       else
-       rateMsg = replaceInsert( rateMsg, 1, "??.?" );
+        rateMsg = replaceInsert( rateMsg, 1, "??.?" );
 
       var timeRemainingCol = elt.nextSibling.nextSibling.nextSibling;
 
@@ -237,11 +234,11 @@ var nsDownloadProgressListenerModule = {
 
   registerSelf: function (compMgr, fileSpec, location, type)
   { 
-    compMgr = compMgr.QueryInterface(Components.interfaces.nsIComponentManagerObsolete);
-    compMgr.registerComponentWithType(Components.ID("{09cddbea-1dd2-11b2-aa15-c41ffea19d79}"),
-                                      "Download Progress Listener",
-                                      "@mozilla.org/download-manager/listener;1", fileSpec,
-                                      location, true, true, type);
+    var compReg = compMgr.QueryInterface(Components.interfaces.nsIComponentRegistrar);
+    compReg.registerFactoryLocation(Components.ID("{09cddbea-1dd2-11b2-aa15-c41ffea19d79}"),
+                                    "Download Progress Listener",
+                                    "@mozilla.org/download-manager/listener;1",
+                                    fileSpec, location, type);
   },
   canUnload: function(compMgr)
   {

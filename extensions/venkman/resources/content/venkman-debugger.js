@@ -86,6 +86,23 @@ const BREAKPOINT_EARLYRETURN = 3;
 
 var $ = new Array(); /* array to store results from evals in debug frames */
 
+function compareVersion(maj, min)
+{
+    if (console.jsds.implementationMajor < maj)
+        return -1;
+    
+    if (console.jsds.implementationMajor > maj)
+        return 1;
+
+    if (console.jsds.implementationMinor < min)
+        return -1;
+    
+    if (console.jsds.implementationMinor > min)
+        return 1;
+
+    return 0;
+}
+
 function initDebugger()
 {   
     dd ("initDebugger {");
@@ -104,15 +121,17 @@ function initDebugger()
     if (!(JSD_CTRID in Components.classes))
         throw new BadMojo (ERR_NO_DEBUGGER);
     
-    console.jsds = Components.classes[JSD_CTRID].getService(jsdIDebuggerService);
+    console.jsds = 
+        Components.classes[JSD_CTRID].getService(jsdIDebuggerService);
     console.jsds.on();
+
+    if (compareVersion(1, 2) >= 0)
+        console.jsds.flags = jsdIDebuggerService.DISABLE_OBJECT_TRACE;
 
     console.executionHook = { onExecute: jsdExecutionHook };
     console.errorHook     = { onError: jsdErrorHook };
     console.callHook      = { onCall: jsdCallHook };
     
-    console.jsds.flags          = jsdIDebuggerService.ENABLE_NATIVE_FRAMES;
-
     console.jsdConsole = console.jsds.wrapValue(console);    
 
     dispatch ("tmode", {mode: console.prefs["lastThrowMode"]});
@@ -126,6 +145,8 @@ function initDebugger()
     console.jsds.debuggerHook   = console.executionHook;
     console.jsds.debugHook      = console.executionHook;
     console.jsds.errorHook      = console.errorHook;
+
+    console.jsds.flags = jsdIDebuggerService.ENABLE_NATIVE_FRAMES;
 
     dd ("} initDebugger");
 }
@@ -221,7 +242,7 @@ function jsdScriptDestroyed (jsdScript)
 
 function jsdExecutionHook (frame, type, rv)
 {
-    //dd ("execution hook: " + formatFrame(frame));
+    dd ("execution hook: " + formatFrame(frame));
     
     var hookReturn = jsdIExecutionHook.RETURN_CONTINUE;
 
@@ -1169,10 +1190,10 @@ function BreakInstance (parentBP, scriptWrapper, pc)
 BreakInstance.prototype.__defineGetter__ ("jsdURL", bi_getURL);
 function bi_getURL ()
 {
-    return ("x-jsd:break?url=" + escape(this.url) +
+    return ("x-jsd:break?url=" + encodeURIComponent(this.url) +
             "&lineNumber=" + this.lineNumber +
             "&conditionEnabled=" + this.conditionEnabled +
-            "&condition=" + escape(this.condition) +
+            "&condition=" + encodeURIComponent(this.condition) +
             "&passExceptions=" + this.passExceptions +
             "&logResult=" + this.logResult +
             "&resultAction=" + this.resultAction +
@@ -1363,10 +1384,10 @@ function FutureBreakpoint (url, lineNumber)
 FutureBreakpoint.prototype.__defineGetter__ ("jsdURL", fb_getURL);
 function fb_getURL ()
 {
-    return ("x-jsd:fbreak?url=" + escape(this.url) +
+    return ("x-jsd:fbreak?url=" + encodeURIComponent(this.url) +
             "&lineNumber=" + this.lineNumber +
             "&conditionEnabled=" + this.conditionEnabled +
-            "&condition=" + escape(this.condition) +
+            "&condition=" + encodeURIComponent(this.condition) +
             "&passExceptions=" + this.passExceptions +
             "&logResult=" + this.logResult +
             "&resultAction=" + this.resultAction +

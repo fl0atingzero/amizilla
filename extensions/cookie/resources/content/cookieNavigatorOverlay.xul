@@ -35,25 +35,13 @@
     // both are necessary. popupmanager is just a special case
     // of permissionmanager but does extra work on add/remove
     const nsIPermissionManager = Components.interfaces.nsIPermissionManager;
+    const nsICookiePermission = Components.interfaces.nsICookiePermission;
     var permissionmanager;
     var popupmanager;
-
-    // Remove the image entries from the task menu
-    function HideImage() {
-      document.getElementById("image").hidden = true;
-    }
-
-    // for some unexplainable reason, CheckForImage() keeps getting called repeatedly
-    // as we mouse over the task menu.  IMO, that shouldn't be happening.  To avoid
-    // taking a performance hit due to this, we will set the following flag to avoid
-    // reexecuting the routine
-    var alreadyCheckedForImage = false;
-
+    
     // determine which items we need to hide or disable from the task menu
     function CheckForVisibility()
     {
-      var uri = getBrowser().currentURI;
-
       // obtain access to permissionmanager and popupmanager
       // (popup manager is a wrapper around permission that does extra work)
       permissionmanager =
@@ -68,17 +56,14 @@
       }
 
       // determine current state (blocked or unblocked) and hide appropriate menu item
-      var blocked = nsIPermissionManager.UNKNOWN_ACTION;
-      
-      blocked = 
-        permissionmanager.testPermission(uri, nsIPermissionManager.COOKIE_TYPE);
-      enableElement("AllowCookies", blocked != nsIPermissionManager.ALLOW_ACTION);
-      enableElement("BlockCookies", blocked != nsIPermissionManager.DENY_ACTION);
-
-      blocked =
-        permissionmanager.testPermission(uri, nsIPermissionManager.IMAGE_TYPE);
-      enableElement("AllowImages", blocked != nsIPermissionManager.ALLOW_ACTION);
-      enableElement("BlockImages", blocked != nsIPermissionManager.DENY_ACTION);
+      var uri = getBrowser().currentURI;
+      setRadioButton("UseCookiesDefault", uri, nsIPermissionManager.UNKNOWN_ACTION, "cookie");
+      setRadioButton("AllowCookies", uri, nsIPermissionManager.ALLOW_ACTION, "cookie");
+      setRadioButton("AllowSessionCookies", uri, nsICookiePermission.ACCESS_SESSION, "cookie");
+      setRadioButton("BlockCookies", uri, nsIPermissionManager.DENY_ACTION, "cookie");
+      setRadioButton("UseImagesDefault", uri, nsIPermissionManager.UNKNOWN_ACTION, "image");
+      setRadioButton("AllowImages", uri, nsIPermissionManager.ALLOW_ACTION, "image");
+      setRadioButton("BlockImages", uri, nsIPermissionManager.DENY_ACTION, "image");
       
       SetPopupMenuEnabledState();
 
@@ -86,27 +71,13 @@
       pref = Components.classes['@mozilla.org/preferences-service;1'];
       pref = pref.getService();
       pref = pref.QueryInterface(Components.interfaces.nsIPrefBranch);
-
-      // determine if image manager should be in the UI
-      if (alreadyCheckedForImage) {
-        return;
-      }
-      alreadyCheckedForImage = true;
-      // remove image functions (unless overruled by the "imageblocker.enabled" pref)
-      try {
-        if (!pref.getBoolPref("imageblocker.enabled")) {
-          HideImage();
-        }
-      } catch(e) {
-        HideImage();
-      }
     }
 
     function SetPopupMenuEnabledState() {
       var blocked = nsIPermissionManager.UNKNOWN_ACTION;
       var policy = pref.getBoolPref("dom.disable_open_during_load");
 
-      blocked = permissionmanager.testPermission(getBrowser().currentURI, nsIPermissionManager.POPUP_TYPE);
+      blocked = permissionmanager.testPermission(getBrowser().currentURI, "popup");
       
       document.getElementById("AboutPopups").hidden = policy;
       document.getElementById("ManagePopups").hidden = !policy;
@@ -117,6 +88,11 @@
       }
 
       enableElement("AllowPopups", false);
+    }
+    
+    function setRadioButton(elementID, uri, perm, type) {
+      var enable = (perm == permissionmanager.testPermission(uri, type));
+      document.getElementById(elementID).setAttribute("checked", enable);
     }
 
     function enableElement(elementID, enable) {
@@ -136,50 +112,68 @@
       }
       var element;
       var uri = getBrowser().currentURI;
+
       switch (action) {
         case "cookieAllow":
-          permissionmanager.add(uri, nsIPermissionManager.COOKIE_TYPE, nsIPermissionManager.ALLOW_ACTION);
+          if (permissionmanager.testPermission(uri, "cookie") == nsIPermissionManager.ALLOW_ACTION)
+            return;
+          permissionmanager.add(uri, "cookie", nsIPermissionManager.ALLOW_ACTION);
           element = document.getElementById("AllowCookies");
-          alert(element.getAttribute("msg"));
+          break;
+        case "cookieSession":
+          if (permissionmanager.testPermission(uri, "cookie") == nsICookiePermission.ACCESS_SESSION)
+            return;
+          permissionmanager.add(uri, "cookie", nsICookiePermission.ACCESS_SESSION);
+          element = document.getElementById("AllowSessionCookies");
+          break;
+        case "cookieDefault":
+          if (permissionmanager.testPermission(uri, "cookie") == nsIPermissionManager.UNKNOWN_ACTION)
+            return;
+          permissionmanager.remove(uri.host, "cookie");
+          element = document.getElementById("UseCookiesDefault");
           break;
         case "cookieBlock":
-          permissionmanager.add(uri, nsIPermissionManager.COOKIE_TYPE, nsIPermissionManager.DENY_ACTION);
+          if (permissionmanager.testPermission(uri, "cookie") == nsIPermissionManager.DENY_ACTION)
+            return;
+          permissionmanager.add(uri, "cookie", nsIPermissionManager.DENY_ACTION);
           element = document.getElementById("BlockCookies");
-          alert(element.getAttribute("msg"));
           break;
         case "imageAllow":
-          permissionmanager.add(uri, nsIPermissionManager.IMAGE_TYPE, nsIPermissionManager.ALLOW_ACTION);
+	  if (permissionmanager.testPermission(uri, "image") == nsIPermissionManager.ALLOW_ACTION)
+            return;
+          permissionmanager.add(uri, "image", nsIPermissionManager.ALLOW_ACTION);
           element = document.getElementById("AllowImages");
-          alert(element.getAttribute("msg"));
+          break;
+        case "imageDefault":
+          if (permissionmanager.testPermission(uri, "image") == nsIPermissionManager.UNKNOWN_ACTION)
+            return;
+          permissionmanager.remove(uri.host, "image");
+          element = document.getElementById("UseImagesDefault");
           break;
         case "imageBlock":
-          permissionmanager.add(uri, nsIPermissionManager.IMAGE_TYPE, nsIPermissionManager.DENY_ACTION);
+          if (permissionmanager.testPermission(uri, "image") == nsIPermissionManager.DENY_ACTION)
+            return;
+          permissionmanager.add(uri, "image", nsIPermissionManager.DENY_ACTION);
           element = document.getElementById("BlockImages");
-          alert(element.getAttribute("msg"));
           break;
         default:
+          return;
       }
-    }
-
-    function PopupAction() {
-      var hostPort = getBrowser().currentURI.hostPort;
-      window.openDialog("chrome://communicator/content/popupManager.xul", "",
-                        "chrome,resizable=yes,modal=yes",
-                        hostPort,
-                        false);
+      var promptService = Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
+                                    .getService(Components.interfaces.nsIPromptService);
+      promptService.alert(window,element.getAttribute("title"), element.getAttribute("msg"));
     }
 
     function OpenAboutPopups() {
       window.openDialog("chrome://communicator/content/aboutPopups.xul", "", 
-                        "chrome,centerscreen,resizable=yes", 
+                        "chrome,centerscreen,dependent", 
                         false);
     }
 
-    function OpenManagePopups() {
+    function OpenManagePopups(host) {
       window.openDialog("chrome://communicator/content/popupManager.xul", "",
                         "chrome,resizable=yes", 
-                        "",
-                        false);
+                        host);
     }
 
   ]]>
@@ -193,11 +187,27 @@
       <menupopup>
         <menuitem id="BlockCookies" label="&cookieBlockCookiesCmd.label;"
                   accesskey="&cookieBlockCookiesCmd.accesskey;" 
+                  title="&cookieMessageTitle.label;"
                   msg="&cookieBlockCookiesMsg.label;"
+                  type="radio" name="cookies"
                   oncommand="CookieImageAction('cookieBlock');"/> 
+        <menuitem id="UseCookiesDefault" label="&cookieCookiesDefaultCmd.label;"
+                  accesskey="&cookieCookiesDefaultCmd.accesskey;" 
+                  title="&cookieMessageTitle.label;"
+                  msg="&cookieCookiesDefaultMsg.label;"
+                  type="radio" name="cookies" checked="true"
+                  oncommand="CookieImageAction('cookieDefault');"/> 
+        <menuitem id="AllowSessionCookies" label="&cookieAllowSessionCookiesCmd.label;"
+                  title="&cookieMessageTitle.label;"
+                  accesskey="&cookieAllowSessionCookiesCmd.accesskey;" 
+                  msg="&cookieAllowSessionCookiesMsg.label;"
+                  type="radio" name="cookies"
+                  oncommand="CookieImageAction('cookieSession');"/> 
         <menuitem id="AllowCookies" label="&cookieAllowCookiesCmd.label;"
+                  title="&cookieMessageTitle.label;"
                   accesskey="&cookieAllowCookiesCmd.accesskey;" 
                   msg="&cookieAllowCookiesMsg.label;"
+                  type="radio" name="cookies"
                   oncommand="CookieImageAction('cookieAllow');"/> 
         <menuseparator/>
         <menuitem label="&cookieDisplayCookiesCmd.label;"
@@ -212,11 +222,21 @@
       <menupopup>
         <menuitem id="BlockImages" label="&cookieBlockImagesCmd.label;"
                   accesskey="&cookieBlockImagesCmd.accesskey;" 
+                  title="&cookieImageMessageTitle.label;"
                   msg="&cookieBlockImagesMsg.label;"
+                  type="radio" name="images"
                   oncommand="CookieImageAction('imageBlock');"/> 
+        <menuitem id="UseImagesDefault" label="&cookieImagesDefaultCmd.label;"
+                  accesskey="&cookieImagesDefaultCmd.accesskey;"
+                  title="&cookieImageMessageTitle.label;"
+                  msg="&cookieImagesDefaultMsg.label;"
+                  type="radio" name="images"
+                  oncommand="CookieImageAction('imageDefault');"/>
         <menuitem id="AllowImages" label="&cookieAllowImagesCmd.label;"
-                  accesskey="&cookieAllowImagesCmd.accesskey;" 
+                  accesskey="&cookieAllowImagesCmd.accesskey;"
+                  title="&cookieImageMessageTitle.label;"
                   msg="&cookieAllowImagesMsg.label;"
+                  type="radio" name="images"
                   oncommand="CookieImageAction('imageAllow');"/> 
         <menuseparator/>
         <menuitem label="&cookieDisplayImagesCmd.label;"
@@ -231,14 +251,14 @@
       <menupopup>
         <menuitem id="AllowPopups" label="&cookieAllowPopupsCmd.label;"
                   accesskey="&cookieAllowPopupsCmd.accesskey;" 
-                  oncommand="PopupAction();"/>
+                  oncommand="OpenManagePopups(getBrowser().currentURI.host);"/>
         <menuitem id="AboutPopups" label="&cookieAboutPopupBlocking.label;"
                   accesskey="&cookieAboutPopupBlocking.accesskey;"
                   oncommand="OpenAboutPopups();"
                   hidden="true"/>
         <menuitem id="ManagePopups" label="&cookieManagePopups.label;"
                   accesskey="&cookieManagePopups.accesskey;"
-                  oncommand="OpenManagePopups();"
+                  oncommand="OpenManagePopups('');"
                   hidden="true"/>
       </menupopup>
     </menu>

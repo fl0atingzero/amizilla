@@ -40,7 +40,6 @@
 #include "nsIObserverService.h"
 #include "nsIObserver.h"
 #include "nsNetUtil.h"
-#include "nsIURI.h"
 
 #include "nsILookAndFeel.h"
 #include "nsIDeviceContext.h"
@@ -122,8 +121,7 @@ CheckFontExistence(nsIPresContext* aPresContext, const nsString& aFontName)
 {
   PRBool aliased;
   nsAutoString localName;
-  nsCOMPtr<nsIDeviceContext> deviceContext;
-  aPresContext->GetDeviceContext(getter_AddRefs(deviceContext));
+  nsIDeviceContext *deviceContext = aPresContext->DeviceContext();
   deviceContext->GetLocalFontName(aFontName, localName, aliased);
   PRBool rv = (aliased || (NS_OK == deviceContext->CheckFontExistence(localName)));
   // (see bug 35824 for comments about the aliased localName)
@@ -140,7 +138,7 @@ AlertMissingFonts(nsString& aMissingFonts)
     return;
 
   nsCOMPtr<nsIStringBundle> sb;
-  sbs->CreateBundle("resource:/res/fonts/mathfont.properties", getter_AddRefs(sb));
+  sbs->CreateBundle("resource://gre/res/fonts/mathfont.properties", getter_AddRefs(sb));
   if (!sb)
     return;
 
@@ -195,24 +193,13 @@ static nsresult
 LoadProperties(const nsString& aName,
                nsCOMPtr<nsIPersistentProperties>& aProperties)
 {
-  nsresult rv;
   nsAutoString uriStr;
-  uriStr.Assign(NS_LITERAL_STRING("resource:/res/fonts/mathfont"));
+  uriStr.Assign(NS_LITERAL_STRING("resource://gre/res/fonts/mathfont"));
   uriStr.Append(aName);
   uriStr.StripWhitespace(); // that may come from aName
   uriStr.Append(NS_LITERAL_STRING(".properties"));
-  nsCOMPtr<nsIURI> uri;
-  rv = NS_NewURI(getter_AddRefs(uri), uriStr);
-  if (NS_FAILED(rv)) return rv;
-  nsCOMPtr<nsIInputStream> in;
-  rv = NS_OpenURI(getter_AddRefs(in), uri);
-  if (NS_FAILED(rv)) return rv;
-  rv = nsComponentManager::
-       CreateInstance(NS_PERSISTENTPROPERTIES_CONTRACTID, nsnull,
-                      NS_GET_IID(nsIPersistentProperties),
-                      getter_AddRefs(aProperties));
-  if (NS_FAILED(rv)) return rv;
-  return aProperties->Load(in);
+  return NS_LoadPersistentPropertiesFromURISpec(getter_AddRefs(aProperties), 
+                                                NS_ConvertUTF16toUTF8(uriStr));
 }
 
 // helper to get the stretchy direction of a char
@@ -372,8 +359,8 @@ nsGlyphTable::ElementAt(nsIPresContext* aPresContext, nsMathMLChar* aChar, PRUin
     nsresult rv = LoadProperties(*mFontName[0], mGlyphProperties);
 #ifdef NS_DEBUG
     nsCAutoString uriStr;
-    uriStr.Assign(NS_LITERAL_CSTRING("resource:/res/fonts/mathfont"));
-    uriStr.Append(NS_LossyConvertUCS2toASCII(*mFontName[0]));
+    uriStr.Assign(NS_LITERAL_CSTRING("resource://gre/res/fonts/mathfont"));
+    LossyAppendUTF16toASCII(*mFontName[0], uriStr);
     uriStr.StripWhitespace(); // that may come from mFontName
     uriStr.Append(NS_LITERAL_CSTRING(".properties"));
     printf("Loading %s ... %s\n",
@@ -765,7 +752,7 @@ private:
   nsVoidArray mAdditionalTableList; 
 };
 
-NS_IMPL_ISUPPORTS1(nsGlyphTableList, nsIObserver);
+NS_IMPL_ISUPPORTS1(nsGlyphTableList, nsIObserver)
 
 // -----------------------------------------------------------------------------------
 // Here is the global list of applicable glyph tables that we will be using
@@ -909,15 +896,16 @@ nsGlyphTableList::GetListFor(nsIPresContext* aPresContext,
                              nsFont*         aFont,
                              nsVoidArray*    aGlyphTableList)
 {
-  // @see the documentation of -moz-math-font-style-stretchy in mathml.css
+  // @see the documentation of -moz-math-stretchy in mathml.css
   // for how this work
   aGlyphTableList->Clear();
-  PRBool useDocumentFonts = PR_TRUE;
-  aPresContext->GetCachedBoolPref(kPresContext_UseDocumentFonts, useDocumentFonts);
+  PRBool useDocumentFonts =
+    aPresContext->GetCachedBoolPref(kPresContext_UseDocumentFonts);
+
   // Check to honor the pref("browser.display.use_document_fonts", 0)
   // Only include fonts from CSS if the pref to disallow authors' fonts isn't set
   if (useDocumentFonts) {
-    // Convert the list of fonts in aFont (from -moz-math-font-style-stretchy)
+    // Convert the list of fonts in aFont (from -moz-math-stretchy)
     // to an ordered list of corresponding glyph extension tables
     StretchyFontEnumContext context = {aPresContext, aChar, aGlyphTableList};
     aFont->EnumerateFamilies(StretchyFontEnumCallback, &context);
@@ -1305,6 +1293,13 @@ nsMathMLChar::SetStyleContext(nsStyleContext* aStyleContext)
     if (aStyleContext) {
       mStyleContext = aStyleContext;
       aStyleContext->AddRef();
+
+      // Sync the pointers of child chars.
+      nsMathMLChar* child = mSibling;
+      while (child) {
+        child->mStyleContext = mStyleContext;
+        child = child->mSibling;
+      }
     }
   }
 }
@@ -1385,7 +1380,7 @@ nsMathMLChar::SetData(nsIPresContext* aPresContext,
  2) We search for the first larger variant of the char that fits the
     container' size. We search fonts for larger variants in the order
     specified in the list of stretchy fonts held by the leaf style
-    context (from -moz-math-font-style-stretchy in mathml.css).
+    context (from -moz-math-stretchy in mathml.css).
     Issues :
     a) the largeop and display settings determine the starting
        size when we do the above search, regardless of whether
@@ -1958,14 +1953,11 @@ nsMathMLChar::Paint(nsIPresContext*      aPresContext,
     // paint the selection background -- beware MathML frames overlap a lot
     if (aSelectedRect && !aSelectedRect->IsEmpty()) {
       // get color to use for selection from the look&feel object
-      nsCOMPtr<nsILookAndFeel> lf;
-      aPresContext->GetLookAndFeel(getter_AddRefs(lf));
-      if (lf) {
-        nscolor bgColor = NS_RGB(0, 0, 0);
-        lf->GetColor(nsILookAndFeel::eColor_TextSelectBackground, bgColor);
-        aRenderingContext.SetColor(bgColor);
-        aRenderingContext.FillRect(*aSelectedRect);
-      }
+      nscolor bgColor = NS_RGB(0, 0, 0);
+      aPresContext->LookAndFeel()->
+	GetColor(nsILookAndFeel::eColor_TextSelectBackground, bgColor);
+      aRenderingContext.SetColor(bgColor);
+      aRenderingContext.FillRect(*aSelectedRect);
     }
     else if (mRect.width && mRect.height) {
       const nsStyleBorder* border = styleContext->GetStyleBorder();
@@ -1998,11 +1990,8 @@ nsMathMLChar::Paint(nsIPresContext*      aPresContext,
     nscolor fgColor = styleContext->GetStyleColor()->mColor;
     if (aSelectedRect && !aSelectedRect->IsEmpty()) {
       // get color to use for selection from the look&feel object
-      nsCOMPtr<nsILookAndFeel> lf;
-      aPresContext->GetLookAndFeel(getter_AddRefs(lf));
-      if (lf) {
-        lf->GetColor(nsILookAndFeel::eColor_TextSelectForeground, fgColor);
-      }
+      aPresContext->LookAndFeel()->
+	GetColor(nsILookAndFeel::eColor_TextSelectForeground, fgColor);
     }
     aRenderingContext.SetColor(fgColor);
 

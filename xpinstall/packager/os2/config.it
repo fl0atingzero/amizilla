@@ -15,6 +15,7 @@ User Agent=$UserAgent$
 ; Destination Path values:
 ;   OS2DISK
 ;   OS2DIR
+;   OS2SYSDIR
 Path=[OS2DISK]\$CompanyName$\$ProductName$
 
 ; Sub Path, when set will indicate to Setup to create a subfolder from
@@ -86,10 +87,20 @@ Confirmation Message=There was an error encountered during installation of $Prod
 ;
 [Locate Previous Product Path0]
 App=[Product CurrentVersion]
-Name=Install Directory
+Key=Install Directory
 Decrypt App=TRUE
 Contains Filename=FALSE
 Verify Existence=
+
+; This version allows previous product path to be found from an arbitrary INI file
+; This was used by IBM Web Browser to locate installs from previous installers
+;[Locate Previous Product Path1]
+;INI=[OS2SYSDIR]\EPFIS.INI
+;Decrypt INI=TRUE
+;App=EPFINST_IBM Web Browser for OS/2_0000-000_0000
+;Key=FilePath
+;Contains Filename=FALSE
+;Verify Existence=
 
 [Dialog Welcome]
 Show Dialog=TRUE
@@ -156,16 +167,17 @@ C0=Component XPCOM
 C1=Component Navigator
 C2=Component MailNews
 C3=Component PSM
-C4=Component Chatzilla
-C5=Component Venkman
-C6=Component US English Profile Defaults
-C7=Component En US lang pack
-C8=Component US region pack
-C9=Component DOM Inspector
-C10=Component Uninstaller
+C4=Component Spellchecker
+C5=Component Chatzilla
+C6=Component Venkman
+C7=Component US English Profile Defaults
+C8=Component En US lang pack
+C9=Component US region pack
+C10=Component DOM Inspector
+C11=Component Uninstaller
 ; Make sure Component QFA is LAST so 3rd party developers who might not want
 ; this component can easily remove it.
-;C11=Component QFA
+;C12=Component QFA
 
 [Setup Type2]
 ;*** LOCALIZE ME BABY ***
@@ -182,16 +194,17 @@ C0=Component XPCOM
 C1=Component Navigator
 C2=Component MailNews
 C3=Component PSM
-C4=Component Chatzilla
-C5=Component Venkman
-C6=Component US English Profile Defaults
-C7=Component En US lang pack
-C8=Component US region pack
-C9=Component DOM Inspector
-C10=Component Uninstaller
+C4=Component Spellchecker
+C5=Component Chatzilla
+C6=Component Venkman
+C7=Component US English Profile Defaults
+C8=Component En US lang pack
+C9=Component US region pack
+C10=Component DOM Inspector
+C11=Component Uninstaller
 ; Make sure Component QFA is LAST so 3rd party developers who might not want
 ; this component can easily remove it.
-;C11=Component QFA
+;C12=Component QFA
 
 
 
@@ -319,6 +332,7 @@ Message Retry0=Some files have failed the CRC check and are being downloaded aga
 Show Dialog=AUTO
 
 [Check Instance0]
+; If you create your own product, make sure to change this name to something else
 Class Name=MozillaMessageWindow
 Window Name=
 ;*** LOCALIZE ME BABY ***
@@ -336,6 +350,8 @@ Extra Cmd0 Parameter=-kill
 [Check Instance1]
 Process Name=mozturbo.exe
 Extra Cmd0 Parameter=-u
+;*** LOCALIZE ME BABY ***
+Message=Unable to close mozturbo.exe. Please press OK to try again. If this problem persists, press the Cancel button and close mozturbo.exe manually. To do this, go to the directory where $ProductName$ is installed and type 'mozturbo -u'.
 
 [Component XPCOM]
 Description Short=Mozilla XPCOM
@@ -456,6 +472,17 @@ Attributes=SELECTED|FORCE_UPGRADE
 Force Upgrade File0=[SETUP PATH]\msgbsutl.dll
 
 
+[Component Spellchecker]
+Description Short=Spellchecker
+;*** LOCALIZE ME BABY ***
+Description Long=for spellchecking
+Archive=spellcheck.xpi
+$InstallSize$:spellcheck
+$InstallSizeArchive$:spellcheck.xpi
+Attributes=SELECTED|FORCE_UPGRADE
+Force Upgrade File0=[SETUP PATH]\myspell.dll
+
+
 [Component Uninstaller]
 Description Short=$CompanyName$ Uninstaller
 *** LOCALIZE ME BABY ***
@@ -534,7 +561,7 @@ Description Long=for secure browsing and email; required for SSL(https) and S/MI
 Archive=psm.xpi
 $InstallSize$:psm
 $InstallSizeArchive$:psm.xpi
-Attributes=SELECTED|FORCE_UPGRADE
+Attributes=SELECTED|INVISIBLE|FORCE_UPGRADE
 Force Upgrade File0=[SETUP PATH]\Components\pipnss.dll
 Force Upgrade File1=[SETUP PATH]\psm.exe
 
@@ -620,29 +647,29 @@ Destination=[SETUP PATH]\install_wizard.log
 
 
 ;RunAppX sections
-[RunApp0]
-Timing=depend reboot
-Wait=FALSE
-Target=[SETUP PATH]\$MainExeFile$
-Parameters=-installer
-WorkingDir=[SETUP PATH]
+;[RunApp0]
+;Timing=depend reboot
+;Wait=FALSE
+;Target=[SETUP PATH]\$MainExeFile$
+;Parameters=-installer
+;WorkingDir=[SETUP PATH]
 ;The Criterion ID=RecaptureHP associates the decision to run this app with
 ;  the user input to the Recapture Homepage checkbox offered (optionally) in the
 ;  Additional Options dialog.
-Criterion ID=RecaptureHP
-Run App If Criterion=FALSE
+;Criterion ID=RecaptureHP
+;Run App If Criterion=FALSE
 
-[RunApp1]
-Timing=depend reboot
-Wait=FALSE
-Target=[SETUP PATH]\$MainExeFile$
-Parameters=-installer -resetPref browser.startup.homepage
-WorkingDir=[SETUP PATH]
+;[RunApp1]
+;Timing=depend reboot
+;Wait=FALSE
+;Target=[SETUP PATH]\$MainExeFile$
+;Parameters=-installer -resetPref browser.startup.homepage
+;WorkingDir=[SETUP PATH]
 ;The Criterion ID=RecaptureHP associates the decision to run this app with
 ;  the user input to the Recapture Homepage checkbox offered (optionally) in the
 ;  Additional Options dialog.
-Criterion ID=RecaptureHP
-Run App If Criterion=TRUE
+;Criterion ID=RecaptureHP
+;Run App If Criterion=TRUE
 
 [OS2 INI0]
 App=$ProductName$ $UserAgent$
@@ -716,14 +743,30 @@ Decrypt Key=FALSE
 Decrypt Key Value=TRUE
 Timing=pre smartupdate
 
-[Cleanup Previous Product INIApps]
-Product Name0=Mozilla
-Product INI App0=Mozilla
-Current Version0=$UserAgent$
+; This version looks in the default INI for anything beginning with Product Name
+; and if it begins with product name and doesn't have current version set the same
+; and the value of Key is the same as the installed directory, it removes the
+; entire app
+[Cleanup Previous Product INIApps0]
+Product Name=$ProductName$
+Current Version=$UserAgent$
+Key=Install Directory
+
+; This version looks in a specified or the default INI for the given App
+; and if the value of the specified Key matched the installed directory,
+; it removes the entire app
+;[Cleanup Previous Product INIApps1]
+;INI=[OS2SYSDIR]\EPFIS.INI
+;Decrypt INI=TRUE
+;App=EPFINST_IBM Web Browser for OS/2_0000-000_0000
+;Key=FilePath
 
 ; Open Folder indicates whether to open the program folder after the install
 ;
 ; Default value is TRUE if nothing is set.
+;
+; When creating objects, you can specify Attributes=UPDATE or FAIL
+; FAIL will fail when trying to create the object, UPDATE will replace it
 
 [Program Folder0]
 Timing=post smartupdate
@@ -733,6 +776,7 @@ ClassName=WPFolder
 Title=$ProductName$
 Location=[DESKTOP]
 Object ID=<MOZILLAFLDR>
+Attributes=FAIL
 
 [Component Navigator-Program Folder0]
 Timing=post smartupdate
@@ -746,6 +790,7 @@ Location=[Default Folder]
 Association Filters=*.HTM,*.HTML
 Association Types=HTML,text/html
 Object ID=<MOZILLAEXE>
+Attributes=UPDATE
 
 [Component Navigator-Program Folder0-Object1]
 ClassName=WPProgram
@@ -755,6 +800,7 @@ Parameters=-ProfileManager
 Working Dir=[SETUP PATH]
 Location=[Default Folder]
 Object ID=<MOZILLAPROFMANAGER>
+Attributes=UPDATE
 
 [Component Uninstaller-Program Folder0]
 Timing=post smartupdate
@@ -767,6 +813,7 @@ Parameters=/ua \"$UserAgent$\"
 Working Dir=[SETUP PATH]
 Location=[Default Folder]
 Object ID=<MOZILLA_UNINSTALL>
+Attributes=UPDATE
 
 [Component MailNews-Program Folder0]
 Timing=post smartupdate
@@ -778,7 +825,8 @@ File=[SETUP PATH]\$MainExeFile$
 Parameters=-mail
 Working Dir=[SETUP PATH]
 Location=[Default Folder]
-Object ID=<CCINBOX>
+Object ID=<MOZILLAMAIL>
+Attributes=UPDATE
 
 [Strings]
 ;*** LOCALIZE ME BABY ***

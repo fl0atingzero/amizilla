@@ -41,8 +41,8 @@
 
 #include "EudoraDebugLog.h"
 
-#include <resources.h>
-#include <files.h>
+#include <Resources.h>
+#include <Files.h>
 #include <TextUtils.h>
 
 #ifdef XP_MACOSX
@@ -68,7 +68,6 @@ static nsresult NS_FileSpecToILocalFileMac(nsFileSpec *aSpec, nsILocalFileMac **
 #endif
 
 static NS_DEFINE_IID(kISupportsIID,			NS_ISUPPORTS_IID);
-static NS_DEFINE_CID(kComponentManagerCID, 	NS_COMPONENTMANAGER_CID);
 
 static const char *	kWhitespace = "\b\t\r\n ";
 

@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: NPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -69,6 +69,10 @@
 // XXX Remove
 #include "nsIWebShell.h"
 
+// used to dispatch urls to default protocol handlers
+#include "nsCExternalHandlerService.h"
+#include "nsIExternalProtocolService.h"
+
 static NS_DEFINE_CID(kTransactionManagerCID, NS_TRANSACTIONMANAGER_CID);
 static NS_DEFINE_CID(kComponentManagerCID,  NS_COMPONENTMANAGER_CID);
 
@@ -103,13 +107,13 @@ nsresult nsMsgWindow::Init()
 
   if (NS_SUCCEEDED(rv))
   {
-      rv = compMgr->CreateInstance(kTransactionManagerCID, nsnull,
-                                   NS_GET_IID(nsITransactionManager),
-                                   getter_AddRefs(mTransactionManager));
-      if (NS_SUCCEEDED(rv))
-        mTransactionManager->SetMaxTransactionCount(-1);
+    rv = compMgr->CreateInstance(kTransactionManagerCID, nsnull,
+                                 NS_GET_IID(nsITransactionManager),
+                                 getter_AddRefs(mTransactionManager));
+    if (NS_SUCCEEDED(rv))
+      mTransactionManager->SetMaxTransactionCount(-1);
   }
-  
+
   return rv;
 }
 
@@ -131,7 +135,7 @@ void nsMsgWindow::GetMessageWindowDocShell(nsIDocShell ** aDocShell)
 
       docShell = do_QueryInterface(msgDocShellItem);
       // we don't own mMessageWindowDocShell so don't try to keep a reference to it!
-      mMessageWindowDocShellWeak = getter_AddRefs(NS_GetWeakReference(docShell));
+      mMessageWindowDocShellWeak = do_GetWeakReference(docShell);
     }
   }
 
@@ -195,7 +199,6 @@ NS_IMETHODIMP nsMsgWindow::GetStatusFeedback(nsIMsgStatusFeedback * *aStatusFeed
 
 NS_IMETHODIMP nsMsgWindow::SetStatusFeedback(nsIMsgStatusFeedback * aStatusFeedback)
 {
-
   nsCOMPtr<nsIDocShell> messageWindowDocShell; 
   GetMessageWindowDocShell(getter_AddRefs(messageWindowDocShell));
 
@@ -290,7 +293,7 @@ NS_IMETHODIMP nsMsgWindow::SetRootDocShell(nsIDocShell * aDocShell)
   mRootDocShellWeak = nsnull;
   if (aDocShell)
   {
-    mRootDocShellWeak = getter_AddRefs(NS_GetWeakReference(aDocShell));
+    mRootDocShellWeak = do_GetWeakReference(aDocShell);
     aDocShell->SetParentURIContentListener(this);
 	// be sure to set the application flag on the root docshell
 	// so it knows we are a mail application.
@@ -349,36 +352,36 @@ NS_IMETHODIMP nsMsgWindow::SetDOMWindow(nsIDOMWindowInternal *aWindow)
 	nsresult rv = NS_OK;
 
 	nsCOMPtr<nsIScriptGlobalObject> globalScript(do_QueryInterface(aWindow));
-  nsCOMPtr<nsIDocShell> docShell;
+  nsIDocShell *docShell = nsnull;
 	if (globalScript)
-		globalScript->GetDocShell(getter_AddRefs(docShell));
+		docShell = globalScript->GetDocShell();
 
-   nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(do_QueryInterface(docShell));
+  nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(do_QueryInterface(docShell));
 
-   if(docShellAsItem)
-   {
-      nsCOMPtr<nsIDocShellTreeItem> rootAsItem;
-      docShellAsItem->GetSameTypeRootTreeItem(getter_AddRefs(rootAsItem));
+  if(docShellAsItem)
+  {
+    nsCOMPtr<nsIDocShellTreeItem> rootAsItem;
+    docShellAsItem->GetSameTypeRootTreeItem(getter_AddRefs(rootAsItem));
 
-      nsCOMPtr<nsIDocShell> rootAsShell(do_QueryInterface(rootAsItem));
-      SetRootDocShell(rootAsShell);
+    nsCOMPtr<nsIDocShell> rootAsShell(do_QueryInterface(rootAsItem));
+    SetRootDocShell(rootAsShell);
 
-      // force ourselves to figure out the message pane
-      nsCOMPtr<nsIDocShell> messageWindowDocShell; 
-      GetMessageWindowDocShell(getter_AddRefs(messageWindowDocShell));
-      SetStatusFeedback(mStatusFeedback);
-   }
+    // force ourselves to figure out the message pane
+    nsCOMPtr<nsIDocShell> messageWindowDocShell; 
+    GetMessageWindowDocShell(getter_AddRefs(messageWindowDocShell));
+    SetStatusFeedback(mStatusFeedback);
+  }
 
 	//Get nsIMsgWindowCommands object 
-   nsCOMPtr<nsISupports> xpConnectObj;
-   nsCOMPtr<nsPIDOMWindow> piDOMWindow(do_QueryInterface(aWindow));
-   if (piDOMWindow)
-   {
-      piDOMWindow->GetObjectProperty(NS_LITERAL_STRING("MsgWindowCommands").get(), getter_AddRefs(xpConnectObj));
-      mMsgWindowCommands = do_QueryInterface(xpConnectObj);
-   }
+  nsCOMPtr<nsISupports> xpConnectObj;
+  nsCOMPtr<nsPIDOMWindow> piDOMWindow(do_QueryInterface(aWindow));
+  if (piDOMWindow)
+  {
+    piDOMWindow->GetObjectProperty(NS_LITERAL_STRING("MsgWindowCommands").get(), getter_AddRefs(xpConnectObj));
+    mMsgWindowCommands = do_QueryInterface(xpConnectObj);
+  }
 
-   return rv;
+  return rv;
 }
 
 NS_IMETHODIMP nsMsgWindow::StopUrls()
@@ -508,76 +511,56 @@ NS_IMETHODIMP nsMsgWindow::GetPromptDialog(nsIPrompt **aPrompt)
   nsCOMPtr<nsIDocShell> rootShell(do_QueryReferent(mRootDocShellWeak));
   if (rootShell)
   {
-      nsCOMPtr<nsIPrompt> dialog;
-      dialog = do_GetInterface(rootShell, &rv);
-      if (dialog)
-      {
-          *aPrompt = dialog;
-          NS_ADDREF(*aPrompt);
-      }
-      return rv;
+    nsCOMPtr<nsIPrompt> dialog;
+    dialog = do_GetInterface(rootShell, &rv);
+    if (dialog)
+    {
+      *aPrompt = dialog;
+      NS_ADDREF(*aPrompt);
+    }
+    return rv;
   }
   else
-      return NS_ERROR_NULL_POINTER;
-}
-
-NS_IMETHODIMP nsMsgWindow::GetAuthPromptDialog(nsIAuthPrompt **aPrompt)
-{
-  nsresult rv = NS_OK;
-  NS_ENSURE_ARG_POINTER(aPrompt);
-  nsCOMPtr<nsIDocShell> rootShell(do_QueryReferent(mRootDocShellWeak));
-  if (rootShell)
-  {
-      nsCOMPtr<nsIAuthPrompt> dialog;
-      dialog = do_GetInterface(rootShell, &rv);
-      if (dialog)
-      {
-          *aPrompt = dialog;
-          NS_ADDREF(*aPrompt);
-      }
-      return rv;
-  }
-  else
-      return NS_ERROR_NULL_POINTER;
+    return NS_ERROR_NULL_POINTER;
 }
 
 NS_IMETHODIMP 
 nsMsgWindow::DisplayHTMLInMessagePane(const PRUnichar *title, const PRUnichar *body)
 {
-    nsresult rv;
+  nsresult rv;
 
-    if (mMsgPaneController)
-      mMsgPaneController->ClearMsgPane();
+  if (mMsgPaneController)
+    mMsgPaneController->ClearMsgPane();
 
-    nsString htmlStr;
-    htmlStr.Append(NS_LITERAL_STRING("<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"></head><body>").get());
-    htmlStr.Append(body);
-    htmlStr.Append(NS_LITERAL_STRING("</body></html>").get());
+  nsString htmlStr;
+  htmlStr.Append(NS_LITERAL_STRING("<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"></head><body>").get());
+  htmlStr.Append(body);
+  htmlStr.Append(NS_LITERAL_STRING("</body></html>").get());
 
-    char *encodedHtml = PL_Base64Encode(NS_ConvertUCS2toUTF8(htmlStr).get(), 0, nsnull);
-    if (!encodedHtml)
-      return NS_ERROR_OUT_OF_MEMORY;
+  char *encodedHtml = PL_Base64Encode(NS_ConvertUCS2toUTF8(htmlStr).get(), 0, nsnull);
+  if (!encodedHtml)
+    return NS_ERROR_OUT_OF_MEMORY;
 
-    nsCString dataSpec;
-    dataSpec = "data:text/html;base64,";
-    dataSpec += encodedHtml;
+  nsCString dataSpec;
+  dataSpec = "data:text/html;base64,";
+  dataSpec += encodedHtml;
 
-    PR_FREEIF(encodedHtml);
+  PR_FREEIF(encodedHtml);
 
-    nsCOMPtr <nsIURI> uri = do_CreateInstance("@mozilla.org/network/simple-uri;1");
-    if (!uri) return NS_ERROR_UNEXPECTED;
+  nsCOMPtr <nsIURI> uri = do_CreateInstance("@mozilla.org/network/simple-uri;1");
+  if (!uri) return NS_ERROR_UNEXPECTED;
 
-    rv = uri->SetSpec(dataSpec);
-    NS_ENSURE_SUCCESS(rv,rv);
+  rv = uri->SetSpec(dataSpec);
+  NS_ENSURE_SUCCESS(rv,rv);
 
-    nsCOMPtr <nsIDocShell> docShell;
-    GetMessageWindowDocShell(getter_AddRefs(docShell));
-    if (!docShell) return NS_ERROR_UNEXPECTED;
+  nsCOMPtr <nsIDocShell> docShell;
+  GetMessageWindowDocShell(getter_AddRefs(docShell));
+  if (!docShell) return NS_ERROR_UNEXPECTED;
 
-    rv = docShell->LoadURI(uri,nsnull,nsIWebNavigation::LOAD_FLAGS_NONE, PR_FALSE);
-    NS_ENSURE_SUCCESS(rv,rv);
+  rv = docShell->LoadURI(uri,nsnull,nsIWebNavigation::LOAD_FLAGS_NONE, PR_FALSE);
+  NS_ENSURE_SUCCESS(rv,rv);
 
-    return NS_OK;
+  return NS_OK;
 }
 
-NS_IMPL_GETSET(nsMsgWindow, Stopped, PRBool, m_stopped);
+NS_IMPL_GETSET(nsMsgWindow, Stopped, PRBool, m_stopped)

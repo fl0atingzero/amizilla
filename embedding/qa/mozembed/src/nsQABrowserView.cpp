@@ -36,6 +36,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include <stdio.h>
+
 //locals
 #include "nsQABrowserView.h"
 #include "nsIQABrowserView.h"
@@ -53,7 +55,6 @@
 #include "nsWeakPtr.h"
 #include "nsWeakReference.h"
 
-
 nsQABrowserView::nsQABrowserView():mWebBrowser(nsnull)
 {
   mWebBrowser = nsnull;
@@ -69,7 +70,7 @@ nsQABrowserView::~nsQABrowserView()
 // nsQABrowserView::nsISupports
 //*****************************************************************************   
 
-NS_IMPL_ISUPPORTS2(nsQABrowserView, nsIQABrowserView, nsIInterfaceRequestor);
+NS_IMPL_ISUPPORTS2(nsQABrowserView, nsIQABrowserView, nsIInterfaceRequestor)
 
 //*****************************************************************************
 // nsQABrowserView::nsIInterfacerequestor
@@ -135,7 +136,7 @@ nsQABrowserView::CreateBrowser(nativeWindow aNativeWnd, nsIWebBrowserChrome * aC
 
   // Register the QABrowserChrome object to receive progress messages
 	// These callbacks will be used to update the status/progress bars
-  nsWeakPtr weakling(dont_AddRef(NS_GetWeakReference(aChrome)));
+  nsWeakPtr weakling(do_GetWeakReference(aChrome));
   (void)mWebBrowser->AddWebBrowserListener(weakling, NS_GET_IID(nsIWebProgressListener));
 
 	// Finally, show the web browser window

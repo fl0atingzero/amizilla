@@ -51,6 +51,7 @@
 #include "nsLayoutAtoms.h"
 #include "nsReflowPath.h"
 #include "nsAutoPtr.h"
+#include "nsStyleSet.h"
 // MouseEvent suppression in PP
 #include "nsGUIEvent.h"
 
@@ -58,7 +59,6 @@ static NS_DEFINE_CID(kTextNodeCID,   NS_TEXTNODE_CID);
 
 // Saving PresState
 #include "nsIPresState.h"
-#include "nsIHTMLContent.h"
 
 const nscoord kSuggestedNotSet = -1;
 
@@ -83,13 +83,10 @@ NS_NewGfxButtonControlFrame(nsIPresShell* aPresShell, nsIFrame** aNewFrame)
   return NS_OK;
 }
       
-NS_IMETHODIMP
-nsGfxButtonControlFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsGfxButtonControlFrame::GetType() const
 {
-  NS_PRECONDITION(nsnull != aType, "null OUT parameter pointer");
-  *aType = nsLayoutAtoms::gfxButtonControlFrame; 
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsLayoutAtoms::gfxButtonControlFrame;
 }
 
 // Special check for the browse button of a file input.
@@ -107,26 +104,12 @@ nsGfxButtonControlFrame::IsFileBrowseButton(PRInt32 type)
     rv = PR_TRUE;
   }
   else if (NS_FORM_INPUT_BUTTON == type) {
-  
     // Check to see if parent is a file input
-    nsresult result;
-    nsCOMPtr<nsIContent> parentContent;
-    result = mContent->GetParent(getter_AddRefs(parentContent));
-    if (NS_SUCCEEDED(result) && parentContent) {
-      nsCOMPtr<nsIAtom> atom;
-      result = parentContent->GetTag(getter_AddRefs(atom));
-      if (NS_SUCCEEDED(result) && atom) {
-        if (atom.get() == nsHTMLAtoms::input) {
+    nsCOMPtr<nsIFormControl> formCtrl =
+      do_QueryInterface(mContent->GetParent());
 
-          // It's an input, is it a file input?
-          nsAutoString value;
-          if (NS_CONTENT_ATTR_HAS_VALUE == parentContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::type, value)) {
-            if (value.EqualsIgnoreCase("file")) {
-              rv = PR_TRUE;
-            }
-          }
-        }
-      }
+    if (formCtrl && formCtrl->GetType() == NS_FORM_INPUT_FILE) {
+      rv = PR_TRUE;
     }
   }
   return rv;
@@ -248,17 +231,15 @@ nsGfxButtonControlFrame::CreateFrameFor(nsIPresContext*   aPresContext,
 
   nsCOMPtr<nsIContent> content(do_QueryInterface(mTextContent));
   if (aContent == content.get()) {
-    nsCOMPtr<nsIPresShell> shell;
-    aPresContext->GetShell(getter_AddRefs(shell));
-
     nsIFrame * parentFrame = mFrames.FirstChild();
     nsStyleContext* styleContext = parentFrame->GetStyleContext();
 
-    rv = NS_NewTextFrame(shell, &newFrame);
+    rv = NS_NewTextFrame(aPresContext->PresShell(), &newFrame);
     if (NS_FAILED(rv)) { return rv; }
     if (!newFrame)   { return NS_ERROR_NULL_POINTER; }
     nsRefPtr<nsStyleContext> textStyleContext;
-    textStyleContext = aPresContext->ResolveStyleContextForNonElement(styleContext);
+    textStyleContext = aPresContext->StyleSet()->
+      ResolveStyleForNonElement(styleContext);
     if (!textStyleContext) { return NS_ERROR_NULL_POINTER; }
 
     if (styleContext) {
@@ -315,7 +296,7 @@ nsGfxButtonControlFrame::GetDefaultLabel(nsString& aString)
 {
   const char * propname = nsFormControlHelper::GetHTMLPropertiesFileName();
   nsresult rv = NS_OK;
-  PRInt32 type = GetType();
+  PRInt32 type = GetFormControlType();
   if (type == NS_FORM_INPUT_RESET) {
     rv = nsFormControlHelper::GetLocalizedString(propname, NS_LITERAL_STRING("Reset").get(), aString);
   } 
@@ -326,7 +307,7 @@ nsGfxButtonControlFrame::GetDefaultLabel(nsString& aString)
     rv = nsFormControlHelper::GetLocalizedString(propname, NS_LITERAL_STRING("Browse").get(), aString);
   }
   else {
-    aString.Assign(NS_LITERAL_STRING(""));
+    aString.Truncate();
     rv = NS_OK;
   }
   return rv;
@@ -337,8 +318,7 @@ nsGfxButtonControlFrame::AttributeChanged(nsIPresContext* aPresContext,
                                        nsIContent*     aChild,
                                        PRInt32         aNameSpaceID,
                                        nsIAtom*        aAttribute,
-                                       PRInt32         aModType, 
-                                       PRInt32         aHint)
+                                       PRInt32         aModType)
 {
   nsresult rv = NS_OK;
 
@@ -356,7 +336,7 @@ nsGfxButtonControlFrame::AttributeChanged(nsIPresContext* aPresContext,
 
   // defer to HTMLButtonControlFrame
   } else {
-    rv = nsHTMLButtonControlFrame::AttributeChanged(aPresContext, aChild, aNameSpaceID, aAttribute, aModType, aHint);
+    rv = nsHTMLButtonControlFrame::AttributeChanged(aPresContext, aChild, aNameSpaceID, aAttribute, aModType);
   }
   return rv;
 }
@@ -407,9 +387,7 @@ nsGfxButtonControlFrame::HandleEvent(nsIPresContext* aPresContext,
                                       nsEventStatus*  aEventStatus)
 {
   // temp fix until Bug 124990 gets fixed
-  PRBool isPaginated = PR_FALSE;
-  aPresContext->IsPaginated(&isPaginated);
-  if (isPaginated && NS_IS_MOUSE_EVENT(aEvent)) {
+  if (aPresContext->IsPaginated() && NS_IS_MOUSE_EVENT(aEvent)) {
     return NS_OK;
   }
   // Override the HandleEvent to prevent the nsFrame::HandleEvent

@@ -26,17 +26,22 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-ifndef MOZ_THUNDERBIRD
+ifdef MOZ_THUNDERBIRD
+MOZ_STANDALONE_NONBROWSER_XULAPP=1
+endif
+ifdef MOZ_STANDALONE_COMPOSER
+MOZ_STANDALONE_NONBROWSER_XULAPP=1
+endif
+
+ifndef MOZ_STANDALONE_NONBROWSER_XULAPP
 DIRS	= \
 			directory \
 			filepicker \
 			find \
 			search \
-			sidebar \
 			related \
 			prefwindow \
 			shistory \
-			timebomb \
 			console \
 			updates \
 			intl \
@@ -52,11 +57,15 @@ DIRS += \
 		download-manager \
 		history \
 		urlbarhistory \
+		sidebar \
 		$(NULL)
 endif
 
 ifeq ($(OS_ARCH),WINNT)
-DIRS		+= winhooks urlwidget alerts
+DIRS		+= urlwidget 
+ifndef MOZ_PHOENIX
+DIRS    += winhooks alerts
+endif
 endif
 
 else
@@ -74,10 +83,9 @@ DIRS    = \
           history/public \
           shistory/public \
           bookmarks/public \
-          timebomb \
           $(NULL)
 
-ifeq ($(OS_ARCH),WINNT)
+ifeq ($(OS_ARCH),WINNT) 
 DIRS    += alerts winhooks
 endif
 
@@ -87,10 +95,10 @@ ifdef MOZ_ENABLE_XREMOTE
 DIRS		+= xremote
 endif
 
-ifndef MOZ_THUNDERBIRD
+ifndef MOZ_STANDALONE_NONBROWSER_XULAPP
 DIRS		+= build
 else
-DIRS	        += build2
+DIRS		+= build2
 endif
 
 include $(topsrcdir)/config/rules.mk

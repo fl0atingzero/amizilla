@@ -53,101 +53,129 @@ class nsDownloadProxy : public nsIDownload,
 public:
 
   nsDownloadProxy() { }
-  virtual ~nsDownloadProxy() { };
+  virtual ~nsDownloadProxy() { }
 
   NS_DECL_ISUPPORTS
 
   NS_IMETHODIMP Init(nsIURI* aSource,
-                     nsILocalFile* aTarget,
+                     nsIURI* aTarget,
                      const PRUnichar* aDisplayName,
                      nsIMIMEInfo *aMIMEInfo,
                      PRInt64 aStartTime,
                      nsIWebBrowserPersist* aPersist) {
     nsresult rv;
     nsCOMPtr<nsIDownloadManager> dm = do_GetService("@mozilla.org/download-manager;1", &rv);
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv))
+      return rv;
     
     rv = dm->AddDownload(aSource, aTarget, aDisplayName, aMIMEInfo, aStartTime, aPersist, getter_AddRefs(mInner));
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv))
+      return rv;
 
-    PRInt32 behavior = 0;
-    nsCOMPtr<nsIPrefService> prefs = do_GetService("@mozilla.org/preferences-service;1", &rv);
-    if (NS_FAILED(rv)) return rv;
-    nsCOMPtr<nsIPrefBranch> branch = do_QueryInterface(prefs);
+    PRInt32 behavior;
+    nsCOMPtr<nsIPrefBranch> branch = do_GetService("@mozilla.org/preferences-service;1", &rv);
+    if (NS_SUCCEEDED(rv))
+      rv = branch->GetIntPref(DOWNLOAD_MANAGER_BEHAVIOR_PREF, &behavior);
+    if (NS_FAILED(rv))
+      behavior = 0;
 
-    branch->GetIntPref(DOWNLOAD_MANAGER_BEHAVIOR_PREF, &behavior);
     if (behavior == 0)
-      return dm->Open(nsnull, this);
-    if (behavior == 1) {
-      nsAutoString path;
-      rv = aTarget->GetPath(path);
-      if (NS_FAILED(rv)) return rv;
-
-      NS_ConvertUCS2toUTF8 utf8Path(path);
-      return dm->OpenProgressDialogFor(utf8Path, nsnull);
-    }
+      rv = dm->Open(nsnull, this);
+    else if (behavior == 1)
+      rv = dm->OpenProgressDialogFor(mInner, nsnull, PR_TRUE);
     return rv;
   }
 
  
   NS_IMETHODIMP GetDisplayName(PRUnichar** aDisplayName)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->GetDisplayName(aDisplayName);
   }
   
   NS_IMETHODIMP SetDisplayName(const PRUnichar* aDisplayName)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->SetDisplayName(aDisplayName);
   }
   
   NS_IMETHODIMP GetMIMEInfo(nsIMIMEInfo** aMIMEInfo)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->GetMIMEInfo(aMIMEInfo);
   }
   
   NS_IMETHODIMP GetSource(nsIURI** aSource)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->GetSource(aSource);
   }
   
-  NS_IMETHODIMP GetTarget(nsILocalFile** aTarget)
+  NS_IMETHODIMP GetTarget(nsIURI** aTarget)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->GetTarget(aTarget);
   }
   
   NS_IMETHODIMP GetStartTime(PRInt64* aStartTime)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->GetStartTime(aStartTime);
   }
 
   NS_IMETHODIMP GetPercentComplete(PRInt32* aPercentComplete)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->GetPercentComplete(aPercentComplete);
   }
    
   NS_IMETHODIMP GetListener(nsIWebProgressListener** aListener)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->GetListener(aListener);
   }
 
   NS_IMETHODIMP SetListener(nsIWebProgressListener* aListener)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->SetListener(aListener);
   }
   
   NS_IMETHODIMP GetObserver(nsIObserver** aObserver)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->GetObserver(aObserver);
   }
 
   NS_IMETHODIMP SetObserver(nsIObserver* aObserver)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->SetObserver(aObserver);
   }
    
   NS_IMETHODIMP GetPersist(nsIWebBrowserPersist** aPersist)
   {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
     return mInner->GetPersist(aPersist);
+  }
+
+  NS_IMETHODIMP GetTargetFile(nsILocalFile** aTargetFile)
+  {
+    if (!mInner)
+      return NS_ERROR_NOT_INITIALIZED;
+    return mInner->GetTargetFile(aTargetFile);
   }
 
   NS_IMETHODIMP OnStateChange(nsIWebProgress* aWebProgress,
@@ -206,6 +234,6 @@ private:
   nsCOMPtr<nsIDownload> mInner;
 };
 
-NS_IMPL_ISUPPORTS2(nsDownloadProxy, nsIDownload, nsIWebProgressListener)  
+NS_IMPL_ISUPPORTS3(nsDownloadProxy, nsIDownload, nsITransfer, nsIWebProgressListener)  
 
 #endif

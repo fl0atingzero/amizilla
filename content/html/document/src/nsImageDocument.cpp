@@ -22,7 +22,7 @@
  * Contributor(s):
  *   Morten Nilsen <morten@nilsen.com>
  *   Christian Biesinger <cbiesinger@web.de>
- *   Jan Varga <varga@netscape.com>
+ *   Jan Varga <varga@nixcorp.com>
  *    
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -58,6 +58,7 @@
 #include "nsIPrefService.h"
 #include "nsAutoPtr.h"
 #include "nsMediaDocument.h"
+#include "nsStyleSet.h"
 
 #define AUTOMATIC_IMAGE_RESIZING_PREF "browser.enable_automatic_image_resizing"
 
@@ -87,15 +88,15 @@ public:
 
   virtual nsresult Init();
 
-  NS_IMETHOD StartDocumentLoad(const char*         aCommand,
-                               nsIChannel*         aChannel,
-                               nsILoadGroup*       aLoadGroup,
-                               nsISupports*        aContainer,
-                               nsIStreamListener** aDocListener,
-                               PRBool              aReset = PR_TRUE,
-                               nsIContentSink*     aSink = nsnull);
+  virtual nsresult StartDocumentLoad(const char*         aCommand,
+                                     nsIChannel*         aChannel,
+                                     nsILoadGroup*       aLoadGroup,
+                                     nsISupports*        aContainer,
+                                     nsIStreamListener** aDocListener,
+                                     PRBool              aReset = PR_TRUE,
+                                     nsIContentSink*     aSink = nsnull);
 
-  NS_IMETHOD SetScriptGlobalObject(nsIScriptGlobalObject* aScriptGlobalObject);
+  virtual void SetScriptGlobalObject(nsIScriptGlobalObject* aScriptGlobalObject);
 
   NS_DECL_NSIIMAGEDOCUMENT
 
@@ -145,7 +146,7 @@ ImageListener::ImageListener(nsImageDocument* aDocument)
 
 ImageListener::~ImageListener()
 {
-};
+}
 
 NS_IMETHODIMP
 ImageListener::OnStartRequest(nsIRequest* request, nsISupports *ctxt)
@@ -176,9 +177,9 @@ ImageListener::OnStopRequest(nsIRequest* request, nsISupports *ctxt,
   imgDoc->UpdateTitleAndCharset();
   
   nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(imgDoc->mImageElement);
-  NS_ENSURE_TRUE(imageLoader, NS_ERROR_UNEXPECTED);
-
-  imageLoader->RemoveObserver(imgDoc);
+  if (imageLoader) {
+    imageLoader->RemoveObserver(imgDoc);
+  }
 
   return nsMediaDocumentStreamListener::OnStopRequest(request, ctxt, status);
 }
@@ -227,7 +228,7 @@ nsImageDocument::Init()
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsImageDocument::StartDocumentLoad(const char*         aCommand,
                                    nsIChannel*         aChannel,
                                    nsILoadGroup*       aLoadGroup,
@@ -253,7 +254,7 @@ nsImageDocument::StartDocumentLoad(const char*         aCommand,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsImageDocument::SetScriptGlobalObject(nsIScriptGlobalObject* aScriptGlobalObject)
 {
   if (!aScriptGlobalObject) {
@@ -267,22 +268,24 @@ nsImageDocument::SetScriptGlobalObject(nsIScriptGlobalObject* aScriptGlobalObjec
                                   PR_FALSE);
     }
 
-    // drop the ref to mImageElement, in case it has a ref to us
+    // Break reference cycle with mImageElement, if we have one
+    nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(mImageElement);
+    if (imageLoader) {
+      imageLoader->RemoveObserver(this);
+    }
+    
     mImageElement = nsnull;
   }
 
   // Set the script global object on the superclass before doing
   // anything that might require it....
-  nsresult rv = nsHTMLDocument::SetScriptGlobalObject(aScriptGlobalObject);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  nsHTMLDocument::SetScriptGlobalObject(aScriptGlobalObject);
 
   if (aScriptGlobalObject) {
     // Create synthetic document
-    rv = CreateSyntheticDocument();
+    nsresult rv = CreateSyntheticDocument();
     if (NS_FAILED(rv)) {
-      return rv;
+      return;
     }
 
     if (mImageResizingEnabled) {
@@ -294,8 +297,6 @@ nsImageDocument::SetScriptGlobalObject(nsIScriptGlobalObject* aScriptGlobalObjec
       target->AddEventListener(NS_LITERAL_STRING("keypress"), this, PR_FALSE);
     }
   }
-
-  return NS_OK;
 }
 
 
@@ -388,6 +389,7 @@ nsImageDocument::OnStartContainer(imgIRequest* aRequest, imgIContainer* aImage)
   if (mImageResizingEnabled) {
     CheckOverflowing();
   }
+  UpdateTitleAndCharset();
 
   return NS_OK;
 }
@@ -499,13 +501,12 @@ nsImageDocument::CreateSyntheticDocument()
   NS_ENSURE_TRUE(imageLoader, NS_ERROR_UNEXPECTED);
 
   nsCAutoString src;
-  mDocumentURL->GetSpec(src);
+  mDocumentURI->GetSpec(src);
 
   NS_ConvertUTF8toUCS2 srcString(src);
   // Make sure not to start the image load from here...
   imageLoader->SetLoadingEnabled(PR_FALSE);
   image->SetAttr(kNameSpaceID_None, nsHTMLAtoms::src, srcString, PR_FALSE);
-  imageLoader->SetLoadingEnabled(PR_TRUE);
 
   if (mStringBundle) {
     const PRUnichar* formatString[1] = { srcString.get() };
@@ -518,6 +519,7 @@ nsImageDocument::CreateSyntheticDocument()
   }
 
   body->AppendChildTo(image, PR_FALSE, PR_FALSE);
+  imageLoader->SetLoadingEnabled(PR_TRUE);
 
   return NS_OK;
 }
@@ -525,8 +527,7 @@ nsImageDocument::CreateSyntheticDocument()
 nsresult
 nsImageDocument::CheckOverflowing()
 {
-  nsCOMPtr<nsIPresShell> shell;
-  GetShellAt(0, getter_AddRefs(shell));
+  nsIPresShell *shell = GetShellAt(0);
   if (!shell) {
     return NS_OK;
   }
@@ -534,12 +535,11 @@ nsImageDocument::CheckOverflowing()
   nsCOMPtr<nsIPresContext> context;
   shell->GetPresContext(getter_AddRefs(context));
 
-  nsRect visibleArea;
-  context->GetVisibleArea(visibleArea);
+  nsRect visibleArea = context->GetVisibleArea();
 
   nsCOMPtr<nsIContent> content = do_QueryInterface(mBodyContent);
   nsRefPtr<nsStyleContext> styleContext =
-    context->ResolveStyleContextFor(content, nsnull);
+    context->StyleSet()->ResolveStyleFor(content, nsnull);
 
   const nsStyleMargin* marginData = styleContext->GetStyleMargin();
   nsMargin margin;
@@ -552,7 +552,7 @@ nsImageDocument::CheckOverflowing()
   visibleArea.Deflate(margin);
 
   float t2p;
-  context->GetTwipsToPixels(&t2p);
+  t2p = context->TwipsToPixels();
   mVisibleWidth = NSTwipsToIntPixels(visibleArea.width, t2p);
   mVisibleHeight = NSTwipsToIntPixels(visibleArea.height, t2p);
 

@@ -112,10 +112,10 @@ function parseJSDURL (url)
             ary = assignment.match(/(.+)=(.*)/);
             if (ASSERT(ary, "error parsing ``" + assignment + "'' from " + url))
             {
-                var name = unescape(ary[1]);
+                var name = decodeURIComponent(ary[1]);
                 /* only set the property the first time we see it */
-                if (2 in ary && !(name in parseResult))
-                    parseResult[name] = unescape(ary[2]);
+                if (arrayHasElementAt(ary, 2) && !(name in parseResult))
+                    parseResult[name] = decodeURIComponent(ary[2]);
             }
             ary = rest.match(/([^&#]+)/);
         }
@@ -163,16 +163,7 @@ function con_loadservicetpl (name, sections, callback)
     }
     
     var url = console.prefs[prefName];
-    try
-    {
-        var data = loadURLNow (url);
-        onComplete (data, url, Components.results.NS_OK);
-    }
-    catch (ex)
-    {
-        dd ("forced to load " + url + " async.");
-        loadURLAsync (url, { onComplete: onComplete });
-    }
+    loadURLAsync (url, { onComplete: onComplete });
 }
         
 console.asyncOpenJSDURL = asyncOpenJSDURL;

@@ -136,9 +136,7 @@ nsFocusController::SetFocusedWindow(nsIDOMWindowInternal* aWindow)
   if (aWindow && (mCurrentWindow != aWindow)) {
     nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(aWindow);
     if (sgo) {
-      nsCOMPtr<nsIDocShell> docShell;
-      sgo->GetDocShell(getter_AddRefs(docShell));
-      nsCOMPtr<nsIBaseWindow> basewin = do_QueryInterface(docShell);
+      nsCOMPtr<nsIBaseWindow> basewin = do_QueryInterface(sgo->GetDocShell());
       if (basewin)
         basewin->SetFocus();
     }
@@ -171,10 +169,7 @@ nsFocusController::UpdateCommands(const nsAString& aEventName)
     if (domDoc) {
       nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
  
-      nsCOMPtr<nsIScriptGlobalObject> global;
-      doc->GetScriptGlobalObject(getter_AddRefs(global));
-
-      nsCOMPtr<nsIDOMWindowInternal> window(do_QueryInterface(global));
+      nsCOMPtr<nsIDOMWindowInternal> window(do_QueryInterface(doc->GetScriptGlobalObject()));
       if (window)
         window->UpdateCommands(aEventName);
     }
@@ -222,12 +217,12 @@ nsFocusController::MoveFocus(PRBool aForward, nsIDOMElement* aElt)
   nsCOMPtr<nsIContent> content;
   if (aElt) {
     content = do_QueryInterface(aElt);
-    content->GetDocument(getter_AddRefs(doc));
+    doc = content->GetDocument();
   }
   else {
     if (mCurrentElement) {
       content = do_QueryInterface(mCurrentElement);
-      content->GetDocument(getter_AddRefs(doc));
+      doc = content->GetDocument();
       content = nsnull;
     }
     else if (mCurrentWindow) {
@@ -247,8 +242,7 @@ nsFocusController::MoveFocus(PRBool aForward, nsIDOMElement* aElt)
   if (count == 0)
     return NS_OK;
 
-  nsCOMPtr<nsIPresShell> shell;
-  doc->GetShellAt(0, getter_AddRefs(shell));
+  nsIPresShell *shell = doc->GetShellAt(0);
   if (!shell)
     return NS_OK;
 
@@ -256,11 +250,8 @@ nsFocusController::MoveFocus(PRBool aForward, nsIDOMElement* aElt)
   nsCOMPtr<nsIPresContext> presContext;
   shell->GetPresContext(getter_AddRefs(presContext));
 
-  nsCOMPtr<nsIEventStateManager> esm;
-  presContext->GetEventStateManager(getter_AddRefs(esm));
-  if (esm)
-    // Make this ESM shift the focus per our instructions.
-    esm->ShiftFocus(aForward, content);
+  // Make this ESM shift the focus per our instructions.
+  presContext->EventStateManager()->ShiftFocus(aForward, content);
 
   return NS_OK;
 }
@@ -365,11 +356,7 @@ nsFocusController::GetParentWindowFromDocument(nsIDOMDocument* aDocument, nsIDOM
   nsCOMPtr<nsIDocument> objectOwner = do_QueryInterface(aDocument);
   if(!objectOwner) return NS_OK;
 
-  nsCOMPtr<nsIScriptGlobalObject> globalObject;
-  objectOwner->GetScriptGlobalObject(getter_AddRefs(globalObject));
-  if(!globalObject) return NS_OK;
-
-  nsCOMPtr<nsIDOMWindowInternal> domWindow = do_QueryInterface(globalObject);
+  nsCOMPtr<nsIDOMWindowInternal> domWindow = do_QueryInterface(objectOwner->GetScriptGlobalObject());
   *aWindow = domWindow;
   NS_IF_ADDREF(*aWindow);
   return NS_OK;
@@ -505,6 +492,13 @@ nsFocusController::SetActive(PRBool aActive)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsFocusController::ResetElementFocus()
+{
+  mCurrentElement = mPreviousElement = nsnull;
+  return NS_OK;
+}
+
 void
 nsFocusController::UpdateWWActiveWindow()
 {
@@ -514,11 +508,11 @@ nsFocusController::UpdateWWActiveWindow()
 
   // This gets the toplevel DOMWindow
   nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(mCurrentWindow);
-  nsCOMPtr<nsIDocShell> docShell;
-  sgo->GetDocShell(getter_AddRefs(docShell));
-  if (!docShell) return;
 
-  nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(do_QueryInterface(docShell));
+  nsCOMPtr<nsIDocShellTreeItem> docShellAsItem =
+    do_QueryInterface(sgo->GetDocShell());
+  if (!docShellAsItem) return;
+
   nsCOMPtr<nsIDocShellTreeItem> rootItem;
   docShellAsItem->GetRootTreeItem(getter_AddRefs(rootItem));
   NS_ASSERTION(rootItem, "Invalid docshell tree - no root!");

@@ -20,7 +20,7 @@
  * Contributor(s): 
  * syd@netscape.com 2/12/00. 
  * pavlov@netscape.com 2/13/00.
- * bryner@netscape.com 11/20/01.
+ * bryner@brianryner.com 11/20/01.
  */
 
 #include "nsNativeAppSupportBase.h"
@@ -105,7 +105,7 @@ NS_IMETHODIMP nsSplashScreenGtk::Show()
   attr.y = (gdk_screen_height() >> 1) - (height >> 1);
   attr.width = width;
   attr.height = height;
-  attr.event_mask = 0;
+  attr.event_mask = GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK;
   mDialog = gdk_window_new(NULL, &attr, GDK_WA_X | GDK_WA_Y);
 
   gdk_window_set_back_pixmap(mDialog, pmap, FALSE);

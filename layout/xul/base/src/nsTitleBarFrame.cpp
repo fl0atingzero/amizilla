@@ -167,13 +167,9 @@ nsTitleBarFrame::HandleEvent(nsIPresContext* aPresContext,
 			 if(mTrackingMouseMove)
 			 {				 				 
 			   // get the document and the global script object - should this be cached?
-			   nsCOMPtr<nsIPresShell> presShell;
-			   aPresContext->GetShell(getter_AddRefs(presShell));
 			   nsCOMPtr<nsIDocument> document;
-			   presShell->GetDocument(getter_AddRefs(document));
-			   nsCOMPtr<nsIScriptGlobalObject> scriptGlobalObject;
-			   document->GetScriptGlobalObject(getter_AddRefs(scriptGlobalObject));
-			   nsCOMPtr<nsIDOMWindowInternal> window(do_QueryInterface(scriptGlobalObject));
+			   aPresContext->PresShell()->GetDocument(getter_AddRefs(document));
+			   nsCOMPtr<nsIDOMWindowInternal> window(do_QueryInterface(document->GetScriptGlobalObject()));
 
 
 
@@ -209,16 +205,13 @@ NS_IMETHODIMP
 nsTitleBarFrame::CaptureMouseEvents(nsIPresContext* aPresContext,PRBool aGrabMouseEvents)
 {
 	// get its view
-  nsIView* view = GetView(aPresContext);
-  nsCOMPtr<nsIViewManager> viewMan;
+  nsIView* view = GetView();
   PRBool result;
 
-  nsCOMPtr<nsIWidget> widget;
-
   if (view) {
-    view->GetViewManager(*getter_AddRefs(viewMan));
+    nsIViewManager* viewMan = view->GetViewManager();
     if (viewMan) {
-      view->GetWidget(*getter_AddRefs(widget));
+      // nsIWidget* widget = view->GetWidget();
       if (aGrabMouseEvents) {
         viewMan->GrabMouseEvents(view,result);
         //mIsCapturingMouseEvents = PR_TRUE;
@@ -242,14 +235,6 @@ nsTitleBarFrame::MouseClicked (nsIPresContext* aPresContext)
 {
   // Execute the oncommand event handler.
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event;
-  event.eventStructType = NS_EVENT;
-  event.message = NS_XUL_COMMAND;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_COMMAND);
   mContent->HandleDOMEvent(aPresContext, &event, nsnull, NS_EVENT_FLAG_INIT, &status);
 }

@@ -83,11 +83,9 @@ nsIPresShell*
 inLayoutUtils::GetPresShellFor(nsISupports* aThing)
 {
   nsCOMPtr<nsIScriptGlobalObject> so = do_QueryInterface(aThing);
-  nsCOMPtr<nsIDocShell> docShell;
-  so->GetDocShell(getter_AddRefs(docShell));
-  
+
   nsCOMPtr<nsIPresShell> presShell;
-  docShell->GetPresShell(getter_AddRefs(presShell));
+  so->GetDocShell()->GetPresShell(getter_AddRefs(presShell));
 
   return presShell;
 }
@@ -103,13 +101,11 @@ inLayoutUtils::GetFrameFor(nsIDOMElement* aElement, nsIPresShell* aShell)
   return frame;
 }
 
-nsIRenderingContext*
+already_AddRefed<nsIRenderingContext>
 inLayoutUtils::GetRenderingContextFor(nsIPresShell* aShell)
 {
-  nsCOMPtr<nsIViewManager> viewman;
-  aShell->GetViewManager(getter_AddRefs(viewman));
   nsCOMPtr<nsIWidget> widget;
-  viewman->GetWidget(getter_AddRefs(widget));
+  aShell->GetViewManager()->GetWidget(getter_AddRefs(widget));
   return widget->GetRenderingContext(); // AddRefs
 }
 
@@ -127,18 +123,14 @@ inLayoutUtils::GetEventStateManagerFor(nsIDOMElement *aElement)
     return nsnull;
   }
 
-  nsCOMPtr<nsIPresShell> shell;
-  doc->GetShellAt(0, getter_AddRefs(shell));
+  nsIPresShell *shell = doc->GetShellAt(0);
   NS_ASSERTION(shell, "No pres shell");
 
   nsCOMPtr<nsIPresContext> presContext;
   shell->GetPresContext(getter_AddRefs(presContext));
   NS_ASSERTION(presContext, "No pres context");
 
-  nsCOMPtr<nsIEventStateManager> esm;
-  presContext->GetEventStateManager(getter_AddRefs(esm));
-
-  return esm;
+  return presContext->EventStateManager();
 }
 
 nsPoint
@@ -150,20 +142,16 @@ inLayoutUtils::GetClientOrigin(nsIPresContext* aPresContext,
   aFrame->GetOffsetFromView(aPresContext, result, &view);
   nsIView* rootView = nsnull;
   if (view) {
-      nsCOMPtr<nsIViewManager> viewManager;
-      view->GetViewManager(*getter_AddRefs(viewManager));
+      nsIViewManager* viewManager = view->GetViewManager();
       NS_ASSERTION(viewManager, "View must have a viewmanager");
       viewManager->GetRootView(rootView);
   }
   while (view) {
-    nscoord x, y;
-    view->GetPosition(&x, &y);
-    result.x += x;
-    result.y += y;
+    result += view->GetPosition();
     if (view == rootView) {
       break;
     }
-    view->GetParent(view);
+    view = view->GetParent();
   }
   return result;
 }
@@ -174,14 +162,12 @@ inLayoutUtils::GetScreenOrigin(nsIDOMElement* aElement)
   nsRect* rect = new nsRect(0,0,0,0);
  
   nsCOMPtr<nsIContent> content = do_QueryInterface(aElement);
-  nsCOMPtr<nsIDocument> doc;
-  content->GetDocument(getter_AddRefs(doc));
+  nsCOMPtr<nsIDocument> doc = content->GetDocument();
 
   if (doc) {
     // Get Presentation shell 0
-    nsCOMPtr<nsIPresShell> presShell;
-    doc->GetShellAt(0, getter_AddRefs(presShell));
-    
+    nsIPresShell *presShell = doc->GetShellAt(0);
+
     if (presShell) {
       // Flush all pending notifications so that our frames are uptodate
       presShell->FlushPendingNotifications(PR_FALSE);
@@ -191,28 +177,27 @@ inLayoutUtils::GetScreenOrigin(nsIDOMElement* aElement)
       
       if (presContext) {
         nsIFrame* frame = nsnull;
-        nsresult rv = presShell->GetPrimaryFrameFor(content, &frame);
+        presShell->GetPrimaryFrameFor(content, &frame);
         
         PRInt32 offsetX = 0;
         PRInt32 offsetY = 0;
-        nsCOMPtr<nsIWidget> widget;
+        nsIWidget* widget = nsnull;
         
         while (frame) {
           // Look for a widget so we can get screen coordinates
-          nsIView* view = frame->GetViewExternal(presContext);
+          nsIView* view = frame->GetViewExternal();
           if (view) {
-            rv = view->GetWidget(*getter_AddRefs(widget));
+            widget = view->GetWidget();
             if (widget)
               break;
           }
           
           // No widget yet, so count up the coordinates of the frame 
-          nsPoint origin;
-          frame->GetOrigin(origin);
+          nsPoint origin = frame->GetPosition();
           offsetX += origin.x;
           offsetY += origin.y;
       
-          frame->GetParent(&frame);
+          frame = frame->GetParent();
         }
         
         if (widget) {
@@ -222,7 +207,7 @@ inLayoutUtils::GetScreenOrigin(nsIDOMElement* aElement)
 
           // Get the scale from that Presentation Context
           float p2t;
-          presContext->GetPixelsToTwips(&p2t);
+          p2t = presContext->PixelsToTwips();
 
           // Convert screen rect to twips
           rect->x = NSIntPixelsToTwips(rect->x, p2t);
@@ -246,10 +231,7 @@ inLayoutUtils::GetBindingManagerFor(nsIDOMNode* aNode)
   aNode->GetOwnerDocument(getter_AddRefs(domdoc));
   if (domdoc) {
     nsCOMPtr<nsIDocument> doc = do_QueryInterface(domdoc);
-    nsCOMPtr<nsIBindingManager> bindingManager = do_QueryInterface(domdoc);
-    doc->GetBindingManager(getter_AddRefs(bindingManager));
-    
-    return bindingManager;
+    return doc->GetBindingManager();
   }
   
   return nsnull;
@@ -260,13 +242,9 @@ inLayoutUtils::GetSubDocumentFor(nsIDOMNode* aNode)
 {
   nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
   if (content) {
-    nsCOMPtr<nsIDocument> doc;
-    content->GetDocument(getter_AddRefs(doc));
+    nsCOMPtr<nsIDocument> doc = content->GetDocument();
     if (doc) {
-      nsCOMPtr<nsIDocument> sub_doc;
-      doc->GetSubDocumentFor(content, getter_AddRefs(sub_doc));
-
-      nsCOMPtr<nsIDOMDocument> domdoc(do_QueryInterface(sub_doc));
+      nsCOMPtr<nsIDOMDocument> domdoc(do_QueryInterface(doc->GetSubDocumentFor(content)));
 
       return domdoc;
     }
@@ -285,22 +263,5 @@ inLayoutUtils::GetContainerFor(nsIDOMDocument* aDoc)
   win->GetFrameElement(getter_AddRefs(elem));
 
   return elem;
-}
-
-PRBool
-inLayoutUtils::IsDocumentElement(nsIDOMNode* aNode)
-{
-  PRBool result = PR_FALSE;
-
-  nsCOMPtr<nsIDOMNode> parent;
-  aNode->GetParentNode(getter_AddRefs(parent));
-  if (parent) {
-    PRUint16 nodeType;
-    parent->GetNodeType(&nodeType);
-    if (nodeType == nsIDOMNode::DOCUMENT_NODE)
-      result = PR_TRUE;
-  }
-
-  return result;
 }
 

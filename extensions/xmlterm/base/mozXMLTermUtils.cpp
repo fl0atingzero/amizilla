@@ -91,10 +91,11 @@ mozXMLTermUtils::ConvertDOMWindowToDocShell(nsIDOMWindowInternal* aDOMWindow,
   if (!globalObject)
     return NS_ERROR_FAILURE;
 
-  globalObject->GetDocShell(aDocShell);
-
+  *aDocShell = globalObject->GetDocShell();
   if (!*aDocShell)
     return NS_ERROR_FAILURE;
+
+  NS_ADDREF(*aDocShell);
 
   return NS_OK;
 }
@@ -142,8 +143,6 @@ NS_EXPORT nsresult
 mozXMLTermUtils::GetPresContextScrollableView(nsIPresContext* aPresContext,
                                          nsIScrollableView** aScrollableView)
 {
-  nsresult result;
-
   XMLT_LOG(mozXMLTermUtils::GetPresContextScrollableView,30,("\n"));
 
   if (!aScrollableView)
@@ -151,14 +150,12 @@ mozXMLTermUtils::GetPresContextScrollableView(nsIPresContext* aPresContext,
 
   *aScrollableView = nsnull;
 
-  nsCOMPtr<nsIPresShell> presShell;
-  result = aPresContext->GetShell(getter_AddRefs(presShell));
-  if (NS_FAILED(result) || !presShell)
+  nsIPresShell *presShell = aPresContext->GetPresShell();
+  if (!presShell)
     return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIViewManager> viewManager;
-  result = presShell->GetViewManager(getter_AddRefs(viewManager));
-  if (NS_FAILED(result) || !viewManager)
+  nsIViewManager* viewManager = presShell->GetViewManager();
+  if (!viewManager)
     return NS_ERROR_FAILURE;
 
   return viewManager->GetRootScrollableView(aScrollableView);
@@ -183,14 +180,8 @@ mozXMLTermUtils::GetPresContextDeviceContext(nsIPresContext* aPresContext,
 
   *aDeviceContext = nsnull;
 
-  nsCOMPtr<nsIPresShell> presShell;
-  result = aPresContext->GetShell(getter_AddRefs(presShell));
-  if (NS_FAILED(result) || !presShell)
-    return NS_ERROR_FAILURE;
-
-  nsCOMPtr<nsIViewManager> viewManager;
-  result = presShell->GetViewManager(getter_AddRefs(viewManager));
-  if (NS_FAILED(result) || !viewManager)
+  nsIViewManager* viewManager = aPresContext->GetViewManager();
+  if (!viewManager)
     return NS_ERROR_FAILURE;
 
   nsCOMPtr<nsIDeviceContext> deviceContext;
@@ -214,21 +205,21 @@ NS_EXPORT nsresult
 mozXMLTermUtils::GetScriptContext(nsIDOMDocument* aDOMDocument,
                                   nsIScriptContext** aScriptContext)
 {
-  nsresult result;
-
   XMLT_LOG(mozXMLTermUtils::GetScriptContext,20,("\n"));
 
   nsCOMPtr<nsIDocument> doc ( do_QueryInterface(aDOMDocument) );
   if (!doc)
     return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIScriptGlobalObject> scriptGlobalObject;
-  result = doc->GetScriptGlobalObject(getter_AddRefs(scriptGlobalObject));
+  nsIScriptGlobalObject *scriptGlobalObject = doc->GetScriptGlobalObject();
 
-  if (NS_FAILED(result) || !scriptGlobalObject)
+  if (!scriptGlobalObject)
     return NS_ERROR_FAILURE;
 
-  return scriptGlobalObject->GetContext(aScriptContext);
+  *aScriptContext = scriptGlobalObject->GetContext();
+  NS_IF_ADDREF(*aScriptContext);
+
+  return NS_OK;
 }
 
 
@@ -252,10 +243,9 @@ mozXMLTermUtils::ExecuteScript(nsIDOMDocument* aDOMDocument,
   if (!doc)
     return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIPrincipal> docPrincipal;
-  result =  doc->GetPrincipal(getter_AddRefs(docPrincipal));
-  if (NS_FAILED(result)) 
-    return result;
+  nsIPrincipal *docPrincipal = doc->GetPrincipal();
+  if (!docPrincipal) 
+    return NS_ERROR_FAILURE;
 
   // Get document script context
   nsCOMPtr<nsIScriptContext> scriptContext;

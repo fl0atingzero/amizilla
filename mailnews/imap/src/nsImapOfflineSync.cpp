@@ -50,6 +50,8 @@
 #include "nsSpecialSystemDirectory.h"
 #include "nsIFileStream.h"
 #include "nsIMsgCopyService.h"
+#include "nsImapProtocol.h"
+
 static NS_DEFINE_CID(kRDFServiceCID, NS_RDFSERVICE_CID);
 
 NS_IMPL_ISUPPORTS2(nsImapOfflineSync, nsIUrlListener, nsIMsgCopyServiceListener)
@@ -95,14 +97,22 @@ nsImapOfflineSync::OnStopRunningUrl(nsIURI* url, nsresult exitCode)
   PRBool stopped = PR_FALSE;
   if (m_window)
     m_window->GetStopped(&stopped);
-  if (stopped)
-    exitCode = NS_BINDING_ABORTED;
 
   if (m_curTempFile)
   {
     m_curTempFile->Delete(PR_FALSE);
     m_curTempFile = nsnull;
   }
+  if (stopped)
+  {
+    if (m_listener)
+      m_listener->OnStopRunningUrl(url, NS_BINDING_ABORTED);
+    return NS_OK;
+  }
+  nsCOMPtr<nsIImapUrl> imapUrl = do_QueryInterface(url);
+
+  if (imapUrl)
+    nsImapProtocol::LogImapUrl(NS_SUCCEEDED(rv) ? "offline imap url succeeded:" : "offline imap url failed:", imapUrl);
   // NS_BINDING_ABORTED is used for the user pressing stop, which
   // should cause us to abort the offline process. Other errors
   // should allow us to continue.
@@ -110,10 +120,12 @@ nsImapOfflineSync::OnStopRunningUrl(nsIURI* url, nsresult exitCode)
     rv = ProcessNextOperation();
   // else if it's a non-stop error, and we're doing multiple folders,
   // go to the next folder.
-  else if (exitCode != NS_BINDING_ABORTED && !m_singleFolderToUpdate)
+  else if (!m_singleFolderToUpdate)
+  {
     rv = AdvanceToNextFolder();
-  else if (m_listener)  // notify main observer.
-    m_listener->OnStopRunningUrl(url, exitCode);
+    if (NS_SUCCEEDED(rv))
+      rv = ProcessNextOperation();
+  }
 
   return rv;
 }
@@ -140,7 +152,7 @@ nsresult nsImapOfflineSync::AdvanceToNextServer()
   m_currentServer = nsnull;
   PRUint32 numServers; 
   m_allServers->Count(&numServers);
-  nsCOMPtr <nsIFolder> rootFolder;
+  nsCOMPtr <nsIMsgFolder> rootFolder;
 
   while (serverIndex < numServers)
   {
@@ -179,7 +191,11 @@ nsresult nsImapOfflineSync::AdvanceToNextFolder()
 	// we always start by changing flags
   mCurrentPlaybackOpType = nsIMsgOfflineImapOperation::kFlagsChanged;
 	
-  m_currentFolder = nsnull;
+  if (m_currentFolder)
+  {
+    m_currentFolder->SetMsgDatabase(nsnull);
+    m_currentFolder = nsnull;
+  }
 
   if (!m_currentServer)
      rv = AdvanceToNextServer();
@@ -579,7 +595,7 @@ PRBool nsImapOfflineSync::CreateOfflineFolders()
 
 PRBool nsImapOfflineSync::CreateOfflineFolder(nsIMsgFolder *folder)
 {
-  nsCOMPtr<nsIFolder> parent;
+  nsCOMPtr<nsIMsgFolder> parent;
   folder->GetParent(getter_AddRefs(parent));
 
   nsCOMPtr <nsIMsgImapMailFolder> imapFolder = do_QueryInterface(parent);
@@ -588,8 +604,7 @@ PRBool nsImapOfflineSync::CreateOfflineFolder(nsIMsgFolder *folder)
   imapFolder->GetOnlineName(getter_Copies(onlineName));
 
   NS_ConvertASCIItoUCS2 folderName(onlineName);
-//  folderName.AssignWithConversion(onlineName);
-	nsresult rv = imapFolder->PlaybackOfflineFolderCreate(folderName.get(), nsnull,  getter_AddRefs(createFolderURI));
+  nsresult rv = imapFolder->PlaybackOfflineFolderCreate(folderName.get(), nsnull,  getter_AddRefs(createFolderURI));
   if (createFolderURI && NS_SUCCEEDED(rv))
   {
     nsCOMPtr <nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(createFolderURI);
@@ -650,11 +665,12 @@ nsresult nsImapOfflineSync::ProcessNextOperation()
   while (m_currentFolder && !m_currentDB)
   {
     m_currentFolder->GetFlags(&folderFlags);
-    // need to check if folder has offline events, or is configured for offline
-    if (folderFlags & (MSG_FOLDER_FLAG_OFFLINEEVENTS | MSG_FOLDER_FLAG_OFFLINE))
-    {
+    // need to check if folder has offline events, /* or is configured for offline */
+    // shouldn't need to check if configured for offline use, since any folder with
+    // events should have MSG_FOLDER_FLAG_OFFLINEEVENTS set.
+    if (folderFlags & (MSG_FOLDER_FLAG_OFFLINEEVENTS /* | MSG_FOLDER_FLAG_OFFLINE */))
       m_currentFolder->GetDBFolderInfoAndDB(getter_AddRefs(folderInfo), getter_AddRefs(m_currentDB));
-    }
+
     if (m_currentDB)
     {
       m_CurrentKeys.RemoveAll();
@@ -662,6 +678,7 @@ nsresult nsImapOfflineSync::ProcessNextOperation()
       if ((m_currentDB->ListAllOfflineOpIds(&m_CurrentKeys) != 0) || !m_CurrentKeys.GetSize())
       {
         m_currentDB = nsnull;
+        folderInfo = nsnull; // can't hold onto folderInfo longer than db
         m_currentFolder->ClearFlag(MSG_FOLDER_FLAG_OFFLINEEVENTS);
       }
       else
@@ -922,7 +939,7 @@ void nsImapOfflineSync::DeleteAllOfflineOpsForCurrentDB()
     if (++m_KeyIndex < m_CurrentKeys.GetSize())
       m_currentDB->GetOfflineOpForKey(m_CurrentKeys[m_KeyIndex], PR_FALSE, getter_AddRefs(currentOp));
   }
-  // turn off MSG_FOLDER_PREF_OFFLINEEVENTS
+  // turn off MSG_FOLDER_FLAG_OFFLINEEVENTS
   if (m_currentFolder)
     m_currentFolder->ClearFlag(MSG_FOLDER_FLAG_OFFLINEEVENTS);
 }
@@ -956,14 +973,11 @@ nsresult nsImapOfflineDownloader::ProcessNextOperation()
     AdvanceToNextServer();
     if (m_currentServer)
     {
-      nsCOMPtr <nsIFolder> rootFolder;
-      m_currentServer->GetRootFolder(getter_AddRefs(rootFolder));
+      nsCOMPtr <nsIMsgFolder> rootMsgFolder;
+      m_currentServer->GetRootFolder(getter_AddRefs(rootMsgFolder));
       nsCOMPtr<nsIMsgFolder> inbox;
-      if (rootFolder)
+      if (rootMsgFolder)
       {
-        nsCOMPtr<nsIMsgFolder> rootMsgFolder = do_QueryInterface(rootFolder, &rv);
-        if (rootMsgFolder)
-        {
           PRUint32 numFolders;
           rootMsgFolder->GetFoldersWithFlag(MSG_FOLDER_FLAG_INBOX, 1, &numFolders, getter_AddRefs(inbox));
           if (inbox)
@@ -992,12 +1006,16 @@ nsresult nsImapOfflineDownloader::ProcessNextOperation()
             // so just advance to the next server.
             if (!imapInbox || offlineImapFolder)
             {
+              // here we should check if this a pop3 server/inbox, and the user doesn't want
+              // to download pop3 mail for offline use.
+              if (!imapInbox)
+              {
+              }
               rv = inbox->GetNewMessages(m_window, this);
               if (NS_SUCCEEDED(rv))
                 return rv; // otherwise, fall through.
             }
           }
-        }
       }
       return ProcessNextOperation(); // recurse and do next server.
     }
@@ -1018,7 +1036,7 @@ nsresult nsImapOfflineDownloader::ProcessNextOperation()
     if (m_currentFolder)
       imapFolder = do_QueryInterface(m_currentFolder);
     m_currentFolder->GetFlags(&folderFlags);
-		// need to check if folder has offline events, or is configured for offline
+    // need to check if folder has offline events, or is configured for offline
     if (imapFolder && folderFlags & MSG_FOLDER_FLAG_OFFLINE)
     {
       rv = m_currentFolder->DownloadAllForOffline(this, m_window);

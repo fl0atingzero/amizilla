@@ -43,7 +43,6 @@
 #include "nsIDeviceContext.h"
 #include "nsIViewManager.h"
 #include "nsIPresShell.h"
-#include "nsIStyleSet.h"
 #include "nsIFontMetrics.h"
 #include "nsIPrintSettings.h"
 #include "nsPageFrame.h"
@@ -52,6 +51,7 @@
 #include "nsStyleConsts.h"
 #include "nsRegion.h"
 #include "nsLayoutAtoms.h"
+#include "nsCSSFrameConstructor.h"
 
 // for header/footer gap & ExtraMargin for Print Preview
 #include "nsIPrefBranch.h"
@@ -59,13 +59,7 @@
 
 // DateTime Includes
 #include "nsDateTimeFormatCID.h"
-#include "nsIDateTimeFormat.h"
-#include "nsIServiceManager.h"
-#include "nsILocale.h"
-#include "nsLocaleCID.h"
-#include "nsILocaleService.h"
 static NS_DEFINE_CID(kDateTimeFormatCID, NS_DATETIMEFORMAT_CID);
-static NS_DEFINE_CID(kLocaleServiceCID, NS_LOCALESERVICE_CID); 
 
 #define OFFSET_NOT_SET -1
 
@@ -84,7 +78,6 @@ static NS_DEFINE_CID(kLocaleServiceCID, NS_LOCALESERVICE_CID);
 static const char sPrintOptionsContractID[] = "@mozilla.org/gfx/printsettings-service;1";
 
 //
-static NS_DEFINE_CID(kRegionCID, NS_REGION_CID);
 
 #include "prlog.h"
 #ifdef PR_LOGGING 
@@ -204,17 +197,9 @@ nsSimplePageSequenceFrame::CreateContinuingPageFrame(nsIPresContext* aPresContex
                                                      nsIFrame*       aPageFrame,
                                                      nsIFrame**      aContinuingPage)
 {
-  nsIPresShell* presShell;
-  nsIStyleSet*  styleSet;
-  nsresult      rv;
-
   // Create the continuing frame
-  aPresContext->GetShell(&presShell);
-  presShell->GetStyleSet(&styleSet);
-  NS_RELEASE(presShell);
-  rv = styleSet->CreateContinuingFrame(aPresContext, aPageFrame, this, aContinuingPage);
-  NS_RELEASE(styleSet);
-  return rv;
+  return aPresContext->PresShell()->FrameConstructor()->
+    CreateContinuingFrame(aPresContext, aPageFrame, this, aContinuingPage);
 }
 
 void
@@ -304,11 +289,8 @@ nsSimplePageSequenceFrame::Reflow(nsIPresContext*          aPresContext,
   // and if this Document is in the upper left hand corner
   // we need to suppress the top margin or it will reflow too small
   // Start by getting the actual printer page dimensions to see if we are not a whole page
-  nsCOMPtr<nsIDeviceContext> dc;
-  aPresContext->GetDeviceContext(getter_AddRefs(dc));
-  NS_ASSERTION(dc, "nsIDeviceContext can't be NULL!");
   nscoord width, height;
-  dc->GetDeviceSurfaceDimensions(width, height);
+  aPresContext->DeviceContext()->GetDeviceSurfaceDimensions(width, height);
 
   // Compute the size of each page and the x coordinate that each page will
   // be placed at
@@ -454,7 +436,7 @@ nsSimplePageSequenceFrame::Reflow(nsIPresContext*          aPresContext,
       // once we reach the 32k boundary for positioning
       if (nsPageFrame::GetCreateWidget()) {
         float t2p;
-        aPresContext->GetTwipsToPixels(&t2p);
+        t2p = aPresContext->TwipsToPixels();
         nscoord xp = NSTwipsToIntPixels(x, t2p);
         nscoord yp = NSTwipsToIntPixels(y, t2p);
         nsPageFrame::SetCreateWidget(xp < 0x8000 && yp < 0x8000);
@@ -481,19 +463,19 @@ nsSimplePageSequenceFrame::Reflow(nsIPresContext*          aPresContext,
       }
 
       // Get the next page
-      kidFrame->GetNextSibling(&kidFrame);
+      kidFrame = kidFrame->GetNextSibling();
     }
 
     // Get Total Page Count
     nsIFrame* page;
     PRInt32 pageTot = 0;
-    for (page = mFrames.FirstChild(); nsnull != page; page->GetNextSibling(&page)) {
+    for (page = mFrames.FirstChild(); page; page = page->GetNextSibling()) {
       pageTot++;
     }
 
     // Set Page Number Info
     PRInt32 pageNum = 1;
-    for (page = mFrames.FirstChild(); nsnull != page; page->GetNextSibling(&page)) {
+    for (page = mFrames.FirstChild(); page; page = page->GetNextSibling()) {
       nsPageFrame * pf = NS_STATIC_CAST(nsPageFrame*, page);
       if (pf != nsnull) {
         pf->SetPageNumInfo(pageNum, pageTot);
@@ -502,27 +484,21 @@ nsSimplePageSequenceFrame::Reflow(nsIPresContext*          aPresContext,
     }
 
     // Create current Date/Time String
-    nsresult rv;
-    nsCOMPtr<nsILocale> locale; 
-    nsCOMPtr<nsILocaleService> localeSvc = do_GetService(kLocaleServiceCID, &rv);
-    if (NS_SUCCEEDED(rv)) {
-      rv = localeSvc->GetApplicationLocale(getter_AddRefs(locale));
-      if (NS_SUCCEEDED(rv) && locale) {
-        nsCOMPtr<nsIDateTimeFormat> dateTime;
-        rv = nsComponentManager::CreateInstance(kDateTimeFormatCID,
-                                               NULL,
-                                               NS_GET_IID(nsIDateTimeFormat),
-                                               (void**) getter_AddRefs(dateTime));
-        if (NS_SUCCEEDED(rv)) {
-          nsAutoString dateString;
-          time_t ltime;
-          time( &ltime );
-          if (NS_SUCCEEDED(dateTime->FormatTime(locale, kDateFormatShort, kTimeFormatNoSeconds, ltime, dateString))) {
-            PRUnichar * uStr = ToNewUnicode(dateString);
-            SetDateTimeStr(uStr); // memory will be freed
-          }
-        }
-      }
+    if (!mDateFormatter)
+      mDateFormatter = do_CreateInstance(kDateTimeFormatCID);
+
+    NS_ENSURE_TRUE(mDateFormatter, NS_ERROR_FAILURE);
+
+    nsAutoString formattedDateString;
+    time_t ltime;
+    time( &ltime );
+    if (NS_SUCCEEDED(mDateFormatter->FormatTime(nsnull /* nsILocale* locale */,
+                                                kDateFormatShort,
+                                                kTimeFormatNoSeconds,
+                                                ltime,
+                                                formattedDateString))) {
+      PRUnichar * uStr = ToNewUnicode(formattedDateString);
+      SetDateTimeStr(uStr); // memory will be freed
     }
 
   }
@@ -666,22 +642,16 @@ nsSimplePageSequenceFrame::StartPrint(nsIPresContext*   aPresContext,
   }
 
   // Begin printing of the document
-  nsCOMPtr<nsIDeviceContext> dc;
-  aPresContext->GetDeviceContext(getter_AddRefs(dc));
-  NS_ASSERTION(dc, "nsIDeviceContext can't be NULL!");
-
   nsresult rv = NS_OK;
 
 #if defined(DEBUG_rods) || defined(DEBUG_dcone)
   {
-    nsIView* seqView = GetView(aPresContext);
-    nsRect rect;
-    GetRect(rect);
+    nsIView* seqView = GetView();
+    nsRect rect = GetRect();
     PR_PL(("Seq Frame: %p - [%5d,%5d,%5d,%5d] ", this, rect.x, rect.y, rect.width, rect.height));
     PR_PL(("view: %p ", seqView));
-    nsRect viewRect;
     if (seqView) {
-      seqView->GetBounds(viewRect);
+      nsRect viewRect = seqView->GetBounds();
       PR_PL((" [%5d,%5d,%5d,%5d]", viewRect.x, viewRect.y, viewRect.width, viewRect.height));
     }
     PR_PL(("\n"));
@@ -689,13 +659,12 @@ nsSimplePageSequenceFrame::StartPrint(nsIPresContext*   aPresContext,
 
   {
     PRInt32 pageNum = 1;
-    for (nsIFrame* page = mFrames.FirstChild(); nsnull != page; page->GetNextSibling(&page)) {
-      nsIView* view = page->GetView(aPresContext);
-      NS_ASSERTION(nsnull != view, "no page view");
-      nsRect rect;
-      page->GetRect(rect);
-      nsRect viewRect;
-      view->GetBounds(viewRect);
+    for (nsIFrame* page = mFrames.FirstChild(); page;
+         page = page->GetNextSibling()) {
+      nsIView* view = page->GetView();
+      NS_ASSERTION(view, "no page view");
+      nsRect rect = page->GetRect();
+      nsRect viewRect = view->GetBounds();
       PR_PL((" Page: %p  No: %d - [%5d,%5d,%5d,%5d] ", page, pageNum, rect.x, rect.y, rect.width, rect.height));
       PR_PL((" [%5d,%5d,%5d,%5d]\n", viewRect.x, viewRect.y, viewRect.width, viewRect.height));
       pageNum++;
@@ -711,19 +680,19 @@ nsSimplePageSequenceFrame::StartPrint(nsIPresContext*   aPresContext,
   if (mDoingPageRange) {
     // XXX because of the hack for making the selection all print on one page
     // we must make sure that the page is sized correctly before printing.
-    PRInt32 width,height;
-    dc->GetDeviceSurfaceDimensions(width,height);
+    PRInt32 width, height;
+    aPresContext->DeviceContext()->GetDeviceSurfaceDimensions(width, height);
 
     PRInt32 pageNum = 1;
     nscoord y = 0;//mMargin.top;
 
-    for (nsIFrame* page = mFrames.FirstChild(); nsnull != page; page->GetNextSibling(&page)) {
-      nsIView* view = page->GetView(aPresContext);
-      NS_ASSERTION(nsnull != view, "no page view");
+    for (nsIFrame* page = mFrames.FirstChild(); page;
+         page = page->GetNextSibling()) {
+      nsIView* view = page->GetView();
+      NS_ASSERTION(view, "no page view");
 
-      nsCOMPtr<nsIViewManager> vm;
-      view->GetViewManager(*getter_AddRefs(vm));
-      NS_ASSERTION(nsnull != vm, "no view manager");
+      nsIViewManager* vm = view->GetViewManager();
+      NS_ASSERTION(vm, "no view manager");
 
       if (pageNum < mFromPageNum || pageNum > mToPageNum) {
         // Hide the pages that won't be printed to the Viewmanager
@@ -734,14 +703,12 @@ nsSimplePageSequenceFrame::StartPrint(nsIPresContext*   aPresContext,
         nsRegion emptyRegion;
         vm->SetViewChildClipRegion(view, &emptyRegion);
       } else {
-        nsRect rect;
-        page->GetRect(rect);
+        nsRect rect = page->GetRect();
         rect.y = y;
         rect.height = height;
-        page->SetRect(aPresContext, rect);
+        page->SetRect(rect);
 
-        nsRect viewRect;
-        view->GetBounds(viewRect);
+        nsRect viewRect = view->GetBounds();
         viewRect.y = y;
         viewRect.height = height;
         vm->MoveViewTo(view, viewRect.x, viewRect.y);
@@ -825,16 +792,10 @@ nsSimplePageSequenceFrame::PrintNextPage(nsIPresContext*  aPresContext)
   mPageData->mPrintSettings->GetPrintOptions(nsIPrintSettings::kPrintOddPages, &printOddPages);
 
   // Begin printing of the document
-  nsCOMPtr<nsIDeviceContext> dc;
-  aPresContext->GetDeviceContext(getter_AddRefs(dc));
+  nsIDeviceContext *dc = aPresContext->DeviceContext();
   NS_ASSERTION(dc, "nsIDeviceContext can't be NULL!");
 
-  nsCOMPtr<nsIPresShell> presShell;
-  aPresContext->GetShell(getter_AddRefs(presShell));
-  NS_ASSERTION(presShell, "nsIPresShell can't be NULL!");
-
-  nsCOMPtr<nsIViewManager> vm;
-  presShell->GetViewManager(getter_AddRefs(vm));
+  nsIViewManager* vm = aPresContext->GetViewManager();
   NS_ASSERTION(vm, "nsIViewManager can't be NULL!");
 
   nsresult rv = NS_OK;
@@ -884,11 +845,10 @@ nsSimplePageSequenceFrame::PrintNextPage(nsIPresContext*  aPresContext)
     nsRect   containerRect;
     if (mSelectionHeight > -1) {
       nsIFrame* childFrame = mFrames.FirstChild();
-      nsIFrame* conFrame;
-      childFrame->FirstChild(aPresContext, nsnull, &conFrame);
-      containerView = conFrame->GetView(aPresContext);
-      NS_ASSERTION(containerView != nsnull, "Container view can't be null!");
-      containerView->GetBounds(containerRect);
+      nsIFrame* conFrame = childFrame->GetFirstChild(nsnull);
+      containerView = conFrame->GetView();
+      NS_ASSERTION(containerView, "Container view can't be null!");
+      containerRect = containerView->GetBounds();
       containerRect.y -= mYSelOffset;
       slidingRect.SetRect(0,mYSelOffset,width,height);
       
@@ -919,9 +879,9 @@ nsSimplePageSequenceFrame::PrintNextPage(nsIPresContext*  aPresContext)
       }
 
       // Print the page
-      nsIView* view = mCurrentPageFrame->GetView(aPresContext);
+      nsIView* view = mCurrentPageFrame->GetView();
 
-      NS_ASSERTION(nsnull != view, "no page view");
+      NS_ASSERTION(view, "no page view");
 
       PR_PL(("SeqFr::Paint -> %p PageNo: %d  View: %p", pf, mPageNum, view));
       PR_PL((" At: %d,%d\n", mMargin.left+mOffsetX, mMargin.top+mOffsetY));
@@ -973,7 +933,7 @@ nsSimplePageSequenceFrame::PrintNextPage(nsIPresContext*  aPresContext)
     }
 
     mPageNum++;
-    rv = mCurrentPageFrame->GetNextSibling(&mCurrentPageFrame);
+    mCurrentPageFrame = mCurrentPageFrame->GetNextSibling();
   }
 
   return rv;
@@ -985,13 +945,9 @@ nsSimplePageSequenceFrame::DoPageEnd(nsIPresContext*  aPresContext)
 	nsresult rv = NS_OK;
 	
   if (mPrintThisPage) {
-    nsCOMPtr<nsIDeviceContext> dc;
-    aPresContext->GetDeviceContext(getter_AddRefs(dc));
-    NS_ASSERTION(dc, "nsIDeviceContext can't be NULL!");
-
     if(mSkipPageEnd){
 	    PR_PL(("***************** End Page (DoPageEnd) *****************\n"));
-      nsresult rv = dc->EndPage();
+      nsresult rv = aPresContext->DeviceContext()->EndPage();
 	    if (NS_FAILED(rv)) {
 	      return rv;
       }
@@ -1005,8 +961,8 @@ nsSimplePageSequenceFrame::DoPageEnd(nsIPresContext*  aPresContext)
 
   mPageNum++;
   
-  if( nsnull != mCurrentPageFrame){
-    rv = mCurrentPageFrame->GetNextSibling(&mCurrentPageFrame);
+  if (mCurrentPageFrame) {
+    mCurrentPageFrame = mCurrentPageFrame->GetNextSibling();
   }
   
   return rv;
@@ -1015,7 +971,7 @@ nsSimplePageSequenceFrame::DoPageEnd(nsIPresContext*  aPresContext)
 NS_IMETHODIMP
 nsSimplePageSequenceFrame::SuppressHeadersAndFooters(PRBool aDoSup)
 {
-  for (nsIFrame* f = mFrames.FirstChild(); f != nsnull; f->GetNextSibling(&f)) {
+  for (nsIFrame* f = mFrames.FirstChild(); f; f = f->GetNextSibling()) {
     nsPageFrame * pf = NS_STATIC_CAST(nsPageFrame*, f);
     if (pf != nsnull) {
       pf->SuppressHeadersAndFooters(aDoSup);
@@ -1027,7 +983,7 @@ nsSimplePageSequenceFrame::SuppressHeadersAndFooters(PRBool aDoSup)
 NS_IMETHODIMP
 nsSimplePageSequenceFrame::SetClipRect(nsIPresContext*  aPresContext, nsRect* aRect)
 {
-  for (nsIFrame* f = mFrames.FirstChild(); f != nsnull; f->GetNextSibling(&f)) {
+  for (nsIFrame* f = mFrames.FirstChild(); f; f = f->GetNextSibling()) {
     nsPageFrame * pf = NS_STATIC_CAST(nsPageFrame*, f);
     if (pf != nsnull) {
       pf->SetClipRect(aRect);
@@ -1062,18 +1018,10 @@ nsSimplePageSequenceFrame::Paint(nsIPresContext*      aPresContext,
   return rv;
 }
 
-NS_IMETHODIMP nsSimplePageSequenceFrame::SizeTo(nsIPresContext* aPresContext, nscoord aWidth, nscoord aHeight)
+nsIAtom*
+nsSimplePageSequenceFrame::GetType() const
 {
-  return nsFrame::SizeTo(aPresContext, aWidth, aHeight);
-}
-
-NS_IMETHODIMP
-nsSimplePageSequenceFrame::GetFrameType(nsIAtom** aType) const
-{
-  NS_PRECONDITION(nsnull != aType, "null OUT parameter pointer");
-  *aType = nsLayoutAtoms::sequenceFrame; 
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsLayoutAtoms::sequenceFrame; 
 }
 
 //------------------------------------------------------------------------------

@@ -72,7 +72,7 @@ static NS_DEFINE_CID(kPluginManagerCID, NS_PLUGINMANAGER_CID);
 static NS_DEFINE_CID(kPluginDocumentCID, NS_PLUGINDOCUMENT_CID);
 
 // URL for the "user agent" style sheet
-#define UA_CSS_URL "resource:/res/ua.css"
+#define UA_CSS_URL "resource://gre/res/ua.css"
 
 // Factory code for creating variations on html documents
 
@@ -95,7 +95,9 @@ static const char* const gHTMLTypes[] = {
   "text/css",
   "text/javascript",
   "application/x-javascript",
+#ifdef MOZ_VIEW_SOURCE
   "application/x-view-source", //XXX I wish I could just use nsMimeTypes.h here
+#endif
   "application/xhtml+xml",
   0
 };
@@ -147,7 +149,7 @@ nsContentDLF::~nsContentDLF()
 
 NS_IMPL_ISUPPORTS2(nsContentDLF,
                    nsIDocumentLoaderFactory,
-                   nsIDocStreamLoaderFactory);
+                   nsIDocStreamLoaderFactory)
 
 NS_IMETHODIMP
 nsContentDLF::CreateInstance(const char* aCommand,
@@ -162,7 +164,7 @@ nsContentDLF::CreateInstance(const char* aCommand,
   EnsureUAStyleSheet();
 
   // Are we viewing source?
-
+#ifdef MOZ_VIEW_SOURCE
   nsCOMPtr<nsIViewSourceChannel> viewSourceChannel = do_QueryInterface(aChannel);
   if (viewSourceChannel)
   {
@@ -212,7 +214,7 @@ nsContentDLF::CreateInstance(const char* aCommand,
     aChannel->SetContentType(NS_LITERAL_CSTRING("text/plain"));
     aContentType = "text/plain";
   }
-
+#endif
   // Try html
   int typeIndex=0;
   while(gHTMLTypes[typeIndex]) {
@@ -325,16 +327,17 @@ nsContentDLF::CreateBlankDocument(nsILoadGroup *aLoadGroup, nsIDocument **aDocum
     // initialize
     nsCOMPtr<nsIURI> uri;
     NS_NewURI(getter_AddRefs(uri), NS_LITERAL_CSTRING("about:blank"));
-    if (uri)
-      rv = blankDoc->ResetToURI(uri, aLoadGroup);
+    if (uri) {
+      blankDoc->ResetToURI(uri, aLoadGroup);
+      rv = NS_OK;
+    }
   }
 
   // add some simple content structure
   if (NS_SUCCEEDED(rv)) {
     rv = NS_ERROR_FAILURE;
 
-    nsCOMPtr<nsINodeInfoManager> nim;
-    blankDoc->GetNodeInfoManager(getter_AddRefs(nim));
+    nsINodeInfoManager *nim = blankDoc->GetNodeInfoManager();
 
     if (nim) {
       nsCOMPtr<nsINodeInfo> htmlNodeInfo;
@@ -364,9 +367,7 @@ nsContentDLF::CreateBlankDocument(nsILoadGroup *aLoadGroup, nsIDocument **aDocum
 
         htmlElement->AppendChildTo(headElement, PR_FALSE, PR_FALSE);
 
-        PRInt32 id;
-        blankDoc->GetAndIncrementContentID(&id);
-        bodyElement->SetContentID(id);
+        bodyElement->SetContentID(blankDoc->GetAndIncrementContentID());
         htmlElement->AppendChildTo(bodyElement, PR_FALSE, PR_FALSE);
 
         rv = NS_OK;
@@ -567,8 +568,6 @@ nsContentDLF::CreateXULDocumentFromStream(nsIInputStream& aXULStream,
 
   return status;
 }
-
-static NS_DEFINE_IID(kDocumentFactoryImplCID, NS_CONTENT_DOCUMENT_LOADER_FACTORY_CID);
 
 static nsresult
 RegisterTypes(nsICategoryManager* aCatMgr,

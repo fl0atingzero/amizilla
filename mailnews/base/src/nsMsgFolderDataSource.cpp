@@ -54,6 +54,7 @@
 #include "nsString.h"
 #include "nsCOMPtr.h"
 #include "nsXPIDLString.h"
+#include "nsReadableUtils.h"
 
 #include "nsIMsgMailSession.h"
 #include "nsIMsgCopyService.h"
@@ -63,8 +64,6 @@
 #include "nsTraceRefcnt.h"
 #include "nsIMsgFolder.h" // TO include biffState enum. Change to bool later...
 #include "nsArray.h"
-
-static NS_DEFINE_CID(kRDFServiceCID,            NS_RDFSERVICE_CID);
 
 nsIRDFResource* nsMsgFolderDataSource::kNC_Child = nsnull;
 nsIRDFResource* nsMsgFolderDataSource::kNC_Folder= nsnull;
@@ -789,7 +788,7 @@ nsMsgFolderDataSource::DoCommand(nsISupportsArray/*<nsIRDFResource>*/* aSources,
       }
       else if ((aCommand == kNC_CompactAll))
       {
-        rv = folder->CompactAll(nsnull, mWindow, nsnull, PR_FALSE, nsnull);
+        rv = folder->CompactAll(nsnull, mWindow, nsnull, PR_TRUE, nsnull);
       }
       else if ((aCommand == kNC_EmptyTrash))
       {
@@ -953,7 +952,7 @@ nsMsgFolderDataSource::OnItemPropertyFlagChanged(nsISupports *item,
   nsresult rv = NS_OK;
 
   if (kBiffStateAtom == property) {
-    // for Incoming biff (to turn it on) the item is of type nsIFolder (see nsMsgFolder::SetBiffState)
+    // for Incoming biff (to turn it on) the item is of type nsIMsgFolder (see nsMsgFolder::SetBiffState)
     // for clearing the biff the item is of type nsIMsgDBHdr (see nsMsgDBFolder::OnKeyChange)
     // so check for both of these here
     nsCOMPtr<nsIMsgFolder> folder(do_QueryInterface(item));
@@ -982,7 +981,7 @@ nsMsgFolderDataSource::OnItemPropertyFlagChanged(nsISupports *item,
 }
 
 NS_IMETHODIMP
-nsMsgFolderDataSource::OnItemEvent(nsIFolder *aFolder, nsIAtom *aEvent)
+nsMsgFolderDataSource::OnItemEvent(nsIMsgFolder *aFolder, nsIAtom *aEvent)
 {
 	return NS_OK;
 }
@@ -1601,7 +1600,7 @@ nsMsgFolderDataSource::createCharsetNode(nsIMsgFolder *folder, nsIRDFNode **targ
   if (NS_SUCCEEDED(rv))
     createNode(NS_ConvertASCIItoUCS2(charset).get(), target, getRDFService());
   else
-    createNode(NS_LITERAL_STRING("").get(), target, getRDFService());
+    createNode(EmptyString().get(), target, getRDFService());
   return NS_OK;
 }
 
@@ -1915,7 +1914,7 @@ nsMsgFolderDataSource::GetNumMessagesNode(PRInt32 aNumMessages, nsIRDFNode **nod
   if(numMessages == kDisplayQuestionCount)
     createNode(NS_LITERAL_STRING("???").get(), node, getRDFService());
   else if (numMessages == kDisplayBlankCount || numMessages == 0)
-    createNode(NS_LITERAL_STRING("").get(), node, getRDFService());
+    createNode(EmptyString().get(), node, getRDFService());
   else
     createIntNode(numMessages, node, getRDFService());
   return NS_OK;
@@ -1926,7 +1925,7 @@ nsMsgFolderDataSource::GetFolderSizeNode(PRInt32 aFolderSize, nsIRDFNode **aNode
 {
   PRUint32 folderSize = aFolderSize;
   if (folderSize == kDisplayBlankCount || folderSize == 0)
-    createNode(NS_LITERAL_STRING("").get(), aNode, getRDFService());
+    createNode(EmptyString().get(), aNode, getRDFService());
   else if(folderSize == kDisplayQuestionCount)
     createNode(NS_LITERAL_STRING("???").get(), aNode, getRDFService());
   else
@@ -1943,12 +1942,10 @@ nsMsgFolderDataSource::GetFolderSizeNode(PRInt32 aFolderSize, nsIRDFNode **aNode
     // XXX todo
     // can we catch this problem at compile time?
     // see #179234
-    nsAutoString units;
     if (sizeInMB)
-      units = NS_LITERAL_STRING(" MB");
+      sizeString.Append(NS_LITERAL_STRING(" MB"));
     else
-      units = NS_LITERAL_STRING(" KB");
-    sizeString.Append(units);
+      sizeString.Append(NS_LITERAL_STRING(" KB"));
     createNode(sizeString.get(), aNode, getRDFService());
   }
   return NS_OK;
@@ -2179,14 +2176,13 @@ nsresult nsMsgFolderDataSource::DoFolderHasAssertion(nsIMsgFolder *folder,
   
 	if((kNC_Child == property))
 	{
-		nsCOMPtr<nsIFolder> childFolder(do_QueryInterface(target, &rv));
+		nsCOMPtr<nsIMsgFolder> childFolder(do_QueryInterface(target, &rv));
 		if(NS_SUCCEEDED(rv))
 		{
-			nsCOMPtr<nsIFolder> folderasFolder(do_QueryInterface(folder));
-			nsCOMPtr<nsIFolder> childsParent;
+			nsCOMPtr<nsIMsgFolder> childsParent;
 			rv = childFolder->GetParent(getter_AddRefs(childsParent));
-			*hasAssertion = (NS_SUCCEEDED(rv) && childsParent && folderasFolder
-							&& (childsParent.get() == folderasFolder.get()));
+			*hasAssertion = (NS_SUCCEEDED(rv) && childsParent && folder
+							&& (childsParent.get() == folder));
 		}
 	}
 	else if ((kNC_Name == property) ||

@@ -33,8 +33,9 @@ IS_COMPONENT	= 1
 MODULE_NAME	= nsUCvMathModule
 GRE_MODULE	= 1
 
+PACKAGE_FILE = ucvmath.pkg
+
 REQUIRES	= xpcom \
-		  xpcom_obsolete \
 		  string \
 		  uconv \
 		  $(NULL)

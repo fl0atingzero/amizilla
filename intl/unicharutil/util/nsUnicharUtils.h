@@ -42,9 +42,6 @@
 #include "nsAString.h"
 #endif
 
-class nsASingleFragmentString;
-class nsString;
-
 void ToLowerCase( nsAString& );
 void ToUpperCase( nsAString& );
 
@@ -95,6 +92,6 @@ inline PRBool IsLowerCase(PRUnichar c) {
          ((0x2e80u <= (u) && (u) <= 0x312fu) || \
           (0x3190u <= (u) && (u) <= 0xabffu) || \
           (0xf900u <= (u) && (u) <= 0xfaffu) || \
-          (0xff00u <= (u) && (u) <= 0xffffu) )
+          (0xff00u <= (u) && (u) <= 0xffefu) )
 
 #endif  /* nsUnicharUtils_h__ */

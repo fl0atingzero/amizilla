@@ -21,8 +21,10 @@
  * Contributor(s): Garth Smedley <garths@oeone.com>
  *                 Mike Potter <mikep@oeone.com>
  *                 Colin Phillips <colinp@oeone.com> 
- *                 Chris Charabaruk <ccharabaruk@meldstar.com>
+ *                 Chris Charabaruk <coldacid@meldstar.com>
  *                 ArentJan Banck <ajbanck@planet.nl>
+ *                 Mostafa Hosseini <mostafah@oeone.com>
+ *                 Eric Belhaire <belhaire@ief.u-psud.fr>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -40,7 +42,7 @@
 
 
 
-/***** calendar/calendarEventDialog.js
+/***** calendar/eventDialog.js
 * AUTHOR
 *   Garth Smedley
 * REQUIRED INCLUDES 
@@ -55,8 +57,8 @@
    args.mode = "new";               // "new" or "edit"
    args.onOk = <function>;          // funtion to call when OK is clicked
    args.calendarEvent = calendarEvent;    // newly creatd calendar event to be editted
-    
-   calendar.openDialog("caNewEvent", "chrome://calendar/content/eventDialog.xul", true, args );
+   
+   openDialog("chrome://calendar/content/eventDialog.xul", "caEditEvent", "chrome,modal", args );
 *
 *  Invoke this dialog to edit an existing event as follows:
 *
@@ -77,6 +79,7 @@
 *   W I N D O W      V A R I A B L E S
 */
 
+var debugenabled=false;
 
 var gEvent;          // event being edited
 var gOnOkFunction;   // function to be called when user clicks OK
@@ -84,8 +87,7 @@ var gOnOkFunction;   // function to be called when user clicks OK
 var gTimeDifference = 3600000;  //when editing an event, we change the end time if the start time is changing. This is the difference for the event time.
 var gDateDifference = 3600000;  //this is the difference for the dates, not the times.
 
-var gDefaultAlarmLength = 15; //number of minutes to default the alarm to
-var gCategoryManager;
+const DEFAULT_ALARM_LENGTH = 15; //default number of time units, an alarm goes off before an event
 
 var gMode = ''; //what mode are we in? new or edit...
 
@@ -134,7 +136,7 @@ function loadCalendarEventDialog()
    
    var titleString = titleDataItem.getAttribute( "value" );
    document.getElementById("calendar-new-eventwindow").setAttribute("title", titleString);
-   
+
    // fill in fields from the event
    gStartDate.setTime( gEvent.start.getTime() );
    document.getElementById( "start-date-picker" ).value = gStartDate;
@@ -148,8 +150,6 @@ function loadCalendarEventDialog()
    gTimeDifference = gEndDate.getTime() - gStartDate.getTime(); //the time difference in ms
    gDateDifference = gTimeDifference; //the time difference in ms
    
-   var today = new Date();
-
    if ( gEvent.recurForever ) 
    {
       gEvent.recurEnd.setTime( gEndDate );
@@ -183,7 +183,7 @@ function loadCalendarEventDialog()
    setFieldValue( "description-field", gEvent.description );
    setFieldValue( "location-field", gEvent.location );
    setFieldValue( "uri-field", gEvent.url );
-   
+
    switch( gEvent.status )
    {
       case gEvent.ICAL_STATUS_TENTATIVE:
@@ -196,22 +196,14 @@ function loadCalendarEventDialog()
          setFieldValue( "status-field", "ICAL_STATUS_CANCELLED" );
       break;
    }
-   if( "edit" == args.mode )
-      setFieldValue( "all-day-event-checkbox", gEvent.allDay, "checked" );
+   setFieldValue( "all-day-event-checkbox", gEvent.allDay, "checked" );
 
    setFieldValue( "private-checkbox", gEvent.privateEvent, "checked" );
-   
-   if( gEvent.alarm === false && gEvent.alarmLength == 0 )
-   {
-      gEvent.alarmLength = gDefaultAlarmLength;
-   }
    
    setFieldValue( "alarm-checkbox", gEvent.alarm, "checked" );
    setFieldValue( "alarm-length-field", gEvent.alarmLength );
    setFieldValue( "alarm-length-units", gEvent.alarmUnits );
-
-   if( gEvent.alarmEmailAddress == "" && "new" == args.mode )
-      gEvent.alarmEmailAddress = opener.getCharPref( opener.gCalendarWindow.calendarPreferences.calendarPref, "alarms.emailaddress", "" );
+   setFieldValue( "alarm-trigger-relation", gEvent.getParameter( "ICAL_RELATED_PARAMETER" ) );
 
    if ( gEvent.alarmEmailAddress && gEvent.alarmEmailAddress != "" ) 
    {
@@ -252,8 +244,7 @@ function loadCalendarEventDialog()
 
    setFieldValue( "repeat-numberoftimes-radio", (gEvent.recurCount != 0), "selected" );
    setFieldValue( "repeat-numberoftimes-textbox", gEvent.recurCount );
-   
-   
+
    /* Categories stuff */
    // Load categories
    var categoriesString = opener.GetUnicharPref(opener.gCalendarWindow.calendarPreferences.calendarPref, "categories.names", getDefaultCategories() );
@@ -267,7 +258,7 @@ function loadCalendarEventDialog()
          categoriesList[categoriesList.length] =  gEvent.categories;
    }
 
-   // categoriesList.sort();
+   categoriesList.sort();
 
    var oldMenulist = document.getElementById( "categories-menulist-menupopup" );
    while( oldMenulist.hasChildNodes() )
@@ -358,7 +349,6 @@ function onOKCommand()
       gEvent.status      = eval( "gEvent."+getFieldValue( "status-field" ) );
    
    gEvent.allDay      = getFieldValue( "all-day-event-checkbox", "checked" );
-   
    gEvent.url = getFieldValue( "uri-field" );
 
    gEvent.privateEvent = getFieldValue( "private-checkbox", "checked" );
@@ -374,12 +364,11 @@ function onOKCommand()
    gEvent.alarm       = getFieldValue( "alarm-checkbox", "checked" );
    gEvent.alarmLength = getFieldValue( "alarm-length-field" );
    gEvent.alarmUnits  = getFieldValue( "alarm-length-units", "value" );  
+   gEvent.setParameter( "ICAL_RELATED_PARAMETER", getFieldValue( "alarm-trigger-relation", "value" ) );
 
-   dump( "!!!-->in calendarEventDialog.js, alarmUnits is "+gEvent.alarmUnits );
    if ( getFieldValue( "alarm-email-checkbox", "checked" ) ) 
    {
       gEvent.alarmEmailAddress = getFieldValue( "alarm-email-field", "value" );
-      dump( "!!!-->in calendarEventDialog.js, alarmEmailAddress is "+gEvent.alarmEmailAddress );
    }
    else
    {
@@ -440,7 +429,7 @@ function onOKCommand()
 
    for( i = 0; i < listbox.childNodes.length; i++ )
    {
-      dump( "\n exception added for "+listbox.childNodes[i].value );
+      debug( "\n exception added for "+listbox.childNodes[i].value );
 
       var dateObj = new Date( );
 
@@ -457,7 +446,6 @@ function onOKCommand()
 
    for( i = 0; i < attachmentListbox.childNodes.length; i++ )
    {
-      dump( "\n adding attachment to event added for "+attachmentListbox.childNodes[i].getAttribute( "label" ) );
       Attachment = Components.classes["@mozilla.org/messengercompose/attachment;1"].createInstance( Components.interfaces.nsIMsgAttachment );
 	   
       Attachment.url = attachmentListbox.childNodes[i].getAttribute( "label" );
@@ -489,6 +477,7 @@ function onOKCommand()
 
    var Server = getFieldValue( "server-field" );
    
+   // :TODO: REALLY only do this if the alarm or start settings change.?
    //if the end time is later than the start time... alert the user using text from the dtd.
    // call caller's on OK function
    gOnOkFunction( gEvent, Server );
@@ -576,7 +565,7 @@ function checkSetRecurTime()
 
    var recur = getFieldValue( "repeat-checkbox", "checked" );
    
-   dump(recurForever+ " and "+ recur+ "\n"); 
+   debug(recurForever+ " and "+ recur+ "\n"); 
    var state = ( recurEndDate.getTime() < endDate.getTime() && 
                  ( recurEndDate.getFullYear() != endDate.getFullYear() ||
                  recurEndDate.getMonth() != endDate.getMonth() ||
@@ -680,9 +669,10 @@ function onDatePick( datepicker )
 function prepareTimePicker( timeFieldName )
 {
    // get the popup and the field we are editing
-   
    var timePickerPopup = document.getElementById( "oe-time-picker-popup" );
    var timeField = document.getElementById( timeFieldName );
+   
+   timeField.focus();
    
    // tell the time picker the time to edit.
    setFieldValue( "oe-time-picker-popup", timeField.editDate, "value" );
@@ -739,6 +729,27 @@ function onTimePick( timepopup )
 }
 
 /**
+*   Called when an item with a datepicker is clicked, BEFORE the picker is shown.
+*/
+
+function prepareDatePicker( dateFieldName )
+{
+   // get the popup and the field we are editing
+   
+   var datePickerPopup = document.getElementById( "oe-date-picker-popup" );
+   var dateField = document.getElementById( dateFieldName );
+   
+   // tell the date picker the date to edit.
+   
+   setFieldValue( "oe-date-picker-popup", dateField.editDate, "value" );
+   
+   // remember the date field that is to be updated by adding a 
+   // property "dateField" to the popup.
+   
+   datePickerPopup.dateField = dateField;
+}
+   
+/**
 *   Called when the repeat checkbox is clicked.
 */
 
@@ -776,7 +787,6 @@ function commandAllDay()
 
 function commandAlarm()
 {
-   document.getElementById( "alarm-email-checkbox" ).removeAttribute( "checked" );
    updateAlarmItemEnabled();
 }
 
@@ -791,29 +801,29 @@ function updateAlarmItemEnabled()
    
    var alarmField = "alarm-length-field";
    var alarmMenu = "alarm-length-units";
-   var alarmLabel = "alarm-length-text";
+   var alarmTrigger = "alarm-trigger-relation";
       
    var alarmEmailCheckbox = "alarm-email-checkbox";
    var alarmEmailField = "alarm-email-field";
 
-   if( getFieldValue(alarmCheckBox, "checked" ) || getFieldValue( alarmEmailCheckbox, "checked" ) )
+//   if( getFieldValue(alarmCheckBox, "checked" ) || getFieldValue( alarmEmailCheckbox, "checked" ) )
+   if( getFieldValue(alarmCheckBox, "checked" ) )
    {
       // call remove attribute beacuse some widget code checks for the presense of a 
       // disabled attribute, not the value.
-      setFieldValue( alarmCheckBox, true, "checked" );
       setFieldValue( alarmField, false, "disabled" );
       setFieldValue( alarmMenu, false, "disabled" );
-      setFieldValue( alarmLabel, false, "disabled" );
+      setFieldValue( alarmTrigger, false, "disabled" );
+      setFieldValue( alarmEmailField, false, "disabled" );
       setFieldValue( alarmEmailCheckbox, false, "disabled" );
    }
    else
    {
       setFieldValue( alarmField, true, "disabled" );
       setFieldValue( alarmMenu, true, "disabled" );
-      setFieldValue( alarmLabel, true, "disabled" );
+      setFieldValue( alarmTrigger, true, "disabled" );
       setFieldValue( alarmEmailField, true, "disabled" );
       setFieldValue( alarmEmailCheckbox, true, "disabled" );
-      setFieldValue( alarmEmailCheckbox, false, "checked" );
    }
 }
 
@@ -1230,25 +1240,35 @@ function updateAdvancedRepeatDayOfMonth()
 
    var weekNumber = getWeekNumberOfMonth();
    
-   document.getElementById( "advanced-repeat-dayofmonth" ).setAttribute( "label", document.getElementById( "onthe-text" ).getAttribute( "value" )+dayNumber+dayExtension+document.getElementById( "ofthemonth-text" ).getAttribute( "value" ) );
+   var calStrings = document.getElementById("bundle_calendar");
+
+   var weekNumberText = getWeekNumberText( weekNumber );
+   var dayOfWeekText = getDayOfWeek( dayNumber );
+   var ofTheMonthText = document.getElementById( "ofthemonth-text" ).getAttribute( "value" );
+   var lastText = document.getElementById( "last-text" ).getAttribute( "value" );
+   var onTheText = document.getElementById( "onthe-text" ).getAttribute( "value" );
+   var dayNumberWithOrdinal = dayNumber + dayExtension;
+   var repeatSentence = calStrings.getFormattedString( "weekDayMonthLabel", [onTheText, dayNumberWithOrdinal, ofTheMonthText] );
+
+   document.getElementById( "advanced-repeat-dayofmonth" ).setAttribute( "label", repeatSentence );
    
    if( weekNumber == 4 && isLastDayOfWeekOfMonth() )
    {
-      document.getElementById( "advanced-repeat-dayofweek" ).setAttribute( "label", getWeekNumberText( weekNumber )+" "+getDayOfWeek( dayNumber )+document.getElementById( "ofthemonth-text" ).getAttribute( "value" ) );
+      document.getElementById( "advanced-repeat-dayofweek" ).setAttribute( "label", calStrings.getFormattedString( "weekDayMonthLabel", [weekNumberText, dayOfWeekText, ofTheMonthText] ) );
 
       document.getElementById( "advanced-repeat-dayofweek-last" ).removeAttribute( "collapsed" );
 
-      document.getElementById( "advanced-repeat-dayofweek-last" ).setAttribute( "label", document.getElementById( "last-text" ).getAttribute( "value" )+getDayOfWeek( dayNumber )+document.getElementById( "ofthemonth-text" ).getAttribute( "value" ) );
+      document.getElementById( "advanced-repeat-dayofweek-last" ).setAttribute( "label", calStrings.getFormattedString( "weekDayMonthLabel", [lastText, dayOfWeekText, ofTheMonthText] ) );
    }
    else if( weekNumber == 4 && !isLastDayOfWeekOfMonth() )
    {
-      document.getElementById( "advanced-repeat-dayofweek" ).setAttribute( "label", getWeekNumberText( weekNumber )+" "+getDayOfWeek( dayNumber )+document.getElementById( "ofthemonth-text" ).getAttribute( "value" ) );
+      document.getElementById( "advanced-repeat-dayofweek" ).setAttribute( "label", calStrings.getFormattedString( "weekDayMonthLabel", [weekNumberText, dayOfWeekText, ofTheMonthText] ) );
 
       document.getElementById( "advanced-repeat-dayofweek-last" ).setAttribute( "collapsed", "true" );
    }
    else
    {
-      document.getElementById( "advanced-repeat-dayofweek" ).setAttribute( "label", getWeekNumberText( weekNumber )+" "+getDayOfWeek( dayNumber )+document.getElementById( "ofthemonth-text" ).getAttribute( "value" ) );
+      document.getElementById( "advanced-repeat-dayofweek" ).setAttribute( "label", calStrings.getFormattedString( "weekDayMonthLabel", [weekNumberText, dayOfWeekText, ofTheMonthText] ) );
 
       document.getElementById( "advanced-repeat-dayofweek-last" ).setAttribute( "collapsed", "true" );
    }
@@ -1320,20 +1340,16 @@ function isAlreadyException( dateObj )
 
 function getDayExtension( dayNumber )
 {
-   switch( dayNumber )
+   var dateStringBundle = srGetStrBundle("chrome://calendar/locale/dateFormat.properties");
+
+   if ( dayNumber >= 1 && dayNumber <= 31 )
    {
-      case 1:
-      case 21:
-      case 31:
-         return( "st" );
-      case 2:
-      case 22:
-         return( "nd" );
-      case 3:
-      case 23:
-         return( "rd" );
-      default:
-         return( "th" );
+      return( dateStringBundle.GetStringFromName( "ordinal.suffix."+dayNumber ) );
+   }
+   else
+   {
+      dump("ERROR: Invalid day number: " + dayNumber);
+      return ( false );
    }
 }
 
@@ -1440,29 +1456,25 @@ function addAttachment( attachmentToAdd )
 
 function getWeekNumberText( weekNumber )
 {
-   switch( weekNumber )
+   var dateStringBundle = srGetStrBundle("chrome://calendar/locale/dateFormat.properties");
+   if ( weekNumber >= 1 && weekNumber <= 4 )
    {
-   case 1:
-      return( "First" );
-   case 2:
-      return( "Second" );
-   case 3:
-      return( "Third" );
-   case 4:
-      return( "Fourth" );
-   case 5:
-      return( "Last" );
-   default:
+      return( dateStringBundle.GetStringFromName( "ordinal.name."+weekNumber) );
+   }
+   else if( weekNumber == 5 ) 
+   {
+       return( dateStringBundle.GetStringFromName( "ordinal.name.last" ) );
+   }
+   else
+   {
       return( false );
    }
-
 }
-
 
 var launch = true;
 
 /* URL */
-function launchBrowser()
+function loadURL()
 {
    if( launch == false ) //stops them from clicking on it twice
       return;
@@ -1479,33 +1491,8 @@ function launchBrowser()
       UrlToGoTo = "http://"+UrlToGoTo;
 
    //launch the browser to that URL
-   var navWindow;
+   launchBrowser( UrlToGoTo );
 
-     // if not, get the most recently used browser window
-       try {
-         var wm = Components.classes["@mozilla.org/appshell/window-mediator;1"]
-           .getService(Components.interfaces.nsIWindowMediator);
-         navWindow = wm.getMostRecentWindow("navigator:browser");
-       }
-       catch (ex) { }
-     
-     if (navWindow) {
-       if ("delayedOpenTab" in navWindow)
-         navWindow.delayedOpenTab(UrlToGoTo);
-       else if ("loadURI" in navWindow)
-         navWindow.loadURI(UrlToGoTo);
-       else
-         navWindow._content.location.href = UrlToGoTo;
-     }
-     // if all else fails, open a new window
-     else {
-       var ass = Components.classes["@mozilla.org/appshell/appShellService;1"].getService(Components.interfaces.nsIAppShellService);
-       w = ass.hiddenDOMWindow;
-
-       w.openDialog( getBrowserURL(), "_blank", "chrome,all,dialog=no", UrlToGoTo );
-     }
-   //window.open(UrlToGoTo, "_blank", "chrome,menubar,toolbar,resizable,dialog=no");
-   //window.open( UrlToGoTo, "calendar-opened-window" );
    launch = true;
 }
 
@@ -1666,8 +1653,8 @@ function formatTime( time )
 }
 
 
-function debug( Text )
+function debug( text )
 {
-   dump( "\n"+ Text + "\n");
-
+    if( debugenabled )
+        dump( "\n"+ text + "\n");
 }

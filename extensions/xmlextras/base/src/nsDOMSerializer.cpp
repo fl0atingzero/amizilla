@@ -50,7 +50,6 @@
 
 #include "nsIJSContextStack.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsICodebasePrincipal.h"
 #include "nsIURI.h"
 
 nsDOMSerializer::nsDOMSerializer()
@@ -74,12 +73,15 @@ NS_IMPL_ADDREF(nsDOMSerializer)
 NS_IMPL_RELEASE(nsDOMSerializer)
 
 
-static nsresult SetUpEncoder(nsIDOMNode *aRoot, const char* aCharset, nsIDocumentEncoder **aEncoder)
+static nsresult
+SetUpEncoder(nsIDOMNode *aRoot, const nsACString& aCharset,
+             nsIDocumentEncoder **aEncoder)
 {
   *aEncoder = nsnull;
    
   nsresult rv;
-  nsCOMPtr<nsIDocumentEncoder> encoder(do_CreateInstance(NS_DOC_ENCODER_CONTRACTID_BASE "text/xml",&rv));
+  nsCOMPtr<nsIDocumentEncoder> encoder =
+    do_CreateInstance(NS_DOC_ENCODER_CONTRACTID_BASE "text/xml", &rv);
   if (NS_FAILED(rv))
     return rv;
 
@@ -95,23 +97,21 @@ static nsresult SetUpEncoder(nsIDOMNode *aRoot, const char* aCharset, nsIDocumen
   }
 
   // This method will fail if no document
-  rv = encoder->Init(document,NS_LITERAL_STRING("text/xml"),nsIDocumentEncoder::OutputEncodeBasicEntities);
+  rv = encoder->Init(document, NS_LITERAL_STRING("text/xml"),
+                     nsIDocumentEncoder::OutputEncodeBasicEntities);
   if (NS_FAILED(rv))
     return rv;
 
-  nsCAutoString charset;
-  if (aCharset) {
-    charset = aCharset;
-  } else {
-    rv = document->GetDocumentCharacterSet(charset);
-    if (NS_FAILED(rv))
-      return rv;
+  nsCAutoString charset(aCharset);
+  if (charset.IsEmpty()) {
+    charset = document->GetDocumentCharacterSet();
   }
   rv = encoder->SetCharset(charset);
   if (NS_FAILED(rv))
     return rv;
 
-  // If we are working on the entire document we do not need to specify which part to serialize
+  // If we are working on the entire document we do not need to
+  // specify which part to serialize
   if (!entireDocument) {
     rv = encoder->SetNode(aRoot);
   }
@@ -124,7 +124,8 @@ static nsresult SetUpEncoder(nsIDOMNode *aRoot, const char* aCharset, nsIDocumen
   return rv;
 }
 
-nsresult CheckSameOrigin(nsIDOMNode *aRoot)
+static nsresult
+CheckSameOrigin(nsIDOMNode *aRoot)
 {
   // Get JSContext from stack.
   nsCOMPtr<nsIJSContextStack> stack =
@@ -151,16 +152,12 @@ nsresult CheckSameOrigin(nsIDOMNode *aRoot)
     nsCOMPtr<nsIDocument> doc(do_QueryInterface(owner_doc));
 
     if (doc) {
-      nsCOMPtr<nsIPrincipal> principal;
       nsCOMPtr<nsIURI> root_uri;
 
-      doc->GetPrincipal(getter_AddRefs(principal));
+      nsIPrincipal *principal = doc->GetPrincipal();
 
-      nsCOMPtr<nsICodebasePrincipal> codebase_principal =
-        do_QueryInterface(principal);
-
-      if (codebase_principal) {
-        codebase_principal->GetURI(getter_AddRefs(root_uri));
+      if (principal) {
+        principal->GetURI(getter_AddRefs(root_uri));
       }
 
       if (root_uri) {
@@ -184,38 +181,28 @@ nsresult CheckSameOrigin(nsIDOMNode *aRoot)
 }
 
 NS_IMETHODIMP
-nsDOMSerializer::SerializeToString(nsIDOMNode *aRoot, PRUnichar **_retval)
+nsDOMSerializer::SerializeToString(nsIDOMNode *aRoot, nsAString& _retval)
 {
   NS_ENSURE_ARG_POINTER(aRoot);
-  NS_ENSURE_ARG_POINTER(_retval);  
   
-  *_retval = nsnull;
+  _retval.Truncate();
 
   nsresult rv = CheckSameOrigin(aRoot);
   if (NS_FAILED(rv))
     return rv;
 
   nsCOMPtr<nsIDocumentEncoder> encoder;
-  rv = SetUpEncoder(aRoot, nsnull, getter_AddRefs(encoder));
+  rv = SetUpEncoder(aRoot, EmptyCString(), getter_AddRefs(encoder));
   if (NS_FAILED(rv))
     return rv;
 
-  nsAutoString str;
-  rv = encoder->EncodeToString(str);
-  if (NS_FAILED(rv))
-    return rv;
-
-  *_retval = ToNewUnicode(str);
-  if (!*_retval)
-    return NS_ERROR_OUT_OF_MEMORY;
-
-  return NS_OK;
+  return encoder->EncodeToString(_retval);
 }
 
 NS_IMETHODIMP
 nsDOMSerializer::SerializeToStream(nsIDOMNode *aRoot, 
                                    nsIOutputStream *aStream, 
-                                   const char *aCharset)
+                                   const nsACString& aCharset)
 {
   NS_ENSURE_ARG_POINTER(aRoot);
   NS_ENSURE_ARG_POINTER(aStream);

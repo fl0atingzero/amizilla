@@ -63,15 +63,15 @@ public:
   NS_IMETHOD CloneNode(PRBool aDeep, nsIDOMNode** aReturn);
 
   // nsIContent
-  NS_IMETHOD SetDocument(nsIDocument* aDocument, PRBool aDeep,
-                         PRBool aCompileEventHandlers);
+  virtual void SetDocument(nsIDocument* aDocument, PRBool aDeep,
+                           PRBool aCompileEventHandlers);
 
   // nsStyleLinkElement
   NS_IMETHOD GetCharset(nsAString& aCharset);
 
 protected:
   void GetStyleSheetURL(PRBool* aIsInline,
-                        nsAString& aUrl);
+                        nsIURI** aURI);
   void GetStyleSheetInfo(nsAString& aTitle,
                          nsAString& aType,
                          nsAString& aMedia,
@@ -101,17 +101,15 @@ nsXMLStylesheetPI::~nsXMLStylesheetPI()
 
 // nsIContent
 
-NS_IMETHODIMP
+void
 nsXMLStylesheetPI::SetDocument(nsIDocument* aDocument, PRBool aDeep,
                                PRBool aCompileEventHandlers)
 {
   nsCOMPtr<nsIDocument> oldDoc = mDocument;
-  nsresult rv = nsXMLProcessingInstruction::SetDocument(aDocument, aDeep,
-                                                        aCompileEventHandlers);
-  if (NS_SUCCEEDED(rv)) {
-    UpdateStyleSheet(oldDoc);
-  }
-  return rv;
+  nsXMLProcessingInstruction::SetDocument(aDocument, aDeep,
+                                          aCompileEventHandlers);
+
+  UpdateStyleSheet(oldDoc);
 }
 
 
@@ -157,10 +155,10 @@ nsXMLStylesheetPI::GetCharset(nsAString& aCharset)
 
 void
 nsXMLStylesheetPI::GetStyleSheetURL(PRBool* aIsInline,
-                                    nsAString& aUrl)
+                                    nsIURI** aURI)
 {
   *aIsInline = PR_FALSE;
-  aUrl.Truncate();
+  *aURI = nsnull;
 
   nsAutoString href;
   GetAttrValue(NS_LITERAL_STRING("href"), href);
@@ -168,11 +166,16 @@ nsXMLStylesheetPI::GetStyleSheetURL(PRBool* aIsInline,
     return;
   }
 
-  nsCOMPtr<nsIURI> url, baseURL;
+  nsIURI *baseURL;
+  nsCAutoString charset;
   if (mDocument) {
-    mDocument->GetBaseURL(getter_AddRefs(baseURL));
+    baseURL = mDocument->GetBaseURI();
+    charset = mDocument->GetDocumentCharacterSet();
+  } else {
+    baseURL = nsnull;
   }
-  NS_MakeAbsoluteURI(aUrl, href, baseURL);
+
+  NS_NewURI(aURI, href, charset.get(), baseURL);
 }
 
 void

@@ -49,6 +49,7 @@
 #include "nsCSSAnonBoxes.h"
 #include "nsReflowPath.h"
 #include "nsAutoPtr.h"
+#include "nsFrameManager.h"
 #ifdef ACCESSIBILITY
 #include "nsIServiceManager.h"
 #include "nsIAccessibilityService.h"
@@ -107,13 +108,10 @@ nsInlineFrame::GetFrameName(nsAString& aResult) const
 }
 #endif
 
-NS_IMETHODIMP
-nsInlineFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsInlineFrame::GetType() const
 {
-  NS_PRECONDITION(nsnull != aType, "null OUT parameter pointer");
-  *aType = nsLayoutAtoms::inlineFrame;
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsLayoutAtoms::inlineFrame;
 }
 
 inline PRBool
@@ -139,16 +137,14 @@ IsMarginZero(nsStyleUnit aUnit, nsStyleCoord &aCoord)
             (aUnit == eStyleUnit_Percent && aCoord.GetPercentValue() == 0.0));
 }
 
-NS_IMETHODIMP
-nsInlineFrame::IsEmpty(nsCompatibility aCompatMode, PRBool aIsPre,
-                       PRBool* aResult)
+/* virtual */ PRBool
+nsInlineFrame::IsEmpty()
 {
 #if 0
   // I used to think inline frames worked this way, but it seems they
   // don't.  At least not in our codebase.
-  if (aCompatMode == eCompatibility_FullStandards) {
-    *aResult = PR_FALSE;
-    return NS_OK;
+  if (GetPresContext()->CompatibilityMode() == eCompatibility_FullStandards) {
+    return PR_FALSE;
   }
 #endif
   const nsStyleMargin* margin = GetStyleMargin();
@@ -172,17 +168,14 @@ nsInlineFrame::IsEmpty(nsCompatibility aCompatMode, PRBool aIsPre,
                     margin->mMargin.GetRight(coord)) ||
       !IsMarginZero(margin->mMargin.GetLeftUnit(),
                     margin->mMargin.GetLeft(coord))) {
-    *aResult = PR_FALSE;
-    return NS_OK;
+    return PR_FALSE;
   }
 
-  *aResult = PR_TRUE;
-  for (nsIFrame *kid = mFrames.FirstChild(); kid; kid->GetNextSibling(&kid)) {
-    kid->IsEmpty(aCompatMode, aIsPre, aResult);
-    if (! *aResult)
-      break;
+  for (nsIFrame *kid = mFrames.FirstChild(); kid; kid = kid->GetNextSibling()) {
+    if (!kid->IsEmpty())
+      return PR_FALSE;
   }
-  return NS_OK;
+  return PR_TRUE;
 }
 
 NS_IMETHODIMP
@@ -244,27 +237,20 @@ nsInlineFrame::RemoveFrame(nsIPresContext* aPresContext,
 
   if (aOldFrame) {
     // Loop and destroy the frame and all of its continuations.
-    PRBool generateReflowCommand = PR_FALSE;
-
     // If the frame we are removing is a brFrame, we need a reflow so
     // the line the brFrame was on can attempt to pull up any frames
     // that can fit from lines below it.
-    nsCOMPtr<nsIAtom> frameType;
-    aOldFrame->GetFrameType(getter_AddRefs(frameType));
-    if (frameType == nsLayoutAtoms::brFrame)
-      generateReflowCommand = PR_TRUE;
+    PRBool generateReflowCommand =
+      aOldFrame->GetType() == nsLayoutAtoms::brFrame;
 
-    nsIFrame* oldFrameParent;
-    aOldFrame->GetParent(&oldFrameParent);
-    nsInlineFrame* parent = (nsInlineFrame*) oldFrameParent;
-    while (nsnull != aOldFrame) {
+    nsInlineFrame* parent = NS_STATIC_CAST(nsInlineFrame*, aOldFrame->GetParent());
+    while (aOldFrame) {
 #ifdef IBMBIDI
       if (nsLayoutAtoms::nextBidi != aListName) {
 #endif
       // If the frame being removed has zero size then don't bother
       // generating a reflow command, otherwise make sure we do.
-      nsRect bbox;
-      aOldFrame->GetRect(bbox);
+      nsRect bbox = aOldFrame->GetRect();
       if (bbox.width || bbox.height) {
         generateReflowCommand = PR_TRUE;
       }
@@ -279,8 +265,8 @@ nsInlineFrame::RemoveFrame(nsIPresContext* aPresContext,
       aOldFrame->GetNextInFlow(&oldFrameNextInFlow);
       parent->mFrames.DestroyFrame(aPresContext, aOldFrame);
       aOldFrame = oldFrameNextInFlow;
-      if (nsnull != aOldFrame) {
-        aOldFrame->GetParent((nsIFrame**) &parent);
+      if (aOldFrame) {
+        parent = NS_STATIC_CAST(nsInlineFrame*, aOldFrame->GetParent());
       }
     }
 
@@ -416,9 +402,7 @@ nsInlineFrame::Reflow(nsIPresContext*          aPresContext,
       // our prev-in-flow's overflow list, it's possible that we have not set
       // the parent pointer for these frames. Check the first frame to see, and
       // if we haven't set the parent pointer then set it now
-      nsIFrame* parent;
-      overflowFrames->GetParent(&parent);
-      mFrames.AppendFrames(parent == this ? nsnull : this, overflowFrames);
+      mFrames.AppendFrames(overflowFrames->GetParent() == this ? nsnull : this, overflowFrames);
     }
   }
 
@@ -553,7 +537,7 @@ nsInlineFrame::ReflowFrames(nsIPresContext* aPresContext,
       break;
     }
     irs.mPrevFrame = frame;
-    frame->GetNextSibling(&frame);
+    frame = frame->GetNextSibling();
   }
 
   // Attempt to pull frames from our next-in-flow until we can't
@@ -686,9 +670,7 @@ nsInlineFrame::ReflowFrames(nsIPresContext* aPresContext,
 static 
 void SetContainsPercentAwareChild(nsIFrame *aFrame)
 {
-  nsFrameState myFrameState;
-  aFrame->GetFrameState(&myFrameState);
-  aFrame->SetFrameState(myFrameState | NS_INLINE_FRAME_CONTAINS_PERCENT_AWARE_CHILD);
+  aFrame->AddStateBits(NS_INLINE_FRAME_CONTAINS_PERCENT_AWARE_CHILD);
 }
 
 static
@@ -696,9 +678,7 @@ void MarkPercentAwareFrame(nsIPresContext *aPresContext,
                            nsInlineFrame  *aInline,
                            nsIFrame       *aFrame)
 {
-  nsFrameState childFrameState;
-  aFrame->GetFrameState(&childFrameState);
-  if (childFrameState & NS_FRAME_REPLACED_ELEMENT) 
+  if (aFrame->GetStateBits() & NS_FRAME_REPLACED_ELEMENT) 
   { // aFrame is a replaced element, check it's style
     if (nsLineLayout::IsPercentageAwareReplacedElement(aPresContext, aFrame)) {
       SetContainsPercentAwareChild(aInline);
@@ -706,11 +686,9 @@ void MarkPercentAwareFrame(nsIPresContext *aPresContext,
   }
   else
   {
-    nsIFrame *child;
-    aFrame->FirstChild(aPresContext, nsnull, &child);
-    if (child)
+    if (aFrame->GetFirstChild(nsnull))
     { // aFrame is an inline container frame, check my frame state
-      if (childFrameState & NS_INLINE_FRAME_CONTAINS_PERCENT_AWARE_CHILD) {
+      if (aFrame->GetStateBits() & NS_INLINE_FRAME_CONTAINS_PERCENT_AWARE_CHILD) {
         SetContainsPercentAwareChild(aInline); // if a child container is effected, so am I
       }
     }
@@ -760,11 +738,8 @@ nsInlineFrame::ReflowInlineFrame(nsIPresContext* aPresContext,
         // remaining child frames in our child list with the wrong parent
         // frame pointer...
         if (irs.mSetParentPointer) {
-          nsIFrame* f;
-          aFrame->GetNextSibling(&f);
-          while (f) {
+          for (nsIFrame* f = aFrame->GetNextSibling(); f; f = f->GetNextSibling()) {
             f->SetParent(this);
-            f->GetNextSibling(&f);
           }
         }
       }
@@ -778,9 +753,8 @@ nsInlineFrame::ReflowInlineFrame(nsIPresContext* aPresContext,
           return rv;
         }
       }
-      nsIFrame* nextFrame;
-      aFrame->GetNextSibling(&nextFrame);
-      if (nsnull != nextFrame) {
+      nsIFrame* nextFrame = aFrame->GetNextSibling();
+      if (nextFrame) {
         aStatus |= NS_FRAME_NOT_COMPLETE;
         PushFrames(aPresContext, nextFrame, aFrame);
       }
@@ -799,9 +773,7 @@ nsInlineFrame::ReflowInlineFrame(nsIPresContext* aPresContext,
     }
   }
   else if (NS_FRAME_IS_NOT_COMPLETE(aStatus)) {
-    nsCOMPtr<nsIAtom> frameType;
-    aFrame->GetFrameType(getter_AddRefs(frameType));
-    if (nsLayoutAtoms::placeholderFrame == frameType) {
+    if (nsLayoutAtoms::placeholderFrame == aFrame->GetType()) {
       nsBlockReflowState* blockRS = lineLayout->mBlockRS;
       blockRS->mBlock->SplitPlaceholder(*aPresContext, *aFrame);
     }
@@ -812,9 +784,8 @@ nsInlineFrame::ReflowInlineFrame(nsIPresContext* aPresContext,
         return rv;
       }
       if (!reflowingFirstLetter) {
-        nsIFrame* nextFrame;
-        aFrame->GetNextSibling(&nextFrame);
-        if (nsnull != nextFrame) {
+        nsIFrame* nextFrame = aFrame->GetNextSibling();
+        if (nextFrame) {
           PushFrames(aPresContext, nextFrame, aFrame);
         }
       }
@@ -854,11 +825,7 @@ nsInlineFrame::PushFrames(nsIPresContext* aPresContext,
 {
   NS_PRECONDITION(nsnull != aFromChild, "null pointer");
   NS_PRECONDITION(nsnull != aPrevSibling, "pushing first child");
-#ifdef DEBUG
-  nsIFrame* prevNextSibling;
-  aPrevSibling->GetNextSibling(&prevNextSibling);
-  NS_PRECONDITION(prevNextSibling == aFromChild, "bad prev sibling");
-#endif
+  NS_PRECONDITION(aPrevSibling->GetNextSibling() == aFromChild, "bad prev sibling");
 
 #ifdef NOISY_PUSHING
       printf("%p pushing aFromChild %p, disconnecting from prev sib %p\n", 
@@ -912,10 +879,10 @@ NS_IMETHODIMP nsInlineFrame::GetAccessible(nsIAccessible** aAccessible)
   // Broken image accessibles are created here, because layout
   // replaces the image or image control frame with an inline frame
   *aAccessible = nsnull;
-  nsCOMPtr<nsIAtom> tagAtom;
-  mContent->GetTag(getter_AddRefs(tagAtom));
-  if (tagAtom == nsHTMLAtoms::img || tagAtom == nsHTMLAtoms::input || 
-     tagAtom == nsHTMLAtoms::label || tagAtom == nsHTMLAtoms::hr) {
+  nsIAtom *tagAtom = mContent->Tag();
+  if ((tagAtom == nsHTMLAtoms::img || tagAtom == nsHTMLAtoms::input || 
+       tagAtom == nsHTMLAtoms::label || tagAtom == nsHTMLAtoms::hr) &&
+      mContent->IsContentOfType(nsIContent::eHTML)) {
     // Only get accessibility service if we're going to use it
     nsCOMPtr<nsIAccessibilityService> accService(do_GetService("@mozilla.org/accessibilityService;1"));
     if (!accService)
@@ -943,10 +910,11 @@ ReParentChildListStyle(nsIPresContext* aPresContext,
                        nsStyleContext* aParentStyleContext,
                        nsFrameList& aFrameList)
 {
-  nsIFrame* kid = aFrameList.FirstChild();
-  while (nsnull != kid) {
-    aPresContext->ReParentStyleContext(kid, aParentStyleContext);
-    kid->GetNextSibling(&kid);
+  nsFrameManager *frameManager = aPresContext->FrameManager();
+
+  for (nsIFrame* kid = aFrameList.FirstChild(); kid;
+       kid = kid->GetNextSibling()) {
+    frameManager->ReParentStyleContext(kid, aParentStyleContext);
   }
 }
 
@@ -977,13 +945,10 @@ nsFirstLineFrame::GetFrameName(nsAString& aResult) const
 }
 #endif
 
-NS_IMETHODIMP
-nsFirstLineFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsFirstLineFrame::GetType() const
 {
-  NS_PRECONDITION(nsnull != aType, "null OUT parameter pointer");
-  *aType = nsLayoutAtoms::lineFrame;
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsLayoutAtoms::lineFrame;
 }
 
 void
@@ -1005,7 +970,7 @@ nsFirstLineFrame::PullOneFrame(nsIPresContext* aPresContext, InlineReflowState& 
   if (frame && !mPrevInFlow) {
     // We are a first-line frame. Fixup the child frames
     // style-context that we just pulled.
-    aPresContext->ReParentStyleContext(frame, mStyleContext);
+    aPresContext->FrameManager()->ReParentStyleContext(frame, mStyleContext);
   }
   return frame;
 }
@@ -1027,8 +992,8 @@ nsFirstLineFrame::Reflow(nsIPresContext* aPresContext,
     if (prevOverflowFrames) {
       nsFrameList frames(prevOverflowFrames);
       
-      ReParentChildListStyle(aPresContext, mStyleContext, frames);
       mFrames.InsertFrames(this, nsnull, prevOverflowFrames);
+      ReParentChildListStyle(aPresContext, mStyleContext, frames);
     }
   }
 
@@ -1038,8 +1003,8 @@ nsFirstLineFrame::Reflow(nsIPresContext* aPresContext,
     NS_ASSERTION(mFrames.NotEmpty(), "overflow list w/o frames");
     nsFrameList frames(overflowFrames);
 
-    ReParentChildListStyle(aPresContext, mStyleContext, frames);
     mFrames.AppendFrames(nsnull, overflowFrames);
+    ReParentChildListStyle(aPresContext, mStyleContext, frames);
   }
 
   // Set our own reflow state (additional state above and beyond
@@ -1085,17 +1050,16 @@ nsFirstLineFrame::Reflow(nsIPresContext* aPresContext,
     if (mStyleContext == first->mStyleContext) {
       // Fixup our style context and our children. First get the
       // proper parent context.
-      nsIFrame* parentFrame;
-      first->GetParent(&parentFrame);
-      nsStyleContext* parentContext = parentFrame->GetStyleContext();
+      nsStyleContext* parentContext = first->GetParent()->GetStyleContext();
       if (parentContext) {
         // Create a new style context that is a child of the parent
         // style context thus removing the :first-line style. This way
         // we behave as if an anonymous (unstyled) span was the child
         // of the parent frame.
-        nsRefPtr<nsStyleContext> newSC = aPresContext->ResolvePseudoStyleContextFor(nsnull,
-                                                                                    nsCSSAnonBoxes::mozLineFrame,
-                                                                                    parentContext);
+        nsRefPtr<nsStyleContext> newSC;
+        newSC = aPresContext->StyleSet()->
+          ResolvePseudoStyleFor(nsnull,
+                                nsCSSAnonBoxes::mozLineFrame, parentContext);
         if (newSC) {
           // Switch to the new style context.
           SetStyleContext(aPresContext, newSC);
@@ -1227,39 +1191,31 @@ nsPositionedInlineFrame::ReplaceFrame(nsIPresContext* aPresContext,
   }
 }
 
-NS_IMETHODIMP
-nsPositionedInlineFrame::GetAdditionalChildListName(PRInt32   aIndex,
-                                                    nsIAtom** aListName) const
+nsIAtom*
+nsPositionedInlineFrame::GetAdditionalChildListName(PRInt32 aIndex) const
 {
-  NS_PRECONDITION(nsnull != aListName, "null OUT parameter pointer");
-  *aListName = nsnull;
   if (0 == aIndex) {
-    *aListName = mAbsoluteContainer.GetChildListName();
-    NS_ADDREF(*aListName);
+    return mAbsoluteContainer.GetChildListName();
   }
-  return NS_OK;
+  return nsnull;
 }
 
-NS_IMETHODIMP
-nsPositionedInlineFrame::FirstChild(nsIPresContext* aPresContext,
-                                    nsIAtom*        aListName,
-                                    nsIFrame**      aFirstChild) const
+nsIFrame*
+nsPositionedInlineFrame::GetFirstChild(nsIAtom* aListName) const
 {
-  NS_PRECONDITION(nsnull != aFirstChild, "null OUT parameter pointer");
   if (mAbsoluteContainer.GetChildListName() == aListName) {
-    return mAbsoluteContainer.FirstChild(this, aListName, aFirstChild);
+    nsIFrame* result = nsnull;
+    mAbsoluteContainer.FirstChild(this, aListName, &result);
+    return result;
   }
 
-  return nsInlineFrame::FirstChild(aPresContext, aListName, aFirstChild);
+  return nsInlineFrame::GetFirstChild(aListName);
 }
 
-NS_IMETHODIMP
-nsPositionedInlineFrame::GetFrameType(nsIAtom** aType) const
+nsIAtom*
+nsPositionedInlineFrame::GetType() const
 {
-  NS_PRECONDITION(nsnull != aType, "null OUT parameter pointer");
-  *aType = nsLayoutAtoms::positionedInlineFrame;
-  NS_ADDREF(*aType);
-  return NS_OK;
+  return nsLayoutAtoms::positionedInlineFrame;
 }
 
 NS_IMETHODIMP
@@ -1295,9 +1251,6 @@ nsPositionedInlineFrame::Reflow(nsIPresContext*          aPresContext,
       reflowState.path = nsnull;
       rv = nsInlineFrame::Reflow(aPresContext, aDesiredSize, reflowState, aStatus);
 
-      // XXX Although this seems like the correct thing to do the line layout
-      // code seems to reset the NS_FRAME_OUTSIDE_CHILDREN and so it is ignored
-#if 0
       // Factor the absolutely positioned child bounds into the overflow area
       nsRect childBounds;
       mAbsoluteContainer.CalculateChildBounds(aPresContext, childBounds);
@@ -1312,7 +1265,6 @@ nsPositionedInlineFrame::Reflow(nsIPresContext*          aPresContext,
       } else {
         mState &= ~NS_FRAME_OUTSIDE_CHILDREN;
       }
-#endif
       return rv;
     }
   }
@@ -1342,9 +1294,6 @@ nsPositionedInlineFrame::Reflow(nsIPresContext*          aPresContext,
                                    containingBlockWidth, containingBlockHeight,
                                    &childBounds);
     
-    // XXX Although this seems like the correct thing to do the line layout
-    // code seems to reset the NS_FRAME_OUTSIDE_CHILDREN and so it is ignored
-#if 0
     // Factor the absolutely positioned child bounds into the overflow area
     aDesiredSize.mOverflowArea.UnionRect(aDesiredSize.mOverflowArea, childBounds);
 
@@ -1357,7 +1306,6 @@ nsPositionedInlineFrame::Reflow(nsIPresContext*          aPresContext,
     } else {
       mState &= ~NS_FRAME_OUTSIDE_CHILDREN;
     }
-#endif
   }
 
   return rv;

@@ -12,7 +12,7 @@
         chrome:displayName="pipnss"
         chrome:author="PSM Team"
         chrome:name="pipnss"
- 	chrome:localeVersion="1.5a">
+#expand  	chrome:localeVersion="__MOZILLA_LOCALE_VERSION__">
   </RDF:Description>
 </RDF:RDF>  
 

@@ -22,6 +22,7 @@
    -    Blake Ross
    -    Ryan Cassin (rcassin@supernova.org)
    -    Daniel Glazman (glazman@netscape.com)
+   -    Stephen Donner (technutz@netscape.net)
   -->
 
 <!-- Attn: Localization - some of the menus in this dialog directly affect mail also. -->
@@ -49,17 +50,17 @@
 <!ENTITY filesaveas.accesskey "A">
 
 <!ENTITY publishCmd.label "Publish">
-<!ENTITY publishcmd.accesskey "u">
+<!ENTITY publishcmd.accesskey "b">
 <!ENTITY publishAsCmd.label "Publish As...">
-<!ENTITY publishas.accesskey "b">
+<!ENTITY publishas.accesskey "h">
 <!ENTITY exportToTextCmd.label "Export to Text...">
 <!ENTITY fileexporttotext.accesskey "T">
-<!ENTITY saveAsCharsetCmd.label "Save As Charset...">
-<!ENTITY filesaveascharset.accesskey "h">
+<!ENTITY saveAsChangeEncodingCmd.label "Save And Change Character Encoding">
+<!ENTITY filesaveandchangeencoding.accesskey "E">
 <!ENTITY previewCmd.label "Browse Page">
 <!ENTITY filepreview.accesskey "w">
 <!ENTITY sendPageCmd.label "Send Page...">
-<!ENTITY sendPage.accesskey "g">
+<!ENTITY sendPage.accesskey "d">
 <!ENTITY printSetupCmd.label "Page Setup...">
 <!ENTITY fileprintsetup.accesskey "u">
 <!ENTITY printPreviewCmd.label "Print Preview">
@@ -79,7 +80,7 @@
 <!ENTITY editMenu.label "Edit">
 <!ENTITY editmenu.accesskey "e">
 <!ENTITY pasteNoFormatting.label "Paste Without Formatting">
-<!ENTITY pasteNoFormatting.accesskey "W">
+<!ENTITY pasteNoFormatting.accesskey "o">
 <!ENTITY pasteAs.label "Paste As">
 <!ENTITY pasteAs.accesskey "a">
 <!ENTITY publishSettings.label "Publishing Site Settings...">
@@ -101,8 +102,6 @@
      Set to: "Table" or "Nested Table" depending on context 
      This accesskey must be in both strings -->
 <!ENTITY pasteTable.accesskey "a">
-
-
 <!ENTITY pasteLinkCmd.label "Link">
 <!ENTITY editpastelink.accesskey "l">
 <!ENTITY pasteAsQuotationCmd.label "Paste As Quotation">
@@ -113,6 +112,7 @@
 <!ENTITY findCmd.label "Find and Replace...">
 <!ENTITY editfind.accesskey "f">
 <!ENTITY editfind.keybinding "f">
+<!ENTITY editfind.keybinding2 "VK_F19">
 <!ENTITY findAgainCmd.label "Find Again">
 <!ENTITY editfindnext.accesskey "g">
 <!ENTITY editfindnext.keybinding "g">
@@ -143,7 +143,6 @@
 <!ENTITY viewpagesource.accesskey "s">
 <!ENTITY viewParagraphMarks.label "Paragraph Marks">
 <!ENTITY viewparagraphmarks.accesskey "p">
-
 
 <!-- Insert menu items -->
 <!ENTITY insertMenu.label "Insert">
@@ -388,12 +387,20 @@
 <!ENTITY alignjustify.accesskey "j">
 <!ENTITY alignJustify.tooltip "Align Justified">
 
+<!-- Layer toolbar items -->
+<!ENTITY layer.tooltip "Layer">
+<!ENTITY layerSendToBack.tooltip "Send to Back">
+<!ENTITY layerBringToFront.tooltip "Bring to Front">
+
 <!ENTITY increaseIndent.label "Increase Indent">
 <!ENTITY increaseindent.accesskey "i">
 <!ENTITY increaseindentkb "=">
 <!ENTITY decreaseIndent.label "Decrease Indent">
 <!ENTITY decreaseindent.accesskey "D">
 <!ENTITY decreaseindentkb "-">
+
+<!ENTITY grid.label "Positioning grid">
+<!ENTITY grid.accesskey "t">
 
 <!ENTITY pageProperties.label "Page Title and Properties...">
 <!ENTITY pageproperties.accesskey "g">
@@ -403,7 +410,7 @@
 <!-- Table Menu -->
 <!ENTITY tableMenu.label "Table">
 <!ENTITY tablemenu.accesskey "b">
-<!-- Select submenu -->
+<!-- Select Submenu -->
 <!ENTITY tableSelectMenu.label "Select">
 <!ENTITY tableselectmenu.accesskey "s">
 
@@ -461,14 +468,13 @@
 <!ENTITY tableProperties.label "Table Properties...">
 <!ENTITY tableProperties.accesskey "o">
 
-<!-- Tools Menu -->
+<!-- Tools menu -->
 <!ENTITY toolsmenu.accesskey "l">
 <!ENTITY toolbrowser.accesskey "b">
 <!ENTITY toolplaineditor.accesskey "p">
 <!ENTITY toolsetfocus.accesskey "f">
 
-
-<!-- debug menu items -->
+<!-- Debug menu items -->
 <!ENTITY debugMenu.label "Debug">
 <!ENTITY newEditorTestPage.label "Composer with Test Page">
 <!ENTITY textEditorCmd.label "Plaintext Editor">
@@ -490,7 +496,7 @@
 <!ENTITY runLogCmd.label "Run Log">
 <!ENTITY setFocusCmd.label "Set Focus">
 
-<!-- toolbar-only items -->
+<!-- Toolbar-only items -->
 <!ENTITY menuBar.tooltip "Menu Bar">
 <!ENTITY compositionToolbar.tooltip "Composition Toolbar">
 <!ENTITY formatToolbar.tooltip "Formatting Toolbar">
@@ -523,7 +529,7 @@
 <!ENTITY throbber.tooltip "Go to the &vendorShortName; home page">
 <!ENTITY HighlightColorButton.tooltip "Choose highlight color for text">
 
-<!-- editor toolbar -->
+<!-- Editor toolbar -->
 <!ENTITY decreaseFontSizeToolbarCmd.tooltip "Smaller font size">
 <!ENTITY increaseFontSizeToolbarCmd.tooltip "Larger font size">
 <!ENTITY boldToolbarCmd.tooltip "Bold">
@@ -540,7 +546,7 @@
 <!ENTITY alignRightButton.tooltip "Align text along right margin">
 <!ENTITY alignjustifyButton.tooltip "Align text along left and right margins">
 
-<!-- formatting toolbar not used, but may be in future -->
+<!-- Formatting toolbar not used, but may be in future -->
 <!ENTITY formatToolbar.boldChar "B">
 <!ENTITY formatToolbar.italicChar "I">
 <!ENTITY formatToolbar.underlineChar "U">
@@ -551,7 +557,7 @@
 <!ENTITY colorLabel.label "Color:">
 <!ENTITY ok.label "OK">
 
-<!-- Display Mode Toolbar and View Menu items -->
+<!-- Display Mode toolbar and View menu items -->
 <!ENTITY NormalModeTab.label "Normal">
 <!ENTITY NormalMode.label "Normal Edit Mode">
 <!ENTITY NormalMode.accesskey "n">

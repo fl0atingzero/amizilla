@@ -156,8 +156,7 @@ nsScrollbarButtonFrame::MouseClicked()
        return;
 
    // get the scrollbars content node
-   nsCOMPtr<nsIContent> content;
-   scrollbar->GetContent(getter_AddRefs(content));
+   nsIContent* content = scrollbar->GetContent();
 
    // get the current pos
    PRInt32 curpos = nsSliderFrame::GetCurrentPosition(content);
@@ -213,24 +212,22 @@ nsScrollbarButtonFrame::MouseClicked()
 
 nsresult
 nsScrollbarButtonFrame::GetChildWithTag(nsIPresContext* aPresContext,
-                                        nsIAtom* atom, nsIFrame* start, nsIFrame*& result)
+                                        nsIAtom* atom, nsIFrame* start,
+                                        nsIFrame*& result)
 {
   // recursively search our children
-  nsIFrame* childFrame;
-  start->FirstChild(aPresContext, nsnull, &childFrame); 
+  nsIFrame* childFrame = start->GetFirstChild(nsnull);
   while (nsnull != childFrame) 
   {    
     // get the content node
-    nsCOMPtr<nsIContent> child;  
-    childFrame->GetContent(getter_AddRefs(child));
+    nsIContent* child = childFrame->GetContent();
 
     if (child) {
       // see if it is the child
-       nsCOMPtr<nsIAtom> tag;
-       child->GetTag(getter_AddRefs(tag));
-       if (atom == tag.get())
+       if (child->Tag() == atom)
        {
          result = childFrame;
+
          return NS_OK;
        }
     }
@@ -240,8 +237,7 @@ nsScrollbarButtonFrame::GetChildWithTag(nsIPresContext* aPresContext,
      if (result != nsnull) 
        return NS_OK;
 
-    nsresult rv = childFrame->GetNextSibling(&childFrame);
-    NS_ASSERTION(rv == NS_OK,"failed to get next child");
+    childFrame = childFrame->GetNextSibling();
   }
 
   result = nsnull;
@@ -249,21 +245,20 @@ nsScrollbarButtonFrame::GetChildWithTag(nsIPresContext* aPresContext,
 }
 
 nsresult
-nsScrollbarButtonFrame::GetParentWithTag(nsIAtom* toFind, nsIFrame* start, nsIFrame*& result)
+nsScrollbarButtonFrame::GetParentWithTag(nsIAtom* toFind, nsIFrame* start,
+                                         nsIFrame*& result)
 {
-   while(nsnull != start)
+   while (start)
    {
-      start->GetParent(&start);
+      start = start->GetParent();
 
       if (start) {
         // get the content node
-        nsCOMPtr<nsIContent> child;  
-        start->GetContent(getter_AddRefs(child));
+        nsIContent* child = start->GetContent();
 
-        nsCOMPtr<nsIAtom> atom;
-        if (child && child->GetTag(getter_AddRefs(atom)) == NS_OK && atom.get() == toFind) {
-           result = start;
-           return NS_OK;
+        if (child && child->Tag() == toFind) {
+          result = start;
+          return NS_OK;
         }
       }
    }

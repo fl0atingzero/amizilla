@@ -45,6 +45,7 @@
 #include "nsIPresShell.h"
 #include "nsAutoPtr.h"
 #include "nsIFrame.h"
+#include "nsStyleSet.h"
 
 nsInspectorCSSUtils::nsInspectorCSSUtils()
 {
@@ -76,6 +77,7 @@ NS_IMETHODIMP
 nsInspectorCSSUtils::GetRuleNodeRule(nsRuleNode *aNode, nsIStyleRule **aRule)
 {
     *aRule = aNode->GetRule();
+    NS_IF_ADDREF(*aRule);
     return NS_OK;
 }
 
@@ -89,32 +91,33 @@ nsInspectorCSSUtils::IsRuleNodeRoot(nsRuleNode *aNode, PRBool *aIsRoot)
 NS_IMETHODIMP
 nsInspectorCSSUtils::AdjustRectForMargins(nsIFrame* aFrame, nsRect& aRect)
 {
-  const nsStyleMargin* margins = aFrame->GetStyleMargin();
-  
-  // adjust coordinates for margins
-  nsStyleCoord coord;
-  if (margins->mMargin.GetTopUnit() == eStyleUnit_Coord) {
-    margins->mMargin.GetTop(coord);
-    aRect.y -= coord.GetCoordValue();
-    aRect.height += coord.GetCoordValue();
-  }
-  if (margins->mMargin.GetLeftUnit() == eStyleUnit_Coord) {
-    margins->mMargin.GetLeft(coord);
-    aRect.x -= coord.GetCoordValue();
-    aRect.width += coord.GetCoordValue();
-  }
-  if (margins->mMargin.GetRightUnit() == eStyleUnit_Coord) {
-    margins->mMargin.GetRight(coord);
-    aRect.width += coord.GetCoordValue();
-  }
-  if (margins->mMargin.GetBottomUnit() == eStyleUnit_Coord) {
-    margins->mMargin.GetBottom(coord);
-    aRect.height += coord.GetCoordValue();
-  }
+    const nsStyleMargin* margins = aFrame->GetStyleMargin();
 
-  return NS_OK;
+    // adjust coordinates for margins
+    nsStyleCoord coord;
+    if (margins->mMargin.GetTopUnit() == eStyleUnit_Coord) {
+        margins->mMargin.GetTop(coord);
+        aRect.y -= coord.GetCoordValue();
+        aRect.height += coord.GetCoordValue();
+    }
+    if (margins->mMargin.GetLeftUnit() == eStyleUnit_Coord) {
+        margins->mMargin.GetLeft(coord);
+        aRect.x -= coord.GetCoordValue();
+        aRect.width += coord.GetCoordValue();
+    }
+    if (margins->mMargin.GetRightUnit() == eStyleUnit_Coord) {
+        margins->mMargin.GetRight(coord);
+        aRect.width += coord.GetCoordValue();
+    }
+    if (margins->mMargin.GetBottomUnit() == eStyleUnit_Coord) {
+        margins->mMargin.GetBottom(coord);
+        aRect.height += coord.GetCoordValue();
+    }
+
+    return NS_OK;
 }
 
+/* static */
 nsStyleContext*
 nsInspectorCSSUtils::GetStyleContextForFrame(nsIFrame* aFrame)
 {
@@ -127,44 +130,54 @@ nsInspectorCSSUtils::GetStyleContextForFrame(nsIFrame* aFrame)
      * frame" actually inherits style from the "inner frame" so we can
      * just move one level up in the style context hierarchy....
      */
-    nsCOMPtr<nsIAtom> frameType;
-    aFrame->GetFrameType(getter_AddRefs(frameType));
-    if (frameType == nsLayoutAtoms::tableOuterFrame)
+    if (aFrame->GetType() == nsLayoutAtoms::tableOuterFrame)
         return styleContext->GetParent();
 
     return styleContext;
 }    
 
+/* static */
 already_AddRefed<nsStyleContext>
 nsInspectorCSSUtils::GetStyleContextForContent(nsIContent* aContent,
+                                               nsIAtom* aPseudo,
                                                nsIPresShell* aPresShell)
 {
-    nsIFrame* frame = nsnull;
-    aPresShell->GetPrimaryFrameFor(aContent, &frame);
-    if (frame) {
-        nsStyleContext* result = GetStyleContextForFrame(frame);
-        // this function returns an addrefed style context
-        if (result)
-            result->AddRef();
-        return result;
+    if (!aPseudo) {
+        nsIFrame* frame = nsnull;
+        aPresShell->GetPrimaryFrameFor(aContent, &frame);
+        if (frame) {
+            nsStyleContext* result = GetStyleContextForFrame(frame);
+            // this function returns an addrefed style context
+            if (result)
+                result->AddRef();
+            return result;
+        }
     }
 
-    // No frame has been created, so resolve the style ourselves
+    // No frame has been created or we have a pseudo, so resolve the
+    // style ourselves
     nsRefPtr<nsStyleContext> parentContext;
-    nsCOMPtr<nsIContent> parent;
-    aContent->GetParent(getter_AddRefs(parent));
+    nsIContent* parent = aPseudo ? aContent : aContent->GetParent();
     if (parent)
-        parentContext = GetStyleContextForContent(parent, aPresShell);
+        parentContext = GetStyleContextForContent(parent, nsnull, aPresShell);
 
     nsCOMPtr<nsIPresContext> presContext;
     aPresShell->GetPresContext(getter_AddRefs(presContext));
     if (!presContext)
         return nsnull;
 
-    if (aContent->IsContentOfType(nsIContent::eELEMENT))
-        return presContext->ResolveStyleContextFor(aContent, parentContext);
+    nsStyleSet *styleSet = aPresShell->StyleSet();
 
-    return presContext->ResolveStyleContextForNonElement(parentContext);
+    if (!aContent->IsContentOfType(nsIContent::eELEMENT)) {
+        NS_ASSERTION(!aPseudo, "Shouldn't have a pseudo for a non-element!");
+        return styleSet->ResolveStyleForNonElement(parentContext);
+    }
+
+    if (aPseudo) {
+        return styleSet->ResolvePseudoStyleFor(aContent, aPseudo, parentContext);
+    }
+    
+    return styleSet->ResolveStyleFor(aContent, parentContext);
 }
 
 NS_IMETHODIMP
@@ -173,15 +186,14 @@ nsInspectorCSSUtils::GetRuleNodeForContent(nsIContent* aContent,
 {
     *aRuleNode = nsnull;
 
-    nsCOMPtr<nsIDocument> doc;
-    aContent->GetDocument(getter_AddRefs(doc));
+    nsIDocument* doc = aContent->GetDocument();
     NS_ENSURE_TRUE(doc, NS_ERROR_UNEXPECTED);
 
-    nsCOMPtr<nsIPresShell> presShell;
-    doc->GetShellAt(0, getter_AddRefs(presShell));
+    nsIPresShell *presShell = doc->GetShellAt(0);
     NS_ENSURE_TRUE(presShell, NS_ERROR_UNEXPECTED);
 
-    nsRefPtr<nsStyleContext> sContext = GetStyleContextForContent(aContent, presShell);
+    nsRefPtr<nsStyleContext> sContext =
+        GetStyleContextForContent(aContent, nsnull, presShell);
     *aRuleNode = sContext->GetRuleNode();
     return NS_OK;
 }

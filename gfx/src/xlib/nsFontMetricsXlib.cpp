@@ -27,6 +27,8 @@
  *   Tim Copperfield <timecop@network.email.ne.jp>
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *   Brian Stell <bstell@ix.netcom.com>
+ *   Jungshik Shin <jshin@mailaps.org>
+ *   IBM Corporation
  *
  *
  * Alternatively, the contents of this file may be used under the terms of
@@ -177,6 +179,9 @@ public:
   
   nsCOMPtr<nsIAtom>                     mUnicode;
   nsCOMPtr<nsIAtom>                     mUserDefined;
+  nsCOMPtr<nsIAtom>                     mZHTW;
+  nsCOMPtr<nsIAtom>                     mZHHK;
+  nsCOMPtr<nsIAtom>                     mZHTWHK; // common to TW and HK
   nsCOMPtr<nsIAtom>                     mUsersLocale;
   nsCOMPtr<nsIAtom>                     mWesternLocale;
 
@@ -268,9 +273,6 @@ struct nsFontPropertyNameXlib
   int         mValue;
 };
 
-static NS_DEFINE_CID(kCharSetManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
-static NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
-static NS_DEFINE_CID(kSaveAsCharsetCID, NS_SAVEASCHARSET_CID);
 static void SetCharsetLangGroup(nsFontMetricsXlibContext *aFmctx, nsFontCharSetInfoXlib* aCharSetInfo);
 
 static int SingleByteConvert(nsFontCharSetInfoXlib* aSelf, XFontStruct* aFont,
@@ -283,9 +285,6 @@ static int ISO10646Convert(nsFontCharSetInfoXlib* aSelf, XFontStruct* aFont,
 static nsFontCharSetInfoXlib Unknown = { nsnull };
 static nsFontCharSetInfoXlib Special = { nsnull };
 
-static nsFontCharSetInfoXlib CP1251 =
-  { "windows-1251", SingleByteConvert, 0,
-    TT_OS2_CPR1_CYRILLIC, TT_OS2_CPR2_RUSSIAN };
 static nsFontCharSetInfoXlib USASCII =
   { "us-ascii", SingleByteConvert, 0,
     TT_OS2_CPR1_LATIN1 | TT_OS2_CPR1_MAC_ROMAN,
@@ -316,6 +315,9 @@ static nsFontCharSetInfoXlib ISO885968x =
       TT_OS2_CPR1_ARABIC, TT_OS2_CPR2_ARABIC | TT_OS2_CPR2_ARABIC_708 };
 static nsFontCharSetInfoXlib ISO8859616 =
   { "x-iso-8859-6-16", SingleByteConvert, 0,
+      TT_OS2_CPR1_ARABIC, TT_OS2_CPR2_ARABIC | TT_OS2_CPR2_ARABIC_708 };
+static nsFontCharSetInfoXlib IBM1046 =
+  { "x-IBM1046", SingleByteConvert, 0,
       TT_OS2_CPR1_ARABIC, TT_OS2_CPR2_ARABIC | TT_OS2_CPR2_ARABIC_708 };
 static nsFontCharSetInfoXlib ISO88597 =
   { "ISO-8859-7", SingleByteConvert, 0,
@@ -352,17 +354,28 @@ static nsFontCharSetInfoXlib KOI8R =
 static nsFontCharSetInfoXlib KOI8U =
   { "KOI8-U", SingleByteConvert, 0,
     TT_OS2_CPR1_CYRILLIC, TT_OS2_CPR2_RUSSIAN | TT_OS2_CPR2_CYRILLIC };
-static nsFontCharSetInfoXlib TIS620 =
+static nsFontCharSetInfoXlib TIS6202 =
 /* Added to support thai context sensitive shaping if
  * CTL extension is is in force */
 #ifdef SUNCTL
   { "tis620-2", SingleByteConvert, 0,
     TT_OS2_CPR1_THAI, 0 };
 #else
-  { "TIS-620", SingleByteConvert, 0,
+  { "windows-874", SingleByteConvert, 0,
     TT_OS2_CPR1_THAI, 0 };
 #endif /* SUNCTL */
+static nsFontCharSetInfoXlib TIS620 =
+  { "TIS-620", SingleByteConvert, 0,
+    TT_OS2_CPR1_THAI, 0 };
+static nsFontCharSetInfoXlib ISO885911 =
+  { "ISO-8859-11", SingleByteConvert, 0,
+    TT_OS2_CPR1_THAI, 0 };
 static nsFontCharSetInfoXlib Big5 =
+  { "x-x-big5", DoubleByteConvert, 1,
+    TT_OS2_CPR1_CHINESE_TRAD, 0 };
+// a kludge to distinguish zh-TW only fonts in Big5 (such as hpbig5-)
+// from zh-TW/zh-HK common fonts in Big5 (such as big5-0, big5-1)
+static nsFontCharSetInfoXlib Big5TWHK =
   { "x-x-big5", DoubleByteConvert, 1,
     TT_OS2_CPR1_CHINESE_TRAD, 0 };
 static nsFontCharSetInfoXlib CNS116431 =
@@ -422,6 +435,23 @@ static nsFontCharSetInfoXlib JamoTTF =
 static nsFontCharSetInfoXlib TamilTTF =
   { "x-tamilttf-0", DoubleByteConvert, 1,
     0, 0 };
+static nsFontCharSetInfoXlib CP1250 =
+  { "windows-1250", SingleByteConvert, 0,
+    TT_OS2_CPR1_LATIN2, TT_OS2_CPR2_LATIN2 };
+static nsFontCharSetInfoXlib CP1251 =
+  { "windows-1251", SingleByteConvert, 0,
+    TT_OS2_CPR1_CYRILLIC, TT_OS2_CPR2_RUSSIAN };
+static nsFontCharSetInfoXlib CP1252 =
+  { "windows-1252", SingleByteConvert, 0,
+    TT_OS2_CPR1_LATIN1 | TT_OS2_CPR1_MAC_ROMAN,
+    TT_OS2_CPR2_CA_FRENCH |  TT_OS2_CPR2_PORTUGESE
+    | TT_OS2_CPR2_WE_LATIN1 |  TT_OS2_CPR2_US };
+static nsFontCharSetInfoXlib CP1253 =
+  { "windows-1253", SingleByteConvert, 0,
+    TT_OS2_CPR1_GREEK, TT_OS2_CPR2_GREEK | TT_OS2_CPR2_GREEK_437G };
+static nsFontCharSetInfoXlib CP1257 =
+  { "windows-1257", SingleByteConvert, 0,
+    TT_OS2_CPR1_BALTIC, TT_OS2_CPR2_BALTIC };
 
 #ifdef SUNCTL
 /* Hindi range currently unsupported in FT2 range. Change TT* once we 
@@ -463,6 +493,8 @@ static nsFontCharSetInfoXlib Mathematica5 =
 #endif /* MOZ_MATHML */
 
 static nsFontLangGroupXlib FLG_WESTERN = { "x-western",     nsnull };
+static nsFontLangGroupXlib FLG_BALTIC  = { "x-baltic",      nsnull };
+static nsFontLangGroupXlib FLG_CE      = { "x-central-euro",nsnull };
 static nsFontLangGroupXlib FLG_RUSSIAN = { "x-cyrillic",    nsnull };
 static nsFontLangGroupXlib FLG_GREEK   = { "el",            nsnull };
 static nsFontLangGroupXlib FLG_TURKISH = { "tr",            nsnull };
@@ -471,6 +503,8 @@ static nsFontLangGroupXlib FLG_ARABIC  = { "ar",            nsnull };
 static nsFontLangGroupXlib FLG_THAI    = { "th",            nsnull };
 static nsFontLangGroupXlib FLG_ZHCN    = { "zh-CN",         nsnull };
 static nsFontLangGroupXlib FLG_ZHTW    = { "zh-TW",         nsnull };
+static nsFontLangGroupXlib FLG_ZHHK    = { "zh-HK",         nsnull };
+static nsFontLangGroupXlib FLG_ZHTWHK  = { "x-zh-TWHK",     nsnull };
 static nsFontLangGroupXlib FLG_JA      = { "ja",            nsnull };
 static nsFontLangGroupXlib FLG_KO      = { "ko",            nsnull };
 #ifdef SUNCTL
@@ -511,8 +545,15 @@ static const nsFontCharSetMapXlib gConstCharSetMap[] =
   { "-ibm pc",            &FLG_NONE,    &Unknown       },
   { "adobe-fontspecific", &FLG_NONE,    &Special       },
   { "ansi-1251",          &FLG_RUSSIAN, &CP1251        },
-  { "big5-0",             &FLG_ZHTW,    &Big5          },
-  { "big5-1",             &FLG_ZHTW,    &Big5          },
+  // On Solaris, big5-0 is used for ASCII-only fonts while in XFree86, 
+  // it's for Big5 fonts without US-ASCII. When a non-Solaris binary
+  // is displayed on a Solaris X server, this would break.
+#ifndef SOLARIS
+  { "big5-0",             &FLG_ZHTWHK,  &Big5TWHK      }, // common to TW/HK
+#else 
+  { "big5-0",             &FLG_ZHTW,    &USASCII       }, 
+#endif
+  { "big5-1",             &FLG_ZHTWHK,  &Big5TWHK      }, // ditto
   { "big5.et-0",          &FLG_ZHTW,    &Big5          },
   { "big5.et.ext-0",      &FLG_ZHTW,    &Big5          },
   { "big5.etext-0",       &FLG_ZHTW,    &Big5          },
@@ -520,7 +561,7 @@ static const nsFontCharSetMapXlib gConstCharSetMap[] =
   { "big5.hku-1",         &FLG_ZHTW,    &Big5          },
   { "big5.pc-0",          &FLG_ZHTW,    &Big5          },
   { "big5.shift-0",       &FLG_ZHTW,    &Big5          },
-  { "big5hkscs-0",        &FLG_ZHTW,    &HKSCS         },
+  { "big5hkscs-0",        &FLG_ZHHK,    &HKSCS         },
   { "cns11643.1986-1",    &FLG_ZHTW,    &CNS116431     },
   { "cns11643.1986-2",    &FLG_ZHTW,    &CNS116432     },
   { "cns11643.1992-1",    &FLG_ZHTW,    &CNS116431     },
@@ -556,7 +597,7 @@ static const nsFontCharSetMapXlib gConstCharSetMap[] =
   { "gb18030.2000-1",     &FLG_ZHCN,    &GB18030_1     },
   { "gbk-0",              &FLG_ZHCN,    &GBK           },
   { "gbk1988.1989-0",     &FLG_ZHCN,    &USASCII       },
-  { "hkscs-1",            &FLG_ZHTW,    &HKSCS         },
+  { "hkscs-1",            &FLG_ZHHK,    &HKSCS         },
   { "hp-japanese15",      &FLG_NONE,    &Unknown       },
   { "hp-japaneseeuc",     &FLG_NONE,    &Unknown       },
   { "hp-roman8",          &FLG_NONE,    &Unknown       },
@@ -565,7 +606,9 @@ static const nsFontCharSetMapXlib gConstCharSetMap[] =
   { "hp-tchinesebig5",    &FLG_ZHTW,    &Big5          },
   { "hp-wa",              &FLG_NONE,    &Unknown       },
   { "hpbig5-",            &FLG_ZHTW,    &Big5          },
+  { "hphkbig5-",          &FLG_ZHHK,    &HKSCS         },
   { "hproc16-",           &FLG_NONE,    &Unknown       },
+  { "ibm-1046",           &FLG_ARABIC,  &IBM1046       },
   { "ibm-1252",           &FLG_NONE,    &Unknown       },
   { "ibm-850",            &FLG_NONE,    &Unknown       },
   { "ibm-fontspecific",   &FLG_NONE,    &Unknown       },
@@ -577,15 +620,15 @@ static const nsFontCharSetMapXlib gConstCharSetMap[] =
   { "ibm-udctw",          &FLG_NONE,    &Unknown       },
   { "iso646.1991-irv",    &FLG_NONE,    &Unknown       },
   { "iso8859-1",          &FLG_WESTERN, &ISO88591      },
-  { "iso8859-13",         &FLG_WESTERN, &ISO885913     },
+  { "iso8859-13",         &FLG_BALTIC,  &ISO885913     },
   { "iso8859-15",         &FLG_WESTERN, &ISO885915     },
   { "iso8859-1@cn",       &FLG_NONE,    &Unknown       },
   { "iso8859-1@kr",       &FLG_NONE,    &Unknown       },
   { "iso8859-1@tw",       &FLG_NONE,    &Unknown       },
   { "iso8859-1@zh",       &FLG_NONE,    &Unknown       },
-  { "iso8859-2",          &FLG_WESTERN, &ISO88592      },
+  { "iso8859-2",          &FLG_CE,      &ISO88592      },
   { "iso8859-3",          &FLG_WESTERN, &ISO88593      },
-  { "iso8859-4",          &FLG_WESTERN, &ISO88594      },
+  { "iso8859-4",          &FLG_BALTIC,  &ISO88594      },
   { "iso8859-5",          &FLG_RUSSIAN, &ISO88595      },
   { "iso8859-6",          &FLG_ARABIC,  &ISO88596      },
   { "iso8859-6.8x",       &FLG_ARABIC,  &ISO885968x    },
@@ -605,9 +648,16 @@ static const nsFontCharSetMapXlib gConstCharSetMap[] =
   { "johabs-1",           &FLG_KO,      &X11Johab      },
   { "johabsh-1",          &FLG_KO,      &X11Johab      },
   { "ksc5601.1987-0",     &FLG_KO,      &KSC5601       },
+  // We can handle GR fonts with GL encoders (KSC5601 and GB2312)
+  // See |DoubleByteConvert|
+  { "ksc5601.1987-1",     &FLG_KO,      &KSC5601       },
   { "ksc5601.1992-3",     &FLG_KO,      &JohabNoAscii  },
   { "koreanjamo-0",       &FLG_KO,      &JamoTTF       },
+  { "microsoft-cp1250",   &FLG_CE,      &CP1250        },
   { "microsoft-cp1251",   &FLG_RUSSIAN, &CP1251        },
+  { "microsoft-cp1252",   &FLG_WESTERN, &CP1252        },
+  { "microsoft-cp1253",   &FLG_GREEK,   &CP1253        },
+  { "microsoft-cp1257",   &FLG_BALTIC,  &CP1257        },
   { "misc-fontspecific",  &FLG_NONE,    &Unknown       },
   { "sgi-fontspecific",   &FLG_NONE,    &Unknown       },
   { "sun-fontspecific",   &FLG_NONE,    &Unknown       },
@@ -618,11 +668,14 @@ static const nsFontCharSetMapXlib gConstCharSetMap[] =
   { "tis620.2533-0",      &FLG_THAI,    &TIS620        },
   { "tis620.2533-1",      &FLG_THAI,    &TIS620        },
   { "tis620-0",           &FLG_THAI,    &TIS620        },
-  { "iso8859-11",         &FLG_THAI,    &TIS620        },
+  { "tis620-2",           &FLG_THAI,    &TIS6202       },
+  { "iso8859-11",         &FLG_THAI,    &ISO885911     },
   { "ucs2.cjk-0",         &FLG_NONE,    &ISO106461     },
   { "ucs2.cjk_china-0",   &FLG_ZHCN,    &ISO106461     },
+  { "iso10646.2000-cn",   &FLG_ZHCN,    &ISO106461     },  // HP/UX
   { "ucs2.cjk_japan-0",   &FLG_JA,      &ISO106461     },
   { "ucs2.cjk_korea-0",   &FLG_KO,      &ISO106461     },
+  { "korean.ucs2-0",      &FLG_KO,      &ISO106461     },  // HP/UX
   { "ucs2.cjk_taiwan-0",  &FLG_ZHTW,    &ISO106461     },
   { "ucs2.thai-0",        &FLG_THAI,    &ISO106461     },
   { "tamilttf-0",         &FLG_TAMIL,   &TamilTTF      },
@@ -886,9 +939,8 @@ atomToName(nsIAtom* aAtom)
 // fonts are too large to use is western fonts.
 // To update the list, see one of files included below. (bug 180266)
 //
-static const PRUint16 gDoubleByteSpecialCharsCCMap[] = {
 #include "dbyte_special_chars.ccmap"
-};
+DEFINE_CCMAP(gDoubleByteSpecialCharsCCMap, const);
 	  
 static PRBool
 FreeCharSetMap(nsHashKey* aKey, void* aData, void* aClosure)
@@ -1201,7 +1253,8 @@ nsFontMetricsXlibContext::Init(nsIDeviceContext *aDevice, PRBool aPrintermode)
   if (NS_SUCCEEDED(rv))
     mAllowDoubleByteSpecialChars = val;
 
-  PRUint32 dbmapSize = sizeof(gDoubleByteSpecialCharsCCMap);
+  /* Make sure we allocate/copy enough (see bug 235913, comment 12)*/
+  PRUint32 dbmapSize = sizeof(gDoubleByteSpecialCharsCCMapUnion);
   mDoubleByteSpecialCharsCCMap = (PRUint16*)PR_Malloc(dbmapSize);
   if (!mDoubleByteSpecialCharsCCMap)
     return NS_ERROR_OUT_OF_MEMORY;
@@ -1431,6 +1484,18 @@ nsFontMetricsXlibContext::Init(nsIDeviceContext *aDevice, PRBool aPrintermode)
   }
   mUserDefined = NS_NewAtom(USER_DEFINED);
   if (!mUserDefined) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  mZHTW = NS_NewAtom("zh-TW");
+  if (!mZHTW) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  mZHHK = NS_NewAtom("zh-HK");
+  if (!mZHHK) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  mZHTWHK = NS_NewAtom("x-zh-TWHK");
+  if (!mZHTWHK) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
@@ -1750,7 +1815,7 @@ NS_IMETHODIMP nsFontMetricsXlib::Init(const nsFont& aFont, nsIAtom* aLangGroup,
   mLangGroup = aLangGroup;
 
   float app2dev;
-  mDeviceContext->GetAppUnitsToDevUnits(app2dev);
+  app2dev = mDeviceContext->AppUnitsToDevUnits();
 
   mPixelSize = NSToIntRound(app2dev * mFont->size);
   // Make sure to clamp the pixel size to something reasonable so we
@@ -1849,7 +1914,7 @@ NS_IMETHODIMP  nsFontMetricsXlib::Destroy()
 void nsFontMetricsXlib::RealizeFont()
 {
   float f;
-  mDeviceContext->GetDevUnitsToAppUnits(f);
+  f = mDeviceContext->DevUnitsToAppUnits();
 
 #ifdef USE_FREETYPE
   if (mWesternFont->IsFreeTypeFont()) {
@@ -1937,7 +2002,7 @@ void nsFontMetricsXlib::RealizeFont()
 #endif /* USE_FREETYPE */
   nsXFont *xFont = mWesternFont->GetXFont();
   XFontStruct *fontInfo = xFont->GetXFontStruct();
-  mDeviceContext->GetDevUnitsToAppUnits(f);
+  f = mDeviceContext->DevUnitsToAppUnits();
 
   nscoord lineSpacing = nscoord((fontInfo->ascent + fontInfo->descent) * f);
   mEmHeight = PR_MAX(1, nscoord(mWesternFont->mSize * f));
@@ -2490,6 +2555,8 @@ DoubleByteConvert(nsFontCharSetInfoXlib* aSelf, XFontStruct* aFont,
         for (PRInt32 i = 0; i < aDestLen; i++)
           aDestBuf[i] &= 0x7F;
       }
+      // We're using a GL encoder (KSC5601 or GB2312) for a GR font
+      // (ksc5601.1987-1 or gb2312.1980-1)
       else if ((!(aDestBuf[0] & 0x80)) && (aFont->min_byte1 & 0x80)) {
         for (PRInt32 i = 0; i < aDestLen; i++)
           aDestBuf[i] |= 0x80;
@@ -3181,7 +3248,8 @@ nsFontXlibSubstitute::Convert(const PRUnichar* aSrc, PRUint32 aSrcLen,
     if (mFontMetricsContext->mFontSubConverter) {
       res = mFontMetricsContext->mFontSubConverter->Init("ISO-8859-1",
                              nsISaveAsCharset::attr_FallbackQuestionMark +
-                               nsISaveAsCharset::attr_EntityAfterCharsetConv,
+                               nsISaveAsCharset::attr_EntityAfterCharsetConv +
+                               nsISaveAsCharset::attr_IgnoreIgnorables,
                              nsIEntityConverter::transliterate);
       if (NS_FAILED(res))
         mFontMetricsContext->mFontSubConverter = nsnull; // destroy converter
@@ -4158,6 +4226,11 @@ SetFontLangGroupInfo(nsFontMetricsXlibContext *aFmctx, const nsFontCharSetMapXli
       fontLangGroup->mFontLangGroupAtom = NS_NewAtom(langGroup);
   }
 
+  // hack : map 'x-zh-TWHK' to 'zh-TW'. See nsFontMetricsGTK.cpp for details.
+  if (fontLangGroup->mFontLangGroupAtom == aFmctx->mZHTWHK) {
+    langGroup = "zh-TW";
+  }
+
   // get the font scaling controls
   nsFontCharSetInfoXlib *charSetInfo = aCharSetMap->mInfo;
   if (!charSetInfo->mInitedSizeInfo) {
@@ -4963,11 +5036,11 @@ FFRESubstituteEncoding(nsACString &aFFREName,
 nsFontXlib*
 nsFontMetricsXlib::TryNodes(nsACString &aFFREName, PRUnichar aChar)
 {
-  FIND_FONT_PRINTF(("        TryNodes aFFREName = %s", 
-                        PromiseFlatCString(aFFREName).get()));
-  const char *FFREName = PromiseFlatCString(aFFREName).get();
+  const nsPromiseFlatCString& FFREName = PromiseFlatCString(aFFREName);
+
+  FIND_FONT_PRINTF(("        TryNodes aFFREName = %s", FFREName.get()));
   nsCStringKey key(FFREName);
-  PRBool anyFoundry = (FFREName[0] == '*');
+  PRBool anyFoundry = (FFREName.First() == '*');
   nsFontNodeArrayXlib* nodes = (nsFontNodeArrayXlib*) mFontMetricsContext->mCachedFFRESearches.Get(&key);
   if (!nodes) {
     nsCAutoString pattern;
@@ -5516,9 +5589,9 @@ nsFontMetricsXlib::FindLangGroupFont(nsIAtom* aLangGroup, PRUnichar aChar, nsCSt
   //  scan mCharSetMap for encodings with matching lang groups
   const nsFontCharSetMapXlib* charSetMap;
   for (charSetMap=mFontMetricsContext->mCharSetMap; charSetMap->mName; charSetMap++) {
-    nsFontLangGroupXlib* mFontLangGroup = charSetMap->mFontLangGroup;
+    nsFontLangGroupXlib* fontLangGroup = charSetMap->mFontLangGroup;
 
-    if ((!mFontLangGroup) || (!mFontLangGroup->mFontLangGroupName)) {
+    if ((!fontLangGroup) || (!fontLangGroup->mFontLangGroupName)) {
       continue;
     }
 
@@ -5526,12 +5599,17 @@ nsFontMetricsXlib::FindLangGroupFont(nsIAtom* aLangGroup, PRUnichar aChar, nsCSt
       SetCharsetLangGroup(mFontMetricsContext, charSetMap->mInfo);
     }
 
-    if (!mFontLangGroup->mFontLangGroupAtom) {
+    if (!fontLangGroup->mFontLangGroupAtom) {
       SetFontLangGroupInfo(mFontMetricsContext, charSetMap);
     }
 
-    if ((aLangGroup != mFontLangGroup->mFontLangGroupAtom) 
-       && (aLangGroup != charSetMap->mInfo->mLangGroup)) {
+    // if font's langGroup is different from requested langGroup, continue.
+    // An exception is that font's langGroup ZHTWHK is regarded as matching
+    // both ZHTW and ZHHK (Freetype2 and Solaris).
+    if ((aLangGroup != fontLangGroup->mFontLangGroupAtom) &&
+        (aLangGroup != charSetMap->mInfo->mLangGroup) &&
+        (fontLangGroup->mFontLangGroupAtom != mFontMetricsContext->mZHTWHK || 
+        (aLangGroup != mFontMetricsContext->mZHHK && aLangGroup != mFontMetricsContext->mZHTW))) {
       continue;
     }
     // look for a font with this charset (registry-encoding) & char
@@ -5655,7 +5733,13 @@ EnumerateNode(void* aElement, void* aData)
       return PR_TRUE; // continue
     }
     else if (info->mLangGroup != aFmctx->mUnicode) {
-      if (node->mCharSetInfo->mLangGroup != info->mLangGroup) {
+      // if font's langGroup is different from requested langGroup, continue.
+      // An exception is that font's langGroup ZHTWHK(big5-1, big5-0) matches 
+      // both ZHTW and ZHHK (Freetype2 and Solaris).
+      if (node->mCharSetInfo->mLangGroup != info->mLangGroup &&
+         (node->mCharSetInfo->mLangGroup != aFmctx->mZHTWHK ||
+         (info->mLangGroup != aFmctx->mZHHK && 
+          info->mLangGroup != aFmctx->mZHTW))) {
         return PR_TRUE; // continue
       }
     }

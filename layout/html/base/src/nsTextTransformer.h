@@ -40,6 +40,7 @@
 #include "nsTextFragment.h"
 #include "nsISupports.h"
 #include "nsIPresContext.h"
+#include "nsIObserver.h"
 #ifdef IBMBIDI
 #include "nsBidi.h"
 #include "nsBidiUtils.h"
@@ -55,7 +56,7 @@ class nsIWordBreaker;
 #define CH_ENSP 8194		//<!ENTITY ensp    CDATA "&#8194;" -- en space, U+2002 ISOpub -->
 #define CH_EMSP 8195		//<!ENTITY emsp    CDATA "&#8195;" -- em space, U+2003 ISOpub -->
 #define CH_THINSP 8291	//<!ENTITY thinsp  CDATA "&#8201;" -- thin space, U+2009 ISOpub -->
-#define CH_ZWNJ	8204	//<!ENTITY zwnj    CDATA "&#8204;" -- zero width non-joiner, U+200C NEW RFC 2070#define CH_SHY  173
+#define CH_ZWNJ	8204	//<!ENTITY zwnj    CDATA "&#8204;" -- zero width non-joiner, U+200C NEW RFC 2070
 #define CH_SHY  173
 
 #ifdef IBMBIDI
@@ -348,8 +349,14 @@ protected:
   PRUint8 mFlags;
 
   // prefs used to configure the double-click word selection behavior
-  static PRPackedBool sWordSelectPrefInited;            // have we read the prefs yet?
-  static PRPackedBool sWordSelectStopAtPunctuation;     // should we stop at punctuation?
+  class WordSelectListener: public nsIObserver {
+  public:
+    NS_DECL_ISUPPORTS
+    NS_DECL_NSIOBSERVER
+  };
+  friend class WordSelectListener;
+  static WordSelectListener *sWordSelectListener; // have we read the prefs yet?
+  static PRBool sWordSelectStopAtPunctuation;     // should we stop at punctuation?
 
 #ifdef DEBUG
   static void SelfTest(nsILineBreaker* aLineBreaker,

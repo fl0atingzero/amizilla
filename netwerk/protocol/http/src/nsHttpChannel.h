@@ -48,7 +48,7 @@
 #include "nsIEncodedChannel.h"
 #include "nsITransport.h"
 #include "nsIUploadChannel.h"
-#include "nsISimpleEnumerator.h"
+#include "nsIStringEnumerator.h"
 #include "nsIOutputStream.h"
 #include "nsIAsyncInputStream.h"
 #include "nsIInputStreamPump.h"
@@ -110,6 +110,7 @@ private:
     nsresult Connect(PRBool firstTime = PR_TRUE);
     nsresult AsyncAbort(nsresult status);
     nsresult SetupTransaction();
+    void     AddCookiesToRequest();
     void     ApplyContentConversions();
     nsresult CallOnStartRequest();
     nsresult ProcessResponse();
@@ -117,7 +118,7 @@ private:
     nsresult ProcessNotModified();
     nsresult ProcessRedirection(PRUint32 httpStatus);
     nsresult ProcessAuthentication(PRUint32 httpStatus);
-    nsresult GetCallback(const nsIID &aIID, void **aResult);
+    void     GetCallback(const nsIID &aIID, void **aResult);
     PRBool   ResponseWouldVary();
 
     // redirection specific methods
@@ -145,16 +146,19 @@ private:
     nsresult OnDoneReadingPartialCacheEntry(PRBool *streamDone);
 
     // auth specific methods
+    nsresult GenCredsAndSetEntry(nsIHttpAuthenticator *, PRBool proxyAuth, const char *scheme, const char *host, PRInt32 port, const char *dir, const char *realm, const char *challenge, const nsHttpAuthIdentity &ident, nsCOMPtr<nsISupports> &session, char **result);
     nsresult GetCredentials(const char *challenges, PRBool proxyAuth, nsAFlatCString &creds);
-    nsresult SelectChallenge(const char *challenges, nsCString &challenge, nsCString &scheme, nsIHttpAuthenticator **); 
-    nsresult GetAuthenticator(const char *scheme, nsIHttpAuthenticator **);
+    nsresult GetCredentialsForChallenge(const char *challenge, const char *scheme,  PRBool proxyAuth, nsIHttpAuthenticator *auth, nsAFlatCString &creds);
+    nsresult ParseChallenge(const char *challenge, nsCString &scheme, nsIHttpAuthenticator **auth); 
     void     ParseRealm(const char *challenge, nsACString &realm);
     void     GetIdentityFromURI(PRUint32 authFlags, nsHttpAuthIdentity&);
-    nsresult PromptForIdentity(const char *host, PRInt32 port, PRBool proxyAuth, const char *realm, const char *scheme, PRUint32 authFlags, nsHttpAuthIdentity &);
-    void     SetAuthorizationHeader(nsHttpAuthCache *, nsHttpAtom header, const char *host, PRInt32 port, const char *path, nsHttpAuthIdentity &ident);
+    nsresult PromptForIdentity(const char *scheme, const char *host, PRInt32 port, PRBool proxyAuth, const char *realm, const char *authType, PRUint32 authFlags, nsHttpAuthIdentity &);
+    PRBool   ConfirmAuth(const nsString &bundleKey, PRBool doYesNoPrompt);
+    void     CheckForSuperfluousAuth();
+    void     SetAuthorizationHeader(nsHttpAuthCache *, nsHttpAtom header, const char *scheme, const char *host, PRInt32 port, const char *path, nsHttpAuthIdentity &ident);
     void     AddAuthorizationHeaders();
     nsresult GetCurrentPath(nsACString &);
-    void     ClearPasswordManagerEntry(const char *host, PRInt32 port, const char *realm, const PRUnichar *user);
+    void     ClearPasswordManagerEntry(const char *scheme, const char *host, PRInt32 port, const char *realm, const PRUnichar *user);
     nsresult DoAuthRetry(nsAHttpConnection *);
 
     static void *PR_CALLBACK AsyncCall_EventHandlerFunc(PLEvent *);
@@ -190,6 +194,9 @@ private:
     PRUint32                          mLogicalOffset;
     PRUint8                           mCaps;
 
+    nsCString                         mContentTypeHint;
+    nsCString                         mContentCharsetHint;
+    
     // cache specific data
     nsCOMPtr<nsICacheEntryDescriptor> mCacheEntry;
     nsCOMPtr<nsIInputStreamPump>      mCachePump;
@@ -217,12 +224,13 @@ private:
     PRUint32                          mTransactionReplaced      : 1;
     PRUint32                          mUploadStreamHasHeaders   : 1;
     PRUint32                          mAuthRetryPending         : 1;
+    PRUint32                          mSuppressDefensiveAuth    : 1;
 
-    class nsContentEncodings : public nsISimpleEnumerator
+    class nsContentEncodings : public nsIUTF8StringEnumerator
     {
     public:
         NS_DECL_ISUPPORTS
-        NS_DECL_NSISIMPLEENUMERATOR
+        NS_DECL_NSIUTF8STRINGENUMERATOR
 
         nsContentEncodings(nsIHttpChannel* aChannel, const char* aEncodingHeader);
         virtual ~nsContentEncodings();

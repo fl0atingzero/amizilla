@@ -275,6 +275,10 @@ ScriptCode nsUnicodeMappingUtil::MapLangGroupToScriptCode(const char* aLangGroup
 	if(0==nsCRT::strcmp(aLangGroup,  "zh-TW")) {
 		return smTradChinese;
 	} else 
+        // No separate script code for zh-HK. Use smTradChinese.
+	if(0==nsCRT::strcmp(aLangGroup,  "zh-HK")) {
+		return smTradChinese;
+	} else 
 	if(0==nsCRT::strcmp(aLangGroup,  "x-unicode")) {
 		return (smPseudoUnicode);
 	} else 
@@ -318,7 +322,8 @@ nsUnicodeMappingUtil::PrefEnumCallback(const char* aName, void* aClosure)
   	return;
   }
   
-  nsString genNameString ((const nsString &)genName);
+  nsString genNameString;
+  genNameString.AssignWithConversion(genName);
   nsGenericFontNameType type = Self->MapGenericFontNameType(genNameString);
   if(type >= kUknownGenericFontName)
   	return;

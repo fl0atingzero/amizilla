@@ -309,7 +309,7 @@ const int EscapeChars[256] =
 {
         0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,       /* 0x */
         0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,  	    /* 1x */
-        0,1023,   0, 512,1023,   0,1023,1023,1023,1023,1023,1023,1023,1023, 959, 784,       /* 2x   !"#$%&'()*+,-./	 */
+        0,1023,   0, 512,1023,   0,1023,1023,1023,1023,1023,1023,1023,1023, 953, 784,       /* 2x   !"#$%&'()*+,-./	 */
      1023,1023,1023,1023,1023,1023,1023,1023,1023,1023,1008, 912,   0,1008,   0, 768,       /* 3x  0123456789:;<=>?	 */
      1008,1023,1023,1023,1023,1023,1023,1023,1023,1023,1023,1023,1023,1023,1023,1023,       /* 4x  @ABCDEFGHIJKLMNO  */
      1023,1023,1023,1023,1023,1023,1023,1023,1023,1023,1023, 896, 896, 896, 896,1023,       /* 5x  PQRSTUVWXYZ[\]^_	 */
@@ -385,11 +385,11 @@ NS_COM PRBool NS_EscapeURL(const char *part,
       //
       // And, we will not escape non-ascii characters if requested.
       // On special request we will also escape the colon even when
-      // not covered by the matrix
-
+      // not covered by the matrix.
+      // ignoreAscii is not honored for control characters (C0 and DEL)
       if ((NO_NEED_ESC(c) || (c == HEX_ESCAPE && !forced)
                           || (c > 0x7f && ignoreNonAscii)
-                          || (c < 0x80 && ignoreAscii))
+                          || (c > 0x1f && c < 0x7f && ignoreAscii))
           && !(c == ':' && colon))
       {
         if (writing)
@@ -436,6 +436,7 @@ NS_COM PRBool NS_UnescapeURL(const char *str, PRInt32 len, PRInt16 flags, nsACSt
 
     PRBool ignoreNonAscii = (flags & esc_OnlyASCII);
     PRBool writing = (flags & esc_AlwaysCopy);
+    PRBool skipControl = (flags & esc_SkipControl); 
 
     static const char hexChars[] = "0123456789ABCDEFabcdef";
 
@@ -447,7 +448,9 @@ NS_COM PRBool NS_UnescapeURL(const char *str, PRInt32 len, PRInt16 flags, nsACSt
         if (*p == HEX_ESCAPE && i < len-2) {
             unsigned char *p1 = ((unsigned char *) p) + 1;
             unsigned char *p2 = ((unsigned char *) p) + 2;
-            if (ISHEX(*p1) && ISHEX(*p2) && !(ignoreNonAscii && *p1 >= '8')) {
+            if (ISHEX(*p1) && ISHEX(*p2) && !(ignoreNonAscii && *p1 >= '8') &&
+                !(skipControl && 
+                  (*p1 < '2' || (*p1 == '7' && (*p2 == 'f' || *p2 == 'F'))))) {
                 //printf("- p1=%c p2=%c\n", *p1, *p2);
                 writing = PR_TRUE;
                 if (p > last) {

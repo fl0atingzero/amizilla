@@ -31,6 +31,8 @@
 #include "nsIStringBundle.h"
 #include "nsIPromptService.h"
 #include "nsMemory.h"
+#include "nsCRT.h"
+#include "nsMIMEInfoMac.h"
 
 #include "nsIInternetConfigService.h"
 
@@ -48,59 +50,6 @@ nsOSHelperAppService::nsOSHelperAppService() : nsExternalHelperAppService()
 
 nsOSHelperAppService::~nsOSHelperAppService()
 {}
-
-NS_IMETHODIMP nsOSHelperAppService::LaunchAppWithTempFile(nsIMIMEInfo * aMIMEInfo, nsIFile * aTempFile)
-{
-  nsresult rv = NS_OK;
-  if (aMIMEInfo)
-  {
-    nsCOMPtr<nsIFile> application;
-
-    nsMIMEInfoHandleAction action = nsIMIMEInfo::useSystemDefault;
-    aMIMEInfo->GetPreferredAction(&action);
-
-    if (action==nsIMIMEInfo::useHelperApp)
-      aMIMEInfo->GetPreferredApplicationHandler(getter_AddRefs(application));
-    else
-      aMIMEInfo->GetDefaultApplicationHandler(getter_AddRefs(application));
-
-    if (!application)
-        return NS_ERROR_FAILURE;
-
-    nsCOMPtr<nsILocalFileMac> app = do_QueryInterface(application, &rv);
-    if (NS_FAILED(rv)) return rv;
-
-    nsCOMPtr<nsILocalFile> docToLoad = do_QueryInterface(aTempFile, &rv);
-    if (NS_FAILED(rv)) return rv;
-
-    rv = app->LaunchWithDoc(docToLoad, PR_FALSE); 
-  }
-#ifdef XP_MACOSX
-  else
-  { // We didn't get an application to handle the file from aMIMEInfo, ask LaunchServices directly
-    nsCOMPtr <nsILocalFileMac> tempFile = do_QueryInterface(aTempFile, &rv);
-    if (NS_FAILED(rv)) return rv;
-    
-    FSRef tempFileRef;
-    tempFile->GetFSRef(&tempFileRef);
-
-    FSRef appFSRef;
-    if (::LSGetApplicationForItem(&tempFileRef, kLSRolesAll, &appFSRef, nsnull) == noErr)
-    {
-      nsCOMPtr<nsILocalFileMac> app(do_CreateInstance("@mozilla.org/file/local;1"));
-      if (!app) return NS_ERROR_FAILURE;
-      app->InitWithFSRef(&appFSRef);
-      
-      nsCOMPtr <nsILocalFile> docToLoad = do_QueryInterface(aTempFile, &rv);
-      if (NS_FAILED(rv)) return rv;
-      
-      rv = app->LaunchWithDoc(docToLoad, PR_FALSE); 
-    }
-  }
-#endif    
-
-  return rv;
-}
 
 NS_IMETHODIMP nsOSHelperAppService::ExternalProtocolHandlerExists(const char * aProtocolScheme, PRBool * aHandlerExists)
 {
@@ -170,13 +119,54 @@ NS_IMETHODIMP nsOSHelperAppService::LoadUrl(nsIURI * aURL)
   return rv;
 }
 
-nsresult nsOSHelperAppService::GetFileTokenForPath(const PRUnichar * platformAppPath, nsIFile ** aFile)
+nsresult nsOSHelperAppService::GetFileTokenForPath(const PRUnichar * aPlatformAppPath, nsIFile ** aFile)
 {
-  nsCOMPtr<nsILocalFile> localFile (do_CreateInstance(NS_LOCAL_FILE_CONTRACTID));
-  if (!localFile)
-    return NS_ERROR_FAILURE;
-  
-  localFile->InitWithPath(nsDependentString(platformAppPath));
+  nsresult rv;
+  nsCOMPtr<nsILocalFileMac> localFile (do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv,rv);
+
+  CFURLRef pathAsCFURL;
+  CFStringRef pathAsCFString = ::CFStringCreateWithCharacters(NULL,
+                                                              aPlatformAppPath,
+                                                              nsCRT::strlen(aPlatformAppPath));
+  if (!pathAsCFString)
+    return NS_ERROR_OUT_OF_MEMORY;
+
+  if (::CFStringGetCharacterAtIndex(pathAsCFString, 0) == '/') {
+    // we have a Posix path
+    pathAsCFURL = ::CFURLCreateWithFileSystemPath(nsnull, pathAsCFString,
+                                                  kCFURLPOSIXPathStyle, PR_FALSE);
+    if (!pathAsCFURL) {
+      ::CFRelease(pathAsCFString);
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+  }
+  else {
+    // if it doesn't start with a / it's not an absolute Posix path
+    // let's check if it's a HFS path left over from old preferences
+
+    // If it starts with a ':' char, it's not an absolute HFS path
+    // so bail for that, and also if it's empty
+    if (::CFStringGetLength(pathAsCFString) == 0 ||
+        ::CFStringGetCharacterAtIndex(pathAsCFString, 0) == ':')
+    {
+      ::CFRelease(pathAsCFString);
+      return NS_ERROR_FILE_UNRECOGNIZED_PATH;
+    }
+
+    pathAsCFURL = ::CFURLCreateWithFileSystemPath(nsnull, pathAsCFString,
+                                                  kCFURLHFSPathStyle, PR_FALSE);
+    if (!pathAsCFURL) {
+      ::CFRelease(pathAsCFString);
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+  }
+
+  rv = localFile->InitWithCFURL(pathAsCFURL);
+  ::CFRelease(pathAsCFString);
+  ::CFRelease(pathAsCFURL);
+  if (NS_FAILED(rv))
+    return rv;
   *aFile = localFile;
   NS_IF_ADDREF(*aFile);
 
@@ -186,66 +176,88 @@ nsresult nsOSHelperAppService::GetFileTokenForPath(const PRUnichar * platformApp
 // method overrides --> use internet config information for mime type lookup.
 ///////////////////////////
 
-NS_IMETHODIMP nsOSHelperAppService::GetFromExtension(const char * aFileExt, nsIMIMEInfo ** aMIMEInfo)
+NS_IMETHODIMP nsOSHelperAppService::GetFromTypeAndExtension(const char * aType, const char * aFileExt, nsIMIMEInfo ** aMIMEInfo)
 {
   // first, ask our base class....
-  nsresult rv = nsExternalHelperAppService::GetFromExtension(aFileExt, aMIMEInfo);
+  nsresult rv = nsExternalHelperAppService::GetFromTypeAndExtension(aType, aFileExt, aMIMEInfo);
   if (NS_SUCCEEDED(rv) && *aMIMEInfo) 
   {
     UpdateCreatorInfo(*aMIMEInfo);
   }
   return rv;
 }
-  
-nsresult nsOSHelperAppService::GetMIMEInfoForExtensionFromOS(const char * aFileExt, nsIMIMEInfo ** aMIMEInfo)
-{
-  nsresult rv;
-  
-  // ask the internet config service to look it up for us...
-  nsCOMPtr<nsIInternetConfigService> icService (do_GetService(NS_INTERNETCONFIGSERVICE_CONTRACTID));
-  if (icService)
-  {
-    rv = icService->GetMIMEInfoFromExtension(aFileExt, aMIMEInfo);
-    // if we got an entry, don't waste time hitting IC for this information next time, store it in our
-    // hash table....
-    // XXX Once cache can be invalidated, add the mime info to it.  See bug 121644
-    // if (NS_SUCCEEDED(rv) && *aMIMEInfo)
-    //  	AddMimeInfoToCache(*aMIMEInfo);    
-  }
-  
-  if (!*aMIMEInfo) rv = NS_ERROR_FAILURE;
-  return rv;
-}
 
-NS_IMETHODIMP nsOSHelperAppService::GetFromMIMEType(const char * aMIMEType, nsIMIMEInfo ** aMIMEInfo)
+already_AddRefed<nsIMIMEInfo>
+nsOSHelperAppService::GetMIMEInfoFromOS(const char * aMIMEType,
+                                        const char * aFileExt,
+                                        PRBool * aFound)
 {
-  // first, ask our base class....
-  nsresult rv = nsExternalHelperAppService::GetFromMIMEType(aMIMEType, aMIMEInfo);
-  if (NS_SUCCEEDED(rv) && *aMIMEInfo) 
-  {
-    UpdateCreatorInfo(*aMIMEInfo);
-  }
-  return rv;
-}
-  
-nsresult nsOSHelperAppService::GetMIMEInfoForMimeTypeFromOS(const char * aMIMEType, nsIMIMEInfo ** aMIMEInfo)
-{
-  nsresult rv;
+  nsIMIMEInfo* mimeInfo = nsnull;
+  *aFound = PR_TRUE;
 
   // ask the internet config service to look it up for us...
   nsCOMPtr<nsIInternetConfigService> icService (do_GetService(NS_INTERNETCONFIGSERVICE_CONTRACTID));
+  PR_LOG(mLog, PR_LOG_DEBUG, ("Mac: HelperAppService lookup for type '%s' ext '%s' (IC: 0x%p)\n",
+                              aMIMEType, aFileExt, icService.get()));
   if (icService)
   {
-    rv = icService->FillInMIMEInfo(aMIMEType, nsnull, aMIMEInfo);
-    // if we got an entry, don't waste time hitting IC for this information next time, store it in our
-    // hash table....
-    // XXX Once cache can be invalidated, add the mime info to it.  See bug 121644
-    // if (NS_SUCCEEDED(rv) && *aMIMEInfo)
-    //   AddMimeInfoToCache(*aMIMEInfo);    
+    nsCOMPtr<nsIMIMEInfo> miByType, miByExt;
+    if (aMIMEType && *aMIMEType)
+      icService->FillInMIMEInfo(aMIMEType, aFileExt, getter_AddRefs(miByType));
+
+    PRBool hasDefault = PR_FALSE;
+    if (miByType)
+      miByType->GetHasDefaultHandler(&hasDefault);
+
+    if (aFileExt && *aFileExt && (!hasDefault || !miByType)) {
+      icService->GetMIMEInfoFromExtension(aFileExt, getter_AddRefs(miByExt));
+      if (miByExt && aMIMEType)
+        miByExt->SetMIMEType(aMIMEType);
+    }
+    PR_LOG(mLog, PR_LOG_DEBUG, ("OS gave us: By Type: 0x%p By Ext: 0x%p type has default: %s\n",
+                                miByType.get(), miByExt.get(), hasDefault ? "true" : "false"));
+
+    // If we got two matches, and the type has no default app, copy default app
+    if (!hasDefault && miByType && miByExt) {
+      // IC currently always uses nsMIMEInfoBase-derived classes.
+      // When it stops doing that, this code will need changing.
+      // XXX This assumes that IC will give os an nsMIMEInfoBase. I'd use
+      // dynamic_cast but that crashes.
+      // XXX these pBy* variables are needed because .get() returns an
+      // nsDerivedSafe thingy that can't be cast to nsMIMEInfoBase*
+      nsIMIMEInfo* pByType = miByType.get();
+      nsIMIMEInfo* pByExt = miByExt.get();
+      nsMIMEInfoBase* byType = NS_STATIC_CAST(nsMIMEInfoBase*, pByType);
+      nsMIMEInfoBase* byExt = NS_STATIC_CAST(nsMIMEInfoBase*, pByExt);
+      if (!byType || !byExt) {
+        NS_ERROR("IC gave us an nsIMIMEInfo that's no nsMIMEInfoBase! Fix nsOSHelperAppService.");
+        return nsnull;
+      }
+      // Copy the attributes of miByType onto miByExt
+      byType->CopyBasicDataTo(byExt);
+      miByType = miByExt;
+    }
+    if (miByType)
+      miByType.swap(mimeInfo);
+    else if (miByExt)
+      miByExt.swap(mimeInfo);
+  }
+
+  if (!mimeInfo) {
+    *aFound = PR_FALSE;
+    PR_LOG(mLog, PR_LOG_DEBUG, ("Creating new mimeinfo\n"));
+    mimeInfo = new nsMIMEInfoMac();
+    if (!mimeInfo)
+      return nsnull;
+    NS_ADDREF(mimeInfo);
+
+    if (aMIMEType && *aMIMEType)
+      mimeInfo->SetMIMEType(aMIMEType);
+    if (aFileExt && *aFileExt)
+      mimeInfo->AppendExtension(aFileExt);
   }
   
-  if (!*aMIMEInfo) rv = NS_ERROR_FAILURE;
-  return rv;
+  return mimeInfo;
 }
 
 // we never want to use a hard coded value for the creator and file type for the mac. always look these values up

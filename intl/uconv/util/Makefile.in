@@ -34,12 +34,10 @@ FORCE_STATIC_LIB = 1
 MODULE_NAME	= nsUCUtil
 REQUIRES	= xpcom \
 		  string \
-		  uconv \
 		  $(NULL)
 
 CPPSRCS		= \
 		nsUCSupport.cpp \
-		nsUCRegUtils.cpp \
 		nsUCConstructors.cpp \
 		$(NULL)
 

@@ -39,12 +39,13 @@
 #include "nsIProtocolProxyService.h"
 #include "nsIIOService.h"
 #include "nsIObserver.h"
+#include "nsIObserverService.h"
 #include "nsIProxyObjectManager.h"
-#include "nsINetModuleMgr.h"
 #include "nsIProxy.h"
 #include "nsIStreamConverterService.h"
 #include "nsICacheSession.h"
 #include "nsIEventQueueService.h"
+#include "nsICookieService.h"
 #include "nsIMIMEService.h"
 #include "nsIIDNService.h"
 #include "nsITimer.h"
@@ -91,6 +92,9 @@ public:
     PRUint16       MaxRequestAttempts()      { return mMaxRequestAttempts; }
     const char    *DefaultSocketType()       { return mDefaultSocketType.get(); /* ok to return null */ }
     nsIIDNService *IDNConverter()            { return mIDNConverter; }
+    PRUint32       PhishyUserPassLength()    { return mPhishyUserPassLength; }
+    
+    PRBool         IsPersistentHttpsCachingEnabled() { return mEnablePersistentHttpsCaching; }
 
     nsHttpAuthCache     *AuthCache() { return &mAuthCache; }
     nsHttpConnectionMgr *ConnMgr()   { return mConnMgr; }
@@ -137,22 +141,38 @@ public:
         return mConnMgr->ProcessPendingQ(cinfo);
     }
 
+    nsresult GetSocketThreadEventTarget(nsIEventTarget **target)
+    {
+        return mConnMgr->GetSocketThreadEventTarget(target);
+    }
+
     //
     // The HTTP handler caches pointers to specific XPCOM services, and
     // provides the following helper routines for accessing those services:
     //
-    nsresult GetProxyObjectManager(nsIProxyObjectManager **);
     nsresult GetEventQueueService(nsIEventQueueService **);
     nsresult GetStreamConverterService(nsIStreamConverterService **);
     nsresult GetMimeService(nsIMIMEService **);
     nsresult GetIOService(nsIIOService** service);
-
+    nsICookieService * GetCookieService(); // not addrefed
 
     // Called by the channel before writing a request
-    nsresult OnModifyRequest(nsIHttpChannel *);
+    void OnModifyRequest(nsIHttpChannel *chan)
+    {
+        NotifyObservers(chan, NS_HTTP_ON_MODIFY_REQUEST_TOPIC);
+    }
 
     // Called by the channel once headers are available
-    nsresult OnExamineResponse(nsIHttpChannel *);
+    void OnExamineResponse(nsIHttpChannel *chan)
+    {
+        NotifyObservers(chan, NS_HTTP_ON_EXAMINE_RESPONSE_TOPIC);
+    }
+
+    // Called by the channel once headers have been merged with cached headers
+    void OnExamineMergedResponse(nsIHttpChannel *chan)
+    {
+        NotifyObservers(chan, NS_HTTP_ON_EXAMINE_MERGED_RESPONSE_TOPIC);
+    }
 
 private:
 
@@ -162,28 +182,26 @@ private:
     void     BuildUserAgent();
     void     InitUserAgentComponents();
     void     PrefsChanged(nsIPrefBranch *prefs, const char *pref);
-    void     GetPrefBranch(nsIPrefBranch **);
 
     nsresult SetAccept(const char *);
     nsresult SetAcceptLanguages(const char *);
     nsresult SetAcceptEncodings(const char *);
     nsresult SetAcceptCharsets(const char *);
 
-    // timer callback for cleansing the idle connection list
-    //static void DeadConnectionCleanupCB(nsITimer *, void *);
-
     nsresult InitConnectionMgr();
     void     StartPruneDeadConnectionsTimer();
     void     StopPruneDeadConnectionsTimer();
+
+    void     NotifyObservers(nsIHttpChannel *chan, const char *event);
 
 private:
 
     // cached services
     nsCOMPtr<nsIIOService>              mIOService;
-    nsCOMPtr<nsIProxyObjectManager>     mProxyMgr;
     nsCOMPtr<nsIEventQueueService>      mEventQueueService;
-    nsCOMPtr<nsINetModuleMgr>           mNetModuleMgr;
     nsCOMPtr<nsIStreamConverterService> mStreamConvSvc;
+    nsCOMPtr<nsIObserverService>        mObserverService;
+    nsCOMPtr<nsICookieService>          mCookieService;
     nsCOMPtr<nsIMIMEService>            mMimeService;
     nsCOMPtr<nsIIDNService>             mIDNConverter;
     nsCOMPtr<nsITimer>                  mTimer;
@@ -215,6 +233,12 @@ private:
     PRUint8  mMaxPipelinedRequests;
 
     PRUint8  mRedirectionLimit;
+
+    // we'll warn the user if we load an URL containing a userpass field
+    // unless its length is less than this threshold.  this warning is
+    // intended to protect the user against spoofing attempts that use
+    // the userpass field of the URL to obscure the actual origin server.
+    PRUint8  mPhishyUserPassLength;
 
     nsCString mAccept;
     nsCString mAcceptLanguages;
@@ -252,6 +276,9 @@ private:
     // mSendSecureXSiteReferrer: default is false, 
     // if true allow referrer headers between secure non-matching hosts
     PRPackedBool   mSendSecureXSiteReferrer;
+
+    // Persistent HTTPS caching flag
+    PRPackedBool   mEnablePersistentHttpsCaching;
 };
 
 //-----------------------------------------------------------------------------

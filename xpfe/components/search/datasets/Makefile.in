@@ -26,27 +26,22 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
+MODULE       = appcomps
+PACKAGE_FILE = searchplugins.pkg
+
 ifdef MOZ_PHOENIX
 FILES		= \
-	dmoz.gif            \
-	dmoz.src            \
 	google.gif          \
 	google.src          \
 	$(NULL)
 else
 FILES		= \
-	bugzilla.gif        \
-	bugzilla.src        \
 	dmoz.gif            \
 	dmoz.src            \
 	google.gif          \
 	google.src          \
-	lxrmozilla.gif      \
-	lxrmozilla.src      \
-	mozilla.gif         \
-	mozilla.src         \
-	NetscapeSearch.gif  \
-	NetscapeSearch.src  \
+	jeeves.gif          \
+	jeeves.src          \
 	$(NULL)
 endif
 

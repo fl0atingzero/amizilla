@@ -38,7 +38,6 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsIHTMLCSSStyleSheet.h"
-#include "nsIArena.h"
 #include "nsCRT.h"
 #include "nsIAtom.h"
 #include "nsIURL.h"
@@ -53,7 +52,6 @@
 #include "nsIDocument.h"
 #include "nsCOMPtr.h"
 
-#include "nsIStyleSet.h"
 #include "nsRuleWalker.h"
 
 /*
@@ -163,7 +161,6 @@ CSSDisablePropsRule::CommonMapRuleInfoInto(nsRuleData* aData)
     nsCSSValue inherit(eCSSUnit_Inherit);
     aData->mDisplayData->mVisibility = inherit;
     aData->mDisplayData->mDirection = inherit;
-    aData->mDisplayData->mOpacity = inherit;
   }
 
   if (aData->mSID == eStyleStruct_Display) {
@@ -175,6 +172,9 @@ CSSDisablePropsRule::CommonMapRuleInfoInto(nsRuleData* aData)
     aData->mDisplayData->mClip.mRight = autovalue;
     aData->mDisplayData->mClip.mBottom = autovalue;
     aData->mDisplayData->mClip.mLeft = autovalue;
+
+    nsCSSValue one(1.0f, eCSSUnit_Number);
+    aData->mDisplayData->mOpacity = one;
 
     nsCSSValue inlinevalue(NS_STYLE_DISPLAY_INLINE, eCSSUnit_Enumerated);
     aData->mDisplayData->mDisplay = inlinevalue;
@@ -355,6 +355,7 @@ public:
   NS_IMETHOD GetMediumCount(PRInt32& aCount) const;
   NS_IMETHOD GetMediumAt(PRInt32 aIndex, nsIAtom*& aMedium) const;
   NS_IMETHOD_(PRBool) UseForMedium(nsIAtom* aMedium) const;
+  NS_IMETHOD_(PRBool) HasRules() const;
 
   NS_IMETHOD GetApplicable(PRBool& aApplicable) const;
   
@@ -380,11 +381,11 @@ public:
 
   NS_IMETHOD HasStateDependentStyle(StateRuleProcessorData* aData,
                                     nsIAtom* aMedium,
-                                    PRBool* aResult);
+                                    nsReStyleHint* aResult);
 
   NS_IMETHOD HasAttributeDependentStyle(AttributeRuleProcessorData* aData,
                                         nsIAtom* aMedium,
-                                        PRBool* aResult);
+                                        nsReStyleHint* aResult);
 
 #ifdef DEBUG
   virtual void List(FILE* out = stdout, PRInt32 aIndent = 0) const;
@@ -452,7 +453,7 @@ HTMLCSSStyleSheetImpl::RulesMatching(ElementRuleProcessorData* aData,
   
   if (styledContent) {
     // just get the one and only style rule from the content's STYLE attribute
-    nsCOMPtr<nsIStyleRule> rule;
+    nsCOMPtr<nsICSSStyleRule> rule;
     styledContent->GetInlineStyleRule(getter_AddRefs(rule));
     if (rule)
       aData->mRuleWalker->Forward(rule);
@@ -514,9 +515,9 @@ HTMLCSSStyleSheetImpl::Init(nsIURI* aURL, nsIDocument* aDocument)
 NS_IMETHODIMP
 HTMLCSSStyleSheetImpl::HasStateDependentStyle(StateRuleProcessorData* aData,
                                               nsIAtom* aMedium,
-                                              PRBool* aResult)
+                                              nsReStyleHint* aResult)
 {
-  *aResult = PR_FALSE;
+  *aResult = nsReStyleHint(0);
   return NS_OK;
 }
 
@@ -524,9 +525,9 @@ HTMLCSSStyleSheetImpl::HasStateDependentStyle(StateRuleProcessorData* aData,
 NS_IMETHODIMP
 HTMLCSSStyleSheetImpl::HasAttributeDependentStyle(AttributeRuleProcessorData* aData,
                                                   nsIAtom* aMedium,
-                                                  PRBool* aResult)
+                                                  nsReStyleHint* aResult)
 {
-  *aResult = PR_FALSE;
+  *aResult = nsReStyleHint(0);
   return NS_OK;
 }
 
@@ -589,6 +590,13 @@ NS_IMETHODIMP_(PRBool)
 HTMLCSSStyleSheetImpl::UseForMedium(nsIAtom* aMedium) const
 {
   return PR_TRUE; // works for all media
+}
+
+NS_IMETHODIMP_(PRBool)
+HTMLCSSStyleSheetImpl::HasRules() const
+{
+  return PR_TRUE;  // We always have rules, since mFirstLineRule and
+                   // mFirstLetterRule are created on request.
 }
 
 NS_IMETHODIMP

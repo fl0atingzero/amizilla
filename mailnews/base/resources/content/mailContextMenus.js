@@ -19,7 +19,7 @@
  * Rights Reserved.
  *
  * Contributors(s):
- *   Jan Varga <varga@utcru.sk>
+ *   Jan Varga <varga@nixcorp.com>
  *   Hakan Waara <hwaara@chello.se>
  */
 
@@ -119,6 +119,7 @@ function fillThreadPaneContextMenu()
   EnableMenuItem("threadPaneContext-labels", (numSelected >= 1));
   EnableMenuItem("threadPaneContext-mark", (numSelected >= 1));
   SetupSaveAsMenuItem("threadPaneContext-saveAs", numSelected, false);
+  SetupPrintPreviewMenuItem("threadPaneContext-printpreview", numSelected, false);
   SetupPrintMenuItem("threadPaneContext-print", numSelected, false);
   SetupDeleteMenuItem("threadPaneContext-delete", numSelected, false);
   SetupAddSenderToABMenuItem("threadPaneContext-addSenderToAddressBook", numSelected, false);
@@ -212,6 +213,12 @@ function SetupSaveAsMenuItem(menuID, numSelected, forceHide)
   EnableMenuItem(menuID, (numSelected == 1));
 }
 
+function SetupPrintPreviewMenuItem(menuID, numSelected, forceHide)
+{
+  ShowMenuItem(menuID, (numSelected <= 1) && !forceHide);
+  EnableMenuItem(menuID, (numSelected == 1));
+}
+
 function SetupPrintMenuItem(menuID, numSelected, forceHide)
 {
   ShowMenuItem(menuID, !forceHide);
@@ -265,6 +272,7 @@ function fillFolderPaneContextMenu()
   var specialFolder = GetFolderAttribute(folderTree, folderResource, "SpecialFolder");
   var canSubscribeToFolder = (serverType == "nntp") || (serverType == "imap");
   var isNewsgroup = !isServer && serverType == 'nntp';
+  var isMailFolder = !isServer && serverType != 'nntp';
   var canGetMessages =  (isServer && (serverType != "nntp") && (serverType !="none")) || isNewsgroup;
 
   EnableMenuItem("folderPaneContext-properties", true);
@@ -300,10 +308,13 @@ function fillFolderPaneContextMenu()
 
   ShowMenuItem("folderPaneContext-newsUnsubscribe", (numSelected <= 1) && canSubscribeToFolder && isNewsgroup);
   EnableMenuItem("folderPaneContext-newsUnsubscribe", true);
-  ShowMenuItem("folderPaneContext-markAllRead", (numSelected <= 1) && isNewsgroup);
-  EnableMenuItem("folderPaneContext-markAllRead", true);
+  ShowMenuItem("folderPaneContext-markNewsgroupAllRead", (numSelected <= 1) && isNewsgroup);
+  EnableMenuItem("folderPaneContext-markNewsgroupAllRead", true);
 
 // End of News folder context menu =======================================
+
+  ShowMenuItem("folderPaneContext-markMailFolderAllRead", (numSelected <= 1) && isMailFolder);
+  EnableMenuItem("folderPaneContext-markMailFolderAllRead", true);
 
   ShowMenuItem("folderPaneContext-searchMessages", (numSelected<=1));
   EnableMenuItem("folderPaneContext-searchMessages", IsCanSearchMessagesEnabled());
@@ -318,7 +329,6 @@ function SetupRenameMenuItem(folderResource, numSelected, isServer, serverType, 
   var folderTree = GetFolderTree();
   var isSpecialFolder = !(specialFolder == "none" || (specialFolder == "Junk" && CanRenameDeleteJunkMail(msgFolder.URI)));
   var canRename = GetFolderAttribute(folderTree, folderResource, "CanRename") == "true";
-  canRename = canRename || !isSpecialFolder;
 
   ShowMenuItem("folderPaneContext-rename", (numSelected <= 1) && !isServer && !isSpecialFolder && canRename);
   var folder = GetMsgFolderFromResource(folderResource);
@@ -449,6 +459,7 @@ function fillMessagePaneContextMenu()
   SetupLabelsMenuItem("messagePaneContext-labels", numSelected, (numSelected == 0 || hideMailItems));
   SetupMarkMenuItem("messagePaneContext-mark", numSelected, (numSelected == 0 || hideMailItems));
   SetupSaveAsMenuItem("messagePaneContext-saveAs", numSelected, (numSelected == 0 || hideMailItems));
+  SetupPrintPreviewMenuItem("messagePaneContext-printpreview", numSelected, (numSelected == 0 || hideMailItems));
   SetupPrintMenuItem("messagePaneContext-print", numSelected, (numSelected == 0 || hideMailItems));
   if (numSelected == 0 || hideMailItems)
     ShowMenuItem("messagePaneContext-delete", false)

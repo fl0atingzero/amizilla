@@ -165,12 +165,10 @@ nsDirectoryIndexStream::Init(nsIFile* aDir)
     }
 #endif
 
-    mDir = aDir;
-    
     // Sigh. We have to allocate on the heap because there are no
     // assignment operators defined.
     nsCOMPtr<nsISimpleEnumerator> iter;
-    rv = mDir->GetDirectoryEntries(getter_AddRefs(iter));
+    rv = aDir->GetDirectoryEntries(getter_AddRefs(iter));
     if (NS_FAILED(rv)) return rv;
 
     // Now lets sort, because clients expect it that way
@@ -215,7 +213,7 @@ nsDirectoryIndexStream::Init(nsIFile* aDir)
 
     mBuf.Append("300: ");
     nsCAutoString url;
-    rv = net_GetURLSpecFromFile(mDir, url);
+    rv = net_GetURLSpecFromFile(aDir, url);
     if (NS_FAILED(rv)) return rv;
     mBuf.Append(url);
     mBuf.Append('\n');
@@ -351,10 +349,7 @@ nsDirectoryIndexStream::Read(char* aBuf, PRUint32 aCount, PRUint32* aReadCount)
 
         PRInt64 fileSize = LL_Zero();
         current->GetFileSize( &fileSize );
-				 
-        PROffset32 fileInfoSize;
-        LL_L2I( fileInfoSize,fileSize );
-        
+
         PRInt64 tmpTime = LL_Zero();
         PRInt64 fileInfoModifyTime = LL_Zero();
         current->GetLastModifiedTime( &tmpTime );
@@ -396,7 +391,7 @@ nsDirectoryIndexStream::Read(char* aBuf, PRUint32 aCount, PRUint32* aReadCount)
         }
 
             // The "content-length" field
-            mBuf.AppendInt(fileInfoSize, 10);
+            mBuf.AppendInt(fileSize, 10);
             mBuf.Append(' ');
 
             // The "last-modified" field

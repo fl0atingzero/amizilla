@@ -97,8 +97,7 @@ public:
                                nsIContent*     aChild,
                                PRInt32         aNameSpaceID,
                                nsIAtom*        aAttribute,
-                               PRInt32         aModType, 
-                               PRInt32         aHint);
+                               PRInt32         aModType);
 
   // table cells contain an area frame which does most of the work, and
   // so these functions should never be called. They assert and return
@@ -158,7 +157,7 @@ public:
    *
    * @see nsLayoutAtoms::tableCellFrame
    */
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
 
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
@@ -289,23 +288,15 @@ private:
 protected:
 
   friend class nsTableRowFrame;
-  void      MapBorderPadding(nsIPresContext* aPresContext);
 
-  void      MapVAlignAttribute(nsIPresContext* aPresContext, nsTableFrame *aTableFrame);
-  void      MapHAlignAttribute(nsIPresContext* aPresContext, nsTableFrame *aTableFrame);
-
-  // paint backgrounds and borders (in separate border model) if aVisibleBackground, always set aPaintChildren
   virtual void PaintUnderlay(nsIPresContext&           aPresContext,
                              nsIRenderingContext&      aRenderingContext,
                              const nsRect&             aDirtyRect,
                              PRUint32&                 aFlags,
-                             const nsStyleTableBorder& aCellTableStyle,
                              const nsStyleBorder&      aStyleBorder,
                              const nsStylePadding&     aStylePadding,
-                             PRBool                    aVisibleBackground,
-                             PRBool&                   aPaintChildren);
+                             const nsStyleTableBorder& aCellTableStyle);
 
-  PRBool    ConvertToPixelValue(nsHTMLValue& aValue, PRInt32 aDefault, PRInt32& aResult);
   nsresult  DecorateForSelection(nsIPresContext* aPresContext,
                                  nsIRenderingContext& aRenderingContext,
                                  const nsStyleBackground* aStyleColor);
@@ -458,7 +449,7 @@ public:
 
   ~nsBCTableCellFrame();
 
-  NS_IMETHOD GetFrameType(nsIAtom** aType) const;
+  virtual nsIAtom* GetType() const;
 
   virtual nsMargin* GetBorderWidth(float     aPixelsToTwips,
                                    nsMargin& aBorder) const;
@@ -477,11 +468,9 @@ protected:
                              nsIRenderingContext&      aRenderingContext,
                              const nsRect&             aDirtyRect,
                              PRUint32&                 aFlags,
-                             const nsStyleTableBorder& aCellTableStyle,
                              const nsStyleBorder&      aStyleBorder,
                              const nsStylePadding&     aStylePadding,
-                             PRBool                    aVisibleBackground,
-                             PRBool&                   aPaintChildren);
+                             const nsStyleTableBorder& aCellTableStyle);
 
 private:
   
@@ -490,9 +479,6 @@ private:
   PRUint32 mBottomBorder: 8;
   PRUint32 mLeftBorder:   8;
 };
-
-#define IS_TABLE_CELL(frameType)\
-((nsLayoutAtoms::tableCellFrame == frameType) || (nsLayoutAtoms::bcTableCellFrame == frameType))
 
 #endif
 

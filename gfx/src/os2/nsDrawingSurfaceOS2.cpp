@@ -27,6 +27,8 @@
 #include "nsFontMetricsOS2.h"
 #include "nsPaletteOS2.h"
 
+#define LCID_START 2
+
 
 // Base class -- fonts, palette and xpcom -----------------------------------
 
@@ -36,7 +38,7 @@ NS_IMPL_ISUPPORTS1(nsDrawingSurfaceOS2, nsIDrawingSurface)
 // do testing with, and 0 is, of course, LCID_DEFAULT.
 
 nsDrawingSurfaceOS2::nsDrawingSurfaceOS2()
-                    : mNextID(2), mTopID(1), mPS(0), mOwnPS(PR_FALSE),
+                    : mNextID(LCID_START), mTopID(1), mPS(0), mOwnPS(PR_FALSE),
                       mWidth (0), mHeight (0)
 {
    mHTFonts = new nsHashtable;
@@ -52,11 +54,10 @@ void nsDrawingSurfaceOS2::DisposeFonts()
    if( mHTFonts)
    {
       // free font things
-      GFX (::GpiSetCharSet (mPS, LCID_DEFAULT), FALSE);
+      GFX (::GpiSetCharSet(mPS, LCID_DEFAULT), FALSE);
 
-      for( int i = 2; i <= mTopID; i++)
-      {
-         GFX (::GpiDeleteSetId (mPS, i), FALSE);
+      for (int i = LCID_START; i <= mTopID; i++) {
+         GFX (::GpiDeleteSetId(mPS, i), FALSE);
       }
       delete mHTFonts;
       mHTFonts = 0;
@@ -66,35 +67,34 @@ void nsDrawingSurfaceOS2::DisposeFonts()
 // Key for the hashtable
 typedef nsVoidKey FontHandleKey;
 
-void nsDrawingSurfaceOS2::SelectFont( nsIFontMetrics *metrics)
+void nsDrawingSurfaceOS2::SelectFont(nsFontOS2* aFont)
 {
-   nsFontHandle fh = nsnull;
-   metrics->GetFontHandle( fh);
+   FontHandleKey key((void*)aFont->mHashMe);
 
-   nsFontOS2 *pHandle = (nsFontOS2 *) fh;
-   FontHandleKey    key((void*)pHandle->mHashMe);
-
-   if( !mHTFonts->Get( &key))
-   {
-      if( mNextID == 255)
+   long lcid = (long) mHTFonts->Get(&key);
+   if (lcid == 0) {
+      if (mNextID == 255) {
          // ids used up, need to empty table and start again.
          FlushFontCache();
+      }
 
-      GFX (::GpiCreateLogFont (mPS, 0, mNextID, &pHandle->mFattrs), GPI_ERROR);
-      mHTFonts->Put( &key, (void *) mNextID);
+      lcid = mNextID;
       mNextID++;
-      if( mTopID < 254)
+      CHK_SUCCESS (::GpiCreateLogFont(mPS, 0, lcid, &aFont->mFattrs),
+                   FONT_MATCH);
+      mHTFonts->Put(&key, (void *) lcid);
+      if (mTopID < 254) {
          mTopID++;
+      }
    }
 
-   long lcid = (long) mHTFonts->Get( &key);
-   pHandle->SelectIntoPS( mPS, lcid);
+   aFont->SelectIntoPS(mPS, lcid);
 }
 
 void nsDrawingSurfaceOS2::FlushFontCache()
 {
    mHTFonts->Reset();
-   mNextID = 2;
+   mNextID = LCID_START;
    // leave mTopID where it is.
 }
 

@@ -18,7 +18,7 @@
    Rights Reserved.
    
    Contributor(s): 
-     Håkan Waara <hwaara@chello.se>
+     HÃ¥kan Waara <hwaara@chello.se>
      Peter Annema <disttsc@bart.nl>
   -->
 <?xml-stylesheet href="chrome://communicator/skin/" type="text/css"?>
@@ -40,39 +40,18 @@
   <![CDATA[
   
   var panel = "chrome://cookie/content/pref-images.xul";
-  var _elementIDs = ["accOrgImages", "networkImageBehaviour", "networkImageWarnAboutImages", "imageLooping"];
+  var _elementIDs = ["accOrgImages", "networkImageBehaviour", "imageLooping"];
 
   function init()
   {
     parent.initPanel('chrome://cookie/content/pref-images.xul');
 
-    imageBlockingEnabled();
     setDisables();
-  }
-
-  // Present finer control over image loading to the user.
-  // enable image blocker if "imageblocker.enabled" pref is true
-  function imageBlockingEnabled()
-  {
-    var enabled;
-    try {
-      enabled = parent.hPrefWindow.getPref("bool", "imageblocker.enabled");
-    }
-    catch(ex) {
-      enabled = false;
-    }
-    if (!enabled)
-    {
-      document.getElementById("haveImageBlocking").setAttribute("hidden", "true");
-      if (!document.getElementById("networkImageDisableImagesInMailNews"))
-        document.getElementById("haveImageBlockingOrMailnews").setAttribute("hidden", "true");
-    }
   }
 
   function setDisables()
   {
     var imageBehavior = document.getElementById("networkImageBehaviour");
-    setWarnAboutImagesEnabled(imageBehavior.value != "2");
 
     // if mailnews is installed then we will have networkImageDisableImagesInMailNews checkbox
     var networkImageDisableImagesInMailNews = document.getElementById("networkImageDisableImagesInMailNews");
@@ -80,17 +59,6 @@
       networkImageDisableImagesInMailNews.disabled = (imageBehavior.value == 2); 
   }
 
-  function setWarnAboutImagesEnabled(aEnabled)
-  {
-    var warnCheckbox = document.getElementById("networkImageWarnAboutImages");
-    if (warnCheckbox)
-    {
-      warnCheckbox.disabled = !aEnabled;
-      if (parent.hPrefWindow.getPrefIsLocked(warnCheckbox.getAttribute("prefstring")) )
-        warnCheckbox.disabled = true;
-    }
-  }
- 
   ]]>
   </script>
 
@@ -117,14 +85,6 @@
     </radiogroup>
 
     <separator id="networkImagesBehaviorSeparator" observes="haveImageBlockingOrMailnews"/>
-
-<!--
-    <vbox align="start">
-      <checkbox id="networkImageWarnAboutImages" label="&warnAboutImages.label;"
-                accesskey="&warnAboutImages.accesskey;" observes="haveImageBlocking"
-                prefstring="network.image.warnAboutImages"/>
-    </vbox>
--->
 
     <separator observes="haveImageBlocking"/>
 

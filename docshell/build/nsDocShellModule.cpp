@@ -37,9 +37,13 @@
 #include "nsSHistory.h"
 #include "nsSHTransaction.h"
 
+// global history
+#include "nsGlobalHistoryAdapter.h"
+#include "nsGlobalHistory2Adapter.h"
+
 // docshell
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsWebShell);
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsDefaultURIFixup);
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsWebShell)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsDefaultURIFixup)
 
 // uriloader
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsURILoader)
@@ -50,7 +54,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPrefetchService, Init)
 
 #if defined(XP_MAC) || defined(XP_MACOSX)
 #include "nsInternetConfigService.h"
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsInternetConfigService);
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsInternetConfigService)
 #endif
 
 // session history
@@ -63,7 +67,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsSHistory, Init)
 // of nsDocShell. Once migration is complete, docshells will be the main
 // "shell" class and this module will need to register the docshell as
 // a component
-//NS_GENERIC_FACTORY_CONSTRUCTOR(nsDocShell);
+//NS_GENERIC_FACTORY_CONSTRUCTOR(nsDocShell)
 
 static const nsModuleComponentInfo gDocShellModuleInfo[] = {
   // docshell
@@ -108,7 +112,15 @@ static const nsModuleComponentInfo gDocShellModuleInfo[] = {
    { "nsSHistory", NS_SHISTORY_CID,
       NS_SHISTORY_CONTRACTID, nsSHistoryConstructor },
    { "nsSHistory", NS_SHISTORY_INTERNAL_CID,
-      NS_SHISTORY_INTERNAL_CONTRACTID, nsSHistoryConstructor }
+      NS_SHISTORY_INTERNAL_CONTRACTID, nsSHistoryConstructor },
+
+    // global history adapters
+    { "nsGlobalHistoryAdapter", NS_GLOBALHISTORYADAPTER_CID,
+      nsnull, nsGlobalHistoryAdapter::Create,
+      nsGlobalHistoryAdapter::RegisterSelf },
+    { "nsGlobalHistory2Adapter", NS_GLOBALHISTORY2ADAPTER_CID,
+      nsnull, nsGlobalHistory2Adapter::Create,
+      nsGlobalHistory2Adapter::RegisterSelf }
 };
 
 // "docshell provider" to illustrate that this thing really *should*

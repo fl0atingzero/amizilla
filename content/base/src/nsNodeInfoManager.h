@@ -42,10 +42,10 @@
 #include "nsINodeInfo.h"
 #include "nsCOMPtr.h"
 #include "plhash.h"
-#include "nsIURI.h"
-#include "nsIPrincipal.h"
 
 class nsNodeInfo;
+class nsIPrincipal;
+class nsIURI;
 
 
 class nsNodeInfoManager : public nsINodeInfoManager
@@ -54,24 +54,21 @@ public:
   NS_DECL_ISUPPORTS
 
   // nsINodeInfoManager
-  NS_IMETHOD Init(nsIDocument *aDocument);
-  NS_IMETHOD DropDocumentReference();
-  NS_IMETHOD GetNodeInfo(nsIAtom *aName, nsIAtom *aPrefix,
-                         PRInt32 aNamespaceID, nsINodeInfo** aNodeInfo);
-  NS_IMETHOD GetNodeInfo(const nsAString& aName, nsIAtom *aPrefix,
-                         PRInt32 aNamespaceID, nsINodeInfo** aNodeInfo);
-  NS_IMETHOD GetNodeInfo(const nsAString& aName, const nsAString& aPrefix,
-                         PRInt32 aNamespaceID, nsINodeInfo** aNodeInfo);
-  NS_IMETHOD GetNodeInfo(const nsAString& aName, const nsAString& aPrefix,
-                         const nsAString& aNamespaceURI,
-                         nsINodeInfo** aNodeInfo);
-  NS_IMETHOD GetNodeInfo(const nsAString& aQualifiedName,
-                         const nsAString& aNamespaceURI,
-                         nsINodeInfo** aNodeInfo);
-  NS_IMETHOD GetDocument(nsIDocument** aDocument);
-  NS_IMETHOD GetDocumentPrincipal(nsIPrincipal** aPrincipal);
-  NS_IMETHOD SetDocumentPrincipal(nsIPrincipal* aPrincipal);
-  NS_IMETHOD GetNodeInfoArray(nsISupportsArray** aArray);
+  virtual nsresult Init(nsIDocument *aDocument);
+  virtual void DropDocumentReference();
+  virtual nsresult GetNodeInfo(nsIAtom *aName, nsIAtom *aPrefix,
+                               PRInt32 aNamespaceID, nsINodeInfo** aNodeInfo);
+  virtual nsresult GetNodeInfo(const nsAString& aName, nsIAtom *aPrefix,
+                               PRInt32 aNamespaceID, nsINodeInfo** aNodeInfo);
+  virtual nsresult GetNodeInfo(const nsAString& aQualifiedName,
+                               const nsAString& aNamespaceURI,
+                               nsINodeInfo** aNodeInfo);
+  virtual nsresult GetNodeInfo(const nsAString& aName, nsIAtom *aPrefix,
+                               const nsAString& aNamespaceURI,
+                               nsINodeInfo** aNodeInfo);
+
+  virtual nsresult GetDocumentPrincipal(nsIPrincipal** aPrincipal);
+  virtual nsresult SetDocumentPrincipal(nsIPrincipal* aPrincipal);
 
   // nsNodeInfoManager
   nsNodeInfoManager();
@@ -79,34 +76,14 @@ public:
 
   void RemoveNodeInfo(nsNodeInfo *aNodeInfo);
 
-  static nsresult GetAnonymousManager(nsINodeInfoManager** aNodeInfoManager);
-
 private:
   static PRIntn PR_CALLBACK NodeInfoInnerKeyCompare(const void *key1,
                                                     const void *key2);
   static PLHashNumber PR_CALLBACK GetNodeInfoInnerHashValue(const void *key);
 
-  PR_STATIC_CALLBACK(PRIntn) GetNodeInfoArrayEnumerator(PLHashEntry* he,
-                                                        PRIntn i,
-                                                        void* arg);
-
   PLHashTable *mNodeInfoHash;
-  nsIDocument *mDocument; // WEAK
   nsCOMPtr<nsIPrincipal> mPrincipal;
 
-  /*
-   * gAnonymousNodeInfoManager is a global nodeinfo manager used for nodes
-   * that are no longer part of a document and for nodes that are created
-   * where no document is accessible.
-   *
-   * gAnonymousNodeInfoManager is allocated when requested for the first time
-   * and once the last nodeinfo manager (appart from gAnonymousNodeInfoManager)
-   * is destroyed gAnonymousNodeInfoManager is destroyed. If the global
-   * nodeinfo manager is the only nodeinfo manager used it can be deleted
-   * and later reallocated if all users of the nodeinfo manager drops the
-   * referernces to it.
-   */
-  static nsNodeInfoManager *gAnonymousNodeInfoManager;
   static PRUint32 gNodeManagerCount;
 };
 

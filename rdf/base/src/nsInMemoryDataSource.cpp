@@ -84,7 +84,6 @@
 #include "prlog.h"
 #include "rdf.h"
 
-static NS_DEFINE_CID(kRDFServiceCID,        NS_RDFSERVICE_CID);
 
 #if defined(MOZ_THREADSAFE_RDF)
 #define NS_AUTOLOCK(_lock) nsAutoLock _autolock(_lock)
@@ -889,6 +888,8 @@ InMemoryDataSource::InMemoryDataSource(nsISupports* aOuter)
 #ifdef MOZ_THREADSAFE_RDF
     mLock = nsnull;
 #endif
+    mForwardArcs.ops = nsnull;
+    mReverseArcs.ops = nsnull;
     mPropagateChanges = PR_TRUE;
 }
 
@@ -896,17 +897,22 @@ InMemoryDataSource::InMemoryDataSource(nsISupports* aOuter)
 nsresult
 InMemoryDataSource::Init()
 {
-    PL_DHashTableInit(&mForwardArcs,
-                      PL_DHashGetStubOps(),
-                      nsnull,
-                      sizeof(Entry),
-                      PL_DHASH_MIN_SIZE);
-
-    PL_DHashTableInit(&mReverseArcs,
-                      PL_DHashGetStubOps(),
-                      nsnull,
-                      sizeof(Entry),
-                      PL_DHASH_MIN_SIZE);
+    if (!PL_DHashTableInit(&mForwardArcs,
+                           PL_DHashGetStubOps(),
+                           nsnull,
+                           sizeof(Entry),
+                           PL_DHASH_MIN_SIZE)) {
+        mForwardArcs.ops = nsnull;
+        return NS_ERROR_OUT_OF_MEMORY;
+    }
+    if (!PL_DHashTableInit(&mReverseArcs,
+                           PL_DHashGetStubOps(),
+                           nsnull,
+                           sizeof(Entry),
+                           PL_DHASH_MIN_SIZE)) {
+        mReverseArcs.ops = nsnull;
+        return NS_ERROR_OUT_OF_MEMORY;
+    }
 
 #ifdef MOZ_THREADSAFE_RDF
     mLock = PR_NewLock();
@@ -930,14 +936,16 @@ InMemoryDataSource::~InMemoryDataSource()
     fprintf(stdout, "%d - RDF: InMemoryDataSource\n", gInstanceCount);
 #endif
 
-    // This'll release all of the Assertion objects that are
-    // associated with this data source. We only need to do this
-    // for the forward arcs, because the reverse arcs table
-    // indexes the exact same set of resources.
-    PL_DHashTableEnumerate(&mForwardArcs, DeleteForwardArcsEntry, &mAllocator);
-    PL_DHashTableFinish(&mForwardArcs);
-
-    PL_DHashTableFinish(&mReverseArcs);
+    if (mForwardArcs.ops) {
+        // This'll release all of the Assertion objects that are
+        // associated with this data source. We only need to do this
+        // for the forward arcs, because the reverse arcs table
+        // indexes the exact same set of resources.
+        PL_DHashTableEnumerate(&mForwardArcs, DeleteForwardArcsEntry, &mAllocator);
+        PL_DHashTableFinish(&mForwardArcs);
+    }
+    if (mReverseArcs.ops)
+        PL_DHashTableFinish(&mReverseArcs);
 
     PR_LOG(gLog, PR_LOG_ALWAYS,
            ("InMemoryDataSource(%p): destroyed.", this));
@@ -1089,8 +1097,8 @@ InMemoryDataSource::GetSource(nsIRDFResource* property,
 
     NS_AUTOLOCK(mLock);
 
-    for (Assertion* as = GetReverseArcs(target); as != nsnull; as = as->mNext) {
-        if ((property == as->u.as.mProperty) && (tv == (as->u.as.mTruthValue))) {
+    for (Assertion* as = GetReverseArcs(target); as; as = as->u.as.mInvNext) {
+        if ((property == as->u.as.mProperty) && (tv == as->u.as.mTruthValue)) {
             *source = as->mSource;
             NS_ADDREF(*source);
             return NS_OK;
@@ -1459,6 +1467,13 @@ InMemoryDataSource::LockedUnassert(nsIRDFResource* aSource,
                     Entry* entry = NS_REINTERPRET_CAST(Entry*, hdr);
                     entry->mNode = aProperty;
                     entry->mAssertions = next->mNext;
+                }
+            }
+            else {
+                // If this second-level hash empties out, clean it up.
+                if (!root->u.hash.mPropertyHash->entryCount) {
+                    Assertion::Destroy(mAllocator, root);
+                    SetForwardArcs(aSource, nsnull);
                 }
             }
         }
@@ -2024,12 +2039,13 @@ InMemoryDataSource::Mark(nsIRDFResource* aSource,
 struct SweepInfo {
     Assertion* mUnassertList;
     PLDHashTable* mReverseArcs;
+    nsFixedSizeAllocator* mAllocator;
 };
 
 NS_IMETHODIMP
 InMemoryDataSource::Sweep()
 {
-    SweepInfo info = { nsnull, &mReverseArcs };
+    SweepInfo info = { nsnull, &mReverseArcs, &mAllocator};
 
     {
         // Remove all the assertions while holding the lock, but don't notify anyone.
@@ -2070,14 +2086,24 @@ InMemoryDataSource::SweepForwardArcsEntries(PLDHashTable* aTable,
                                             PLDHashEntryHdr* aHdr,
                                             PRUint32 aNumber, void* aArg)
 {
+    PLDHashOperator result = PL_DHASH_NEXT;
     Entry* entry = NS_REINTERPRET_CAST(Entry*, aHdr);
     SweepInfo* info = NS_STATIC_CAST(SweepInfo*, aArg);
 
     Assertion* as = entry->mAssertions;
     if (as && (as->mHashEntry))
     {
-        // ignore any HASH_ENTRY assertions, they are only in the forward hash
-        as = as->mNext;
+        // Stuff in sub-hashes must be swept recursively (max depth: 1)
+        PL_DHashTableEnumerate(as->u.hash.mPropertyHash, 
+                               SweepForwardArcsEntries, info);
+
+        // If the sub-hash is now empty, clean it up.
+        if (!as->u.hash.mPropertyHash->entryCount) {
+            Assertion::Destroy(*info->mAllocator, as);
+            result = PL_DHASH_REMOVE;
+        }
+
+        return result;
     }
 
     Assertion* prev = nsnull;
@@ -2136,8 +2162,6 @@ InMemoryDataSource::SweepForwardArcsEntries(PLDHashTable* aTable,
             as = next;
         }
     }
-
-    PLDHashOperator result = PL_DHASH_NEXT;
 
     // if no more assertions exist for this resource, then unhash it.
     if (! entry->mAssertions)

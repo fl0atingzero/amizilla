@@ -56,18 +56,13 @@ nsXBLProtoImpl::InstallImplementation(nsXBLPrototypeBinding* aBinding, nsIConten
   if (!mMembers)
     return NS_OK; // Nothing to do, so let's not waste time.
 
-  nsCOMPtr<nsIDocument> document;
-  aBoundElement->GetDocument(getter_AddRefs(document));
+  nsIDocument* document = aBoundElement->GetDocument();
   if (!document) return NS_OK;
 
-  nsCOMPtr<nsIScriptGlobalObject> global;
-  document->GetScriptGlobalObject(getter_AddRefs(global));
+  nsIScriptGlobalObject *global = document->GetScriptGlobalObject();
   if (!global) return NS_OK;
 
-  nsCOMPtr<nsIScriptContext> context;
-  nsresult rv = global->GetContext(getter_AddRefs(context));
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsIScriptContext *context = global->GetContext();
   if (!context) return NS_OK;
 
   // InitTarget objects gives us back the JS object that represents the bound element and the
@@ -76,14 +71,16 @@ nsXBLProtoImpl::InstallImplementation(nsXBLPrototypeBinding* aBinding, nsIConten
   // not been built already.
   void * targetScriptObject = nsnull;
   void * targetClassObject = nsnull;
-  rv = InitTargetObjects(aBinding, context, aBoundElement, &targetScriptObject, &targetClassObject);
+  nsresult rv = InitTargetObjects(aBinding, context, aBoundElement,
+                                  &targetScriptObject, &targetClassObject);
   NS_ENSURE_SUCCESS(rv, rv); // kick out if we were unable to properly intialize our target objects
 
   // Walk our member list and install each one in turn.
   for (nsXBLProtoImplMember* curr = mMembers;
        curr;
        curr = curr->GetNext())
-    curr->InstallMember(context, aBoundElement, targetScriptObject, targetClassObject);
+    curr->InstallMember(context, aBoundElement, targetScriptObject,
+                        targetClassObject, mClassName);
   return NS_OK;
 }
 
@@ -94,17 +91,20 @@ nsXBLProtoImpl::InitTargetObjects(nsXBLPrototypeBinding* aBinding,
                                   void** aScriptObject, 
                                   void** aTargetClassObject)
 {
-  if (!mClassObject)
-    CompilePrototypeMembers(aBinding); // This is the first time we've ever installed this binding on an element.
+  nsresult rv = NS_OK;
+  if (!mClassObject) {
+    rv = CompilePrototypeMembers(aBinding); // This is the first time we've ever installed this binding on an element.
                                  // We need to go ahead and compile all methods and properties on a class
                                  // in our prototype binding.
-  
-  if (!mClassObject)
-    return NS_OK; // This can be ok, if all we've got are fields (and no methods/properties).
+    if (NS_FAILED(rv))
+      return rv;
+
+    if (!mClassObject)
+      return NS_OK; // This can be ok, if all we've got are fields (and no methods/properties).
+  }
 
   // Because our prototype implementation has a class, we need to build up a corresponding
   // class for the concrete implementation in the bound document.
-  nsresult rv = NS_OK;
   JSContext* jscontext = (JSContext*)aContext->GetNativeContext();
   JSObject* global = ::JS_GetGlobalObject(jscontext);
   nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
@@ -122,11 +122,12 @@ nsXBLProtoImpl::InitTargetObjects(nsXBLPrototypeBinding* aBinding,
   // between the object and its base class.  We become the new base class of the object, and the
   // object's old base class becomes the new class' base class.
   *aScriptObject = object;
-  aBinding->InitClass(mClassName, aContext, (void *) object, aTargetClassObject);
+  rv = aBinding->InitClass(mClassName, aContext, (void *) object, aTargetClassObject);
+  if (NS_FAILED(rv))
+    return rv;
 
   // Root ourselves in the document.
-  nsCOMPtr<nsIDocument> doc;
-  aBoundElement->GetDocument(getter_AddRefs(doc));
+  nsIDocument* doc = aBoundElement->GetDocument();
   if (doc) {
     nsCOMPtr<nsIXPConnectWrappedNative> nativeWrapper(do_QueryInterface(wrapper));
     if (nativeWrapper)
@@ -142,20 +143,19 @@ nsXBLProtoImpl::CompilePrototypeMembers(nsXBLPrototypeBinding* aBinding)
   // We want to pre-compile our implementation's members against a "prototype context". Then when we actually 
   // bind the prototype to a real xbl instance, we'll clone the pre-compiled JS into the real instance's 
   // context.
-  nsCOMPtr<nsIXBLDocumentInfo> docInfo = aBinding->GetXBLDocumentInfo(nsnull);
-  if (!docInfo)
-    return NS_ERROR_FAILURE;
-
-  nsCOMPtr<nsIScriptGlobalObjectOwner> globalOwner(do_QueryInterface(docInfo));
+  nsCOMPtr<nsIScriptGlobalObjectOwner> globalOwner(
+      do_QueryInterface(aBinding->XBLDocumentInfo()));
   nsCOMPtr<nsIScriptGlobalObject> globalObject;
   globalOwner->GetScriptGlobalObject(getter_AddRefs(globalObject));
 
-  nsCOMPtr<nsIScriptContext> context;
-  globalObject->GetContext(getter_AddRefs(context));
- 
+  nsIScriptContext *context = globalObject->GetContext();
+
   void* classObject;
   JSObject* scopeObject = globalObject->GetGlobalJSObject();
-  aBinding->InitClass(mClassName, context, scopeObject, &classObject);
+  nsresult rv = aBinding->InitClass(mClassName, context, scopeObject, &classObject);
+  if (NS_FAILED(rv))
+    return rv;
+
   mClassObject = (JSObject*) classObject;
   if (!mClassObject)
     return NS_ERROR_FAILURE;
@@ -165,7 +165,43 @@ nsXBLProtoImpl::CompilePrototypeMembers(nsXBLPrototypeBinding* aBinding)
   for (nsXBLProtoImplMember* curr = mMembers;
        curr;
        curr = curr->GetNext()) {
-    curr->CompileMember(context, mClassName, mClassObject);
+    nsresult rv = curr->CompileMember(context, mClassName, mClassObject);
+    if (NS_FAILED(rv)) {
+      DestroyMembers(curr);
+      return rv;
+    }
   }
   return NS_OK;
 }
+
+void
+nsXBLProtoImpl::DestroyMembers(nsXBLProtoImplMember* aBrokenMember)
+{
+  NS_ASSERTION(mClassObject, "This should never be called when there is no class object");
+  PRBool compiled = PR_TRUE;
+  for (nsXBLProtoImplMember* curr = mMembers; curr; curr = curr->GetNext()) {
+    if (curr == aBrokenMember) {
+      compiled = PR_FALSE;
+    }
+    curr->Destroy(compiled);
+  }
+}
+
+nsresult
+NS_NewXBLProtoImpl(nsXBLPrototypeBinding* aBinding, 
+                   const PRUnichar* aClassName, 
+                   nsXBLProtoImpl** aResult)
+{
+  nsXBLProtoImpl* impl = new nsXBLProtoImpl();
+  if (!impl)
+    return NS_ERROR_OUT_OF_MEMORY;
+  if (aClassName)
+    impl->mClassName.AssignWithConversion(aClassName);
+  else
+    aBinding->BindingURI()->GetSpec(impl->mClassName);
+  aBinding->SetImplementation(impl);
+  *aResult = impl;
+
+  return NS_OK;
+}
+

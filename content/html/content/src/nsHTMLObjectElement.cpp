@@ -48,25 +48,25 @@
 #include "nsIWebNavigation.h"
 #include "nsIFormControl.h"
 
-class nsHTMLObjectElement : public nsGenericHTMLContainerFormElement,
+class nsHTMLObjectElement : public nsGenericHTMLFormElement,
                             public nsImageLoadingContent,
                             public nsIDOMHTMLObjectElement
 {
 public:
-  nsHTMLObjectElement();
+  nsHTMLObjectElement(PRBool aFromParser = PR_FALSE);
   virtual ~nsHTMLObjectElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLFormElement::)
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLFormElement::)
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLFormElement::)
 
   // nsIDOMHTMLObjectElement
   NS_DECL_NSIDOMHTMLOBJECTELEMENT
@@ -79,24 +79,29 @@ public:
   NS_IMETHOD SaveState();
   NS_IMETHOD RestoreState(nsIPresState* aState);
 
-  NS_IMETHOD StringToAttribute(nsIAtom* aAttribute,
-                               const nsAString& aValue,
-                               nsHTMLValue& aResult);
+  virtual void DoneAddingChildren();
+  virtual PRBool IsDoneAddingChildren();
+
+  virtual PRBool ParseAttribute(nsIAtom* aAttribute,
+                                const nsAString& aValue,
+                                nsAttrValue& aResult);
   NS_IMETHOD AttributeToString(nsIAtom* aAttribute,
                                const nsHTMLValue& aValue,
                                nsAString& aResult) const;
   NS_IMETHOD GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const;
-  NS_IMETHOD GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                      nsChangeHint& aHint) const;
+  NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
+
+protected:
+  PRPackedBool mIsDoneAddingChildren;
 };
 
 nsresult
 NS_NewHTMLObjectElement(nsIHTMLContent** aInstancePtrResult,
-                        nsINodeInfo *aNodeInfo)
+                        nsINodeInfo *aNodeInfo, PRBool aFromParser)
 {
   NS_ENSURE_ARG_POINTER(aInstancePtrResult);
 
-  nsHTMLObjectElement* it = new nsHTMLObjectElement();
+  nsHTMLObjectElement* it = new nsHTMLObjectElement(aFromParser);
 
   if (!it) {
     return NS_ERROR_OUT_OF_MEMORY;
@@ -117,21 +122,34 @@ NS_NewHTMLObjectElement(nsIHTMLContent** aInstancePtrResult,
 }
 
 
-nsHTMLObjectElement::nsHTMLObjectElement()
+nsHTMLObjectElement::nsHTMLObjectElement(PRBool aFromParser)
 {
+  mIsDoneAddingChildren = !aFromParser;
 }
 
 nsHTMLObjectElement::~nsHTMLObjectElement()
 {
 }
 
+PRBool
+nsHTMLObjectElement::IsDoneAddingChildren()
+{
+  return mIsDoneAddingChildren;
+}
+
+void
+nsHTMLObjectElement::DoneAddingChildren()
+{
+  mIsDoneAddingChildren = PR_TRUE;
+  RecreateFrames();
+}
 
 NS_IMPL_ADDREF_INHERITED(nsHTMLObjectElement, nsGenericElement) 
 NS_IMPL_RELEASE_INHERITED(nsHTMLObjectElement, nsGenericElement) 
 
 // QueryInterface implementation for nsHTMLObjectElement
 NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLObjectElement,
-                                    nsGenericHTMLContainerFormElement)
+                                    nsGenericHTMLFormElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLObjectElement)
   NS_INTERFACE_MAP_ENTRY(imgIDecoderObserver)
   NS_INTERFACE_MAP_ENTRY(nsIImageLoadingContent)
@@ -158,7 +176,7 @@ nsHTMLObjectElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   if (NS_FAILED(rv))
     return rv;
 
-  CopyInnerTo(this, it, aDeep);
+  CopyInnerTo(it, aDeep);
 
   *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
 
@@ -170,7 +188,7 @@ nsHTMLObjectElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
 NS_IMETHODIMP
 nsHTMLObjectElement::GetForm(nsIDOMHTMLFormElement** aForm)
 {
-  return nsGenericHTMLContainerFormElement::GetForm(aForm);
+  return nsGenericHTMLFormElement::GetForm(aForm);
 }
 
 // nsIFormControl
@@ -204,18 +222,18 @@ NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Code, code)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Align, align)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Archive, archive)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Border, border)
-NS_IMPL_STRING_ATTR(nsHTMLObjectElement, CodeBase, codebase)
+NS_IMPL_URI_ATTR(nsHTMLObjectElement, CodeBase, codebase)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, CodeType, codetype)
-NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Data, data)
+NS_IMPL_URI_ATTR(nsHTMLObjectElement, Data, data)
 NS_IMPL_BOOL_ATTR(nsHTMLObjectElement, Declare, declare)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Height, height)
-NS_IMPL_PIXEL_ATTR(nsHTMLObjectElement, Hspace, hspace)
+NS_IMPL_INT_ATTR(nsHTMLObjectElement, Hspace, hspace)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Name, name)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Standby, standby)
 NS_IMPL_INT_ATTR(nsHTMLObjectElement, TabIndex, tabindex)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Type, type)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, UseMap, usemap)
-NS_IMPL_PIXEL_ATTR(nsHTMLObjectElement, Vspace, vspace)
+NS_IMPL_INT_ATTR(nsHTMLObjectElement, Vspace, vspace)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Width, width)
 
 
@@ -230,8 +248,7 @@ nsHTMLObjectElement::GetContentDocument(nsIDOMDocument** aContentDocument)
     return NS_OK;
   }
 
-  nsCOMPtr<nsIDocument> sub_doc;
-  mDocument->GetSubDocumentFor(this, getter_AddRefs(sub_doc));
+  nsIDocument *sub_doc = mDocument->GetSubDocumentFor(this);
 
   if (!sub_doc) {
     return NS_OK;
@@ -240,26 +257,22 @@ nsHTMLObjectElement::GetContentDocument(nsIDOMDocument** aContentDocument)
   return CallQueryInterface(sub_doc, aContentDocument);
 }
 
-NS_IMETHODIMP
-nsHTMLObjectElement::StringToAttribute(nsIAtom* aAttribute,
-                                       const nsAString& aValue,
-                                       nsHTMLValue& aResult)
+PRBool
+nsHTMLObjectElement::ParseAttribute(nsIAtom* aAttribute,
+                                    const nsAString& aValue,
+                                    nsAttrValue& aResult)
 {
   if (aAttribute == nsHTMLAtoms::align) {
-    if (ParseAlignValue(aValue, aResult)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+    return ParseAlignValue(aValue, aResult);
   }
-  else if (aAttribute == nsHTMLAtoms::tabindex) {
-    if (aResult.ParseIntWithBounds(aValue, eHTMLUnit_Integer, 0)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+  if (aAttribute == nsHTMLAtoms::tabindex) {
+    return aResult.ParseIntWithBounds(aValue, 0, 32767);
   }
-  else if (ParseImageAttribute(aAttribute, aValue, aResult)) {
-    return NS_CONTENT_ATTR_HAS_VALUE;
+  if (ParseImageAttribute(aAttribute, aValue, aResult)) {
+    return PR_TRUE;
   }
 
-  return NS_CONTENT_ATTR_NOT_THERE;
+  return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
 }
 
 NS_IMETHODIMP
@@ -273,42 +286,33 @@ nsHTMLObjectElement::AttributeToString(nsIAtom* aAttribute,
       return NS_CONTENT_ATTR_HAS_VALUE;
     }
   }
-  else if (ImageAttributeToString(aAttribute, aValue, aResult)) {
-    return NS_CONTENT_ATTR_HAS_VALUE;
-  }
 
-  return nsGenericHTMLContainerElement::AttributeToString(aAttribute, aValue,
-                                                          aResult);
+  return nsGenericHTMLFormElement::AttributeToString(aAttribute, aValue,
+                                                     aResult);
 }
 
 static void
-MapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes,
+MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
                       nsRuleData* aData)
 {
-  if (!aData)
-    return;
-
-  nsGenericHTMLElement::MapAlignAttributeInto(aAttributes, aData);
-  nsGenericHTMLElement::MapImageBorderAttributeInto(aAttributes, aData);
-  nsGenericHTMLElement::MapImageMarginAttributeInto(aAttributes, aData);
-  nsGenericHTMLElement::MapImagePositionAttributeInto(aAttributes, aData);
-  nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aData);
+  nsGenericHTMLFormElement::MapImageAlignAttributeInto(aAttributes, aData);
+  nsGenericHTMLFormElement::MapImageBorderAttributeInto(aAttributes, aData);
+  nsGenericHTMLFormElement::MapImageMarginAttributeInto(aAttributes, aData);
+  nsGenericHTMLFormElement::MapImageSizeAttributesInto(aAttributes, aData);
+  nsGenericHTMLFormElement::MapCommonAttributesInto(aAttributes, aData);
 }
 
-NS_IMETHODIMP
-nsHTMLObjectElement::GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                              nsChangeHint& aHint) const
+NS_IMETHODIMP_(PRBool)
+nsHTMLObjectElement::IsAttributeMapped(const nsIAtom* aAttribute) const
 {
-  static const AttributeImpactEntry* const map[] = {
+  static const MappedAttributeEntry* const map[] = {
     sCommonAttributeMap,
-    sImageAttributeMap,
+    sImageMarginSizeAttributeMap,
     sImageBorderAttributeMap,
     sImageAlignAttributeMap,
   };
 
-  FindAttributeImpact(aAttribute, aHint, map, NS_ARRAY_LENGTH(map));
-  
-  return NS_OK;
+  return FindAttributeDependence(aAttribute, map, NS_ARRAY_LENGTH(map));
 }
 
 

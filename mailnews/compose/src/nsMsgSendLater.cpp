@@ -38,7 +38,8 @@
 #include "nsMsgSendLater.h"
 #include "nsCOMPtr.h"
 #include "nsMsgCopy.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsIEnumerator.h"
 #include "nsIFileSpec.h"
 #include "nsISmtpService.h"
@@ -71,7 +72,6 @@
 #include "nsIMimeConverter.h"
 #include "nsMsgMimeCID.h"
 
-static NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
 static NS_DEFINE_CID(kISupportsArrayCID, NS_SUPPORTSARRAY_CID);
 
 NS_IMPL_ISUPPORTS2(nsMsgSendLater, nsIMsgSendLater, nsIStreamListener)
@@ -107,6 +107,7 @@ nsMsgSendLater::nsMsgSendLater()
   m_headersSize = 0;
 
   mIdentityKey = nsnull;
+  mAccountKey = nsnull;
 
   mRequestReturnReceipt = PR_FALSE;
 
@@ -124,6 +125,7 @@ nsMsgSendLater::~nsMsgSendLater()
   PR_Free(m_headers);
   PR_Free(mLeftoverBuffer);
   PR_Free(mIdentityKey);
+  PR_Free(mAccountKey);
 }
 
 // Stream is done...drive on!
@@ -389,10 +391,11 @@ SendOperationListener::OnStopSending(const char *aMsgID, nsresult aStatus, const
       //
       // Now delete the message from the outbox folder.
       //
-      nsCOMPtr<nsIPref> prefs(do_GetService(kPrefCID, &rv)); 
-      if (NS_SUCCEEDED(rv) && prefs)
-        prefs->GetBoolPref("mail.really_delete_draft", &deleteMsgs);
+      nsCOMPtr<nsIPrefBranch> pPrefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
+      if (pPrefBranch)
+        pPrefBranch->GetBoolPref("mail.really_delete_draft", &deleteMsgs);
 
+      mSendLater->SetOrigMsgDisposition();
       if (deleteMsgs)
       {
         mSendLater->DeleteCurrentMessage();
@@ -550,6 +553,7 @@ nsMsgSendLater::CompleteMailFileSend()
     m_window->GetStatusFeedback(getter_AddRefs(statusFeedback));
   NS_ADDREF(this);  //TODO: We should remove this!!!
   rv = pMsgSend->SendMessageFile(identity,
+                                 mAccountKey,
                                  compFields, // nsIMsgCompFields *fields,
                                  mTempIFileSpec, // nsIFileSpec *sendFileSpec,
                                  PR_TRUE, // PRBool deleteSendFileOnCompletion,
@@ -719,6 +723,48 @@ nsMsgSendLater::SendUnsentMessages(nsIMsgIdentity *identity)
   return StartNextMailFileSend();
 }
 
+nsresult nsMsgSendLater::SetOrigMsgDisposition()
+{
+  // We're finished sending a queued message. We need to look at mMessage 
+  // and see if we need to set replied/forwarded
+  // flags for the original message that this message might be a reply to
+  // or forward of.
+  nsXPIDLCString originalMsgURIs;
+  nsXPIDLCString queuedDisposition;
+  mMessage->GetStringProperty(ORIG_URI_PROPERTY, getter_Copies(originalMsgURIs));
+  mMessage->GetStringProperty(QUEUED_DISPOSITION_PROPERTY, getter_Copies(queuedDisposition));
+  if (!queuedDisposition.IsEmpty())
+  {
+    char *uriList = PL_strdup(originalMsgURIs.get());
+    if (!uriList)
+      return NS_ERROR_OUT_OF_MEMORY;
+    char *newStr = uriList;
+    char *uri;
+    while (nsnull != (uri = nsCRT::strtok(newStr, ",", &newStr)))
+    {
+      nsCOMPtr <nsIMsgDBHdr> msgHdr;
+      nsresult rv = GetMsgDBHdrFromURI(uri, getter_AddRefs(msgHdr));
+      NS_ENSURE_SUCCESS(rv,rv);
+      if (msgHdr)
+      {
+        // get the folder for the message resource
+        nsCOMPtr<nsIMsgFolder> msgFolder;
+        msgHdr->GetFolder(getter_AddRefs(msgFolder));
+        if (msgFolder)
+        {
+          nsMsgDispositionState dispositionSetting = nsIMsgFolder::nsMsgDispositionState_Replied;
+          if (queuedDisposition.Equals("forwarded"))
+            dispositionSetting = nsIMsgFolder::nsMsgDispositionState_Forwarded;
+          
+          msgFolder->AddMessageDispositionState(msgHdr, dispositionSetting);
+        }
+      }
+    }
+    PR_Free(uriList);
+  }
+  return NS_OK;
+}
+
 nsresult
 nsMsgSendLater::DeleteCurrentMessage()
 {
@@ -767,6 +813,7 @@ nsMsgSendLater::BuildHeaders()
   PR_FREEIF(m_newshost);
   PR_FREEIF(m_fcc);
   PR_FREEIF(mIdentityKey);
+  PR_FREEIF(mAccountKey);
   m_flags = 0;
 
   while (buf < buf_end)
@@ -845,6 +892,11 @@ nsMsgSendLater::BuildHeaders()
         {
           prune_p = PR_TRUE;
           header = &mIdentityKey;
+        }
+        else if (!PL_strncasecmp(HEADER_X_MOZILLA_ACCOUNT_KEY, buf, end - buf))
+        {
+          prune_p = PR_TRUE;
+          header = &mAccountKey;
         }
         break;
       }

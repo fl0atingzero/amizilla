@@ -62,7 +62,12 @@ REQUIRES	= xpcom \
 		  intl \
 		  uconv \
 		  windowwatcher \
+		  docshell \
 		  $(NULL)
+
+ifdef MOZ_PHOENIX
+REQUIRES	+= toolkitcomps
+endif
 
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 REQUIRES		+= windowwatcher \
@@ -74,13 +79,31 @@ OSHELPER	= nsOSHelperAppService.cpp
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 OSHELPER		+= nsInternetConfig.cpp \
 			nsInternetConfigService.cpp \
+			nsMIMEInfoMac.cpp \
 			$(NULL)
 endif
 
-EXPORTS = 	nsExternalHelperAppService.h \
-		nsExternalProtocolHandler.h \
+LOCAL_INCLUDES = -I$(srcdir)
+
+ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
+OSHELPER	+= nsGNOMERegistry.cpp
+endif
+
+ifeq ($(MOZ_WIDGET_TOOLKIT),beos)
+OSHELPER  += nsMIMEInfoBeOS.cpp
+endif
+
+ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
+OSHELPER  += nsMIMEInfoWin.cpp
+LOCAL_INCLUDES += -I$(srcdir)/win
+endif
+
+ifeq ($(MOZ_WIDGET_TOOLKIT),os2)
+OSHELPER  += nsMIMEInfoOS2.cpp
+endif
+
+EXPORTS = \
 		$(OSDIR)/nsOSHelperAppService.h \
-		nsHelperAppRDF.h	    \
 			$(NULL)
 
 XPIDLSRCS = \
@@ -88,7 +111,7 @@ XPIDLSRCS = \
 	nsIExternalProtocolService.idl \
 	nsIExternalHelperAppService.idl	\
 	$(NULL)
-	
+
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 XPIDLSRCS		+= nsIInternetConfigService.idl
 endif
@@ -96,12 +119,14 @@ endif
 CPPSRCS	= \
 	nsExternalHelperAppService.cpp	\
 	nsExternalProtocolHandler.cpp \
+	nsMIMEInfoImpl.cpp \
 	$(OSHELPER) \
 	$(NULL)
 
 ifeq ($(OS_ARCH),WINNT)
 OS_LIBS		+= shell32.lib
-GARBAGE		+= nsOSHelperAppService.cpp $(srcdir)/nsOSHelperAppService.cpp
+GARBAGE		+= nsOSHelperAppService.cpp $(srcdir)/nsOSHelperAppService.cpp \
+             nsMIMEInfoWin.cpp $(srcdir)/nsMIMEInfoWin.cpp
 endif
 
 # we don't want the shared lib, but we want to force the creation of a static lib.
@@ -109,8 +134,12 @@ FORCE_STATIC_LIB = 1
 SRCS_IN_OBJDIR	= 1
 include $(topsrcdir)/config/rules.mk
 
+ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
+CXXFLAGS += $(TK_CFLAGS)
+endif
+
 # the use of multiple VPATH dirs is broken in cygwin make
 ifeq ($(OS_ARCH),WINNT)
-export:: $(OSDIR)/nsOSHelperAppService.cpp
+export:: $(OSDIR)/nsOSHelperAppService.cpp $(OSDIR)/nsMIMEInfoWin.cpp
 	$(INSTALL) $^ .
 endif

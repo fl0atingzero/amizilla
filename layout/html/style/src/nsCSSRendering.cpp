@@ -65,6 +65,7 @@
 #include "nsIDOMHTMLBodyElement.h"
 #include "nsIDOMHTMLDocument.h"
 #include "nsLayoutUtils.h"
+#include "nsINameSpaceManager.h"
 
 #define BORDER_FULL    0        //entire side
 #define BORDER_INSIDE  1        //inside half
@@ -112,21 +113,15 @@ struct InlineBackgroundData
   {
     SetFrame(aFrame);
 
-    nsSize size;
-    mFrame->GetSize(size);
-
     // Assume background-origin: border and return a rect with offsets
     // relative to (0,0).  If we have a different background-origin,
     // then our rect should be deflated appropriately by our caller.
-    return nsRect(-mContinuationPoint, 0, mUnbrokenWidth, size.height);
+    return nsRect(-mContinuationPoint, 0, mUnbrokenWidth, mFrame->GetSize().height);
   }
 
   nsRect GetBoundingRect(nsIFrame* aFrame)
   {
     SetFrame(aFrame);
-
-    nsPoint point;
-    mFrame->GetOrigin(point);
 
     // Move the offsets relative to (0,0) which puts the bounding box into
     // our coordinate system rather than our parent's.  We do this by
@@ -134,6 +129,7 @@ struct InlineBackgroundData
     // This also assumes background-origin: border, so our caller will
     // need to deflate us if needed.
     nsRect boundingBox(mBoundingBox);
+    nsPoint point = mFrame->GetPosition();
     boundingBox.MoveBy(-point.x, -point.y);
 
     return boundingBox;
@@ -161,9 +157,7 @@ protected:
 
     // Get our last frame's size and add its width to our continuation
     // point before we cache the new frame.
-    nsSize size;
-    mFrame->GetSize(size);
-    mContinuationPoint += size.width;
+    mContinuationPoint += mFrame->GetSize().width;
 
     mFrame = aFrame;
   }
@@ -175,9 +169,8 @@ protected:
     // is the total of the widths of the previous frames.
     aFrame->GetPrevInFlow(&inlineFrame);
 
-    nsRect rect;
     while (inlineFrame) {
-      inlineFrame->GetRect(rect);
+      nsRect rect = inlineFrame->GetRect();
       mContinuationPoint += rect.width;
       mUnbrokenWidth += rect.width;
       mBoundingBox.UnionRect(mBoundingBox, rect);
@@ -188,7 +181,7 @@ protected:
     // unbroken width.
     inlineFrame = aFrame;
     while (inlineFrame) {
-      inlineFrame->GetRect(rect);
+      nsRect rect = inlineFrame->GetRect();
       mUnbrokenWidth += rect.width;
       mBoundingBox.UnionRect(mBoundingBox, rect);
       inlineFrame->GetNextInFlow(&inlineFrame);
@@ -201,7 +194,6 @@ protected:
 static InlineBackgroundData gInlineBGData;
 
 static void GetPath(nsFloatPoint aPoints[],nsPoint aPolyPath[],PRInt32 *aCurIndex,ePathTypes  aPathType,PRInt32 &aC1Index,float aFrac=0);
-static nsresult GetFrameForBackgroundUpdate(nsIPresContext *aPresContext,nsIFrame *aFrame, nsIFrame **aBGFrame);
 
 // FillRect or InvertRect depending on the renderingaInvert parameter
 static void FillOrInvertRect(nsIRenderingContext& aRC,nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight, PRBool aInvert);
@@ -317,11 +309,10 @@ nscolor nsCSSRendering::MakeBevelColor(PRIntn whichSide, PRUint8 style,
   else
     NS_Get3DColors(colors, aBackgroundColor);
  
-
   if ((style == NS_STYLE_BORDER_STYLE_BG_OUTSET) ||
-	  (style == NS_STYLE_BORDER_STYLE_OUTSET) ||
+      (style == NS_STYLE_BORDER_STYLE_OUTSET) ||
       (style == NS_STYLE_BORDER_STYLE_RIDGE)) {
-    // Flip colors for these two border style
+    // Flip colors for these three border styles
     switch (whichSide) {
     case NS_SIDE_BOTTOM: whichSide = NS_SIDE_TOP;    break;
     case NS_SIDE_RIGHT:  whichSide = NS_SIDE_LEFT;   break;
@@ -526,7 +517,6 @@ void nsCSSRendering::DrawSide(nsIRenderingContext& aContext,
   switch (theStyle) {
   case NS_STYLE_BORDER_STYLE_NONE:
   case NS_STYLE_BORDER_STYLE_HIDDEN:
-  case NS_STYLE_BORDER_STYLE_BLANK:
     return;
 
   case NS_STYLE_BORDER_STYLE_DOTTED:    //handled a special case elsewhere
@@ -541,8 +531,8 @@ void nsCSSRendering::DrawSide(nsIRenderingContext& aContext,
                                         ((theStyle == NS_STYLE_BORDER_STYLE_RIDGE) ?
                                          NS_STYLE_BORDER_STYLE_GROOVE :
                                          NS_STYLE_BORDER_STYLE_RIDGE), 
-										 aBackgroundColor, theColor, 
-										 PR_TRUE));
+                                         aBackgroundColor, theColor, 
+                                         PR_TRUE));
     if (2 == np) {
       //aContext.DrawLine (theSide[0].x, theSide[0].y, theSide[1].x, theSide[1].y);
       DrawLine (aContext, theSide[0].x, theSide[0].y, theSide[1].x, theSide[1].y, aGap);
@@ -553,7 +543,7 @@ void nsCSSRendering::DrawSide(nsIRenderingContext& aContext,
     np = MakeSide (theSide, aContext, whichSide, borderOutside, borderInside,aSkipSides,
                    BORDER_OUTSIDE, 0.5f, twipsPerPixel);
     aContext.SetColor ( MakeBevelColor (whichSide, theStyle, aBackgroundColor, 
-		                                theColor, PR_TRUE));
+                                        theColor, PR_TRUE));
     if (2 == np) {
       //aContext.DrawLine (theSide[0].x, theSide[0].y, theSide[1].x, theSide[1].y);
       DrawLine (aContext, theSide[0].x, theSide[0].y, theSide[1].x, theSide[1].y, aGap);
@@ -572,6 +562,19 @@ void nsCSSRendering::DrawSide(nsIRenderingContext& aContext,
       DrawLine (aContext, theSide[0].x, theSide[0].y, theSide[1].x, theSide[1].y, aGap);
     } else {
       //aContext.FillPolygon (theSide, np);
+      FillPolygon (aContext, theSide, np, aGap);
+    }
+    break;
+
+  case NS_STYLE_BORDER_STYLE_BG_SOLID:
+    np = MakeSide (theSide, aContext, whichSide, borderOutside, borderInside, aSkipSides,
+                   BORDER_FULL, 1.0f, twipsPerPixel);
+    nscolor colors[2]; 
+    NS_Get3DColors(colors, aBackgroundColor); 
+    aContext.SetColor (colors[0]);
+    if (2 == np) {
+      DrawLine (aContext, theSide[0].x, theSide[0].y, theSide[1].x, theSide[1].y, aGap);
+    } else {
       FillPolygon (aContext, theSide, np, aGap);
     }
     break;
@@ -603,7 +606,7 @@ void nsCSSRendering::DrawSide(nsIRenderingContext& aContext,
     np = MakeSide (theSide, aContext, whichSide, borderOutside, borderInside,aSkipSides,
                    BORDER_FULL, 1.0f, twipsPerPixel);
     aContext.SetColor ( MakeBevelColor (whichSide, theStyle, aBackgroundColor,
-		                                 theColor, PR_FALSE));
+                                        theColor, PR_FALSE));
     if (2 == np) {
       //aContext.DrawLine (theSide[0].x, theSide[0].y, theSide[1].x, theSide[1].y);
       DrawLine (aContext, theSide[0].x, theSide[0].y, theSide[1].x, theSide[1].y, aGap);
@@ -614,10 +617,10 @@ void nsCSSRendering::DrawSide(nsIRenderingContext& aContext,
     break;
   case NS_STYLE_BORDER_STYLE_OUTSET:
   case NS_STYLE_BORDER_STYLE_INSET:
-	np = MakeSide (theSide, aContext, whichSide, borderOutside, borderInside,aSkipSides,
+    np = MakeSide (theSide, aContext, whichSide, borderOutside, borderInside,aSkipSides,
                    BORDER_FULL, 1.0f, twipsPerPixel);
     aContext.SetColor ( MakeBevelColor (whichSide, theStyle, aBackgroundColor, 
-		                                theColor, PR_TRUE));
+                                        theColor, PR_TRUE));
     if (2 == np) {
       //aContext.DrawLine (theSide[0].x, theSide[0].y, theSide[1].x, theSide[1].y);
       DrawLine (aContext, theSide[0].x, theSide[0].y, theSide[1].x, theSide[1].y, aGap);
@@ -866,7 +869,7 @@ PRBool  skippedSide = PR_FALSE;
 
 /** ---------------------------------------------------
  *  See documentation in nsCSSRendering.h
- *	@update 10/22/99 dwc
+ *  @update 10/22/99 dwc
  */
 void nsCSSRendering::DrawDashedSides(PRIntn startSide,
                                      nsIRenderingContext& aContext,
@@ -893,11 +896,6 @@ const nscolor kBlackColor = NS_RGB(0,0,0);
   PRUint8 style = aDoOutline
                   ? aOutlineStyle->GetOutlineStyle()
                   : aBorderStyle->GetBorderStyle(startSide);  
-
-  // find out were x and y start
-  // XXX Unused variables
-  nscoord xstart = PR_MAX(aDirtyRect.x, borderInside.x);
-  nscoord ystart = PR_MAX(aDirtyRect.y, borderInside.y);
 
   // find the x and y width
   nscoord xwidth = aDirtyRect.XMost();
@@ -1345,7 +1343,7 @@ PRIntn  whichSide=0;
           width = aBounds.width - aBorderEdges->mMaxBorderWidth.right;
           width += segment->mWidth;
         }
-	      else
+        else
         {
           width = aBounds.width;
         }
@@ -1370,7 +1368,7 @@ PRIntn  whichSide=0;
               neighborBorderEdges = segment->mInsideNeighbor;
               neighborEdgeCount=0;
             }
-			      nsBorderEdge * neighborRight = (nsBorderEdge *)(segment->mInsideNeighbor->mEdges[NS_SIDE_RIGHT].ElementAt(neighborEdgeCount));
+            nsBorderEdge * neighborRight = (nsBorderEdge *)(segment->mInsideNeighbor->mEdges[NS_SIDE_RIGHT].ElementAt(neighborEdgeCount));
             totalLength = neighborRight->mLength;
           }
           dashRect.width = borderOutside.XMost() - borderInside.XMost();
@@ -1379,7 +1377,7 @@ PRIntn  whichSide=0;
           dashRect.y = borderOutside.y + (totalLength/2) - dashRect.height;
           if ((PR_TRUE==aBorderEdges->mOutsideEdge) && (0!=i))
             dashRect.y -= topEdge->mWidth;
-		      currRect = dashRect;
+          currRect = dashRect;
 
           // draw the top half
           while (currRect.YMost() > borderInside.y) {
@@ -1547,101 +1545,49 @@ PRBool GetBGColorForHTMLElement( nsIPresContext *aPresContext,
   NS_ASSERTION(aPresContext, "null params not allowed");
   PRBool result = PR_FALSE; // assume we did not find the HTML element
 
-  nsIPresShell* shell = nsnull;
-  aPresContext->GetShell(&shell);
+  nsIPresShell* shell = aPresContext->GetPresShell();
   if (shell) {
     nsIDocument *doc = nsnull;
     if (NS_SUCCEEDED(shell->GetDocument(&doc)) && doc) {
       nsIContent *pContent;
-      if (NS_SUCCEEDED(doc->GetRootContent(&pContent)) && pContent) {
+      if ((pContent = doc->GetRootContent())) {
         // make sure that this is the HTML element
-        nsCOMPtr<nsIAtom> tag;
-        pContent->GetTag(getter_AddRefs(tag));
+        nsIAtom *tag = pContent->Tag();
         NS_ASSERTION(tag, "Tag could not be retrieved from root content element");
-        if (tag) {
-          if (tag == nsHTMLAtoms::html ||
-              tag == nsHTMLAtoms::body) {
-            // use this guy's color
-            nsIFrame *pFrame = nsnull;
-            if (NS_SUCCEEDED(shell->GetPrimaryFrameFor(pContent, &pFrame)) && pFrame) {
-              nsStyleContext *pContext = pFrame->GetStyleContext();
-              if (pContext) {
-                const nsStyleBackground* color = pContext->GetStyleBackground();
-                if (0 == (color->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT)) {
-                  aBGColor = color;
-                  // set the reslt to TRUE to indicate we mapped the color
-                  result = PR_TRUE;
-                }
-              }// if context
-            }// if frame
-          }// if tag == html or body
+        if (tag == nsHTMLAtoms::html ||
+            tag == nsHTMLAtoms::body) {
+          // use this guy's color
+          nsIFrame *pFrame = nsnull;
+          if (NS_SUCCEEDED(shell->GetPrimaryFrameFor(pContent, &pFrame)) &&
+              pFrame) {
+            nsStyleContext *pContext = pFrame->GetStyleContext();
+            if (pContext) {
+              const nsStyleBackground* color = pContext->GetStyleBackground();
+              if (0 == (color->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT)) {
+                aBGColor = color;
+                // set the reslt to TRUE to indicate we mapped the color
+                result = PR_TRUE;
+              }
+            }// if context
+          }// if frame
+        }// if tag == html or body
 #ifdef DEBUG
-          else {
-            printf( "Root Content is not HTML or BODY: cannot get bgColor of HTML or BODY\n");
-          }
+        else {
+          printf( "Root Content is not HTML or BODY: cannot get bgColor of HTML or BODY\n");
+        }
 #endif
-        }// if tag
-        NS_RELEASE(pContent);
       }// if content
       NS_RELEASE(doc);
     }// if doc
-    NS_RELEASE(shell);
   } // if shell
 
   return result;
 }
 
-// nethod GetFrameForBackgroundUpdate
-//
-// If the frame (aFrame) is the HTML or BODY frame then find the canvas frame and set the
-// aBGFrame param to that. This is used when we need a frame to invalidate after an asynch
-// image load for the background.
-// 
-// The check is a bit expensive, however until the canvas frame is somehow cached on the 
-// body frame, or the root element, we need to walk the frames up until we find the canvas
-//
-nsresult GetFrameForBackgroundUpdate(nsIPresContext *aPresContext,nsIFrame *aFrame, nsIFrame **aBGFrame)
-{
-  NS_ASSERTION(aFrame && aBGFrame, "illegal null parameter");
-
-  nsresult rv = NS_OK;
-
-  if (aFrame && aBGFrame) {
-    *aBGFrame = aFrame; // default to the frame passed in
-
-    nsCOMPtr<nsIContent> pContent;
-    aFrame->GetContent(getter_AddRefs(pContent));
-    if (pContent) {
-      // make sure that this is the HTML or BODY element
-      nsCOMPtr<nsIAtom> tag;
-      pContent->GetTag(getter_AddRefs(tag));
-      if (tag) {
-        if (tag.get() == nsHTMLAtoms::html ||
-            tag.get() == nsHTMLAtoms::body) {
-          // the frame is the body frame, so we provide the canvas frame
-          nsIFrame *pCanvasFrame = nsnull;
-          aFrame->GetParent(&pCanvasFrame);
-          while (pCanvasFrame) {
-            nsCOMPtr<nsIAtom>  parentType;
-            pCanvasFrame->GetFrameType(getter_AddRefs(parentType));
-            if (parentType.get() == nsLayoutAtoms::canvasFrame) {
-              *aBGFrame = pCanvasFrame;
-              break;
-            }
-            pCanvasFrame->GetParent(&pCanvasFrame);
-          }
-        }// if tag == html or body
-      }// if tag
-    }
-  } else {
-    rv = NS_ERROR_NULL_POINTER;
-  }
-  return rv;
-}
-
 // helper macro to determine if the borderstyle 'a' is a MOZ-BG-XXX style
 #define MOZ_BG_BORDER(a)\
-((a==NS_STYLE_BORDER_STYLE_BG_INSET) || (a==NS_STYLE_BORDER_STYLE_BG_OUTSET))
+((a==NS_STYLE_BORDER_STYLE_BG_INSET) || (a==NS_STYLE_BORDER_STYLE_BG_OUTSET)\
+                                     || (a==NS_STYLE_BORDER_STYLE_BG_SOLID))
 
 static
 PRBool GetBorderColor(const nsStyleColor* aColor, const nsStyleBorder& aBorder, PRUint8 aSide, nscolor& aColorVal,
@@ -1681,8 +1627,7 @@ void nsCSSRendering::PaintBorder(nsIPresContext* aPresContext,
   nsStyleCoord        bordStyleRadius[4];
   PRInt16             borderRadii[4],i;
   float               percent;
-  nsCompatibility     compatMode;
-  aPresContext->GetCompatibilityMode(&compatMode);
+  nsCompatibility     compatMode = aPresContext->CompatibilityMode();
 
   // Check to see if we have an appearance defined.  If so, we let the theme
   // renderer draw the border.  DO not get the data from aForFrame, since the passed in style context
@@ -1702,13 +1647,15 @@ void nsCSSRendering::PaintBorder(nsIPresContext* aPresContext,
   const nsStyleBackground* bgColor = 
     nsCSSRendering::FindNonTransparentBackground(aStyleContext, 
                                             compatMode == eCompatibility_NavQuirks ? PR_TRUE : PR_FALSE); 
+
   // mozBGColor is used instead of bgColor when the display type is BG_INSET or BG_OUTSET
-  // AND, in quirk mode, it is set to the BODY element's background color instead of the nearest
-  // ancestor's background color.
+  // or BG_SOLID, and, in quirk mode, it is set to the BODY element's background color
+  // instead of the nearest ancestor's background color.
   const nsStyleBackground* mozBGColor = bgColor;
 
   // now check if we are in Quirks mode and have a border style of BG_INSET or OUTSET
-  // - if so we use the bgColor from the HTML element instead of the nearest ancestor
+  // or BG_SOLID - if so we use the bgColor from the HTML element instead of the
+  // nearest ancestor
   if (compatMode == eCompatibility_NavQuirks) {
     PRBool bNeedBodyBGColor = PR_FALSE;
     if (aStyleContext) {
@@ -1745,8 +1692,6 @@ void nsCSSRendering::PaintBorder(nsIPresContext* aPresContext,
   for(i=0;i<4;i++) {
     borderRadii[i] = 0;
     switch ( bordStyleRadius[i].GetUnit()) {
-    case eStyleUnit_Inherit:
-      break;
     case eStyleUnit_Percent:
       percent = bordStyleRadius[i].GetPercentValue();
       borderRadii[i] = (nscoord)(percent * aBorderArea.width);
@@ -2136,8 +2081,6 @@ nscoord width;
   for(i=0;i<4;i++) {
     borderRadii[i] = 0;
     switch ( bordStyleRadius[i].GetUnit()) {
-    case eStyleUnit_Inherit:
-      break;
     case eStyleUnit_Percent:
       percent = bordStyleRadius[i].GetPercentValue();
       borderRadii[i] = (nscoord)(percent * aBorderArea.width);
@@ -2204,7 +2147,7 @@ nscoord width;
   /* XXX something is misnamed here!!!! */
   nscoord twipsPerPixel;/* XXX */
   float p2t;/* XXX */
-  aPresContext->GetPixelsToTwips(&p2t);/* XXX */
+  p2t = aPresContext->PixelsToTwips();/* XXX */
   twipsPerPixel = (nscoord) p2t;/* XXX */
 
   nscolor outlineColor(NS_RGB(0,0,0)); // default to black in case it is invert color and the platform does not support that
@@ -2296,7 +2239,7 @@ void nsCSSRendering::PaintBorderEdges(nsIPresContext* aPresContext,
   // Draw all the other sides
   nscoord twipsPerPixel;
   float p2t;
-  aPresContext->GetPixelsToTwips(&p2t);
+  p2t = aPresContext->PixelsToTwips();
   twipsPerPixel = (nscoord) p2t;/* XXX huh!*/
 
   if (0 == (aSkipSides & (1<<NS_SIDE_TOP))) {
@@ -2511,23 +2454,6 @@ ComputeBackgroundAnchorPoint(const nsStyleBackground& aColor,
   aResult.y = y;
 }
 
-// Returns the nearest scroll frame ancestor
-static nsIFrame*
-GetNearestScrollFrame(nsIFrame* aFrame)
-{
-  for (nsIFrame* f = aFrame; f; f->GetParent(&f)) {
-    nsCOMPtr<nsIAtom> frameType;
-
-    // Is it a scroll frame?
-    f->GetFrameType(getter_AddRefs(frameType));
-    if (nsLayoutAtoms::scrollFrame == frameType) {
-      return f;
-    }
-  }
-
-  return nsnull;
-}
-
 // Returns the root scrollable frame, which is the first child of the root
 // frame.
 static nsIScrollableFrame*
@@ -2535,17 +2461,11 @@ GetRootScrollableFrame(nsIPresContext* aPresContext, nsIFrame* aRootFrame)
 {
   nsIScrollableFrame* scrollableFrame = nsnull;
 
-  nsCOMPtr<nsIAtom> frameType;
-  aRootFrame->GetFrameType(getter_AddRefs(frameType));
-
-  if (nsLayoutAtoms::viewportFrame == frameType) {
-    nsIFrame* childFrame;
-    aRootFrame->FirstChild(aPresContext, nsnull, &childFrame);
+  if (nsLayoutAtoms::viewportFrame == aRootFrame->GetType()) {
+    nsIFrame* childFrame = aRootFrame->GetFirstChild(nsnull);
 
     if (childFrame) {
-      childFrame->GetFrameType(getter_AddRefs(frameType));
-
-      if (nsLayoutAtoms::scrollFrame == frameType) {
+      if (nsLayoutAtoms::scrollFrame == childFrame->GetType()) {
         // Use this frame, even if we are using GFX frames for the
         // viewport, which contains another scroll frame below this
         // frame, since the GFX scrollport frame does not implement
@@ -2567,19 +2487,18 @@ const nsStyleBackground*
 nsCSSRendering::FindNonTransparentBackground(nsStyleContext* aContext,
                                              PRBool aStartAtParent /*= PR_FALSE*/)
 {
+  NS_ASSERTION(aContext, "Cannot find NonTransparentBackground in a null context" );
+  
   const nsStyleBackground* result = nsnull;
-  nsStyleContext* context;
+  nsStyleContext* context = nsnull;
   if (aStartAtParent) {
     context = aContext->GetParent();
-  } else {
+  }
+  if (!context) {
     context = aContext;
   }
-  NS_ASSERTION(context, "Cannot find NonTransparentBackground in a null context" );
   
   while (context) {
-    // Have to .get() because some compilers won't match the template
-    // otherwise (they don't look for implicit type conversions while doing
-    // template matching?).
     result = context->GetStyleBackground();
     if (0 == (result->mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT))
       break;
@@ -2632,15 +2551,13 @@ nsCSSRendering::FindNonTransparentBackground(nsStyleContext* aContext,
 inline nsIFrame*
 IsCanvasFrame(nsIPresContext* aPresContext, nsIFrame *aFrame)
 {
-  nsCOMPtr<nsIAtom> frameType;
-  aFrame->GetFrameType(getter_AddRefs(frameType));
+  nsIAtom* frameType = aFrame->GetType();
   if (frameType == nsLayoutAtoms::canvasFrame ||
       frameType == nsLayoutAtoms::rootFrame ||
       frameType == nsLayoutAtoms::pageFrame) {
     return aFrame;
   } else if (frameType == nsLayoutAtoms::viewportFrame) {
-    nsIFrame* firstChild;
-    aFrame->FirstChild(aPresContext, nsnull, &firstChild);
+    nsIFrame* firstChild = aFrame->GetFirstChild(nsnull);
     if (firstChild) {
       return firstChild;
     }
@@ -2656,17 +2573,14 @@ FindCanvasBackground(nsIPresContext* aPresContext,
 {
   // XXXldb What if the root element is positioned, etc.?  (We don't
   // allow that yet, do we?)
-  nsIFrame *firstChild;
-  aForFrame->FirstChild(aPresContext, nsnull, &firstChild);
+  nsIFrame *firstChild = aForFrame->GetFirstChild(nsnull);
   if (firstChild) {
     const nsStyleBackground* result = firstChild->GetStyleBackground();
   
     // for printing and print preview.. this should be a pageContentFrame
-    nsCOMPtr<nsIAtom> frameType;
     nsStyleContext* parentContext;
 
-    firstChild->GetFrameType(getter_AddRefs(frameType));
-    if ( (frameType == nsLayoutAtoms::pageContentFrame) ){
+    if (firstChild->GetType() == nsLayoutAtoms::pageContentFrame) {
       // we have to find the background style ourselves.. since the 
       // pageContentframe does not have content
       while(firstChild){
@@ -2677,18 +2591,17 @@ FindCanvasBackground(nsIPresContext* aPresContext,
             *aBackground = kidFrame->GetStyleBackground();
             return PR_TRUE;
           } else {
-            kidFrame->GetNextSibling(&kidFrame); 
+            kidFrame = kidFrame->GetNextSibling(); 
           }
         }
-        firstChild->FirstChild(aPresContext, nsnull, &firstChild);
+        firstChild = firstChild->GetFirstChild(nsnull);
       }
       return PR_FALSE;    // nothing found for this
     }
 
     // Check if we need to do propagation from BODY rather than HTML.
     if (result->IsTransparent()) {
-      nsCOMPtr<nsIContent> content;
-      aForFrame->GetContent(getter_AddRefs(content));
+      nsIContent* content = aForFrame->GetContent();
       if (content) {
         nsCOMPtr<nsIDOMNode> node( do_QueryInterface(content) );
         // Use |GetOwnerDocument| so it works during destruction.
@@ -2696,25 +2609,27 @@ FindCanvasBackground(nsIPresContext* aPresContext,
         node->GetOwnerDocument(getter_AddRefs(doc));
         nsCOMPtr<nsIDOMHTMLDocument> htmlDoc = do_QueryInterface(doc);
         if (htmlDoc) {
-          nsCOMPtr<nsIDOMHTMLElement> body;
-          htmlDoc->GetBody(getter_AddRefs(body));
-          nsCOMPtr<nsIContent> bodyContent = do_QueryInterface(body);
-          // We need to null check the body node (bug 118829) since
-          // there are cases, thanks to the fix for bug 5569, where we
-          // will reflow a document with no body.  In particular, if a
-          // SCRIPT element in the head blocks the parser and then has a
-          // SCRIPT that does "document.location.href = 'foo'", then
-          // nsParser::Terminate will call |DidBuildModel| methods
-          // through to the content sink, which will call |StartLayout|
-          // and thus |InitialReflow| on the pres shell.  See bug 119351
-          // for the ugly details.
-          if (bodyContent) {
-            nsCOMPtr<nsIPresShell> shell;
-            aPresContext->GetShell(getter_AddRefs(shell));
-            nsIFrame *bodyFrame;
-            nsresult rv = shell->GetPrimaryFrameFor(bodyContent, &bodyFrame);
-            if (NS_SUCCEEDED(rv) && bodyFrame)
-              result = bodyFrame->GetStyleBackground();
+          nsCOMPtr<nsIDocument> document = do_QueryInterface(doc);
+          if (!document->IsCaseSensitive()) { // HTML, not XHTML
+            nsCOMPtr<nsIDOMHTMLElement> body;
+            htmlDoc->GetBody(getter_AddRefs(body));
+            nsCOMPtr<nsIContent> bodyContent = do_QueryInterface(body);
+            // We need to null check the body node (bug 118829) since
+            // there are cases, thanks to the fix for bug 5569, where we
+            // will reflow a document with no body.  In particular, if a
+            // SCRIPT element in the head blocks the parser and then has a
+            // SCRIPT that does "document.location.href = 'foo'", then
+            // nsParser::Terminate will call |DidBuildModel| methods
+            // through to the content sink, which will call |StartLayout|
+            // and thus |InitialReflow| on the pres shell.  See bug 119351
+            // for the ugly details.
+            if (bodyContent) {
+              nsIFrame *bodyFrame;
+              nsresult rv = aPresContext->PresShell()->
+                GetPrimaryFrameFor(bodyContent, &bodyFrame);
+              if (NS_SUCCEEDED(rv) && bodyFrame)
+                result = bodyFrame->GetStyleBackground();
+            }
           }
         }
       }
@@ -2736,30 +2651,25 @@ FindElementBackground(nsIPresContext* aPresContext,
                       nsIFrame* aForFrame,
                       const nsStyleBackground** aBackground)
 {
-  nsIFrame *parentFrame;
-  aForFrame->GetParent(&parentFrame);
+  nsIFrame *parentFrame = aForFrame->GetParent();
   // XXXldb We shouldn't have to null-check |parentFrame| here.
   if (parentFrame && IsCanvasFrame(aPresContext, parentFrame) == parentFrame) {
     // Check that we're really the root (rather than in another child list).
-    nsIFrame *childFrame;
-    parentFrame->FirstChild(aPresContext, nsnull, &childFrame);
+    nsIFrame *childFrame = parentFrame->GetFirstChild(nsnull);
     if (childFrame == aForFrame)
       return PR_FALSE; // Background was already drawn for the canvas.
   }
 
   *aBackground = aForFrame->GetStyleBackground();
 
-  nsCOMPtr<nsIContent> content;
-  aForFrame->GetContent(getter_AddRefs(content));
+  nsIContent* content = aForFrame->GetContent();
   if (!content || !content->IsContentOfType(nsIContent::eHTML))
     return PR_TRUE;  // not frame for an HTML element
-  
+
   if (!parentFrame)
     return PR_TRUE; // no parent to look at
-  
-  nsCOMPtr<nsIAtom> tag;
-  content->GetTag(getter_AddRefs(tag));
-  if (tag != nsHTMLAtoms::body)
+
+  if (content->Tag() != nsHTMLAtoms::body)
     return PR_TRUE; // not frame for <BODY> element
 
   // We should only look at the <html> background if we're in an HTML document
@@ -2770,6 +2680,10 @@ FindElementBackground(nsIPresContext* aPresContext,
   if (!htmlDoc)
     return PR_TRUE;
 
+  nsCOMPtr<nsIDocument> document(do_QueryInterface(doc));
+  if (document->IsCaseSensitive()) // XHTML, not HTML
+    return PR_TRUE;
+  
   const nsStyleBackground* htmlBG = parentFrame->GetStyleBackground();
   return !htmlBG->IsTransparent();
 }
@@ -2801,7 +2715,8 @@ nsCSSRendering::PaintBackground(nsIPresContext* aPresContext,
                                 const nsRect& aBorderArea,
                                 const nsStyleBorder& aBorder,
                                 const nsStylePadding& aPadding,
-                                PRBool aUsePrintSettings)
+                                PRBool aUsePrintSettings,
+                                nsRect* aBGClipRect)
 {
   NS_PRECONDITION(aForFrame,
                   "Frame is expected to be provided to PaintBackground");
@@ -2815,28 +2730,21 @@ nsCSSRendering::PaintBackground(nsIPresContext* aPresContext,
     // a root, other wise keep going in order to let the theme stuff
     // draw the background. The canvas really should be drawing the
     // bg, but there's no way to hook that up via css.
-    const nsStyleDisplay* displayData = aForFrame->GetStyleDisplay();
-    if (displayData->mAppearance) {
-      nsCOMPtr<nsIContent> content;
-      aForFrame->GetContent(getter_AddRefs(content));
-      if (content) {
-        nsCOMPtr<nsIContent> parent;
-        content->GetParent(getter_AddRefs(parent));
-        if (parent)
-          return;
-        else
-          color = aForFrame->GetStyleBackground();
-      }
-      else
-        return;
-    }
-    else
+    if (!aForFrame->GetStyleDisplay()->mAppearance) {
       return;
+    }
+
+    nsIContent* content = aForFrame->GetContent();
+    if (!content || content->GetParent()) {
+      return;
+    }
+        
+    color = aForFrame->GetStyleBackground();
   }
   if (!isCanvas) {
     PaintBackgroundWithSC(aPresContext, aRenderingContext, aForFrame,
                           aDirtyRect, aBorderArea, *color, aBorder,
-                          aPadding, aUsePrintSettings);
+                          aPadding, aUsePrintSettings, aBGClipRect);
     return;
   }
 
@@ -2844,30 +2752,23 @@ nsCSSRendering::PaintBackground(nsIPresContext* aPresContext,
     return;
   nsStyleBackground canvasColor(*color);
 
-  nsCOMPtr<nsIPresShell> shell;
-  aPresContext->GetShell(getter_AddRefs(shell));
-  nsCOMPtr<nsIViewManager> vm;
-  shell->GetViewManager(getter_AddRefs(vm));
+  nsIViewManager* vm = aPresContext->GetViewManager();
 
   if (canvasColor.mBackgroundFlags & NS_STYLE_BG_COLOR_TRANSPARENT) {
     nsIView* rootView;
     vm->GetRootView(rootView);
-    nsIView* rootParent;
-    rootView->GetParent(rootParent);
-    if (!rootParent) {
+    if (!rootView->GetParent()) {
       PRBool widgetIsTranslucent = PR_FALSE;
 
-      nsCOMPtr<nsIWidget> rootWidget;
-      rootView->GetWidget(*getter_AddRefs(rootWidget));
-      if (rootWidget) {
-        rootWidget->GetWindowTranslucency(widgetIsTranslucent);
+      if (rootView->HasWidget()) {
+        rootView->GetWidget()->GetWindowTranslucency(widgetIsTranslucent);
       }
       
       if (!widgetIsTranslucent) {
         // Ensure that we always paint a color for the root (in case there's
         // no background at all or a partly transparent image).
         canvasColor.mBackgroundFlags &= ~NS_STYLE_BG_COLOR_TRANSPARENT;
-        aPresContext->GetDefaultBackgroundColor(&canvasColor.mBackgroundColor);
+        canvasColor.mBackgroundColor = aPresContext->DefaultBackgroundColor();
       }
     }
   }
@@ -2879,14 +2780,14 @@ nsCSSRendering::PaintBackground(nsIPresContext* aPresContext,
   // attachment (root or BODY) or the stylesheet specifying that
   // attachment, set the BitBlt flag here as well.
   if (canvasColor.mBackgroundAttachment == NS_STYLE_BG_ATTACHMENT_FIXED) {
-    nsIView *view = aForFrame->GetView(aPresContext);
+    nsIView *view = aForFrame->GetView();
     if (view)
       vm->SetViewBitBltEnabled(view, PR_FALSE);
   }
 
   PaintBackgroundWithSC(aPresContext, aRenderingContext, aForFrame,
                         aDirtyRect, aBorderArea, canvasColor,
-                        aBorder, aPadding, aUsePrintSettings);
+                        aBorder, aPadding, aUsePrintSettings, aBGClipRect);
 }
 
 void
@@ -2898,7 +2799,8 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
                                       const nsStyleBackground& aColor,
                                       const nsStyleBorder& aBorder,
                                       const nsStylePadding& aPadding,
-                                      PRBool aUsePrintSettings)
+                                      PRBool aUsePrintSettings,
+                                      nsRect* aBGClipRect)
 {
   NS_PRECONDITION(aForFrame,
                   "Frame is expected to be provided to PaintBackground");
@@ -2907,8 +2809,8 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
   PRBool canDrawBackgroundColor = PR_TRUE;
 
   if (aUsePrintSettings) {
-    aPresContext->GetBackgroundImageDraw(canDrawBackgroundImage); 
-    aPresContext->GetBackgroundColorDraw(canDrawBackgroundColor); 
+    canDrawBackgroundImage = aPresContext->GetBackgroundImageDraw();
+    canDrawBackgroundColor = aPresContext->GetBackgroundColorDraw();
   }
 
   // Check to see if we have an appearance defined.  If so, we let the theme
@@ -2924,14 +2826,20 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
     }
   }
 
-  // The background is rendered over the 'background-clip' area.
-  nsRect bgClipArea(aBorderArea);
-  if (aColor.mBackgroundClip != NS_STYLE_BG_CLIP_BORDER) {
-    NS_ASSERTION(aColor.mBackgroundClip == NS_STYLE_BG_CLIP_PADDING,
-                 "unknown background-clip value");
-    nsMargin border;
-    aBorder.GetBorder(border);
-    bgClipArea.Deflate(border);
+  nsRect bgClipArea;
+  if (aBGClipRect) {
+    bgClipArea = *aBGClipRect;
+  }
+  else {
+    // The background is rendered over the 'background-clip' area.
+    bgClipArea = aBorderArea;
+    if (aColor.mBackgroundClip != NS_STYLE_BG_CLIP_BORDER) {
+      NS_ASSERTION(aColor.mBackgroundClip == NS_STYLE_BG_CLIP_PADDING,
+                   "unknown background-clip value");
+      nsMargin border;
+      aBorder.GetBorder(border);
+      bgClipArea.Deflate(border);
+    }
   }
 
   // The actual dirty rect is the intersection of the 'background-clip'
@@ -2943,7 +2851,7 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
   }
 
   // if there is no background image or background images are turned off, try a color.
-  if (aColor.mBackgroundImage.IsEmpty() || !canDrawBackgroundImage) {
+  if (!aColor.mBackgroundImage || !canDrawBackgroundImage) {
     PaintBackgroundColor(aPresContext, aRenderingContext, aForFrame, bgClipArea,
                          aColor, aBorder, aPadding, canDrawBackgroundColor);
     return;
@@ -2951,16 +2859,9 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
 
   // We have a background image
 
-  // get the frame for the background image load to complete in
-  // - this may be different than the frame we are rendering
-  //   (as in the case of the canvas frame) 
-  nsIFrame *pBGFrame = nsnull;
-  GetFrameForBackgroundUpdate(aPresContext, aForFrame, &pBGFrame);
-  NS_ASSERTION(pBGFrame, "Background Frame must be set by GetFrameForBackgroundUpdate");
-
   // Lookup the image
   nsCOMPtr<imgIRequest> req;
-  nsresult rv = aPresContext->LoadImage(aColor.mBackgroundImage, pBGFrame, getter_AddRefs(req));
+  nsresult rv = aPresContext->LoadImage(aColor.mBackgroundImage, aForFrame, getter_AddRefs(req));
 
   PRUint32 status = imgIRequest::STATUS_ERROR;
   if (req)
@@ -2980,7 +2881,7 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
   image->GetHeight(&imageSize.height);
 
   float p2t;
-  aPresContext->GetPixelsToTwips(&p2t);
+  p2t = aPresContext->PixelsToTwips();
   imageSize.width = NSIntPixelsToTwips(imageSize.width, p2t);
   imageSize.height = NSIntPixelsToTwips(imageSize.height, p2t);
 
@@ -2988,8 +2889,7 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
 
   nsRect bgOriginArea;
 
-  nsCOMPtr<nsIAtom> frameType;
-  aForFrame->GetFrameType(getter_AddRefs(frameType));
+  nsIAtom* frameType = aForFrame->GetType();
   if (frameType == nsLayoutAtoms::inlineFrame) {
     switch (aColor.mBackgroundInlinePolicy) {
     case NS_STYLE_BG_INLINE_POLICY_EACH_BOX:
@@ -3063,6 +2963,17 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
                        "Unknown gfxIFormats value");
           needBackgroundColor = frameFormat != gfxIFormats::RGB &&
                                 frameFormat != gfxIFormats::BGR;
+
+          /* check for tiling of a image where frame smaller than container */
+          nsSize iSize;
+          image->GetWidth(&iSize.width);
+          image->GetHeight(&iSize.height);
+          nsRect iframeRect;
+          gfxImgFrame->GetRect(iframeRect);
+          if (iSize.width != iframeRect.width ||
+              iSize.height != iframeRect.height) {
+            needBackgroundColor = PR_TRUE;
+          }
         }
       }
       break;
@@ -3093,81 +3004,39 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
   nsPoint anchor;
   if (NS_STYLE_BG_ATTACHMENT_FIXED == aColor.mBackgroundAttachment) {
     // If it's a fixed background attachment, then the image is placed 
-    // relative to the nearest scrolling ancestor, or the viewport if
-    // the frame doesn't have a scrolling ancestor
-    nsIFrame* scrolledFrame = nsnull;
+    // relative to the viewport
     nsIView* viewportView = nsnull;
     nsRect viewportArea;
 
-    // get the nsIScrollableFrame interface from the scrollFrame
-    nsIScrollableFrame* scrollableFrame;
-    nsIFrame* scrollFrame = GetNearestScrollFrame(aForFrame);
-    if (scrollFrame) {
-      CallQueryInterface(scrollFrame, &scrollableFrame);
-      if (scrollableFrame) {
-        scrollableFrame->GetScrolledFrame(aPresContext, scrolledFrame);
-      }
+    nsIFrame* rootFrame;
+    aPresContext->PresShell()->GetRootFrame(&rootFrame);
+    NS_ASSERTION(rootFrame, "no root frame");
+
+    if (aPresContext->IsPaginated()) {
+      nsIFrame* page = nsLayoutUtils::GetPageFrame(aForFrame);
+      NS_ASSERTION(page, "no page");
+      rootFrame = page;
     }
 
-    if (scrolledFrame) {
-      scrolledFrame->GetRect(viewportArea);
-      viewportView = scrolledFrame->GetView(aPresContext);
-    }
-    else {
-      // The viewport isn't scrollable, so use the root frame's view
-      nsCOMPtr<nsIPresShell> presShell;
-      aPresContext->GetShell(getter_AddRefs(presShell));
-      NS_ASSERTION(presShell, "no pres shell");
+    viewportView = rootFrame->GetView();
+    NS_ASSERTION(viewportView, "no viewport view");
+    viewportArea = viewportView->GetBounds();
+    viewportArea.x = 0;
+    viewportArea.y = 0;
 
-      nsIFrame* rootFrame;
-      presShell->GetRootFrame(&rootFrame);
-      NS_ASSERTION(rootFrame, "no root frame");
-
-      PRBool isPaginated = PR_FALSE;
-      aPresContext->IsPaginated(&isPaginated);
-      if (isPaginated) {
-        nsIFrame* page = nsLayoutUtils::GetPageFrame(aForFrame);
-        NS_ASSERTION(page, "no page");
-        rootFrame = page;
-      }
-
-      viewportView = rootFrame->GetView(aPresContext);
-      NS_ASSERTION(viewportView, "no viewport view");
-      viewportView->GetBounds(viewportArea);
-      viewportArea.x = 0;
-      viewportArea.y = 0;
-
-      scrollableFrame = GetRootScrollableFrame(aPresContext, rootFrame);
-    }
+    nsIScrollableFrame* scrollableFrame =
+      GetRootScrollableFrame(aPresContext, rootFrame);
 
     if (scrollableFrame) {
-      // Now, account for scrollbars, if we have any.
-      PRBool verticalVisible;
-      PRBool horizontalVisible;
-      scrollableFrame->GetScrollbarVisibility(aPresContext, &verticalVisible,
-                                              &horizontalVisible);
-
-      if (verticalVisible || horizontalVisible) {
-        nscoord verticalWidth;
-        nscoord horizontalHeight;
-        scrollableFrame->GetScrollbarSizes(aPresContext, &verticalWidth,
-                                           &horizontalHeight);
-        if (verticalVisible) {
-          // Assumes vertical scrollbars are on the right.
-          viewportArea.width -= verticalWidth;
-        }
-        if (horizontalVisible) {
-          // Assumes horizontal scrollbars are on the bottom.
-          viewportArea.height -= horizontalHeight;
-        }
-      }
+      nsMargin scrollbars = scrollableFrame->GetActualScrollbarSizes();
+      viewportArea.Deflate(scrollbars);
     }
 
     // Get the anchor point
     ComputeBackgroundAnchorPoint(aColor, viewportArea, viewportArea, tileWidth, tileHeight, anchor);
 
     // Convert the anchor point to aForFrame's coordinate space
-    nsIView* view = aForFrame->GetView(aPresContext);
+    nsIView* view = aForFrame->GetView();
     if (!view) {
       nsPoint offset;
       aForFrame->GetOffsetFromView(aPresContext, offset, &view);
@@ -3175,22 +3044,16 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
     }
     NS_ASSERTION(view, "expected a view");
     while (view && (view != viewportView)) {
-      nscoord x, y;
-
-      view->GetPosition(&x, &y);
-      anchor.x -= x;
-      anchor.y -= y;
-
+      anchor -= view->GetPosition();
       // Get the parent view until we reach the viewport view
-      view->GetParent(view);
+      view = view->GetParent();
     }
   } else {
     if (frameType == nsLayoutAtoms::canvasFrame) {
       // If the frame is the canvas, the image is placed relative to
       // the root element's (first) frame (see bug 46446)
       nsRect firstRootElementFrameArea;
-      nsIFrame* firstRootElementFrame;
-      aForFrame->FirstChild(aPresContext, nsnull, &firstRootElementFrame);
+      nsIFrame* firstRootElementFrame = aForFrame->GetFirstChild(nsnull);
       NS_ASSERTION(firstRootElementFrame, "A canvas with a background "
         "image had no child frame, which is impossible according to CSS. "
         "Make sure there isn't a background image specified on the "
@@ -3198,7 +3061,7 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
 
       // temporary null check -- see bug 97226
       if (firstRootElementFrame) {
-        firstRootElementFrame->GetRect(firstRootElementFrameArea);
+        firstRootElementFrameArea = firstRootElementFrame->GetRect();
 
         // Take the border out of the frame's rect
         const nsStyleBorder* borderStyle = firstRootElementFrame->GetStyleBorder();
@@ -3330,41 +3193,41 @@ nsCSSRendering::PaintBackgroundWithSC(nsIPresContext* aPresContext,
 
   // first do the horizontal case
   nscoord x0, x1;
+  // For scrolling attachment, the anchor is within the 'background-clip'
+  // For fixed attachment, the anchor is within the bounds of the nearest
+  // scrolling ancestor (or the viewport)
+  x0 = (NS_STYLE_BG_ATTACHMENT_SCROLL == aColor.mBackgroundAttachment) ?
+       bgClipArea.x : 0;
   if (repeat & NS_STYLE_BG_REPEAT_X) {
     // When tiling in the x direction, adjust the starting position of the
     // tile to account for dirtyRect.x. When tiling in x, the anchor.x value
     // will be a negative value used to adjust the starting coordinate.
-    x0 = bgClipArea.x + anchor.x + ((dirtyRect.x - (bgClipArea.x + anchor.x)) / tileWidth) * tileWidth;
+    x0 += anchor.x + 
+          ((dirtyRect.x - (bgClipArea.x + anchor.x)) / tileWidth) * tileWidth;
     x1 = x0 + ((dirtyRect.x + dirtyRect.width - x0 + tileWidth - 1) / tileWidth) * tileWidth;
   }
   else {
-    // For scrolling attachment, the anchor is within the 'background-clip'
-    // For fixed attachment, the anchor is within the bounds of the nearest
-    // scrolling ancestor (or the viewport)
-    x0 = anchor.x;
-    if (NS_STYLE_BG_ATTACHMENT_SCROLL == aColor.mBackgroundAttachment) {
-      x0 += bgClipArea.x;
-    }
+    x0 += anchor.x;
     x1 = x0 + tileWidth;
   }
 
   // now do all that again with the vertical case
   nscoord y0, y1;
+  // For scrolling attachment, the anchor is within the 'background-clip'
+  // For fixed attachment, the anchor is within the bounds of the nearest
+  // scrolling ancestor (or the viewport)
+  y0 = (NS_STYLE_BG_ATTACHMENT_SCROLL == aColor.mBackgroundAttachment) ?
+       bgClipArea.y : 0;
   if (repeat & NS_STYLE_BG_REPEAT_Y) {
     // When tiling in the y direction, adjust the starting position of the
     // tile to account for dirtyRect.y. When tiling in y, the anchor.y value
     // will be a negative value used to adjust the starting coordinate.
-    y0 = bgClipArea.y + anchor.y + ((dirtyRect.y - (bgClipArea.y + anchor.y)) / tileHeight) * tileHeight;
+    y0 += anchor.y + 
+          ((dirtyRect.y - (bgClipArea.y + anchor.y)) / tileHeight) * tileHeight;
     y1 = y0 + ((dirtyRect.y + dirtyRect.height - y0 + tileHeight - 1) / tileHeight) * tileHeight;
   }
   else {
-    // For scrolling attachment, the anchor is within the 'background-clip'
-    // For fixed attachment, the anchor is within the bounds of the nearest
-    // scrolling ancestor (or the viewport)
-    y0 = anchor.y;
-    if (NS_STYLE_BG_ATTACHMENT_SCROLL == aColor.mBackgroundAttachment) {
-      y0 += bgClipArea.y;
-    }
+    y0 += anchor.y;
     y1 = y0 + tileHeight;
   }
 
@@ -3411,9 +3274,6 @@ nsCSSRendering::PaintBackgroundColor(nsIPresContext* aPresContext,
   for (; side < 4; ++side) {
     borderRadii[side] = 0;
     switch (bordStyleRadius[side].GetUnit()) {
-      case eStyleUnit_Inherit:
-        // do nothing
-        break;
       case eStyleUnit_Percent:
         borderRadii[side] = nscoord(bordStyleRadius[side].GetPercentValue() * aBgClipArea.width);
         break;
@@ -3458,7 +3318,7 @@ nsCSSRendering::PaintBackgroundColor(nsIPresContext* aPresContext,
 
 /** ---------------------------------------------------
  *  See documentation in nsCSSRendering.h
- *	@update 3/26/99 dwc
+ *  @update 3/26/99 dwc
  */
 void
 nsCSSRendering::PaintRoundedBackground(nsIPresContext* aPresContext,
@@ -3481,7 +3341,7 @@ nsCSSRendering::PaintRoundedBackground(nsIPresContext* aPresContext,
   float         p2t;
 
   // needed for our border thickness
-  aPresContext->GetPixelsToTwips(&p2t);
+  p2t = aPresContext->PixelsToTwips();
   twipsPerPixel = NSToCoordRound(p2t);
 
   nscolor color = aColor.mBackgroundColor;
@@ -3568,7 +3428,7 @@ nsCSSRendering::PaintRoundedBackground(nsIPresContext* aPresContext,
 
 /** ---------------------------------------------------
  *  See documentation in nsCSSRendering.h
- *	@update 3/26/99 dwc
+ *  @update 3/26/99 dwc
  */
 void 
 nsCSSRendering::PaintRoundedBorder(nsIPresContext* aPresContext,
@@ -3614,7 +3474,7 @@ nsCSSRendering::PaintRoundedBorder(nsIPresContext* aPresContext,
   }
 
   // needed for our border thickness
-  aPresContext->GetPixelsToTwips(&p2t);
+  p2t = aPresContext->PixelsToTwips();
   twipsPerPixel = NSToCoordRound(p2t);
 
   // Base our thickness check on the segment being less than a pixel and 1/2
@@ -3713,7 +3573,7 @@ nsCSSRendering::PaintRoundedBorder(nsIPresContext* aPresContext,
 
 /** ---------------------------------------------------
  *  See documentation in nsCSSRendering.h
- *	@update 3/26/99 dwc
+ *  @update 3/26/99 dwc
  */
 void 
 nsCSSRendering::RenderSide(nsFloatPoint aPoints[],nsIRenderingContext& aRenderingContext,
@@ -3776,13 +3636,23 @@ nsCSSRendering::RenderSide(nsFloatPoint aPoints[],nsIRenderingContext& aRenderin
     switch (border_Style){
       case NS_STYLE_BORDER_STYLE_OUTSET:
       case NS_STYLE_BORDER_STYLE_INSET:
+      case NS_STYLE_BORDER_STYLE_BG_OUTSET:
+      case NS_STYLE_BORDER_STYLE_BG_INSET:
+      case NS_STYLE_BORDER_STYLE_BG_SOLID:
         {
-        const nsStyleBackground* bgColor = nsCSSRendering::FindNonTransparentBackground(aStyleContext);
-        aRenderingContext.SetColor ( MakeBevelColor (aSide, border_Style, bgColor->mBackgroundColor,sideColor, PR_TRUE));
+          const nsStyleBackground* bgColor = nsCSSRendering::FindNonTransparentBackground(aStyleContext);
+          if (border_Style == NS_STYLE_BORDER_STYLE_BG_SOLID) {
+            nscolor colors[2]; 
+            NS_Get3DColors(colors, bgColor->mBackgroundColor); 
+            aRenderingContext.SetColor(colors[0]);
+          } else {
+            aRenderingContext.SetColor(MakeBevelColor(aSide, border_Style, bgColor->mBackgroundColor, sideColor, 
+                                       !MOZ_BG_BORDER(border_Style)));
+          }
         }
       case NS_STYLE_BORDER_STYLE_DOTTED:
       case NS_STYLE_BORDER_STYLE_DASHED:
-        // break;   This is here until dotted and dashed are supported.  It is ok to have
+        // break; XXX This is here until dotted and dashed are supported.  It is ok to have
         // dotted and dashed render in solid until this style is supported.  This code should
         // be moved when it is supported so that the above outset and inset will fall into the 
         // solid code below....
@@ -3816,7 +3686,6 @@ nsCSSRendering::RenderSide(nsFloatPoint aPoints[],nsIRenderingContext& aRenderin
         break;
       case NS_STYLE_BORDER_STYLE_NONE:
       case NS_STYLE_BORDER_STYLE_HIDDEN:
-      case NS_STYLE_BORDER_STYLE_BLANK:
         break;
       case NS_STYLE_BORDER_STYLE_RIDGE:
       case NS_STYLE_BORDER_STYLE_GROOVE:
@@ -3865,7 +3734,7 @@ nsCSSRendering::RenderSide(nsFloatPoint aPoints[],nsIRenderingContext& aRenderin
 
 /** ---------------------------------------------------
  *  See documentation in nsCSSRendering.h
- *	@update 3/26/99 dwc
+ *  @update 3/26/99 dwc
  */
 void 
 RoundedRect::CalcInsetCurves(QBCurve &aULCurve,QBCurve &aURCurve,QBCurve &aLLCurve,QBCurve &aLRCurve,nsMargin &aBorder)
@@ -3944,7 +3813,7 @@ PRInt16   adjust=0;
 
 /** ---------------------------------------------------
  *  See documentation in nsCSSRendering.h
- *	@update 4/13/99 dwc
+ *  @update 4/13/99 dwc
  */
 void 
 RoundedRect::Set(nscoord aLeft,nscoord aTop,PRInt32  aWidth,PRInt32 aHeight,PRInt16 aRadius[4],PRInt16 aNumTwipPerPix)
@@ -4002,7 +3871,7 @@ RoundedRect::Set(nscoord aLeft,nscoord aTop,PRInt32  aWidth,PRInt32 aHeight,PRIn
 
 /** ---------------------------------------------------
  *  See documentation in nsCSSRendering.h
- *	@update 4/13/99 dwc
+ *  @update 4/13/99 dwc
  */
 void 
 RoundedRect::GetRoundedBorders(QBCurve &aULCurve,QBCurve &aURCurve,QBCurve &aLLCurve,QBCurve &aLRCurve)
@@ -4030,7 +3899,7 @@ RoundedRect::GetRoundedBorders(QBCurve &aULCurve,QBCurve &aURCurve,QBCurve &aLLC
 
 /** ---------------------------------------------------
  *  Given a qbezier path, convert it into a polygon path
- *	@update 3/26/99 dwc
+ *  @update 3/26/99 dwc
  *  @param aPoints -- an array of points to use for the path
  *  @param aPolyPath -- an array of points containing the flattened polygon to use
  *  @param aCurIndex -- the index that points to the last element of the array
@@ -4093,7 +3962,7 @@ GetPath(nsFloatPoint aPoints[],nsPoint aPolyPath[],PRInt32 *aCurIndex,ePathTypes
 
 /** ---------------------------------------------------
  *  See documentation in nsCSSRendering.h
- *	@update 4/13/99 dwc
+ *  @update 4/13/99 dwc
  */
 void 
 QBCurve::SubDivide(nsIRenderingContext *aRenderingContext,nsPoint aPointArray[],PRInt32 *aCurIndex)
@@ -4102,19 +3971,19 @@ QBCurve   curve1,curve2;
 float     fx,fy,smag;
 
   // divide the curve into 2 pieces
-	MidPointDivide(&curve1,&curve2);
-	
-	fx = (float)fabs(curve1.mAnc2.x - this->mCon.x);
-	fy = (float)fabs(curve1.mAnc2.y - this->mCon.y);
+  MidPointDivide(&curve1,&curve2);
 
-	//smag = fx+fy-(PR_MIN(fx,fy)>>1);
+  fx = (float)fabs(curve1.mAnc2.x - this->mCon.x);
+  fy = (float)fabs(curve1.mAnc2.y - this->mCon.y);
+
+  //smag = fx+fy-(PR_MIN(fx,fy)>>1);
   smag = fx*fx + fy*fy;
  
-	if (smag>1){
-		// split the curve again
+  if (smag>1){
+    // split the curve again
     curve1.SubDivide(aRenderingContext,aPointArray,aCurIndex);
     curve2.SubDivide(aRenderingContext,aPointArray,aCurIndex);
-	}else{
+  }else{
     if(aPointArray ) {
       // save the points for further processing
       aPointArray[*aCurIndex].x = (nscoord)curve1.mAnc2.x;
@@ -4124,7 +3993,7 @@ float     fx,fy,smag;
       aPointArray[*aCurIndex].y = (nscoord)curve2.mAnc2.y;
       (*aCurIndex)++;
     }else{
-		  // draw the curve 
+      // draw the curve 
       nsTransform2D *aTransform;
       aRenderingContext->GetCurrentTransform(aTransform);
 
@@ -4132,18 +4001,18 @@ float     fx,fy,smag;
       aRenderingContext->DrawLine((nscoord)curve1.mAnc1.x,(nscoord)curve1.mAnc1.y,(nscoord)curve1.mAnc2.x,(nscoord)curve1.mAnc2.y);
       aRenderingContext->DrawLine((nscoord)curve1.mAnc2.x,(nscoord)curve1.mAnc2.y,(nscoord)curve2.mAnc2.x,(nscoord)curve2.mAnc2.y);
     }
-	}
+  }
 }
 
 /** ---------------------------------------------------
  *  See documentation in nsCSSRendering.h
- *	@update 4/13/99 dwc
+ *  @update 4/13/99 dwc
  */
 void 
 QBCurve::MidPointDivide(QBCurve *A,QBCurve *B)
 {
-float         c1x,c1y,c2x,c2y;
-nsFloatPoint	a1;
+  float c1x,c1y,c2x,c2y;
+  nsFloatPoint a1;
 
   c1x = (mAnc1.x+mCon.x)/2.0f;
   c1y = (mAnc1.y+mCon.y)/2.0f;
@@ -4151,7 +4020,7 @@ nsFloatPoint	a1;
   c2y = (mAnc2.y+mCon.y)/2.0f;
 
   a1.x = (c1x + c2x)/2.0f;
-	a1.y = (c1y + c2y)/2.0f;
+  a1.y = (c1y + c2y)/2.0f;
 
   // put the math into our 2 new curves
   A->mAnc1 = this->mAnc1;
@@ -4307,7 +4176,6 @@ GetDashInfo(nscoord  aBorderLength,
   }
   else {
     aNumDashSpaces = aBorderLength / (2 * aDashLength); // round down
-    nscoord foo = ((2 * aNumDashSpaces) - 1) * aDashLength;
     nscoord extra = aBorderLength - aStartDashLength - aEndDashLength - (((2 * aNumDashSpaces) - 1) * aDashLength);
     if (extra > 0) {
       nscoord half = RoundIntToPixel(extra / 2, aTwipsPerPixel);
@@ -4345,8 +4213,7 @@ nsCSSRendering::DrawTableBorderSegment(nsIRenderingContext&     aContext,
   switch (aBorderStyle) {
   case NS_STYLE_BORDER_STYLE_NONE:
   case NS_STYLE_BORDER_STYLE_HIDDEN:
-  case NS_STYLE_BORDER_STYLE_BLANK:
-    //NS_ASSERTION(PR_FALSE, "style of none, hidden, or blank");
+    //NS_ASSERTION(PR_FALSE, "style of none or hidden");
     break;
   case NS_STYLE_BORDER_STYLE_DOTTED:
   case NS_STYLE_BORDER_STYLE_DASHED: 
@@ -4524,6 +4391,7 @@ nsCSSRendering::DrawTableBorderSegment(nsIRenderingContext&     aContext,
       break;
     }
     // else fall through to solid
+  case NS_STYLE_BORDER_STYLE_BG_SOLID:
   case NS_STYLE_BORDER_STYLE_SOLID:
     DrawSolidBorderSegment(aContext, aBorder, twipsPerPixel, aStartBevelSide, 
                            aStartBevelOffset, aEndBevelSide, aEndBevelOffset);

@@ -48,12 +48,13 @@
 #include "nsIStreamListener.h"
 #include "nsNetUtil.h"
 #include "nsQuickSort.h"
-#include "nsIProfileInternal.h"
 #include "nsIMsgMessageService.h"
 #include "nsMsgUtils.h" // for GetMessageServiceFromURI
 #include "prnetdb.h"
 #include "nsIMsgWindow.h"
 #include "prlog.h"
+#include "nsAppDirectoryServiceDefs.h"
+#include "nsUnicharUtils.h"
 
 static PRLogModuleInfo *BayesianFilterLogModule = nsnull;
 
@@ -99,39 +100,6 @@ inline Token* TokenEnumeration::nextToken()
     return token;
 }
 
-// PLDHashTable operation callbacks
-
-static const void* PR_CALLBACK GetKey(PLDHashTable* table, PLDHashEntryHdr* entry)
-{
-    return NS_STATIC_CAST(Token*, entry)->mWord;
-}
-
-static PRBool PR_CALLBACK MatchEntry(PLDHashTable* table,
-                                     const PLDHashEntryHdr* entry,
-                                     const void* key)
-{
-    const Token* token = NS_STATIC_CAST(const Token*, entry);
-    return (strcmp(token->mWord, NS_REINTERPRET_CAST(const char*, key)) == 0);
-}
-
-static void PR_CALLBACK MoveEntry(PLDHashTable* table,
-                                  const PLDHashEntryHdr* from,
-                                  PLDHashEntryHdr* to)
-{
-    const Token* fromToken = NS_STATIC_CAST(const Token*, from);
-    Token* toToken = NS_STATIC_CAST(Token*, to);
-    NS_ASSERTION(fromToken->mLength != 0, "zero length token in table!");
-    *toToken = *fromToken;
-}
-
-static void PR_CALLBACK ClearEntry(PLDHashTable* table, PLDHashEntryHdr* entry)
-{
-    // We use the mWord field to further indicate liveness when using PL_DHASH_ADD.
-    // So we simply clear it when an entry is removed.
-    Token* token = NS_STATIC_CAST(Token*, entry);
-    token->mWord = NULL;
-}
-
 struct VisitClosure {
     PRBool (*f) (Token*, void*);
     void* data;
@@ -149,11 +117,11 @@ static PLDHashOperator PR_CALLBACK VisitEntry(PLDHashTable* table, PLDHashEntryH
 static const PLDHashTableOps gTokenTableOps = {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
-    GetKey,
-    PL_DHashStringKey,      // Save the extra layer of function call to PL_DHashStringKey.
-    MatchEntry,
-    MoveEntry,
-    ClearEntry,
+    PL_DHashGetKeyStub,
+    PL_DHashStringKey,
+    PL_DHashMatchStringKey,
+    PL_DHashMoveEntryStub,
+    PL_DHashClearEntryStub,
     PL_DHashFinalizeStub
 };
 
@@ -865,18 +833,10 @@ void nsBayesianFilter::observeMessage(Tokenizer& tokenizer, const char* messageU
 static nsresult getTrainingFile(nsCOMPtr<nsILocalFile>& file)
 {
     // should we cache the profile manager's directory?
-    nsresult rv;
-    nsCOMPtr<nsIProfileInternal> profileManager = do_GetService("@mozilla.org/profile/manager;1", &rv);
-    if (NS_FAILED(rv)) return rv;
-    
-    nsXPIDLString currentProfile;
-    rv = profileManager->GetCurrentProfile(getter_Copies(currentProfile));
-    if (NS_FAILED(rv)) return rv;
-    
     nsCOMPtr<nsIFile> profileDir;
-    rv = profileManager->GetProfileDir(currentProfile.get(), getter_AddRefs(profileDir));
-    if (NS_FAILED(rv)) return rv;
-    
+
+    nsresult rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(profileDir));
+    NS_ENSURE_SUCCESS(rv, rv);
     rv = profileDir->Append(NS_LITERAL_STRING("training.dat"));
     if (NS_FAILED(rv)) return rv;
     
@@ -1049,4 +1009,28 @@ NS_IMETHODIMP nsBayesianFilter::SetMessageClassification(const char *aMsgURL,
     TokenStreamListener *tokenListener = new TokenStreamListener(analyzer);
     analyzer->setTokenListener(tokenListener);
     return tokenizeMessage(aMsgURL, aMsgWindow, analyzer);
+}
+
+NS_IMETHODIMP nsBayesianFilter::ResetTrainingData()
+{
+  // clear out our in memory training tokens...
+  if (mGoodCount && mGoodTokens.countTokens())
+  {
+    mGoodTokens.clearTokens();
+    mGoodCount = 0;
+  }
+
+  if (mBadCount && mBadTokens.countTokens())
+  {
+    mBadTokens.clearTokens();
+    mBadCount = 0;
+  }
+
+  // now remove training.dat
+  nsCOMPtr<nsILocalFile> file;
+  nsresult rv = getTrainingFile(file);
+  if (file)
+    file->Remove(PR_FALSE);
+
+  return NS_OK;
 }

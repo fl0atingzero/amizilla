@@ -55,7 +55,6 @@
 #include "nsIScriptGlobalObjectOwner.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsICodebasePrincipal.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIStringStream.h"
@@ -69,6 +68,8 @@
 #include "nsEscape.h"
 #include "nsIJSContextStack.h"
 #include "nsIWebNavigation.h"
+#include "nsIDocShell.h"
+#include "nsIContentViewer.h"
 
 static NS_DEFINE_CID(kSimpleURICID, NS_SIMPLEURI_CID);
 static NS_DEFINE_CID(kWindowMediatorCID, NS_WINDOWMEDIATOR_CID);
@@ -97,7 +98,7 @@ protected:
 //
 // nsISupports implementation...
 //
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsJSThunk, nsIInputStream);
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsJSThunk, nsIInputStream)
 
 
 nsJSThunk::nsJSThunk()
@@ -116,6 +117,34 @@ nsresult nsJSThunk::Init(nsIURI* uri)
     return NS_OK;
 }
 
+static void
+GetInterfaceFromChannel(nsIChannel* aChannel,
+                        const nsIID &aIID,
+                        void **aResult)
+{
+    NS_PRECONDITION(aChannel, "Must have a channel");
+    NS_PRECONDITION(aResult, "Null out param");
+    *aResult = nsnull;
+
+    // Get an interface requestor from the channel callbacks.
+    nsCOMPtr<nsIInterfaceRequestor> callbacks;
+    aChannel->GetNotificationCallbacks(getter_AddRefs(callbacks));
+    if (callbacks) {
+        callbacks->GetInterface(aIID, aResult);
+    }
+    if (!*aResult) {
+        // Try the loadgroup
+        nsCOMPtr<nsILoadGroup> loadGroup;
+        aChannel->GetLoadGroup(getter_AddRefs(loadGroup));
+        if (loadGroup) {
+            loadGroup->GetNotificationCallbacks(getter_AddRefs(callbacks));
+            if (callbacks) {
+                callbacks->GetInterface(aIID, aResult);
+            }
+        }
+    }
+}
+
 nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel)
 {
     nsresult rv;
@@ -127,25 +156,14 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel)
     rv = mURI->GetPath(script);
     if (NS_FAILED(rv)) return rv;
 
-    // Get an interface requestor from the channel callbacks.
-    nsCOMPtr<nsIInterfaceRequestor> callbacks;
-    rv = aChannel->GetNotificationCallbacks(getter_AddRefs(callbacks));
-
-    NS_ASSERTION(NS_SUCCEEDED(rv) && callbacks,
-                 "Unable to get an nsIInterfaceRequestor from the channel");
-    if (NS_FAILED(rv) || !callbacks) {
-        return NS_ERROR_FAILURE;
-    }
-
-    // The requestor must be able to get a script global object owner.
+    // The the global object owner from the channel
     nsCOMPtr<nsIScriptGlobalObjectOwner> globalOwner;
-    rv = callbacks->GetInterface(NS_GET_IID(nsIScriptGlobalObjectOwner),
-                                 getter_AddRefs(globalOwner));
-
-    NS_ASSERTION(NS_SUCCEEDED(rv) && globalOwner, 
+    GetInterfaceFromChannel(aChannel, NS_GET_IID(nsIScriptGlobalObjectOwner),
+                            getter_AddRefs(globalOwner));
+    NS_ASSERTION(globalOwner, 
                  "Unable to get an nsIScriptGlobalObjectOwner from the "
-                 "InterfaceRequestor!");
-    if (NS_FAILED(rv) || !globalOwner) {
+                 "channel!");
+    if (!globalOwner) {
         return NS_ERROR_FAILURE;
     }
 
@@ -185,12 +203,9 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel)
         return NS_ERROR_FAILURE;
     }
 
-    nsCOMPtr<nsIScriptContext> scriptContext;
-    rv = global->GetContext(getter_AddRefs(scriptContext));
-    if (NS_FAILED(rv))
-        return rv;
-
-    if (!scriptContext) return NS_ERROR_FAILURE;
+    nsIScriptContext *scriptContext = global->GetContext();
+    if (!scriptContext)
+        return NS_ERROR_FAILURE;
 
     // Unescape the script
     NS_UnescapeURL(script);
@@ -230,32 +245,21 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel)
         if (NS_FAILED(rv))
             return rv;
 
-        PRBool equals = PR_FALSE;
-        if ((NS_FAILED(objectPrincipal->Equals(principal, &equals)) || !equals)) {
-            // If the principals aren't equal
-
-            nsCOMPtr<nsIPrincipal> systemPrincipal;
-            securityManager->GetSystemPrincipal(getter_AddRefs(systemPrincipal));
-            if (principal.get() != systemPrincipal.get()) {
-                // and the script to be run does not have the system principal
-
-                nsCOMPtr<nsICodebasePrincipal> 
-                    objectCodebase(do_QueryInterface(objectPrincipal));
-                nsXPIDLCString objectOrigin;
-                rv = objectCodebase->GetOrigin(getter_Copies(objectOrigin));
-                if (PL_strcmp("about:blank", objectOrigin) != 0) {
-                    // and the target window is not about:blank, then
-                    // don't run the script. Print a message to the console and
-                    // return undefined.
-
-                    nsCOMPtr<nsIConsoleService> 
-                        console(do_GetService("@mozilla.org/consoleservice;1"));
-                    if (console) {
-                            console->LogStringMessage(
-                                NS_LITERAL_STRING("Attempt to load a javascript: URL from one host\nin a window displaying content from another host\nwas blocked by the security manager.").get());
-                    }
-                    return NS_ERROR_DOM_RETVAL_UNDEFINED;
+        nsCOMPtr<nsIPrincipal> systemPrincipal;
+        securityManager->GetSystemPrincipal(getter_AddRefs(systemPrincipal));
+        if (principal != systemPrincipal) {
+            rv = securityManager->CheckSameOriginPrincipal(principal,
+                                                           objectPrincipal);
+            if (NS_FAILED(rv)) {
+                nsCOMPtr<nsIConsoleService> console =
+                    do_GetService("@mozilla.org/consoleservice;1");
+                if (console) {
+                    // XXX Localize me!
+                    console->LogStringMessage(
+                        NS_LITERAL_STRING("Attempt to load a javascript: URL from one host\nin a window displaying content from another host\nwas blocked by the security manager.").get());
                 }
+
+                return NS_ERROR_DOM_RETVAL_UNDEFINED;
             }
         }
     }
@@ -300,9 +304,9 @@ nsresult nsJSThunk::BringUpConsole(nsIDOMWindow *aDomWindow)
     nsresult rv;
 
     // First, get the Window Mediator service.
-    nsCOMPtr<nsIWindowMediator> windowMediator;
+    nsCOMPtr<nsIWindowMediator> windowMediator =
+        do_GetService(kWindowMediatorCID, &rv);
 
-    windowMediator = do_GetService(kWindowMediatorCID, &rv);
     if (NS_FAILED(rv)) return rv;
 
     // Next, find out whether there's a console already open.
@@ -356,6 +360,7 @@ protected:
 };
 
 nsJSChannel::nsJSChannel() :
+    mLoadFlags(LOAD_NORMAL),
     mIsActive(PR_FALSE),
     mWasCanceled(PR_FALSE)
 {
@@ -367,14 +372,12 @@ nsJSChannel::~nsJSChannel()
 
 nsresult nsJSChannel::StopAll()
 {
-    nsCOMPtr<nsIInterfaceRequestor> callbacks;
-    mStreamChannel->GetNotificationCallbacks(getter_AddRefs(callbacks));
-
     nsresult rv = NS_ERROR_UNEXPECTED;
-    nsCOMPtr<nsIWebNavigation> webNav(do_GetInterface(callbacks));
+    nsCOMPtr<nsIWebNavigation> webNav;
+    GetInterfaceFromChannel(mStreamChannel, NS_GET_IID(nsIWebNavigation),
+                            getter_AddRefs(webNav));
 
-    NS_ASSERTION(webNav, "Can't get nsIWebNavigation from callbacks!");
-
+    NS_ASSERTION(webNav, "Can't get nsIWebNavigation from channel!");
     if (webNav) {
         rv = webNav->Stop(nsIWebNavigation::STOP_ALL);
     }
@@ -400,7 +403,7 @@ nsresult nsJSChannel::Init(nsIURI *aURI)
     // treat it as html.
     rv = NS_NewInputStreamChannel(getter_AddRefs(channel), aURI, mIOThunk,
                                   NS_LITERAL_CSTRING("text/html"),
-                                  NS_LITERAL_CSTRING(""));
+                                  EmptyCString());
     if (NS_FAILED(rv)) return rv;
 
     rv = mIOThunk->Init(aURI);
@@ -466,13 +469,13 @@ nsJSChannel::Cancel(nsresult aStatus)
 NS_IMETHODIMP
 nsJSChannel::Suspend()
 {
-    return NS_OK;
+    return mStreamChannel->Suspend();
 }
 
 NS_IMETHODIMP
 nsJSChannel::Resume()
 {
-    return NS_OK;
+    return mStreamChannel->Resume();
 }
 
 //
@@ -548,10 +551,33 @@ nsJSChannel::InternalOpen(PRBool aIsAsync, nsIStreamListener *aListener,
         mStreamChannel->GetLoadFlags(&loadFlags);
 
         if (loadFlags & LOAD_DOCUMENT_URI) {
-            // We're loaded as the document channel. Stop all pending
-            // network loads.
+            // We're loaded as the document channel. If we go on,
+            // we'll blow away the current document. Make sure that's
+            // ok. If so, stop all pending network loads.
 
-            rv = StopAll();
+            nsCOMPtr<nsIDocShell> docShell;
+            GetInterfaceFromChannel(mStreamChannel, NS_GET_IID(nsIDocShell),
+                                    getter_AddRefs(docShell));
+            if (docShell) {
+                nsCOMPtr<nsIContentViewer> cv;
+                docShell->GetContentViewer(getter_AddRefs(cv));
+
+                if (cv) {
+                    PRBool okToUnload;
+
+                    if (NS_SUCCEEDED(cv->PermitUnload(&okToUnload)) &&
+                        !okToUnload) {
+                        // The user didn't want to unload the current
+                        // page, translate this into an undefined
+                        // return from the javascript: URL...
+                        rv = NS_ERROR_DOM_RETVAL_UNDEFINED;
+                    }
+                }
+            }
+
+            if (NS_SUCCEEDED(rv)) {
+                rv = StopAll();
+            }
         }
 
         if (NS_SUCCEEDED(rv)) {
@@ -563,7 +589,9 @@ nsJSChannel::InternalOpen(PRBool aIsAsync, nsIStreamListener *aListener,
                 rv = mStreamChannel->Open(aResult);
             }
         }
-    } else {
+    }
+
+    if (NS_FAILED(rv)) {
         // Propagate the failure down to the underlying channel...
         mStreamChannel->Cancel(rv);
     }

@@ -42,7 +42,6 @@
 
 #include "nsISupports.h"
 #include "nsString.h"
-#include "nsIScriptContext.h"
 #include "nsIDOMLocation.h"
 #include "nsIDOMXULCommandDispatcher.h"
 #include "nsIDocument.h"
@@ -93,6 +92,8 @@ public:
   NS_IMETHOD SetFrameElementInternal(nsIDOMElement* aFrameElement) = 0;
 
   NS_IMETHOD IsLoadingOrRunningTimeout(PRBool* aResult) = 0;
+  NS_IMETHOD IsPopupSpamWindow(PRBool *aResult) = 0;
+  NS_IMETHOD SetPopupSpamWindow(PRBool aPopup) = 0;
 
   NS_IMETHOD SetOpenerScriptURL(nsIURI* aURI) = 0;
 };

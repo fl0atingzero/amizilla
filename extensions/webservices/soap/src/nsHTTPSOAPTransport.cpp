@@ -44,7 +44,7 @@
 #include "nsIURI.h"
 #include "nsNetUtil.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsICodebasePrincipal.h"
+#include "nsIPrincipal.h"
 #include "nsIVariant.h"
 #include "nsString.h"
 #include "nsSOAPUtils.h"
@@ -57,7 +57,6 @@
 #include "nsIWebScriptsAccessService.h"
 #include "nsMemory.h"
 #include "nsIDocument.h"
-#include "nsIAggregatePrincipal.h"
 
 nsHTTPSOAPTransport::nsHTTPSOAPTransport()
 {
@@ -72,13 +71,12 @@ NS_IMPL_ISUPPORTS1_CI(nsHTTPSOAPTransport, nsISOAPTransport)
 #define DEBUG_DUMP_DOCUMENT(message,doc) \
   { \
           nsresult rcc;\
-          nsXPIDLString serial;\
+          nsAutoString serial;\
           nsCOMPtr<nsIDOMSerializer> serializer(do_CreateInstance(NS_XMLSERIALIZER_CONTRACTID, &rcc));\
           if (NS_FAILED(rcc)) return rcc;  \
-          rcc = serializer->SerializeToString(doc, getter_Copies(serial));\
+          rcc = serializer->SerializeToString(doc, serial);\
           if (NS_FAILED(rcc)) return rcc;\
-          nsAutoString result(serial);\
-          printf(message ":\n%s\n", NS_ConvertUCS2toUTF8(result).get());\
+          printf(message ":\n%s\n", NS_ConvertUTF16toUTF8(serial).get());\
   }
 //  Availble from the debugger...
 nsresult DebugPrintDOM(nsIDOMNode * node)
@@ -89,13 +87,11 @@ nsresult DebugPrintDOM(nsIDOMNode * node)
 #define DEBUG_DUMP_DOCUMENT(message,doc)
 #endif
 
-static NS_NAMED_LITERAL_STRING(kAnyURISchemaType, "anyURI");
-
 /**
   * This method will replace the target document's 
-  * codebase pricipal with the subject codebase to
-  * override cross domain checks. So use caution 
-  * because this might lead to serious security breech
+  * codebase principal with the subject codebase to
+  * override cross-domain checks. So use caution 
+  * because this might lead to a serious security breach
   * if misused.
   * @param aDocument - The target/response document.
   */
@@ -113,33 +109,14 @@ nsresult ChangePrincipal(nsIDOMDocument* aDocument)
   nsCOMPtr<nsIDocument> targetDoc(do_QueryInterface(aDocument, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
   
-  nsCOMPtr<nsIURI> targetURI;
-  targetDoc->GetDocumentURL(getter_AddRefs(targetURI));
-  rv = secMgr->CheckSameOrigin(nsnull, targetURI);
+  rv = secMgr->CheckSameOrigin(nsnull, targetDoc->GetDocumentURI());
   // change the principal only if the script security 
   // manager has denied access.
   if (NS_FAILED(rv)) {
     nsCOMPtr<nsIPrincipal> subjectPrincipal;
     rv = secMgr->GetSubjectPrincipal(getter_AddRefs(subjectPrincipal));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsCOMPtr<nsIAggregatePrincipal> subjectAgg = 
-      do_QueryInterface(subjectPrincipal, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-       
-    nsCOMPtr<nsIPrincipal> subjectCodebase;
-    rv = subjectAgg->GetOriginalCodebase(getter_AddRefs(subjectCodebase));
-    NS_ENSURE_SUCCESS(rv, rv);
-       
-    nsCOMPtr<nsIPrincipal> targetPrincipal;
-    rv = targetDoc->GetPrincipal(getter_AddRefs(targetPrincipal));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsCOMPtr<nsIAggregatePrincipal> targetAgg = 
-      do_QueryInterface(targetPrincipal, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = targetAgg->SetCodebase(subjectCodebase);
+    if (NS_SUCCEEDED(rv))
+      targetDoc->SetPrincipal(subjectPrincipal);
   }
   return rv;
 }
@@ -216,24 +193,20 @@ static nsresult GetTransportURI(nsISOAPCall * aCall, nsAString & aURI)
                               "SOAP_INVOKE_VERIFY_PRINCIPAL", 
                               "Source-verified message cannot be sent without principal.");
       }
-      nsCOMPtr<nsICodebasePrincipal> codebase = do_QueryInterface(principal,&rc);
-      if (NS_FAILED(rc)) 
-        return rc;
-  
-      if (!codebase) {
+
+      nsCOMPtr<nsIURI> uri;
+      principal->GetURI(getter_AddRefs(uri));
+      if (!uri) {
         return SOAP_EXCEPTION(NS_ERROR_FAILURE,
-                              "SOAP_INVOKE_VERIFY_CODEBASE", 
-                              "Source-verified message cannot be sent without codebase.");
+                              "SOAP_INVOKE_VERIFY_URI", 
+                              "Source-verified message cannot be sent without URI.");
       }
-  
-      char* str;
 
-      rc = codebase->GetSpec(&str);
+      nsCAutoString spec;
+      rc = uri->GetSpec(spec);
       if (NS_FAILED(rc)) 
         return rc;
-      CopyASCIItoUCS2(nsDependentCString(str), sourceURI);
-      nsMemory::Free(str);
-
+      CopyASCIItoUCS2(spec, sourceURI);
     }
 
 //  Adding a header to tell the server that it must understand and verify the source of the call
@@ -249,8 +222,8 @@ static nsresult GetTransportURI(nsISOAPCall * aCall, nsAString & aURI)
     //  Remove any existing elements that may conflict with this verifySource identification
     nsCOMPtr<nsIDOMElement> verifySource;
     for (;;) {
-      nsSOAPUtils::GetSpecificChildElement(nsnull, element, nsSOAPUtils::kVerifySourceNamespaceURI, 
-        nsSOAPUtils::kVerifySourceHeader, getter_AddRefs(verifySource));
+      nsSOAPUtils::GetSpecificChildElement(nsnull, element, gSOAPStrings->kVerifySourceNamespaceURI, 
+        gSOAPStrings->kVerifySourceHeader, getter_AddRefs(verifySource));
       if (verifySource) {
         element->RemoveChild(verifySource, getter_AddRefs(ignore));
         if (NS_FAILED(rc))
@@ -274,30 +247,30 @@ static nsresult GetTransportURI(nsISOAPCall * aCall, nsAString & aURI)
     nsAutoString XSIURI;
     nsAutoString SOAPEncURI;
     if (version == nsISOAPMessage::VERSION_1_1) {
-      XSURI.Assign(nsSOAPUtils::kXSURI1999);
-      XSIURI.Assign(nsSOAPUtils::kXSIURI1999);
-      SOAPEncURI.Assign(nsSOAPUtils::kSOAPEncURI11);
+      XSURI.Assign(gSOAPStrings->kXSURI1999);
+      XSIURI.Assign(gSOAPStrings->kXSIURI1999);
+      SOAPEncURI.Assign(gSOAPStrings->kSOAPEncURI11);
     }
     else {
-      XSURI.Assign(nsSOAPUtils::kXSURI);
-      XSIURI.Assign(nsSOAPUtils::kXSIURI);
-      SOAPEncURI.Assign(nsSOAPUtils::kSOAPEncURI);
+      XSURI.Assign(gSOAPStrings->kXSURI);
+      XSIURI.Assign(gSOAPStrings->kXSIURI);
+      SOAPEncURI.Assign(gSOAPStrings->kSOAPEncURI);
     }
     //  Create the header and append it with mustUnderstand and normal encoding.
-    rc = document->CreateElementNS(nsSOAPUtils::kVerifySourceNamespaceURI, 
-      nsSOAPUtils::kVerifySourceHeader, 
+    rc = document->CreateElementNS(gSOAPStrings->kVerifySourceNamespaceURI, 
+      gSOAPStrings->kVerifySourceHeader, 
       getter_AddRefs(verifySource));
     if (NS_FAILED(rc)) 
       return rc;
     rc = element->AppendChild(verifySource, getter_AddRefs(ignore));
     if (NS_FAILED(rc)) 
       return rc;
-    rc = verifySource->SetAttributeNS(*nsSOAPUtils::kSOAPEnvURI[version],
-      nsSOAPUtils::kMustUnderstandAttribute,nsSOAPUtils::kTrueA);// mustUnderstand
+    rc = verifySource->SetAttributeNS(*gSOAPStrings->kSOAPEnvURI[version],
+      gSOAPStrings->kMustUnderstandAttribute,gSOAPStrings->kTrueA);// mustUnderstand
     if (NS_FAILED(rc)) 
       return rc;
-    rc = verifySource->SetAttributeNS(*nsSOAPUtils::kSOAPEnvURI[version], 
-      nsSOAPUtils::kEncodingStyleAttribute, SOAPEncURI);// 1.2 encoding
+    rc = verifySource->SetAttributeNS(*gSOAPStrings->kSOAPEnvURI[version], 
+      gSOAPStrings->kEncodingStyleAttribute, SOAPEncURI);// 1.2 encoding
     if (NS_FAILED(rc)) 
       return rc;
 
@@ -308,21 +281,21 @@ static nsresult GetTransportURI(nsISOAPCall * aCall, nsAString & aURI)
       rc = nsSOAPUtils::MakeNamespacePrefix(nsnull, verifySource, XSURI, stringType);
       if (NS_FAILED(rc)) 
         return rc;
-      stringType.Append(nsSOAPUtils::kQualifiedSeparator);
-      stringType.Append(kAnyURISchemaType);
+      stringType.Append(gSOAPStrings->kQualifiedSeparator);
+      stringType.Append(NS_LITERAL_STRING("anyURI"));
     }
 
     //  If it is available, add the sourceURI 
     if (!sourceURI.IsEmpty()) {
-      rc = document->CreateElementNS(nsSOAPUtils::kVerifySourceNamespaceURI,
-        nsSOAPUtils::kVerifySourceURI,getter_AddRefs(element));
+      rc = document->CreateElementNS(gSOAPStrings->kVerifySourceNamespaceURI,
+        gSOAPStrings->kVerifySourceURI,getter_AddRefs(element));
       if (NS_FAILED(rc)) 
         return rc;
       rc = verifySource->AppendChild(element, getter_AddRefs(ignore));
       if (NS_FAILED(rc)) 
         return rc;
       rc = element->SetAttributeNS(XSIURI,
-        nsSOAPUtils::kXSITypeAttribute,stringType);
+        gSOAPStrings->kXSITypeAttribute,stringType);
       if (NS_FAILED(rc)) 
         return rc;
       nsCOMPtr<nsIDOMText> text;
@@ -365,11 +338,19 @@ NS_IMETHODIMP nsHTTPSOAPTransport::SyncCall(nsISOAPCall * aCall, nsISOAPResponse
   if (NS_FAILED(rv))
     return rv;
 
-  rv = request->OverrideMimeType("text/xml");
+  rv = request->OverrideMimeType(NS_LITERAL_CSTRING("text/xml"));
   if (NS_FAILED(rv))
     return rv;
-  rv = request->OpenRequest("POST", NS_ConvertUCS2toUTF8(uri).get(),
-                            PR_FALSE, nsnull, nsnull);
+
+  const nsAString& empty = EmptyString();
+  rv = request->OpenRequest(NS_LITERAL_CSTRING("POST"),
+                            NS_ConvertUTF16toUTF8(uri), PR_FALSE, empty,
+                            empty);
+  if (NS_FAILED(rv))
+    return rv;
+
+  rv = request->SetRequestHeader(NS_LITERAL_CSTRING("Content-Type"),
+                                 NS_LITERAL_CSTRING("text/xml; charset=UTF-8"));
   if (NS_FAILED(rv))
     return rv;
 
@@ -377,9 +358,17 @@ NS_IMETHODIMP nsHTTPSOAPTransport::SyncCall(nsISOAPCall * aCall, nsISOAPResponse
   rv = aCall->GetActionURI(action);
   if (NS_FAILED(rv))
     return rv;
-  if (!AStringIsNull(action)) {
-    rv = request->SetRequestHeader("SOAPAction",
-                                   NS_ConvertUCS2toUTF8(action).get());
+
+  // Apache Axis web services WSDL files say to set soapAction to "" and require it to be sent.  
+  // So only check if its not void instead of using AStringIsNull.
+  if (!action.IsVoid()) {
+
+    //XXXdoron necko doesn't allow empty header values, so set it to " "
+    if (action.IsEmpty())
+      action = NS_LITERAL_STRING(" ");
+
+    rv = request->SetRequestHeader(NS_LITERAL_CSTRING("SOAPAction"),
+                                   NS_ConvertUTF16toUTF8(action));
     if (NS_FAILED(rv))
       return rv;
   }
@@ -565,11 +554,13 @@ NS_IMETHODIMP
     return SOAP_EXCEPTION(NS_ERROR_NOT_INITIALIZED,"SOAP_TRANSPORT_URI", "No transport URI was specified.");
 
   DEBUG_DUMP_DOCUMENT("Asynchronous Request", messageDocument)
-  rv = request->OverrideMimeType("text/xml");
+  rv = request->OverrideMimeType(NS_LITERAL_CSTRING("text/xml"));
   if (NS_FAILED(rv))
     return rv;
-  rv = request->OpenRequest("POST", NS_ConvertUCS2toUTF8(uri).get(),
-                            PR_TRUE, nsnull, nsnull);
+
+  const nsAString& empty = EmptyString();
+  rv = request->OpenRequest(NS_LITERAL_CSTRING("POST"),
+                            NS_ConvertUTF16toUTF8(uri), PR_TRUE, empty, empty);
   if (NS_FAILED(rv))
     return rv;
 
@@ -577,9 +568,23 @@ NS_IMETHODIMP
   rv = aCall->GetActionURI(action);
   if (NS_FAILED(rv))
     return rv;
-  if (!AStringIsNull(action)) {
-    rv = request->SetRequestHeader("SOAPAction",
-                                   NS_ConvertUCS2toUTF8(action).get());
+
+  rv = request->SetRequestHeader(NS_LITERAL_CSTRING("Content-Type"),
+                                 NS_LITERAL_CSTRING("text/xml; charset=UTF-8"));
+  if (NS_FAILED(rv))
+    return rv;
+
+  // Apache Axis web services WSDL files say to set soapAction to "" and require it to be sent.  
+  // So only check if its not void instead of using AStringIsNull.
+
+  if (!action.IsVoid()) {
+
+    //XXXdoron necko doesn't allow empty header values, so set it to " "
+    if (action.IsEmpty())
+      action = NS_LITERAL_STRING(" ");
+
+    rv = request->SetRequestHeader(NS_LITERAL_CSTRING("SOAPAction"),
+                                   NS_ConvertUTF16toUTF8(action));
     if (NS_FAILED(rv))
       return rv;
   }

@@ -51,15 +51,13 @@ static gboolean doActionCB(AtkAction *aAction, gint aActionIndex);
 static gint getActionCountCB(AtkAction *aAction);
 static const gchar *getDescriptionCB(AtkAction *aAction, gint aActionIndex);
 static const gchar *getNameCB(AtkAction *aAction, gint aActionIndex);
-static const gchar *getKeybindingCB(AtkAction *aAction, gint aActionIndex);
+static const gchar *getKeyBindingCB(AtkAction *aAction, gint aActionIndex);
 static gboolean     setDescriptionCB(AtkAction *aAction, gint aActionIndex,
                                      const gchar *aDesc);
 G_END_DECLS
 
 MaiInterfaceAction::MaiInterfaceAction(nsAccessibleWrap *aAccWrap):
-    MaiInterface(aAccWrap),
-    mName(nsnull),
-    mKeyBinding(nsnull)
+    MaiInterface(aAccWrap)
 {
 }
 
@@ -96,7 +94,7 @@ interfaceInitCB(AtkActionIface *aIface)
     aIface->do_action = doActionCB;
     aIface->get_n_actions = getActionCountCB;
     aIface->get_description = getDescriptionCB;
-    aIface->get_keybinding = getKeybindingCB;
+    aIface->get_keybinding = getKeyBindingCB;
     aIface->get_name = getNameCB;
     aIface->set_description = setDescriptionCB;
 }
@@ -107,7 +105,7 @@ doActionCB(AtkAction *aAction, gint aActionIndex)
     nsAccessibleWrap *accWrap = GetAccessibleWrap(ATK_OBJECT(aAction));
     NS_ENSURE_TRUE(accWrap, FALSE);
  
-    nsresult rv = accWrap->AccDoAction(aActionIndex);
+    nsresult rv = accWrap->DoAction(aActionIndex);
     return (NS_FAILED(rv)) ? FALSE : TRUE;
 }
 
@@ -118,7 +116,7 @@ getActionCountCB(AtkAction *aAction)
     NS_ENSURE_TRUE(accWrap, 0);
 
     PRUint8 num = 0;
-    nsresult rv = accWrap->GetAccNumActions(&num);
+    nsresult rv = accWrap->GetNumActions(&num);
     return (NS_FAILED(rv)) ? 0 : NS_STATIC_CAST(gint, num);
 }
 
@@ -142,9 +140,9 @@ getNameCB(AtkAction *aAction, gint aActionIndex)
     NS_ENSURE_TRUE(action, nsnull);
 
     const char *name = action->GetName();
-    if (!name) {
+    if (!name || !*name) {
         nsAutoString autoStr;
-        nsresult rv = accWrap->GetAccActionName(aActionIndex, autoStr);
+        nsresult rv = accWrap->GetActionName(aActionIndex, autoStr);
         NS_ENSURE_SUCCESS(rv, nsnull);
 
         action->SetName(autoStr);
@@ -154,7 +152,7 @@ getNameCB(AtkAction *aAction, gint aActionIndex)
 }
 
 const gchar *
-getKeybindingCB(AtkAction *aAction, gint aActionIndex)
+getKeyBindingCB(AtkAction *aAction, gint aActionIndex)
 {
     nsAccessibleWrap *accWrap = GetAccessibleWrap(ATK_OBJECT(aAction));
     NS_ENSURE_TRUE(accWrap, nsnull);
@@ -167,26 +165,26 @@ getKeybindingCB(AtkAction *aAction, gint aActionIndex)
     if (action->GetKeyBinding())
         return action->GetKeyBinding();
 
-    //return all Keybindings including accesskey and shortcut
+    //return all KeyBindings including accesskey and shortcut
     
-    nsAutoString allKeybinding;
+    nsAutoString allKeyBinding;
 
     //get accesskey
     nsAutoString accessKey;
-    nsresult rv = accWrap->GetAccKeyboardShortcut(accessKey);
+    nsresult rv = accWrap->GetKeyboardShortcut(accessKey);
 
     if (NS_SUCCEEDED(rv) && !accessKey.IsEmpty()) {
         nsCOMPtr<nsIAccessible> parentAccessible;
-        accWrap->GetAccParent(getter_AddRefs(parentAccessible));
+        accWrap->GetParent(getter_AddRefs(parentAccessible));
         if (parentAccessible) {
             PRUint32 role;
-            parentAccessible->GetAccRole(&role);
+            parentAccessible->GetRole(&role);
 
             if (role == ATK_ROLE_MENU_BAR) {
                 //it is topmenu, change from "Alt+f" to "f;<Alt>f"
                 nsAutoString rightChar;
                 accessKey.Right(rightChar, 1);
-                allKeybinding = rightChar + NS_LITERAL_STRING(";<Alt>") +
+                allKeyBinding = rightChar + NS_LITERAL_STRING(";<Alt>") +
                                 rightChar;
             }
             else if ((role == ATK_ROLE_MENU) || (role == ATK_ROLE_MENU_ITEM)) {
@@ -196,7 +194,7 @@ getKeybindingCB(AtkAction *aAction, gint aActionIndex)
 
                 while ((grandParentAcc) && (role != ATK_ROLE_MENU_BAR)) {
                     nsAutoString grandParentKey;
-                    grandParentAcc->GetAccKeyboardShortcut(grandParentKey);
+                    grandParentAcc->GetKeyboardShortcut(grandParentKey);
 
                     if (!grandParentKey.IsEmpty()) {
                         nsAutoString rightChar;
@@ -205,11 +203,11 @@ getKeybindingCB(AtkAction *aAction, gint aActionIndex)
                     }
 
                     nsCOMPtr<nsIAccessible> tempAcc = grandParentAcc;
-                    tempAcc->GetAccParent(getter_AddRefs(grandParentAcc));
+                    tempAcc->GetParent(getter_AddRefs(grandParentAcc));
                     if (grandParentAcc)
-                        grandParentAcc->GetAccRole(&role);
+                        grandParentAcc->GetRole(&role);
                 }
-                allKeybinding = accessKey + NS_LITERAL_STRING(";<Alt>") +
+                allKeyBinding = accessKey + NS_LITERAL_STRING(";<Alt>") +
                                 allKey;
             }
         }
@@ -217,15 +215,15 @@ getKeybindingCB(AtkAction *aAction, gint aActionIndex)
             //default process, rarely happens.
             nsAutoString rightChar;
             accessKey.Right(rightChar, 1);
-            allKeybinding = rightChar + NS_LITERAL_STRING(";<Alt>") + rightChar;
+            allKeyBinding = rightChar + NS_LITERAL_STRING(";<Alt>") + rightChar;
         }
     }
     else  //don't have accesskey
-        allKeybinding = NS_LITERAL_STRING(";");
+        allKeyBinding = NS_LITERAL_STRING(";");
 
     //get shortcut
     nsAutoString keyBinding, subShortcut;
-    rv = accWrap->GetAccKeybinding(keyBinding);
+    rv = accWrap->GetKeyBinding(keyBinding);
 
     if (NS_SUCCEEDED(rv) && !keyBinding.IsEmpty()) {
         //change the shortcut from "Ctrl+Shift+L" to "<Control><Shift>L"
@@ -252,8 +250,8 @@ getKeybindingCB(AtkAction *aAction, gint aActionIndex)
         }
     }
 
-    allKeybinding += NS_LITERAL_STRING(";") + subShortcut;
-    action->SetKeyBinding(allKeybinding);
+    allKeyBinding += NS_LITERAL_STRING(";") + subShortcut;
+    action->SetKeyBinding(allKeyBinding);
     return action->GetKeyBinding();
 }
 

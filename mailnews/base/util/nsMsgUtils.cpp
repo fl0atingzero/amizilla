@@ -59,6 +59,9 @@
 #include "nsIRDFService.h"
 #include "nsIMimeConverter.h"
 #include "nsMsgMimeCID.h"
+#include "nsIPrefService.h"
+#include "nsIRelativeFilePref.h"
+#include "nsAppDirectoryServiceDefs.h"
 #include "nsICategoryManager.h"
 #include "nsCategoryManagerUtils.h"
 #include "nsISpamSettings.h"
@@ -502,7 +505,7 @@ nsresult NS_MsgEscapeEncodeURLPath(const PRUnichar *str, char **result)
   NS_ENSURE_ARG_POINTER(str);
   NS_ENSURE_ARG_POINTER(result);
 
-  *result = nsEscape(NS_ConvertUCS2toUTF8(str).get(), url_Path);
+  *result = nsEscape(NS_ConvertUCS2toUTF8(str).get(), url_Path); 
   if (!*result) return NS_ERROR_OUT_OF_MEMORY;
   return NS_OK;
 }
@@ -554,7 +557,7 @@ nsresult GetExistingFolder(const char *aFolderURI, nsIMsgFolder **aFolder)
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Parent doesn't exist means that this folder doesn't exist.
-  nsCOMPtr<nsIFolder> parentFolder;
+  nsCOMPtr<nsIMsgFolder> parentFolder;
   rv = thisFolder->GetParent(getter_AddRefs(parentFolder));
   if (NS_SUCCEEDED(rv) && parentFolder)
     NS_ADDREF(*aFolder = thisFolder);
@@ -673,7 +676,7 @@ GetOrCreateFolder(const nsACString &aURI, nsIUrlListener *aListener)
   rv = server->GetMsgFolderFromURI(folderResource, nsCAutoString(aURI).get(), getter_AddRefs(msgFolder));
   NS_ENSURE_SUCCESS(rv,rv);
 
-  nsCOMPtr <nsIFolder> parent;
+  nsCOMPtr <nsIMsgFolder> parent;
   rv = msgFolder->GetParent(getter_AddRefs(parent));
   if (NS_FAILED(rv) || !parent)
   {
@@ -809,5 +812,115 @@ nsresult MSGCramMD5(const char *text, PRInt32 text_len, const char *key, PRInt32
   memcpy(digest, result, DIGEST_LENGTH);
   return rv;
 
+}
+
+
+// digest needs to be a pointer to a DIGEST_LENGTH (16) byte buffer
+nsresult MSGApopMD5(const char *text, PRInt32 text_len, const char *password, PRInt32 password_len, unsigned char *digest)
+{
+  nsresult rv;
+  unsigned char result[DIGEST_LENGTH];
+  unsigned char *presult = result;
+
+  nsCOMPtr<nsISignatureVerifier> verifier = do_GetService(SIGNATURE_VERIFIER_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+
+  HASHContextStr      *context;
+  PRUint32 resultLen;
+
+  rv = verifier->HashBegin(nsISignatureVerifier::MD5, &context);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = verifier->HashUpdate(context, text, text_len);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = verifier->HashUpdate(context, password, password_len);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = verifier->HashEnd(context, &presult, &resultLen, DIGEST_LENGTH);
+  NS_ENSURE_SUCCESS(rv, rv);
+  memcpy(digest, result, DIGEST_LENGTH);
+  return rv;
+}
+
+NS_MSG_BASE nsresult NS_GetPersistentFile(const char *relPrefName,
+                                          const char *absPrefName,
+                                          const char *dirServiceProp,
+                                          PRBool& gotRelPref,
+                                          nsILocalFile **aFile)
+{
+    NS_ENSURE_ARG_POINTER(aFile);
+    *aFile = nsnull;
+    NS_ENSURE_ARG(relPrefName);
+    NS_ENSURE_ARG(absPrefName);
+    gotRelPref = PR_FALSE;
+    
+    nsCOMPtr<nsIPrefService> prefService(do_GetService(NS_PREFSERVICE_CONTRACTID));
+    if (!prefService) return NS_ERROR_FAILURE;
+    nsCOMPtr<nsIPrefBranch> mainBranch;
+    prefService->GetBranch(nsnull, getter_AddRefs(mainBranch));
+    if (!mainBranch) return NS_ERROR_FAILURE;
+
+    nsCOMPtr<nsILocalFile> localFile;
+    
+    // Get the relative first    
+    nsCOMPtr<nsIRelativeFilePref> relFilePref;
+    mainBranch->GetComplexValue(relPrefName,
+                                NS_GET_IID(nsIRelativeFilePref), getter_AddRefs(relFilePref));
+    if (relFilePref) {
+        relFilePref->GetFile(getter_AddRefs(localFile));
+        NS_ASSERTION(localFile, "An nsIRelativeFilePref has no file.");
+        if (localFile)
+            gotRelPref = PR_TRUE;
+    }    
+    
+    // If not, get the old absolute
+    if (!localFile) {
+        mainBranch->GetComplexValue(absPrefName,
+                                    NS_GET_IID(nsILocalFile), getter_AddRefs(localFile));
+                                        
+        // If not, and given a dirServiceProp, use directory service.
+        if (!localFile && dirServiceProp) {
+            nsCOMPtr<nsIProperties> dirService(do_GetService("@mozilla.org/file/directory_service;1"));
+            if (!dirService) return NS_ERROR_FAILURE;
+            dirService->Get(dirServiceProp, NS_GET_IID(nsILocalFile), getter_AddRefs(localFile));
+            if (!localFile) return NS_ERROR_FAILURE;
+        }
+    }
+    
+    if (localFile) {
+        *aFile = localFile;
+        NS_ADDREF(*aFile);
+        return NS_OK;
+    }
+    
+    return NS_ERROR_FAILURE;
+}
+
+NS_MSG_BASE nsresult NS_SetPersistentFile(const char *relPrefName,
+                                          const char *absPrefName,
+                                          nsILocalFile *aFile)
+{
+    NS_ENSURE_ARG(relPrefName);
+    NS_ENSURE_ARG(absPrefName);
+    NS_ENSURE_ARG(aFile);
+    
+    nsresult rv;
+    nsCOMPtr<nsIPrefService> prefService(do_GetService(NS_PREFSERVICE_CONTRACTID));
+    if (!prefService) return NS_ERROR_FAILURE;
+    nsCOMPtr<nsIPrefBranch> mainBranch;
+    prefService->GetBranch(nsnull, getter_AddRefs(mainBranch));
+    if (!mainBranch) return NS_ERROR_FAILURE;
+
+    // Write the relative.
+    nsCOMPtr<nsIRelativeFilePref> relFilePref;
+    NS_NewRelativeFilePref(aFile, nsDependentCString(NS_APP_USER_PROFILE_50_DIR), getter_AddRefs(relFilePref));
+    if (!relFilePref) return NS_ERROR_FAILURE;
+    rv = mainBranch->SetComplexValue(relPrefName, NS_GET_IID(nsIRelativeFilePref), relFilePref);
+    NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to write profile-relative file pref.");
+    
+    // Write the absolute for backwards compatibilty's sake.
+    // Or, if aPath is on a different drive than the profile dir.
+    rv = mainBranch->SetComplexValue(absPrefName, NS_GET_IID(nsILocalFile), aFile);
+    
+    return rv;
 }
 

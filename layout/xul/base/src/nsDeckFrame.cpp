@@ -104,12 +104,11 @@ nsDeckFrame::AttributeChanged(nsIPresContext* aPresContext,
                               nsIContent*     aChild,
                               PRInt32         aNameSpaceID,
                               nsIAtom*        aAttribute,
-                              PRInt32         aModType, 
-                              PRInt32         aHint)
+                              PRInt32         aModType)
 {
   nsresult rv = nsBoxFrame::AttributeChanged(aPresContext, aChild,
                                              aNameSpaceID, aAttribute,
-                                             aModType, aHint);
+                                             aModType);
 
 
    // if the index changed hide the old element and make the now element visible
@@ -142,14 +141,12 @@ nsDeckFrame::HideBox(nsIPresContext* aPresContext, nsIBox* aBox)
   nsIFrame* frame = nsnull;
   aBox->GetFrame(&frame);
 
-  nsIView* view = frame->GetView(aPresContext);
+  nsIView* view = frame->GetView();
 
   if (view) {
-    nsCOMPtr<nsIViewManager> viewManager;
-    view->GetViewManager(*getter_AddRefs(viewManager));
+    nsIViewManager* viewManager = view->GetViewManager();
     viewManager->SetViewVisibility(view, nsViewVisibility_kHide);
-    nsRect r(0, 0, 0, 0);
-    viewManager->ResizeView(view, r);
+    viewManager->ResizeView(view, nsRect(0, 0, 0, 0));
   }
 }
 
@@ -159,12 +156,10 @@ nsDeckFrame::ShowBox(nsIPresContext* aPresContext, nsIBox* aBox)
   nsIFrame* frame = nsnull;
   aBox->GetFrame(&frame);
 
-  nsRect rect;
-  frame->GetRect(rect);
-  nsIView* view = frame->GetView(aPresContext);
+  nsRect rect = frame->GetRect();
+  nsIView* view = frame->GetView();
   if (view) {
-    nsCOMPtr<nsIViewManager> viewManager;
-    view->GetViewManager(*getter_AddRefs(viewManager));
+    nsIViewManager* viewManager = view->GetViewManager();
     rect.x = rect.y = 0;
     viewManager->ResizeView(view, rect);
     viewManager->SetViewVisibility(view, nsViewVisibility_kShow);
@@ -263,17 +258,10 @@ nsDeckFrame::GetFrameForPoint(nsIPresContext*   aPresContext,
                               nsFramePaintLayer aWhichLayer,    
                               nsIFrame**        aFrame)
 {
-
-  if ((aWhichLayer != NS_FRAME_PAINT_LAYER_FOREGROUND))
-    return NS_ERROR_FAILURE;
-
   // if it is not inside us fail
   if (!mRect.Contains(aPoint)) {
     return NS_ERROR_FAILURE;
   }
-
-  // if its not in our child just return us.
-  *aFrame = this;
 
   // get the selected frame and see if the point is in it.
   nsIBox* selectedBox = GetSelectedBox();
@@ -281,13 +269,20 @@ nsDeckFrame::GetFrameForPoint(nsIPresContext*   aPresContext,
     nsIFrame* selectedFrame = nsnull;
     selectedBox->GetFrame(&selectedFrame);
 
-    nsPoint tmp;
-    tmp.MoveTo(aPoint.x - mRect.x, aPoint.y - mRect.y);
+    nsPoint tmp(aPoint.x - mRect.x, aPoint.y - mRect.y);
 
-    return selectedFrame->GetFrameForPoint(aPresContext, tmp, aWhichLayer, aFrame);
+    if (NS_SUCCEEDED(selectedFrame->GetFrameForPoint(aPresContext, tmp,
+                                                     aWhichLayer, aFrame)))
+      return NS_OK;
   }
     
-  return NS_OK;
+  // if its not in our child just return us.
+  if (aWhichLayer == NS_FRAME_PAINT_LAYER_BACKGROUND) {
+      *aFrame = this;
+      return NS_OK;
+  }
+
+  return NS_ERROR_FAILURE;
 }
 
 

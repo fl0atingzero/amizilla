@@ -36,7 +36,8 @@
  * ***** END LICENSE BLOCK ***** */
  
 #include "nsISupports.idl"
-#include "nsIFolder.idl"
+#include "nsICollection.idl"
+#include "nsIFolderListener.idl"
 #include "nsIMsgThread.idl"
 #include "nsIMsgIncomingServer.idl"
 #include "nsISupportsArray.idl"
@@ -50,6 +51,7 @@
 %}
 
 [ptr] native octet_ptr(PRUint8);
+[ptr] native nsAutoString(nsAutoString);
 
 interface nsIMsgDBHdr;
 interface nsIMsgWindow;
@@ -59,7 +61,6 @@ interface nsMsgKeyArray;
 interface nsIMsgFilterList;
 
 interface nsIMsgFolderCacheElement;
-interface nsAutoString;
 interface nsITransport;
 interface nsIFileSpec;
 interface nsIOutputStream;
@@ -70,22 +71,12 @@ typedef long nsMsgBiffState;
 typedef long nsMsgDispositionState;
 
 [scriptable, uuid(85e39ff0-b248-11d2-b7ef-00805f05ffa5)]
-interface nsIMsgFolder : nsIFolder {
+interface nsIMsgFolder : nsICollection {
 
 const nsMsgBiffState nsMsgBiffState_NewMail = 0; // User has new mail waiting.
 const nsMsgBiffState nsMsgBiffState_NoMail =  1; // No new mail is waiting.
 const nsMsgBiffState nsMsgBiffState_Unknown = 2; // We dunno whether there is new mail.
 
-
-  /* already exists in nsIFolder */
-  /*	readonly attribute string name;   */
-  /*	void SetName(in string name); */
-
-
-  /* XXX should these 2 go on nsIFolder or nsICollection? */
-  void AddUnique(in nsISupports element);
-  void ReplaceElement(in nsISupports element, in nsISupports newElement);
-  
   nsISimpleEnumerator getMessages(in nsIMsgWindow aMsgWindow);
   
   void startFolderLoading();
@@ -270,12 +261,6 @@ const nsMsgBiffState nsMsgBiffState_Unknown = 2; // We dunno whether there is ne
    */
 	attribute unsigned long sizeOnDisk;
 
-  /**
-   * set the password for this folder (what is this used for?)
-   */
-	void rememberPassword(in string password);
-	readonly attribute string rememberedPassword;
-	boolean userNeedsToAuthenticateForFolder(in boolean displayOnly);
   	readonly attribute string username;
   	readonly attribute string hostname;
 
@@ -399,7 +384,7 @@ const nsMsgBiffState nsMsgBiffState_Unknown = 2; // We dunno whether there is ne
 
   attribute nsIMsgRetentionSettings retentionSettings;
   attribute nsIMsgDownloadSettings downloadSettings;
-  void callFilterPlugins(in nsIMsgWindow aMsgWindow);
+  boolean callFilterPlugins(in nsIMsgWindow aMsgWindow);
   /**
    * used for order in the folder pane, folder pickers, etc.
    */
@@ -420,4 +405,49 @@ const nsMsgBiffState nsMsgBiffState_Unknown = 2; // We dunno whether there is ne
 
   /* does not persist across sessions */
   attribute nsMsgKey lastMessageLoaded;
+
+  /* old nsIFolder properties and methods */
+  readonly attribute string URI;
+  attribute wstring name;
+  attribute wstring prettyName;
+  readonly attribute wstring abbreviatedName;
+
+  nsISupports getChildNamed(in wstring name);
+  attribute nsIMsgFolder parent;
+
+  nsIEnumerator GetSubFolders();
+  readonly attribute boolean hasSubFolders;
+
+  void AddFolderListener(in nsIFolderListener listener);
+  void RemoveFolderListener(in nsIFolderListener listener);
+  nsIMsgFolder FindSubFolder(in string escapedSubFolderName);
+
+  void NotifyPropertyChanged(in nsIAtom property,
+                             in string oldValue,
+                             in string newValue);
+  void NotifyIntPropertyChanged(in nsIAtom property,
+                                in long oldValue,
+                                in long newValue);
+  void NotifyBoolPropertyChanged(in nsIAtom property,
+                                 in boolean oldValue,
+                                 in boolean newValue);
+  void NotifyPropertyFlagChanged(in nsISupports item,
+                                 in nsIAtom property,
+                                 in unsigned long oldValue,
+                                 in unsigned long newValue);
+  void NotifyUnicharPropertyChanged(in nsIAtom property,
+                                    in wstring oldValue,
+                                    in wstring newValue);
+  
+  void NotifyItemAdded(in nsISupports parentItem, in nsISupports item, in string viewString);
+  void NotifyItemDeleted(in nsISupports parentItem, in nsISupports item, in string viewString);
+
+  void NotifyFolderEvent(in nsIAtom event);
+  
+  //  void NotifyFolderLoaded();
+  //  void NotifyDeleteOrMoveMessagesCompleted(in nsIMsgFolder folder);
+
+  // lists all descendents, not just first level children
+  void ListDescendents(in nsISupportsArray descendents);  
+  void Shutdown(in boolean shutdownChildren);
 };

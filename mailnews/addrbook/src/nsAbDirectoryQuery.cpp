@@ -387,18 +387,15 @@ nsresult nsAbDirectoryQuery::queryChildren (nsIAbDirectory* directory,
 {
     nsresult rv = NS_OK;
 
-    nsCOMPtr<nsIEnumerator> subDirectories;
+    nsCOMPtr<nsISimpleEnumerator> subDirectories;
     rv = directory->GetChildNodes(getter_AddRefs(subDirectories));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = subDirectories->First();
-    if (NS_FAILED(rv))
-        return NS_OK;
-
-    do
+    PRBool hasMore;
+    while (NS_SUCCEEDED(rv = subDirectories->HasMoreElements(&hasMore)) && hasMore)
     {
         nsCOMPtr<nsISupports> item;
-        rv = subDirectories->CurrentItem (getter_AddRefs (item));
+        rv = subDirectories->GetNext (getter_AddRefs (item));
         NS_ENSURE_SUCCESS(rv, rv);
 
         nsCOMPtr<nsIAbDirectory> subDirectory(do_QueryInterface(item, &rv));
@@ -407,10 +404,7 @@ nsresult nsAbDirectoryQuery::queryChildren (nsIAbDirectory* directory,
         rv = query (subDirectory, arguments, listener, resultLimit);
         NS_ENSURE_SUCCESS(rv, rv);
 
-        rv = subDirectories->Next();
     }
-    while (rv == NS_OK);
-
     return NS_OK;
 }
 
@@ -609,22 +603,13 @@ nsresult nsAbDirectoryQuery::matchCardCondition (nsIAbCard* card,
             *matchFound = !FindInReadable(matchValue, value, nsCaseInsensitiveStringComparator());
             break;
         case nsIAbBooleanConditionTypes::Is:
-            *matchFound = value.Equals (matchValue, nsCaseInsensitiveStringComparator());
+            *matchFound = value.Equals(matchValue, nsCaseInsensitiveStringComparator());
             break;
         case nsIAbBooleanConditionTypes::IsNot:
-            *matchFound = !value.Equals (matchValue, nsCaseInsensitiveStringComparator());
+            *matchFound = !value.Equals(matchValue, nsCaseInsensitiveStringComparator());
             break;
         case nsIAbBooleanConditionTypes::BeginsWith:
-            {
-                if (value.Length() < matchValue.Length()) {
-                    *matchFound = PR_FALSE;
-                    break;
-                }
-                *matchFound =
-                    matchValue.Equals(Substring(value, 0,
-                                                matchValue.Length()),
-                                      nsCaseInsensitiveStringComparator());
-            }
+            *matchFound = StringBeginsWith(value, matchValue, nsCaseInsensitiveStringComparator());
             break;
         case nsIAbBooleanConditionTypes::LessThan:
             *matchFound = Compare(value, matchValue, nsCaseInsensitiveStringComparator()) < 0;
@@ -633,21 +618,8 @@ nsresult nsAbDirectoryQuery::matchCardCondition (nsIAbCard* card,
             *matchFound = Compare(value, matchValue, nsCaseInsensitiveStringComparator()) > 0;
             break;
         case nsIAbBooleanConditionTypes::EndsWith:
-        {
-            
-            PRInt32 vl = value.Length ();
-            PRInt32 mvl = matchValue.Length ();
-
-            if (mvl > vl)
-            {
-                *matchFound = PR_FALSE;
-                break;
-            }
-
-            *matchFound = matchValue.Equals(Substring(value, vl - mvl, mvl),
-                                            nsCaseInsensitiveStringComparator());
+            *matchFound = StringEndsWith(value, matchValue, nsCaseInsensitiveStringComparator());
             break;
-        }
         case nsIAbBooleanConditionTypes::SoundsLike:
         case nsIAbBooleanConditionTypes::RegExp:
             *matchFound = PR_FALSE;

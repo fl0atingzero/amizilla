@@ -94,7 +94,6 @@ bin/components/history.xpt
 ;bin/components/alerts.xpt
 bin/components/related.xpt
 bin/components/search.xpt
-bin/components/timebomb.xpt
 bin/components/urlbarhistory.xpt
 ;bin/components/urlwidgt.xpt
 bin/components/caps.dll
@@ -111,7 +110,6 @@ bin/components/composer.xpt
 bin/components/docshell.dll
 ;bin/components/docshell_base.xpt
 bin/components/docshell.xpt
-bin/components/jsdom.dll
 ;bin/components/jsd3250.dll
 bin/components/jsd.dll
 bin/components/jsdservice.xpt
@@ -194,7 +192,6 @@ bin/components/profile.xpt
 bin/components/proxyObjInst.xpt
 bin/components/rdf.dll
 bin/components/rdf.xpt
-bin/components/shistory.dll
 bin/components/shistory.xpt
 bin/components/sidebar.xpt
 bin/components/signonviewer.xpt
@@ -306,6 +303,7 @@ bin/chrome/icons/default/main-window.ico
 
 ; all the pref files must be part of base
 ; to prevent migration bugs
+bin/greprefs/*
 bin/defaults/pref/*
 bin/defaults/autoconfig/*
 bin/res/ua.css
@@ -314,6 +312,25 @@ bin/res/quirk.css
 bin/res/forms.css
 bin/res/platform-forms.css
 bin/res/EditorOverride.css
+bin/res/grabber.gif
+bin/res/table-add-column-after-active.gif
+bin/res/table-add-column-after-hover.gif
+bin/res/table-add-column-after.gif
+bin/res/table-add-column-before-active.gif
+bin/res/table-add-column-before-hover.gif
+bin/res/table-add-column-before.gif
+bin/res/table-add-row-after-active.gif
+bin/res/table-add-row-after-hover.gif
+bin/res/table-add-row-after.gif
+bin/res/table-add-row-before-active.gif
+bin/res/table-add-row-before-hover.gif
+bin/res/table-add-row-before.gif
+bin/res/table-remove-column-active.gif
+bin/res/table-remove-column-hover.gif
+bin/res/table-remove-column.gif
+bin/res/table-remove-row-active.gif
+bin/res/table-remove-row-hover.gif
+bin/res/table-remove-row.gif
 bin/res/viewsource.css
 bin/res/mathml.css
 bin/res/arrow.gif
@@ -336,8 +353,6 @@ bin/res/charsetData.properties
 bin/res/langGroups.properties
 bin/res/language.properties
 bin/res/entityTables/*
-bin/res/rdf/article.gif
-bin/res/rdf/document.gif
 bin/res/rdf/folder-closed.gif
 bin/res/rdf/folder-open.gif
 bin/res/rdf/loading.gif
@@ -404,6 +419,7 @@ bin/components/mdn-service.js
 bin/components/bayesflt.dll
 bin/components/mailview.xpt
 bin/components/mailview.dll
+bin/components/offlineStartup.js 
 
 [chatzilla]
 bin/components/chatzilla-service.js
@@ -441,6 +457,12 @@ bin/chrome/icons/default/winInspectorMain.ico
 bin/defaults/pref/inspector.js
 bin/res/inspector/viewer-registry.rdf
 bin/res/inspector/search-registry.rdf
+
+[spellcheck]
+bin/components/myspell.dll
+bin/components/spellchk.dll
+bin/components/spellchecker.xpt
+bin/components/myspell/*
 
 ;Things that aren't packaged and why (or not why)
 ;accproxy.dll - I don't know

@@ -41,6 +41,7 @@
 #include "nsXPCOM.h"
 
 #include "nsIComponentLoader.h"
+#include "xpcom-private.h"
 #include "nsNativeComponentLoader.h"
 #include "nsIComponentManager.h"
 #include "nsIComponentRegistrar.h"
@@ -133,26 +134,20 @@ public:
 
     // nsComponentManagerImpl methods:
     nsComponentManagerImpl();
-    virtual ~nsComponentManagerImpl();
 
     static nsComponentManagerImpl* gComponentManager;
     nsresult Init(void);
 
     nsresult WritePersistentRegistry();
     nsresult ReadPersistentRegistry();
-public:
 
     nsresult Shutdown(void);
 
     nsresult FreeServices();
 
-    friend class nsFactoryEntry;
-    friend class nsServiceManager;
-
-    friend nsresult
+    nsresult
     NS_GetService(const char *aContractID, const nsIID& aIID, PRBool aDontCreate, nsISupports** result);
 
-protected:
     nsresult RegisterComponentCommon(const nsCID &aClass,
                                      const char *aClassName,
                                      const char *aContractID,
@@ -191,23 +186,20 @@ protected:
     // loader type cannot be determined.
     int GetLoaderType(const char *typeStr);
 
-    // Add a loader type if not already known. Return the typeIndex
-    // if the loader type is either added or already there; -1 if
-    // there was an error
-    int AddLoaderType(const char *typeStr);
+    // Add a loader type if not already known. Out the typeIndex
+    // if the loader type is either added or already there;
+    // returns NS_OK or an error on failure.
+    nsresult AddLoaderType(const char *typeStr, int *typeIndex);
 
-public:
     int GetLoaderCount() { return mNLoaderData + 1; }
 
     // registers only the files in spec's location by loaders other than the
     // native loader.  This is an optimization method only.
     nsresult AutoRegisterNonNativeComponents(nsIFile* spec);
 
-
-private:
     nsresult AutoRegisterImpl(PRInt32 when, nsIFile *inDirSpec, PRBool fileIsCompDir=PR_TRUE);
+    nsresult RemoveEntries(nsIFile* file);
 
-protected:
     PLDHashTable        mFactories;
     PLDHashTable        mContractIDs;
     PRMonitor*          mMon;
@@ -247,38 +239,14 @@ protected:
     nsVoidArray         mPendingCIDs;
 #endif
 
+private:
+    ~nsComponentManagerImpl();
 };
 
 
 #define NS_MAX_FILENAME_LEN	1024
 
 #define NS_ERROR_IS_DIR NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_XPCOM, 24)
-
-#if defined(XP_UNIX) && !defined(XP_MACOSX)
-/* The default registry on the unix system is $HOME/.mozilla/registry per
- * vr_findGlobalRegName(). vr_findRegFile() will create the registry file
- * if it doesn't exist. But it wont create directories.
- *
- * Hence we need to create the directory if it doesn't exist already.
- *
- * Why create it here as opposed to the app ?
- * ------------------------------------------
- * The app cannot create the directory in main() as most of the registry
- * and initialization happens due to use of static variables.
- * And we dont want to be dependent on the order in which
- * these static stuff happen.
- *
- * Permission for the $HOME/.mozilla will be Read,Write,Execute
- * for user only. Nothing to group and others.
- */
-#define NS_MOZILLA_DIR_NAME		".mozilla"
-#define NS_MOZILLA_DIR_PERMISSION	00700
-#endif /* XP_UNIX */
-
-#ifdef XP_BEOS
-#define NS_MOZILLA_DIR_NAME		"Mozilla"
-#define NS_MOZILLA_DIR_PERMISSION	00700
-#endif /* XP_BEOS */
 
 ////////////////////////////////////////////////////////////////////////////////
 /**
@@ -353,7 +321,7 @@ class AutoRegEntry
 {
 public:
     AutoRegEntry(const nsACString& name, PRInt64* modDate);
-    virtual ~AutoRegEntry();
+    ~AutoRegEntry();
 
     const nsDependentCString GetName()
       { return nsDependentCString(mName, mNameLen); }

@@ -38,6 +38,8 @@ var gFolderDatasource;
 var gFolderPicker;
 var gStatusBar = null;
 var gStatusFeedback = new nsMsgStatusFeedback();
+var gTimelineEnabled = false;
+var gMessengerBundle = null;
 var RDF;
 var gSearchBundle;
 var gNextMessageViewIndexAfterDelete = -2;
@@ -163,9 +165,8 @@ var gSearchNotificationListener =
     {
         gSearchStopButton.setAttribute("label", gSearchBundle.getString("labelForSearchButton"));
         gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("accesskeyForSearchButton"));
+        gStatusFeedback._stopMeteors();
         SetAdvancedSearchStatusText(gSearchView.QueryInterface(Components.interfaces.nsITreeView).rowCount);
-        gStatusFeedback.showProgress(0);
-        gStatusBar.setAttribute("mode","normal");
     },
 
     onNewSearch: function()
@@ -173,9 +174,8 @@ var gSearchNotificationListener =
       gSearchStopButton.setAttribute("label", gSearchBundle.getString("labelForStopButton"));
       gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("accesskeyForStopButton"));
       UpdateMailSearch("new-search");	
-      gStatusFeedback.showProgress(0);
+      gStatusFeedback._startMeteors();
       gStatusFeedback.showStatusString(gSearchBundle.getString("searchingMessage"));
-      gStatusBar.setAttribute("mode","undetermined");
     }
 }
 
@@ -231,6 +231,7 @@ function searchOnLoad()
   CreateMessenger();
 
   gSearchBundle = document.getElementById("bundle_search");
+  gMessengerBundle = document.getElementById("bundle_messenger");
   setupDatasource();
   setupSearchListener();
 
@@ -249,6 +250,7 @@ function searchOnLoad()
   HideSearchColumn("sizeCol");
   HideSearchColumn("flaggedCol");
   HideSearchColumn("idCol");
+  HideSearchColumn("junkStatusCol");
   
   // we want to show the location column for search
   ShowSearchColumn("locationCol");
@@ -497,7 +499,7 @@ function setupDatasource() {
     var cmdupdator = new nsMsgSearchCommandUpdater();
 
     gSearchView.init(messenger, msgWindow, cmdupdator);
-    gSearchView.open(null, nsMsgViewSortType.byId, nsMsgViewSortOrder.ascending, nsMsgViewFlagsType.kNone, false, count);
+    gSearchView.open(null, nsMsgViewSortType.byId, nsMsgViewSortOrder.ascending, nsMsgViewFlagsType.kNone, count);
 
     // the thread pane needs to use the search datasource (to get the
     // actual list of messages) and the message datasource (to get any

@@ -1,36 +1,41 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the NPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the NPL or the GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifdef JS_THREADSAFE
 
@@ -149,10 +154,6 @@ js_CompareAndSwap(jsword *w, jsword ov, jsword nv)
 {
     return !_check_lock((atomic_p)w, ov, nv);
 }
-
-#elif defined(XP_OS2_VACPP)
-
-/* js_CompareAndSwap implemented in jslocko.asm */
 
 #else
 
@@ -559,8 +560,16 @@ js_GetSlotThreadSafe(JSContext *cx, JSObject *obj, uint32 slot)
     scope = OBJ_SCOPE(obj);
     JS_ASSERT(scope->ownercx != cx);
     JS_ASSERT(obj->slots && slot < obj->map->freeslot);
-    if ((scope->ownercx && ClaimScope(scope, cx)) ||
-        CX_THREAD_IS_RUNNING_GC(cx)) {
+
+    /*
+     * Avoid locking if called from the GC (see GC_AWARE_GET_SLOT in jsobj.h).
+     * Also avoid locking an object owning a sealed scope.  If neither of those
+     * special cases applies, try to claim scope's flyweight lock from whatever
+     * context may have had it in an earlier request.
+     */
+    if (CX_THREAD_IS_RUNNING_GC(cx) ||
+        (SCOPE_IS_SEALED(scope) && scope->object == obj) ||
+        (scope->ownercx && ClaimScope(scope, cx))) {
         return obj->slots[slot];
     }
 
@@ -641,8 +650,16 @@ js_SetSlotThreadSafe(JSContext *cx, JSObject *obj, uint32 slot, jsval v)
     scope = OBJ_SCOPE(obj);
     JS_ASSERT(scope->ownercx != cx);
     JS_ASSERT(obj->slots && slot < obj->map->freeslot);
-    if ((scope->ownercx && ClaimScope(scope, cx)) ||
-        CX_THREAD_IS_RUNNING_GC(cx)) {
+
+    /*
+     * Avoid locking if called from the GC (see GC_AWARE_GET_SLOT in jsobj.h).
+     * Also avoid locking an object owning a sealed scope.  If neither of those
+     * special cases applies, try to claim scope's flyweight lock from whatever
+     * context may have had it in an earlier request.
+     */
+    if (CX_THREAD_IS_RUNNING_GC(cx) ||
+        (SCOPE_IS_SEALED(scope) && scope->object == obj) ||
+        (scope->ownercx && ClaimScope(scope, cx))) {
         obj->slots[slot] = v;
         return;
     }
@@ -852,7 +869,6 @@ js_CleanupLocks()
         fl_list_table_len = 0;
     }
 #endif /* !NSPR_LOCK */
-    js_FinishDtoa();
 }
 
 void
@@ -1034,9 +1050,9 @@ js_LockScope(JSContext *cx, JSScope *scope)
 
     JS_ASSERT(me == CurrentThreadId());
     JS_ASSERT(scope->ownercx != cx);
-    if (scope->ownercx && ClaimScope(scope, cx))
-        return;
     if (CX_THREAD_IS_RUNNING_GC(cx))
+        return;
+    if (scope->ownercx && ClaimScope(scope, cx))
         return;
 
     if (Thin_RemoveWait(ReadWord(scope->lock.owner)) == me) {
@@ -1060,8 +1076,32 @@ js_UnlockScope(JSContext *cx, JSScope *scope)
     /* We hope compilers use me instead of reloading cx->thread in the macro. */
     if (CX_THREAD_IS_RUNNING_GC(cx))
         return;
+    if (cx->lockedSealedScope == scope) {
+        cx->lockedSealedScope = NULL;
+        return;
+    }
 
-    JS_ASSERT(scope->ownercx == NULL);
+    /*
+     * If scope->ownercx is not null, it's likely that two contexts not using
+     * requests nested locks for scope.  The first context, cx here, claimed
+     * scope; the second, scope->ownercx here, re-claimed it because the first
+     * was not in a request, or was on the same thread.  We don't want to keep
+     * track of such nesting, because it penalizes the common non-nested case.
+     * Instead of asserting here and silently coping, we simply re-claim scope
+     * for cx and return.
+     *
+     * See http://bugzilla.mozilla.org/show_bug.cgi?id=229200 for a real world
+     * case where an asymmetric thread model (Mozilla's main thread is known
+     * to be the only thread that runs the GC) combined with multiple contexts
+     * per thread has led to such request-less nesting.
+     */
+    if (scope->ownercx) {
+        JS_ASSERT(scope->u.count == 0);
+        JS_ASSERT(scope->lock.owner == 0);
+        scope->ownercx = cx;
+        return;
+    }
+
     JS_ASSERT(scope->u.count > 0);
     if (Thin_RemoveWait(ReadWord(scope->lock.owner)) != me) {
         JS_ASSERT(0);   /* unbalanced unlock */
@@ -1084,7 +1124,7 @@ js_TransferScopeLock(JSContext *cx, JSScope *oldscope, JSScope *newscope)
     jsword me;
     JSThinLock *tl;
 
-    JS_ASSERT(JS_IS_SCOPE_LOCKED(newscope));
+    JS_ASSERT(JS_IS_SCOPE_LOCKED(cx, newscope));
 
     /*
      * If the last reference to oldscope went away, newscope needs no lock
@@ -1092,15 +1132,37 @@ js_TransferScopeLock(JSContext *cx, JSScope *oldscope, JSScope *newscope)
      */
     if (!oldscope)
 	return;
-    JS_ASSERT(JS_IS_SCOPE_LOCKED(oldscope));
+    JS_ASSERT(JS_IS_SCOPE_LOCKED(cx, oldscope));
+
+    /*
+     * Special case in js_LockScope and js_UnlockScope for the GC calling
+     * code that locks, unlocks, or mutates.  Nothing to do in these cases,
+     * because scope and newscope were "locked" by the GC thread, so neither
+     * was actually locked.
+     */
+    if (CX_THREAD_IS_RUNNING_GC(cx))
+	return;
+
+    /*
+     * Special case in js_LockObj and js_UnlockScope for locking the sealed
+     * scope of an object that owns that scope (the prototype or mutated obj
+     * for which OBJ_SCOPE(obj)->object == obj), and unlocking it.
+     */
+    JS_ASSERT(cx->lockedSealedScope != newscope);
+    if (cx->lockedSealedScope == oldscope) {
+        JS_ASSERT(newscope->ownercx == cx ||
+                  (!newscope->ownercx && newscope->u.count == 1));
+        cx->lockedSealedScope = NULL;
+        return;
+    }
 
     /*
      * If oldscope is single-threaded, there's nothing to do.
-     * XXX if (!newscope->ownercx), assume newscope->u.count is properly set
      */
     if (oldscope->ownercx) {
         JS_ASSERT(oldscope->ownercx == cx);
-        JS_ASSERT(newscope->ownercx == cx || !newscope->ownercx);
+        JS_ASSERT(newscope->ownercx == cx ||
+                  (!newscope->ownercx && newscope->u.count == 1));
         return;
     }
 
@@ -1133,6 +1195,12 @@ js_LockObj(JSContext *cx, JSObject *obj)
     JS_ASSERT(OBJ_IS_NATIVE(obj));
     for (;;) {
         scope = OBJ_SCOPE(obj);
+        if (SCOPE_IS_SEALED(scope) && scope->object == obj &&
+            !cx->lockedSealedScope) {
+            cx->lockedSealedScope = scope;
+            return;
+        }
+
         js_LockScope(cx, scope);
 
         /* If obj still has this scope, we're done. */
@@ -1152,6 +1220,7 @@ js_UnlockObj(JSContext *cx, JSObject *obj)
 }
 
 #ifdef DEBUG
+
 JSBool
 js_IsRuntimeLocked(JSRuntime *rt)
 {
@@ -1159,21 +1228,34 @@ js_IsRuntimeLocked(JSRuntime *rt)
 }
 
 JSBool
-js_IsObjLocked(JSObject *obj)
+js_IsObjLocked(JSContext *cx, JSObject *obj)
 {
     JSScope *scope = OBJ_SCOPE(obj);
 
-    return MAP_IS_NATIVE(&scope->map) &&
-           (scope->ownercx ||
-            CurrentThreadId() == Thin_RemoveWait(ReadWord(scope->lock.owner)));
+    return MAP_IS_NATIVE(&scope->map) && js_IsScopeLocked(cx, scope);
 }
 
 JSBool
-js_IsScopeLocked(JSScope *scope)
+js_IsScopeLocked(JSContext *cx, JSScope *scope)
 {
-    return scope->ownercx ||
-           CurrentThreadId() == Thin_RemoveWait(ReadWord(scope->lock.owner));
-}
-#endif
+    /* Special case: the GC locking any object's scope, see js_LockScope. */
+    if (CX_THREAD_IS_RUNNING_GC(cx))
+        return JS_TRUE;
 
+    /* Special case: locked object owning a sealed scope, see js_LockObj. */
+    if (cx->lockedSealedScope == scope)
+        return JS_TRUE;
+
+    /*
+     * General case: the scope is either exclusively owned (by cx), or it has
+     * a thin or fat lock to cope with shared (concurrent) ownership.
+     */
+    if (scope->ownercx) {
+        JS_ASSERT(scope->ownercx == cx);
+        return JS_TRUE;
+    }
+    return CurrentThreadId() == Thin_RemoveWait(ReadWord(scope->lock.owner));
+}
+
+#endif /* DEBUG */
 #endif /* JS_THREADSAFE */

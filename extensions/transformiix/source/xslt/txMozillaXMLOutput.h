@@ -45,6 +45,7 @@
 #include "txOutputFormat.h"
 #include "nsCOMArray.h"
 #include "nsICSSLoaderObserver.h"
+#include "txStack.h"
 
 class nsIContent;
 class nsIDOMDocument;
@@ -102,13 +103,14 @@ public:
 
 private:
     void closePrevious(PRInt8 aAction);
-    void startHTMLElement(nsIDOMElement* aElement);
-    void endHTMLElement(nsIDOMElement* aElement, PRBool aXHTML);
+    void startHTMLElement(nsIDOMElement* aElement, PRBool aXHTML);
+    void endHTMLElement(nsIDOMElement* aElement);
     void processHTTPEquiv(nsIAtom* aHeader, const nsAString& aValue);
-    void wrapChildren(nsIDOMNode* aCurrentNode, nsIDOMElement* aWrapper);
     nsresult createResultDocument(const nsAString& aName, PRInt32 aNsID,
                                   nsIDOMDocument* aSourceDocument,
                                   nsIDOMDocument* aResultDocument);
+    nsresult createHTMLElement(const nsAString& aName,
+                               nsIDOMElement** aResult);
 
     nsCOMPtr<nsIDOMDocument> mDocument;
     nsCOMPtr<nsIDOMNode> mCurrentNode;
@@ -122,6 +124,14 @@ private:
 
     PRUint32 mBadChildLevel;
     nsCString mRefreshString;
+
+    txStack mTableStateStack;
+    enum TableState { 
+        NORMAL,      // An element needing no special treatment
+        TABLE,       // A HTML table element
+        ADDED_TBODY  // An inserted tbody not coming from the stylesheet
+    };
+    TableState mTableState;
 
     nsAutoString mText;
 

@@ -39,7 +39,7 @@
 #include <MacWindows.h>
 
 #include "nsCommandLineServiceMac.h"
-#include "nsComPtr.h"
+#include "nsCOMPtr.h"
 #include "nsIBaseWindow.h"
 #include "nsIContent.h"
 #include "nsIDocument.h"
@@ -49,8 +49,6 @@
 #include "nsIDOMElement.h"
 #include "nsIDOMNode.h"
 #include "nsIHTMLContent.h"
-#include "nsIPrincipal.h"
-#include "nsICodebasePrincipal.h"
 #include "nsIServiceManager.h"
 #include "nsIWebNavigation.h"
 #include "nsIWebShellWindow.h"

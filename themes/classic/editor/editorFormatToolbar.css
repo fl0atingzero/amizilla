@@ -26,7 +26,7 @@
 /* ::::: formatting buttons ::::: */
 
 #FormatToolbar > toolbarbutton {
-  min-width: 3em;
+  min-width: 32px;
 }
  
 #FormatToolbar > toolbarbutton > .toolbarbutton-text {
@@ -384,19 +384,19 @@
 }
 
 #InsertAnchorItem {
-  -moz-image-region: rect(143px 64px 159px 48px);
+  -moz-image-region: rect(128px 16px 144px 0);
 }
 
 #InsertAnchorItem:hover {
-  -moz-image-region: rect(159px 16px 175px 0);
+  -moz-image-region: rect(128px 32px 144px 16px);
 }
 
 #InsertImageItem {
-  -moz-image-region: rect(159px 64px 175px 48px);
+  -moz-image-region: rect(144px 16px 160px 0);
 }
 
 #InsertImageItem:hover {
-  -moz-image-region: rect(175px 16px 191px 0);
+  -moz-image-region: rect(144px 32px 160px 16px);
 }
 
 #InsertHRuleItem {
@@ -408,84 +408,99 @@
 }
 
 #InsertTableItem {
-  -moz-image-region: rect(122px 62px 138px 46px);
+  -moz-image-region: rect(112px 16px 128px 0);
 }
 
 #InsertTableItem:hover {
-  -moz-image-region: rect(143px 16px 159px 0);
+  -moz-image-region: rect(112px 32px 128px 16px);
 }
 
 /* ..... smiley menu ..... */
 
 .insert-smile > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/smile_n.gif");
+  list-style-image: url("chrome://communicator/skin/icons/smileys/smile_n.gif");
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-tongue > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/tongue_n.gif");
+  list-style-image: url("chrome://communicator/skin/icons/smileys/tongue_n.gif");
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-frown > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/frown_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/frown_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-wink > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/wink_n.gif");
+  list-style-image: url("chrome://communicator/skin/icons/smileys/wink_n.gif");
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-laughing > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/laughing_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/laughing_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-embarrassed > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/embarrassed_n.gif");
+  list-style-image: url("chrome://communicator/skin/icons/smileys/embarrassed_n.gif");
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-undecided > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/undecided_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/undecided_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-surprise > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/surprise_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/surprise_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-kiss > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/kiss_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/kiss_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-yell > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/yell_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/yell_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-cool > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/cool_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/cool_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-undecided > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/undecided_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/undecided_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-money > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/money_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/money_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-foot > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/foot_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/foot_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-innocent > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/innocent_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/innocent_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-cry > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/cry_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/cry_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
 
 .insert-sealed > .menu-iconic-left {
-  list-style-image: url("chrome://editor/content/images/sealed_n.gif"); 
+  list-style-image: url("chrome://communicator/skin/icons/smileys/sealed_n.gif"); 
+  -moz-image-region: auto; /* cut off inheritance */
 }
-
-
 
 /* ::::: fg/bg color picker ::::: */
 
@@ -534,3 +549,46 @@
   -moz-image-region: rect(260px 64px 272px 48px);
 }
 
+
+#absolutePositionButton{
+  -moz-image-region: rect(273px 16px 289px 0px);
+}
+
+#absolutePositionButton:hover {
+  -moz-image-region: rect(273px 32px 289px 16px);
+}
+
+#absolutePositionButton:hover:active {
+  -moz-image-region: rect(273px 48px 289px 32px);
+}
+
+#absolutePositionButton[disabled="true"] {
+  -moz-image-region: rect(273px 64px 289px 48px) ! important;
+}
+
+
+#absolutePositionButton[checked="true"]{
+  -moz-image-region: rect(289px 16px 305px 0px);
+}
+
+#absolutePositionButton[checked="true"]:hover {
+  -moz-image-region: rect(289px 32px 305px 16px);
+}
+
+#absolutePositionButton[checked="true"]:hover:active {
+  -moz-image-region: rect(289px 48px 305px 32px);
+}
+
+
+#FormatToolbar > #increaseZIndexButton {
+  list-style-image: url("chrome://editor/content/images/bringtofront.gif");
+}
+#FormatToolbar > #increaseZIndexButton[disabled="true"] {
+  list-style-image: url("chrome://editor/content/images/bringtofront-disabled.gif");
+}
+#FormatToolbar > #decreaseZIndexButton {
+  list-style-image: url("chrome://editor/content/images/sendtoback.gif");
+}
+#FormatToolbar > #decreaseZIndexButton[disabled="true"] {
+  list-style-image: url("chrome://editor/content/images/sendtoback-disabled.gif");
+}

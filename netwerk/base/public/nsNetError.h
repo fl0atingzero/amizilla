@@ -230,6 +230,8 @@
 #define NS_ERROR_FTP_PWD \
     NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_NETWORK, 24)
 
+#define NS_ERROR_FTP_LIST \
+    NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_NETWORK, 25)
 
 /******************************************************************************
  * DNS specific error codes:
@@ -250,6 +252,23 @@
  */
 #define NS_ERROR_UNKNOWN_PROXY_HOST \
     NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_NETWORK, 42)
+
+
+/******************************************************************************
+ * Socket specific error codes:
+ */
+
+/**
+ * The specified socket type does not exist.
+ */
+#define NS_ERROR_UNKNOWN_SOCKET_TYPE \
+    NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_NETWORK, 51)
+
+/**
+ * The specified socket type could not be created.
+ */
+#define NS_ERROR_SOCKET_CREATE_FAILED \
+    NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_NETWORK, 52)
 
 
 /******************************************************************************

@@ -50,12 +50,14 @@
 #include "nsPrefBranch.h"
 #include "nsXPIDLString.h"
 #include "nsCRT.h"
+#include "nsCOMArray.h"
 
 #include "nsQuickSort.h"
 #include "prmem.h"
 #include "pldhash.h"
 
 #include "prefapi.h"
+#include "prefread.h"
 #include "prefapi_private_data.h"
 
 // supporting PREF_Init()
@@ -69,17 +71,16 @@
 #endif
 
 // Definitions
-#define INITIAL_MAX_DEFAULT_PREF_FILES 10
-
+#define INITIAL_PREF_FILES 10
+#define PREF_READ_BUFFER_SIZE 4096
 
 // Prototypes
 #ifdef MOZ_PROFILESHARING
 static PRBool isSharingEnabled();
 #endif
 
-static nsresult openPrefFile(nsIFile* aFile, PRBool aIsErrorFatal,
-                             PRBool aIsGlobalContext, PRBool aSkipFirstLine);
-
+static nsresult openPrefFile(nsIFile* aFile);
+static nsresult pref_InitInitialObjects(void);
 
   // needed so we can still get the JS Runtime Service during XPCOM shutdown
 static nsIJSRuntimeService* gJSRuntimeService = nsnull; // owning reference
@@ -93,16 +94,11 @@ static nsIJSRuntimeService* gJSRuntimeService = nsnull; // owning reference
 nsPrefService::nsPrefService()
 : mCurrentFile(nsnull),
   mErrorOpeningUserPrefs(PR_FALSE)
-{
-  nsPrefBranch *rootBranch;
-
-  rootBranch = new nsPrefBranch("", PR_FALSE); 
-  mRootBranch = (nsIPrefBranch *)rootBranch;
-  
 #if MOZ_PROFILESHARING
-  mCurrentSharedFile = nsnull;
-  mErrorOpeningSharedUserPrefs = PR_FALSE;
+  , mErrorOpeningSharedUserPrefs(PR_FALSE)
+  , mCurrentSharedFile(nsnull)
 #endif
+{
 }
 
 nsPrefService::~nsPrefService()
@@ -141,11 +137,20 @@ NS_INTERFACE_MAP_END
 
 nsresult nsPrefService::Init()
 {
+  nsPrefBranch *rootBranch = new nsPrefBranch("", PR_FALSE); 
+  if (!rootBranch)
+    return NS_ERROR_OUT_OF_MEMORY;
+
+  mRootBranch = (nsIPrefBranchInternal *)rootBranch;
+  
   nsXPIDLCString lockFileName;
   nsresult rv;
 
-  if (!PREF_Init(nsnull))
-    return NS_ERROR_FAILURE;
+  rv = PREF_Init();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = pref_InitInitialObjects();
+  NS_ENSURE_SUCCESS(rv, rv);
 
   /*
    * The following is a small hack which will allow us to only load the library
@@ -220,7 +225,6 @@ NS_IMETHODIMP nsPrefService::ReadUserPrefs(nsIFile *aFile)
 
     NotifyServiceObservers(NS_PREFSERVICE_READ_TOPIC_ID);
 
-    JS_MaybeGC(gMochaContext);
   } else {
     rv = ReadAndOwnUserPrefFile(aFile);
   }
@@ -232,10 +236,10 @@ NS_IMETHODIMP nsPrefService::ResetPrefs()
   NotifyServiceObservers(NS_PREFSERVICE_RESET_TOPIC_ID);
   PREF_CleanupPrefs();
 
-  if (!PREF_Init(nsnull))
-    return NS_ERROR_FAILURE;
+  nsresult rv = PREF_Init();
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  return NS_OK;
+  return pref_InitInitialObjects();
 }
 
 NS_IMETHODIMP nsPrefService::ResetUserPrefs()
@@ -261,15 +265,13 @@ NS_IMETHODIMP nsPrefService::GetBranch(const char *aPrefRoot, nsIPrefBranch **_r
   if ((nsnull != aPrefRoot) && (*aPrefRoot != '\0')) {
     // TODO: - cache this stuff and allow consumers to share branches (hold weak references I think)
     nsPrefBranch* prefBranch = new nsPrefBranch(aPrefRoot, PR_FALSE);
+    if (!prefBranch)
+      return NS_ERROR_OUT_OF_MEMORY;
 
-    rv = prefBranch->QueryInterface(NS_GET_IID(nsIPrefBranch), (void **)_retval);
+    rv = CallQueryInterface(prefBranch, _retval);
   } else {
     // special case caching the default root
-    nsCOMPtr<nsIPrefBranch> prefBranch = do_QueryInterface(mRootBranch, &rv);
-    if (NS_SUCCEEDED(rv)) {
-      *_retval = prefBranch;
-      NS_ADDREF(*_retval);
-    }
+    rv = CallQueryInterface(mRootBranch, _retval);
   }
   return rv;
 }
@@ -280,31 +282,10 @@ NS_IMETHODIMP nsPrefService::GetDefaultBranch(const char *aPrefRoot, nsIPrefBran
 
   // TODO: - cache this stuff and allow consumers to share branches (hold weak references I think)
   nsPrefBranch* prefBranch = new nsPrefBranch(aPrefRoot, PR_TRUE);
+  if (!prefBranch)
+    return NS_ERROR_OUT_OF_MEMORY;
 
-  rv = prefBranch->QueryInterface(NS_GET_IID(nsIPrefBranch), (void **)_retval);
-  return rv;
-}
-
-
-// Forward these methods through the nsIPrefBranchInternal headers
-
-NS_IMETHODIMP nsPrefService::AddObserver(const char *aDomain, nsIObserver *aObserver, PRBool aHoldWeak)
-{
-  nsresult rv;
-
-  nsCOMPtr<nsIPrefBranchInternal> prefBranch = do_QueryInterface(mRootBranch, &rv);
-  if (NS_SUCCEEDED(rv))
-    rv = prefBranch->AddObserver(aDomain, aObserver, aHoldWeak);
-  return rv;
-}
-
-NS_IMETHODIMP nsPrefService::RemoveObserver(const char *aDomain, nsIObserver *aObserver)
-{
-  nsresult rv;
-
-  nsCOMPtr<nsIPrefBranchInternal> prefBranch = do_QueryInterface(mRootBranch, &rv);
-  if (NS_SUCCEEDED(rv))
-    rv = prefBranch->RemoveObserver(aDomain, aObserver);
+  rv = CallQueryInterface(prefBranch, _retval);
   return rv;
 }
 
@@ -379,7 +360,7 @@ nsresult nsPrefService::UseUserPrefFile()
   if (NS_SUCCEEDED(rv) && aFile) {
     rv = aFile->AppendNative(NS_LITERAL_CSTRING("user.js"));
     if (NS_SUCCEEDED(rv)) {
-      rv = openPrefFile(aFile, PR_FALSE, PR_FALSE, PR_FALSE);
+      rv = openPrefFile(aFile);
     }
   }
   return rv;
@@ -401,11 +382,10 @@ nsresult nsPrefService::ReadAndOwnUserPrefFile(nsIFile *aFile)
 #endif
 
   // We need to track errors in reading the shared and the
-  // non-shared files independently. Clear gErrorOpeningUserPrefs
-  // and set the appropriate member variable from it after reading.
-  gErrorOpeningUserPrefs = PR_FALSE;
-  nsresult rv = openPrefFile(mCurrentFile, PR_TRUE, PR_FALSE, PR_TRUE);
-  mErrorOpeningUserPrefs = gErrorOpeningUserPrefs;
+  // non-shared files independently. 
+  // Set the appropriate member variable from it after reading.
+  nsresult rv = openPrefFile(mCurrentFile);
+  mErrorOpeningUserPrefs = NS_FAILED(rv);
 
 #ifdef MOZ_PROFILESHARING
   gSharedPrefHandler->ReadingUserPrefs(PR_FALSE);
@@ -431,12 +411,11 @@ nsresult nsPrefService::ReadAndOwnSharedUserPrefFile(nsIFile *aFile)
 #endif
 
   // We need to track errors in reading the shared and the
-  // non-shared files independently. Clear gErrorOpeningUserPrefs
-  // and set the appropriate member variable from it after reading.
-  gErrorOpeningUserPrefs = PR_FALSE;
-  nsresult rv = openPrefFile(mCurrentSharedFile, PR_TRUE, PR_FALSE, PR_TRUE);
-  mErrorOpeningSharedUserPrefs = gErrorOpeningUserPrefs;
-  
+  // non-shared files independently. 
+  // Set the appropriate member variable from it after reading.
+  nsresult rv = openPrefFile(mCurrentSharedFile);
+  mErrorOpeningSharedUserPrefs = NS_FAILED(rv);
+
 #ifdef MOZ_PROFILESHARING
   gSharedPrefHandler->ReadingUserPrefs(PR_FALSE);
 #endif
@@ -496,6 +475,7 @@ nsresult nsPrefService::WritePrefFile(nsIFile* aFile)
     NS_LINEBREAK
     NS_LINEBREAK;
 
+  nsCOMPtr<nsIOutputStream> outStreamSink;
   nsCOMPtr<nsIOutputStream> outStream;
   PRUint32                  writeAmount;
   nsresult                  rv;
@@ -512,25 +492,35 @@ nsresult nsPrefService::WritePrefFile(nsIFile* aFile)
 #endif
 
   // execute a "safe" save by saving through a tempfile
-  PRInt32 numCopies = 1;
-  mRootBranch->GetIntPref("backups.number_of_prefs_copies", &numCopies);
-
-  nsSafeSaveFile safeSave(aFile, numCopies);
-  rv = safeSave.CreateBackup(nsSafeSaveFile::kPurgeNone);
+  nsSafeSaveFile safeSave;
+  nsCOMPtr<nsIFile> tempFile;
+  rv = safeSave.Init(aFile, getter_AddRefs(tempFile));
   if (NS_FAILED(rv))
     return rv;
+
+  // this clone of tempFile exists to defeat the stat caching "feature" of
+  // nsLocalFile.  when tempFileClone is opened, nsLocalFile will stat the
+  // file and cache the results.  it will return those cached results when
+  // we later ask tempFile for its size.  as a result we will think that 
+  // we didn't write anything to the file, and our logic here will fail
+  // miserably.  nsLocalFile should probably be fixed to not cache stat
+  // results when returning a writable file descriptor.  see bug 132517.
+  nsCOMPtr<nsIFile> tempFileClone;
+  rv = tempFile->Clone(getter_AddRefs(tempFileClone));
+  if (NS_FAILED(rv))
+    return rv;
+
+  rv = NS_NewLocalFileOutputStream(getter_AddRefs(outStreamSink), tempFileClone);
+  if (NS_FAILED(rv)) 
+      return rv;
+  rv = NS_NewBufferedOutputStream(getter_AddRefs(outStream), outStreamSink, 4096);
+  if (NS_FAILED(rv)) 
+      return rv;  
 
   char** valueArray = (char **)PR_Calloc(sizeof(char *), gHashTable.entryCount);
   if (!valueArray)
     return NS_ERROR_OUT_OF_MEMORY;
-
-  rv = NS_NewLocalFileOutputStream(getter_AddRefs(outStream), aFile);
-  if (NS_FAILED(rv)) 
-      return rv;
   
-  // write out the file header
-  rv = outStream->Write(outHeader, sizeof(outHeader) - 1, &writeAmount);
-
   pref_saveArgs saveArgs;
   saveArgs.prefArray = valueArray;
   saveArgs.saveTypes = SAVE_ALL;
@@ -549,6 +539,10 @@ nsresult nsPrefService::WritePrefFile(nsIFile* aFile)
     
   /* Sort the preferences to make a readable file on disk */
   NS_QuickSort(valueArray, gHashTable.entryCount, sizeof(char *), pref_CompareStrings, NULL);
+  
+  // write out the file header
+  rv = outStream->Write(outHeader, sizeof(outHeader) - 1, &writeAmount);
+
   char** walker = valueArray;
   for (PRUint32 valueIdx = 0; valueIdx < gHashTable.entryCount; valueIdx++, walker++) {
     if (*walker) {
@@ -565,15 +559,19 @@ nsresult nsPrefService::WritePrefFile(nsIFile* aFile)
   PR_Free(valueArray);
   outStream->Close();
 
-  // if save failed replace the original file from backup
-  if (NS_FAILED(rv)) {
-    nsresult rv2;
-    rv2 = safeSave.RestoreFromBackup();
-    if (NS_SUCCEEDED(rv2)) {
-      // we failed to write the file, but managed to restore the previous one...
-      rv = NS_OK;
-    }
-  }
+  PRInt64 tempLL;
+  PRUint32 oldFileSize, newFileSize;
+  (void)aFile->GetFileSize(&tempLL); // All impls return 0 for size on failure.
+  LL_L2UI(oldFileSize, tempLL);
+  (void)tempFile->GetFileSize(&tempLL);
+  LL_L2UI(newFileSize, tempLL);
+  
+  // As long as we have succeeded, move the temp file to the actual file.
+  // But, if the new file is only 1/2 the size of the old file (dataloss),
+  // pass TRUE for aBackupTarget, leaving the old file on disk.
+  safeSave.OnSaveFinished(NS_SUCCEEDED(rv),
+                          oldFileSize && ((newFileSize << 1) <= oldFileSize));
+  
   if (NS_SUCCEEDED(rv))
     gDirty = PR_FALSE;
   return rv;
@@ -595,14 +593,10 @@ static PRBool isSharingEnabled()
 }
 #endif
 
-static nsresult openPrefFile(nsIFile* aFile, PRBool aIsErrorFatal,
-                             PRBool aIsGlobalContext, PRBool aSkipFirstLine)
+static nsresult openPrefFile(nsIFile* aFile)
 {
   nsCOMPtr<nsIInputStream> inStr;
-  char *readBuf;
-  PRInt64 llFileSize;
-  PRUint32 fileSize;
-  nsresult rv;
+  char      readBuf[PREF_READ_BUFFER_SIZE];
 
 #if MOZ_TIMELINE
   {
@@ -612,96 +606,159 @@ static nsresult openPrefFile(nsIFile* aFile, PRBool aIsErrorFatal,
   }
 #endif
 
-  rv = aFile->GetFileSize(&llFileSize);
-  if (NS_FAILED(rv))
-    return rv;        
-  LL_L2UI(fileSize, llFileSize); // Converting 64 bit structure to unsigned int
-
-  // Now that we know the file exists, set this flag until we have
-  // successfully read and evaluated the prefs file. This will
-  // prevent us from writing an empty or partial prefs.js.
-  
-  gErrorOpeningUserPrefs = aIsErrorFatal;
-
-  rv = NS_NewLocalFileInputStream(getter_AddRefs(inStr), aFile);
+  nsresult rv = NS_NewLocalFileInputStream(getter_AddRefs(inStr), aFile);
   if (NS_FAILED(rv)) 
     return rv;        
 
-  readBuf = (char *)PR_Malloc(fileSize);
-  if (!readBuf) 
-    return NS_ERROR_OUT_OF_MEMORY;
+  PrefParseState ps;
+  PREF_InitParseState(&ps, PREF_ReaderCallback, NULL);
+  for (;;) {
+    PRUint32 amtRead = 0;
+    rv = inStr->Read(readBuf, sizeof(readBuf), &amtRead);
+    if (NS_FAILED(rv) || amtRead == 0)
+      break;
 
-  JS_BeginRequest(gMochaContext);
-
-  PRUint32 amtRead = 0;
-  rv = inStr->Read(readBuf, fileSize, &amtRead);
-  NS_ASSERTION((amtRead == fileSize), "failed to read the entire prefs file!!");
-  if (amtRead != fileSize)
-    return NS_ERROR_FAILURE;
- #ifdef XP_OS2 /* OS/2 workaround - our system editor adds an EOF character */
-     if (readBuf[amtRead - 1] == 0x1A) {
-        amtRead--;
-     }
- #endif
-  if (NS_SUCCEEDED(rv)) {
-    nsCAutoString leafName;
-    aFile->GetNativeLeafName(leafName);
-    if (PREF_EvaluateConfigScript(readBuf, amtRead, leafName.get(), aIsGlobalContext, PR_TRUE,
-                                   aSkipFirstLine))
-      gErrorOpeningUserPrefs = PR_FALSE;
-    else
-      rv = NS_ERROR_FAILURE;
+    PREF_ParseBuf(&ps, readBuf, amtRead); 
   }
-
-  PR_Free(readBuf);
-  JS_EndRequest(gMochaContext);
-
+  PREF_FinalizeParseState(&ps);
   return rv;        
 }
-
 
 /*
  * some stuff that gets called from Pref_Init()
  */
 
-/// Note: inplaceSortCallback is a small C callback stub for NS_QuickSort
-static int PR_CALLBACK
-inplaceSortCallback(const void *data1, const void *data2, void *privateData)
+static int
+pref_CompareFileNames(nsIFile* aFile1, nsIFile* aFile2, void* /*unused*/)
 {
-  nsCAutoString name1;
-  nsCAutoString name2;
-  nsIFile *file1= *(nsIFile **)data1;
-  nsIFile *file2= *(nsIFile **)data2;
-  nsresult rv;
-  int sortResult = 0;
+  nsCAutoString filename1, filename2;
+  aFile1->GetNativeLeafName(filename1);
+  aFile2->GetNativeLeafName(filename2);
 
-  rv = file1->GetNativeLeafName(name1);
-  NS_ASSERTION(NS_SUCCEEDED(rv),"failed to get the leaf name");
-  if (NS_SUCCEEDED(rv)) {
-    rv = file2->GetNativeLeafName(name2);
-    NS_ASSERTION(NS_SUCCEEDED(rv),"failed to get the leaf name");
+  return Compare(filename2, filename1);
+}
+
+/**
+ * Load default pref files from a directory. The files in the
+ * directory are sorted reverse-alphabetically; a set of "special file
+ * names" may be specified which are loaded after all the others.
+ */
+static nsresult
+pref_LoadPrefsInDir(nsIFile* aDir, char const *const *aSpecialFiles, PRUint32 aSpecialFilesCount)
+{
+  nsresult rv, rv2;
+  PRBool hasMoreElements;
+
+  nsCOMPtr<nsISimpleEnumerator> dirIterator;
+
+  // this may fail in some normal cases, such as embedders who do not use a GRE
+  rv = aDir->GetDirectoryEntries(getter_AddRefs(dirIterator));
+  if (NS_FAILED(rv)) return rv;
+
+  rv = dirIterator->HasMoreElements(&hasMoreElements);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMArray<nsIFile> prefFiles(INITIAL_PREF_FILES);
+  nsCOMArray<nsIFile> specialFiles(aSpecialFilesCount);
+  nsCOMPtr<nsIFile> prefFile;
+
+  while (hasMoreElements && NS_SUCCEEDED(rv)) {
+    nsCAutoString leafName;
+
+    rv = dirIterator->GetNext(getter_AddRefs(prefFile));
+    if (NS_FAILED(rv)) {
+      break;
+    }
+
+    prefFile->GetNativeLeafName(leafName);
+    NS_ASSERTION(!leafName.IsEmpty(), "Failure in default prefs: directory enumerator returned empty file?");
+
+    // Skip non-js files
+    if (StringEndsWith(leafName, NS_LITERAL_CSTRING(".js"))) {
+      PRBool shouldParse = PR_TRUE;
+      // separate out special files
+      for (PRUint32 i = 0; i < aSpecialFilesCount; ++i) {
+        if (leafName.Equals(nsDependentCString(aSpecialFiles[i]))) {
+          shouldParse = PR_FALSE;
+          // special files should be process in order; we put them into
+          // the array by index; this can make the array sparse
+          specialFiles.ReplaceObjectAt(prefFile, i);
+        }
+      }
+
+      if (shouldParse) {
+        prefFiles.AppendObject(prefFile);
+      }
+    }
+
+    rv = dirIterator->HasMoreElements(&hasMoreElements);
+  }
+
+  if (prefFiles.Count() + specialFiles.Count() == 0) {
+    NS_WARNING("No default pref files found.");
     if (NS_SUCCEEDED(rv)) {
-      if (!name1.IsEmpty() && !name2.IsEmpty()) {
-        // we want it so foo.js will come before foo-<bar>.js
-        // "foo." is before "foo-", so we have to reverse the order to accomplish
-        sortResult = Compare(name2, name1); // XXX i18n
+      rv = NS_SUCCESS_FILE_DIRECTORY_EMPTY;
+    }
+    return rv;
+  }
+
+  prefFiles.Sort(pref_CompareFileNames, nsnull);
+  
+  PRUint32 arrayCount = prefFiles.Count();
+  PRUint32 i;
+  for (i = 0; i < arrayCount; ++i) {
+    rv2 = openPrefFile(prefFiles[i]);
+    if (NS_FAILED(rv2)) {
+      NS_ERROR("Default pref file not parsed successfully.");
+      rv = rv2;
+    }
+  }
+
+  arrayCount = specialFiles.Count();
+  for (i = 0; i < arrayCount; ++i) {
+    // this may be a sparse array; test before parsing
+    nsIFile* file = specialFiles[i];
+    if (file) {
+      rv2 = openPrefFile(file);
+      if (NS_FAILED(rv2)) {
+        NS_ERROR("Special default pref file not parsed successfully.");
+        rv = rv2;
       }
     }
   }
-  return sortResult;
+
+  return rv;
 }
 
+
 //----------------------------------------------------------------------------------------
-JSBool pref_InitInitialObjects()
 // Initialize default preference JavaScript buffers from
 // appropriate TEXT resources
 //----------------------------------------------------------------------------------------
+static nsresult pref_InitInitialObjects()
 {
   nsCOMPtr<nsIFile> aFile;
   nsCOMPtr<nsIFile> defaultPrefDir;
   nsresult          rv;
-  PRBool            hasMoreElements;
-        
+
+  // first we parse the GRE default prefs. This also works if we're not using a GRE, 
+
+  rv = NS_GetSpecialDirectory(NS_GRE_DIR, getter_AddRefs(defaultPrefDir));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = defaultPrefDir->AppendNative(NS_LITERAL_CSTRING("greprefs"));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = pref_LoadPrefsInDir(defaultPrefDir, nsnull, 0);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Error parsing GRE default preferences. Is this an old-style embedding app?");
+  }
+
+  // now parse the "application" default preferences
+  rv = NS_GetSpecialDirectory(NS_APP_PREF_DEFAULTS_50_DIR, getter_AddRefs(defaultPrefDir));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  /* these pref file names should not be used: we process them after all other application pref files for backwards compatibility */
   static const char* specialFiles[] = {
 #if defined(XP_MAC) || defined(XP_MACOSX)
       "macprefs.js"
@@ -724,107 +781,14 @@ JSBool pref_InitInitialObjects()
 #endif
   };
 
-  rv = NS_GetSpecialDirectory(NS_APP_PREF_DEFAULTS_50_DIR, getter_AddRefs(defaultPrefDir));
-  if (NS_FAILED(rv))
-    return JS_FALSE;
-
-  nsIFile **defaultPrefFiles = (nsIFile **)nsMemory::Alloc(INITIAL_MAX_DEFAULT_PREF_FILES * sizeof(nsIFile *));
-  int maxDefaultPrefFiles = INITIAL_MAX_DEFAULT_PREF_FILES;
-  int numFiles = 0;
-
-  // Parse all the random files that happen to be in the components directory.
-  nsCOMPtr<nsISimpleEnumerator> dirIterator;
-  rv = defaultPrefDir->GetDirectoryEntries(getter_AddRefs(dirIterator));
-  if (!dirIterator) {
-    NS_ASSERTION(NS_SUCCEEDED(rv), "ERROR: Could not make a directory iterator.");
-    return JS_FALSE;
+  rv = pref_LoadPrefsInDir(defaultPrefDir, specialFiles, NS_ARRAY_LENGTH(specialFiles));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Error parsing application default preferences.");
   }
 
-  dirIterator->HasMoreElements(&hasMoreElements);
-  if (!hasMoreElements) {
-    NS_ASSERTION(NS_SUCCEEDED(rv), "ERROR: Prefs directory is empty.");
-    return JS_FALSE;
-  }
+  // xxxbsmedberg: TODO load default prefs from a category
+  // but the architecture is not quite there yet
 
-  while (hasMoreElements) {
-    PRBool shouldParse = PR_TRUE;
-    nsCAutoString leafName;
-
-    dirIterator->GetNext(getter_AddRefs(aFile));
-    dirIterator->HasMoreElements(&hasMoreElements);
-
-    rv = aFile->GetNativeLeafName(leafName);
-    if (NS_SUCCEEDED(rv)) {
-      // Skip non-js files
-      if ((leafName.Length() < 3) || !Substring(leafName, leafName.Length() - 3, 3).Equals(NS_LITERAL_CSTRING(".js")))
-        shouldParse = PR_FALSE;
-      // Skip files in the special list.
-      if (shouldParse) {
-        for (int j = 0; j < (int) (sizeof(specialFiles) / sizeof(char *)); j++)
-          if (!strcmp(leafName.get(), specialFiles[j]))
-            shouldParse = PR_FALSE;
-      }
-      if (shouldParse) {
-        rv = aFile->Clone(&(defaultPrefFiles[numFiles]));
-        if NS_SUCCEEDED(rv) {
-          ++numFiles;
-          if (numFiles == maxDefaultPrefFiles) {
-            // double the size of the array
-            maxDefaultPrefFiles *= 2;
-            defaultPrefFiles = (nsIFile **)nsMemory::Realloc(defaultPrefFiles, maxDefaultPrefFiles * sizeof(nsIFile *));
-          }
-        }
-      }
-    }
-  };
-
-  NS_QuickSort((void *)defaultPrefFiles, numFiles, sizeof(nsIFile *), inplaceSortCallback, nsnull);
-
-  int k;
-  for (k = 0; k < numFiles; k++) {
-    rv = openPrefFile(defaultPrefFiles[k], PR_FALSE, PR_FALSE, PR_FALSE);
-    NS_ASSERTION(NS_SUCCEEDED(rv), "Config file not parsed successfully");
-    NS_RELEASE(defaultPrefFiles[k]);
-  }
-  nsMemory::Free(defaultPrefFiles);
-
-  // Finally, parse any other special files (platform-specific ones).
-  for (k = 0; k < (int) (sizeof(specialFiles) / sizeof(char *)); k++) {
-    // we must get the directory every time so we can append the child
-    // because SetLeafName will not work here.
-    rv = defaultPrefDir->Clone(getter_AddRefs(aFile));
-    if (NS_SUCCEEDED(rv)) {
-      rv = aFile->AppendNative(nsDependentCString(specialFiles[k]));
-      if (NS_SUCCEEDED(rv)) {
-        rv = openPrefFile(aFile, PR_FALSE, PR_FALSE, PR_FALSE);
-        NS_ASSERTION(NS_SUCCEEDED(rv), "<platform>.js was not parsed successfully");
-      }
-    }
-  }
-
-  JS_MaybeGC(gMochaContext);
-  return JS_TRUE;
-}
-
-
-JSRuntime* PREF_GetJSRuntime()
-{
-  nsresult rv;
-
-  if (!gJSRuntimeService) {
-    rv = CallGetService("@mozilla.org/js/xpc/RuntimeService;1",
-                        &gJSRuntimeService);
-    if (NS_FAILED(rv)) {
-      NS_WARNING("nsJSRuntimeService is missing");
-      gJSRuntimeService = nsnull;
-      return nsnull;
-    }
-  }
-
-  JSRuntime* rt;
-  rv = gJSRuntimeService->GetRuntime(&rt);
-  if (NS_SUCCEEDED(rv))
-    return rt;
-  return nsnull;
+  return NS_OK;
 }
 

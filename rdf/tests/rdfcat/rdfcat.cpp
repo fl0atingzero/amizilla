@@ -47,6 +47,7 @@
 
  */
 
+#include <stdio.h>
 #include "nsCOMPtr.h"
 #include "nsIComponentManager.h"
 #include "nsIEventQueueService.h"
@@ -67,12 +68,10 @@
 #include "prio.h"
 #include "prthread.h"
 
-
 ////////////////////////////////////////////////////////////////////////
 // CIDs
 
 // rdf
-static NS_DEFINE_CID(kRDFServiceCID,        NS_RDFSERVICE_CID);
 static NS_DEFINE_CID(kRDFXMLDataSourceCID,  NS_RDFXMLDATASOURCE_CID);
 
 // xpcom

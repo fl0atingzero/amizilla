@@ -21,6 +21,7 @@
  * 
  * Contributor(s):
  *   David Hyatt <hyatt@netscape.com> (Original Author)
+ *   Christian Biesinger <cbiesinger@web.de>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -46,6 +47,8 @@
 #include "imgIContainerObserver.h"
 
 #include "imgILoad.h"
+
+#include "nsAutoPtr.h"
 
 NS_IMPL_ISUPPORTS1(nsICODecoder, imgIDecoder)
 
@@ -90,23 +93,37 @@ nsresult nsICODecoder::SetImageData()
 
 nsresult nsICODecoder::SetAlphaData()
 {
+  // Alpha data was already set if bpp == 32
+  if (mHaveAlphaData)
+    return NS_OK;
+
   PRUint32 bpr;
   mFrame->GetAlphaBytesPerRow(&bpr);
-
-  PRUint32 decoderRowSize = CalcAlphaRowSize();
-
   // In case the decoder and frame have different sized alpha buffers, we
   // take the smaller of the two row length values as the row length to copy.
-  PRUint32 rowCopyLen = PR_MIN(bpr, decoderRowSize);
+  PRUint32 rowCopyLen = PR_MIN(bpr, mDirEntry.mWidth);
+  PRUint8* alphaRow = new PRUint8[rowCopyLen];
+  if (!alphaRow)
+    return NS_ERROR_OUT_OF_MEMORY;
 
+  PRUint32 decoderRowSize = CalcAlphaRowSize();
   PRUint8* alphaBufferPos = mAlphaBuffer;
   PRUint32 frameOffset = 0;
 
-  for (PRUint32 i = 0;
-       i < mDirEntry.mHeight;
-       ++i, frameOffset += bpr, alphaBufferPos += decoderRowSize) {
-    mFrame->SetAlphaData(alphaBufferPos, rowCopyLen, frameOffset);
+  for (PRUint32 i = 0; i < mDirEntry.mHeight; i++) {
+    PRInt8 byte = 0;
+    PRUint32 k = 0;
+    for (PRUint32 j = 0; j < rowCopyLen; ++j) {
+      if ((j % 8) == 0)
+        byte = alphaBufferPos[k++];
+      alphaRow[j] = byte >> 7;
+      byte <<= 1;
+    }
+    mFrame->SetAlphaData(alphaRow, rowCopyLen, frameOffset);
+    frameOffset += bpr;
+    alphaBufferPos += decoderRowSize;
   }
+  delete[] alphaRow;
   return NS_OK;
 }
 
@@ -124,6 +141,7 @@ nsICODecoder::nsICODecoder()
   mCurLine = 1; // Otherwise decoder will never start
   mColors = nsnull;
   mRow = nsnull;
+  mHaveAlphaData = 0;
   mDecodingAndMask = PR_FALSE;
   mDecodedBuffer = nsnull;
   mAlphaBuffer = nsnull;
@@ -241,8 +259,6 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
     if (mPos == 22+mCurrIcon*sizeof(mDirEntryArray)) {
       mCurrIcon++;
       ProcessDirEntry(e);
-      if (e.mReserved != 0)
-        return NS_ERROR_FAILURE; // This ICO is garbage.
       if ((e.mWidth == PREFICONSIZE && e.mHeight == PREFICONSIZE && e.mBitCount >= colorDepth)
            || (mCurrIcon == mNumIcons && mImageOffset == 0)) {
         mImageOffset = e.mImageOffset;
@@ -303,7 +319,7 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
     if (!mRow)
       return NS_ERROR_OUT_OF_MEMORY;
     
-    rv = mFrame->Init(0, 0, mDirEntry.mWidth, mDirEntry.mHeight, GFXFORMATALPHA, 24);
+    rv = mFrame->Init(0, 0, mDirEntry.mWidth, mDirEntry.mHeight, GFXFORMATALPHA8, 24);
     NS_ENSURE_SUCCESS(rv, rv);
     rv = mImage->AppendFrame(mFrame);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -338,8 +354,8 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
   }
 
   if (!mDecodingAndMask && (mPos >= (mImageOffset + BITMAPINFOSIZE + mNumColors*4))) {
-    // Increment mPos to avoid reprocessing the info header.
     if (mPos == (mImageOffset + BITMAPINFOSIZE + mNumColors*4)) {
+      // Increment mPos to avoid reprocessing the info header.
       mPos++;
 #if defined(XP_MAC) || defined(XP_MACOSX)
       mDecodedBuffer = new PRUint8[mDirEntry.mHeight*mDirEntry.mWidth*4];
@@ -347,6 +363,14 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
       mDecodedBuffer = new PRUint8[mDirEntry.mHeight*mDirEntry.mWidth*3];
 #endif
       if (!mDecodedBuffer)
+        return NS_ERROR_OUT_OF_MEMORY;
+    }
+    PRUint32 alphaRowSize;
+    mFrame->GetAlphaBytesPerRow(&alphaRowSize);
+    nsAutoArrayPtr<PRUint8> alphaRow; // Will only be used if bpp == 32
+    if (mBIH.bpp == 32) {
+      alphaRow = new PRUint8[alphaRowSize];
+      if (!alphaRow)
         return NS_ERROR_OUT_OF_MEMORY;
     }
 
@@ -369,6 +393,7 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
             PRUint8* decoded = mDecodedBuffer + (mCurLine * mDirEntry.mWidth * GFXBYTESPERPIXEL);
             PRUint8* p = mRow;
             PRUint8* d = decoded;
+            PRUint8* alphaPos = alphaRow; // only used if bpp == 32
             PRUint32 lpos = mDirEntry.mWidth;
             switch (mBIH.bpp) {
               case 1:
@@ -411,11 +436,10 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
               case 24:
                 while (lpos > 0) {
                   SetPixel(d, p[2], p[1], p[0]);
-                  p += 2;
+                  p += 3;
                   --lpos;
                   if (mBIH.bpp == 32)
-                    p++; // Padding byte
-                  ++p;
+                    mHaveAlphaData |= *alphaPos++ = *p++; // Alpha value
                 }
                 break;
               default:
@@ -427,11 +451,16 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
               mDecodingAndMask = PR_TRUE;
               
             mRowBytes = 0;
+
+            // If 32 bit image, gotta set the alpha data here
+            if (mBIH.bpp == 32)
+              mFrame->SetAlphaData(alphaRow, alphaRowSize, mCurLine * alphaRowSize);
         }
     } while (!mDecodingAndMask && aCount > 0);
+
   }
 
-  if (mDecodingAndMask) {
+  if (mDecodingAndMask && !mHaveAlphaData) {
     PRUint32 rowSize = CalcAlphaRowSize();
 
     if (mPos == (1 + mImageOffset + BITMAPINFOSIZE + mNumColors*4)) {

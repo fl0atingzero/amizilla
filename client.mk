@@ -52,14 +52,18 @@
 #
 # For branches, uncomment the MOZ_CO_TAG line with the proper tag,
 # and commit this file on that tag.
-#MOZ_CO_TAG = <tag>
-NSPR_CO_TAG = NSPRPUB_PRE_4_2_CLIENT_BRANCH
-PSM_CO_TAG = #We will now build PSM from the tip instead of a branch.
-NSS_CO_TAG = NSS_CLIENT_TAG
-LDAPCSDK_CO_TAG = ldapcsdk_50_client_branch
-ACCESSIBLE_CO_TAG = 
-IMGLIB2_CO_TAG = 
-IPC_CO_TAG = IPC_BRANCH_20030304
+MOZ_CO_TAG =  MOZILLA_1_7_RELEASE
+NSPR_CO_TAG =  MOZILLA_1_7_RELEASE
+PSM_CO_TAG =  MOZILLA_1_7_RELEASE
+NSS_CO_TAG =  MOZILLA_1_7_RELEASE
+LDAPCSDK_CO_TAG =  MOZILLA_1_7_RELEASE
+ACCESSIBLE_CO_TAG =  MOZILLA_1_7_RELEASE
+IMGLIB2_CO_TAG =  MOZILLA_1_7_RELEASE
+IPC_CO_TAG =  MOZILLA_1_7_RELEASE
+TOOLKIT_CO_TAG = MOZILLA_1_7_RELEASE
+BROWSER_CO_TAG = MOZILLA_1_7_RELEASE
+MAIL_CO_TAG = MOZILLA_1_7_RELEASE
+STANDALONE_COMPOSER_CO_TAG = MOZILLA_1_7_RELEASE
 BUILD_MODULES = all
 
 #######################################################################
@@ -285,7 +289,7 @@ CVSCO_IMGLIB2 = $(CVS) $(CVS_FLAGS) co $(IMGLIB2_CO_FLAGS) $(CVS_CO_DATE_FLAGS) 
 # CVS defines for ipc module
 #
 IPC_CO_MODULE = mozilla/ipc/ipcd
-IPC_CO_FLAGS := -P
+IPC_CO_FLAGS := -P -A
 ifdef MOZ_CO_FLAGS
   IPC_CO_FLAGS := $(MOZ_CO_FLAGS)
 endif
@@ -368,7 +372,17 @@ endif
 ####################################
 # CVS defines for Phoenix (pulled and built if MOZ_PHOENIX is set)
 #
-CVSCO_PHOENIX := $(CVSCO) $(CVS_CO_DATE_FLAGS) mozilla/browser
+BROWSER_CO_FLAGS := -P
+ifdef MOZ_CO_FLAGS
+  BROWSER_CO_FLAGS := $(MOZ_CO_FLAGS)
+endif
+ifdef BROWSER_CO_TAG
+  BROWSER_CO_FLAGS := $(BROWSER_CO_FLAGS) -r $(BROWSER_CO_TAG)
+endif
+
+BROWSER_CO_DIRS := mozilla/browser mozilla/other-licenses/branding/firefox
+
+CVSCO_PHOENIX := $(CVS) $(CVS_FLAGS) co $(BROWSER_CO_FLAGS) $(CVS_CO_DATE_FLAGS) $(BROWSER_CO_DIRS)
 
 ifdef MOZ_PHOENIX
 FASTUPDATE_PHOENIX := fast_update $(CVSCO_PHOENIX)
@@ -383,7 +397,17 @@ endif
 # CVS defines for Thunderbird (pulled and built if MOZ_THUNDERBIRD is set)
 #
 
-CVSCO_THUNDERBIRD := $(CVSCO) $(CVS_CO_DATE_FLAGS) mozilla/mail
+MAIL_CO_FLAGS := -P
+ifdef MOZ_CO_FLAGS
+  MAIL_CO_FLAGS := $(MOZ_CO_FLAGS)
+endif
+ifdef MAIL_CO_TAG
+  MAIL_CO_FLAGS := $(MAIL_CO_FLAGS) -r $(MAIL_CO_TAG)
+endif
+
+MAIL_CO_DIRS := mozilla/mail mozilla/other-licenses/branding/thunderbird
+
+CVSCO_THUNDERBIRD := $(CVS) $(CVS_FLAGS) co $(MAIL_CO_FLAGS) $(CVS_CO_DATE_FLAGS) $(MAIL_CO_DIRS)
 ifdef MOZ_THUNDERBIRD
 FASTUPDATE_THUNDERBIRD := fast_update $(CVSCO_THUNDERBIRD)
 CHECKOUT_THUNDERBIRD := cvs_co $(CVSCO_THUNDERBIRD)
@@ -394,10 +418,40 @@ CHECKOUT_THUNDERBIRD := true
 endif
 
 ####################################
+# CVS defines for Standalone Composer (pulled and built if MOZ_STANDALONE_COMPOSER is set)
+#
+
+STANDALONE_COMPOSER_CO_FLAGS := -P
+ifdef MOZ_CO_FLAGS
+  STANDALONE_COMPOSER_CO_FLAGS := $(MOZ_CO_FLAGS)
+endif
+ifdef STANDALONE_COMPOSER_CO_TAG
+  STANDALONE_COMPOSER_CO_FLAGS := $(STANDALONE_COMPOSER_CO_FLAGS) -r $(STANDALONE_COMPOSER_CO_TAG)
+endif
+
+CVSCO_STANDALONE_COMPOSER := $(CVS) $(CVS_FLAGS) co $(STANDALONE_COMPOSER_CO_FLAGS) $(CVS_CO_DATE_FLAGS) mozilla/composer
+ifdef MOZ_STANDALONE_COMPOSER
+FASTUPDATE_STANDALONE_COMPOSER:= fast_update $(CVSCO_STANDALONE_COMPOSER)
+CHECKOUT_STANDALONE_COMPOSER:= cvs_co $(CVSCO_STANDALONE_COMPOSER)
+MOZ_XUL_APP = 1
+else
+FASTUPDATE_STANDALONE_COMPOSER:= true
+CHECKOUT_STANDALONE_COMPOSER:= true
+endif
+
+####################################
 # CVS defines for mozilla/toolkit (pulled and built if MOZ_XUL_APP is set)
 #
 
-CVSCO_MOZTOOLKIT := $(CVSCO) $(CVS_CO_DATE_FLAGS) mozilla/toolkit
+TOOLKIT_CO_FLAGS := -P
+ifdef MOZ_CO_FLAGS
+  TOOLKIT_CO_FLAGS := $(MOZ_CO_FLAGS)
+endif
+ifdef TOOLKIT_CO_TAG
+  TOOLKIT_CO_FLAGS := $(TOOLKIT_CO_FLAGS) -r $(TOOLKIT_CO_TAG)
+endif
+
+CVSCO_MOZTOOLKIT := $(CVS) $(CVS_FLAGS) co $(TOOLKIT_CO_FLAGS) $(CVS_CO_DATE_FLAGS)  mozilla/toolkit mozilla/chrome
 ifdef MOZ_XUL_APP
 FASTUPDATE_MOZTOOLKIT := fast_update $(CVSCO_MOZTOOLKIT)
 CHECKOUT_MOZTOOLKIT := cvs_co $(CVSCO_MOZTOOLKIT)
@@ -490,6 +544,7 @@ real_checkout:
 	$(CHECKOUT_MOZTOOLKIT) && \
 	$(CHECKOUT_PHOENIX) && \
 	$(CHECKOUT_THUNDERBIRD) && \
+	$(CHECKOUT_STANDALONE_COMPOSER) && \
 	$(CHECKOUT_CODESIGHS) && \
 	cvs_co $(CVSCO_SEAMONKEY)
 	@echo "checkout finish: "`date` | tee -a $(CVSCO_LOGFILE)
@@ -551,11 +606,13 @@ real_fast-update:
 	fast_update $(CVSCO_LDAPCSDK) && \
 	fast_update $(CVSCO_ACCESSIBLE) && \
 	fast_update $(CVSCO_IMGLIB2) && \
+	fast_update $(CVSCO_IPC) && \
 	fast_update $(CVSCO_CALENDAR) && \
 	$(FASTUPDATE_LIBART) && \
 	$(FASTUPDATE_MOZTOOLKIT) && \
 	$(FASTUPDATE_PHOENIX) && \
 	$(FASTUPDATE_THUNDERBIRD) && \
+	$(FASTUPDATE_STANDALONE_COMPOSER) && \
 	$(FASTUPDATE_CODESIGHS) && \
 	fast_update $(CVSCO_SEAMONKEY)
 	@echo "fast_update finish: "`date` | tee -a $(CVSCO_LOGFILE)
@@ -640,6 +697,8 @@ CONFIG_STATUS_DEPS := \
 	$(wildcard $(TOPSRCDIR)/mailnews/makefiles) \
 	$(CONFIG_STATUS_DEPS_L10N) \
 	$(wildcard $(TOPSRCDIR)/themes/makefiles) \
+	$(wildcard $(TOPSRCDIR)/config/milestone.txt) \
+	$(wildcard $(TOPSRCDIR)/config/chrome-versions.sh) \
 	$(NULL)
 
 # configure uses the program name to determine @srcdir@. Calling it without
@@ -682,6 +741,21 @@ depend:: $(OBJDIR)/Makefile $(OBJDIR)/config.status
 
 build::  $(OBJDIR)/Makefile $(OBJDIR)/config.status
 	$(MOZ_MAKE)
+
+####################################
+# Profile-feedback build (gcc only)
+#  To use this, you should set the following variables in your mozconfig
+#    mk_add_options PROFILE_GEN_SCRIPT=/path/to/profile-script
+#
+#  The profile script should exercise the functionality to be included
+#  in the profile feedback.
+
+profiledbuild:: $(OBJDIR)/Makefile $(OBJDIR)/config.status
+	$(MOZ_MAKE) MOZ_PROFILE_GENERATE=1
+	OBJDIR=${OBJDIR} $(PROFILE_GEN_SCRIPT)
+	$(MOZ_MAKE) clobber_all
+	$(MOZ_MAKE) MOZ_PROFILE_USE=1
+	find $(OBJDIR) -name "*.da" -exec rm {} \;
 
 ####################################
 # Other targets

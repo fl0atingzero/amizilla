@@ -78,9 +78,7 @@ function getReferrer(doc)
   var sourceURL = getContentFrameURI(focusedWindow);
 
   try {
-    var uri = Components.classes["@mozilla.org/network/standard-url;1"].createInstance(Components.interfaces.nsIURI);
-    uri.spec = sourceURL;
-    return uri;
+    return makeURL(sourceURL);
   } catch (e) {
     return null;
   }
@@ -137,10 +135,11 @@ function openNewTabWith(url, sendReferrer, reverseBackgroundPref)
 
     var browserWin = windowMediator.getMostRecentWindow("navigator:browser");
 
-    // if there's no existing browser window, open this url in one, and
-    // return
+    // if there's no existing browser window, then, as long as
+    // we are allowed to, open this url in one and return
     //
     if (!browserWin) {
+      urlSecurityCheck(url, document);
       window.openDialog(getBrowserURL(), "_blank", "chrome,all,dialog=no", 
                         url, null, referrer);
       return;
@@ -160,7 +159,16 @@ function openNewTabWith(url, sendReferrer, reverseBackgroundPref)
 
   var referrer = sendReferrer ? getReferrer(browserDocument) : null;
 
-  var tab = browser.addTab(url, referrer); // open link in new tab
+  // As in openNewWindowWith(), we want to pass the charset of the
+  // current document over to a new tab. 
+  var wintype = browserDocument.firstChild.getAttribute('windowtype');
+  var originCharset;
+  if (wintype == "navigator:browser") {
+    originCharset = window._content.document.characterSet;
+  }
+
+  // open link in new tab
+  var tab = browser.addTab(url, referrer, originCharset); 
   if (pref) {
     var loadInBackground = pref.getBoolPref("browser.tabs.loadInBackground");
     if (reverseBackgroundPref)
@@ -253,15 +261,17 @@ function foundHeaderInfo(aSniffer, aData)
   var contentEncodingType = aSniffer.contentEncodingType;
 
   var shouldDecode = false;
+  var urlExt = null;
   // Are we allowed to decode?
   try {
     const helperAppService =
       Components.classes["@mozilla.org/uriloader/external-helper-app-service;1"].
         getService(Components.interfaces.nsIExternalHelperAppService);
     var url = aSniffer.uri.QueryInterface(Components.interfaces.nsIURL);
-    var urlExt = url.fileExtension;
-    if (helperAppService.applyDecodingForType(contentType) &&
-        (!urlExt || helperAppService.applyDecodingForExtension(urlExt))) {
+    urlExt = url.fileExtension;
+    if (contentEncodingType &&
+        helperAppService.applyDecodingForExtension(urlExt,
+                                                   contentEncodingType)) {
       shouldDecode = true;
     }
   }
@@ -285,7 +295,7 @@ function foundHeaderInfo(aSniffer, aData)
     contentType = contentEncodingType;
   }
 
-  appendFiltersForContentType(fp, contentType,
+  appendFiltersForContentType(fp, contentType, urlExt,
                               isDocument ? saveMode : SAVEMODE_FILEONLY);
 
   const prefSvcContractID = "@mozilla.org/preferences-service;1";
@@ -341,7 +351,7 @@ function foundHeaderInfo(aSniffer, aData)
   var persistArgs = {
     source      : source,
     contentType : (useSaveDocument && fp.filterIndex == 2) ? "text/plain" : contentType,
-    target      : fp.file,
+    target      : makeFileURL(fp.file),
     postData    : isDocument ? getPostData() : null,
     bypassCache : aData.bypassCache
   };
@@ -367,10 +377,7 @@ function foundHeaderInfo(aSniffer, aData)
     var filesFolder = null;
     if (persistArgs.contentType != "text/plain") {
       // Create the local directory into which to save associated files. 
-      const lfContractID = "@mozilla.org/file/local;1";
-      const lfIID = Components.interfaces.nsILocalFile;
-      filesFolder = Components .classes[lfContractID].createInstance(lfIID);
-      filesFolder.initWithPath(persistArgs.target.path);
+      filesFolder = fp.file.clone();
       
       var nameWithoutExtension = filesFolder.leafName.replace(/\.[^.]*$/, "");
       var filesFolderLeafName = getStringBundle().formatStringFromName("filesFolder",
@@ -396,7 +403,8 @@ function foundHeaderInfo(aSniffer, aData)
                          persistArgs.contentType, encodingFlags, kWrapColumn);
   } else {
     dl.init(source, persistArgs.target, null, null, null, persist);
-    persist.saveURI(source, null, null, persistArgs.postData, null, persistArgs.target);
+    var referer = getReferrer(document);
+    persist.saveURI(source, null, referer, persistArgs.postData, null, persistArgs.target);
   }
 }
 
@@ -408,7 +416,8 @@ function nsHeaderSniffer(aURL, aCallback, aData)
   this.uri = makeURL(aURL);
   
   this.linkChecker = Components.classes["@mozilla.org/network/urichecker;1"]
-    .createInstance().QueryInterface(Components.interfaces.nsIURIChecker);
+    .createInstance(Components.interfaces.nsIURIChecker);
+  this.linkChecker.init(this.uri);
 
   var flags;
   if (aData.bypassCache) {
@@ -416,8 +425,16 @@ function nsHeaderSniffer(aURL, aCallback, aData)
   } else {
     flags = Components.interfaces.nsIRequest.LOAD_FROM_CACHE;
   }
+  this.linkChecker.loadFlags = flags;
 
-  this.linkChecker.asyncCheckURI(aURL, this, null, flags);
+  // Set referrer, ignore errors
+  try {
+    var referrer = getReferrer(document);
+    this.linkChecker.baseChannel.QueryInterface(Components.interfaces.nsIHttpChannel).referrer = referrer;
+  }
+  catch (ex) { }
+
+  this.linkChecker.asyncCheck(this, null);
 }
 
 nsHeaderSniffer.prototype = {
@@ -426,8 +443,7 @@ nsHeaderSniffer.prototype = {
   QueryInterface: function (iid) {
     if (!iid.equals(Components.interfaces.nsIRequestObserver) &&
         !iid.equals(Components.interfaces.nsISupports) &&
-        !iid.equals(Components.interfaces.nsIInterfaceRequestor) &&
-        !iid.equals(Components.interfaces.nsIAuthPrompt)) {
+        !iid.equals(Components.interfaces.nsIInterfaceRequestor)) {
       throw Components.results.NS_ERROR_NO_INTERFACE;
     }
     return this;
@@ -435,37 +451,14 @@ nsHeaderSniffer.prototype = {
 
   // ---------- nsIInterfaceRequestor methods ----------
   getInterface : function(iid) {
-    return this.QueryInterface(iid);
-  },
-
-  // ---------- nsIAuthPrompt methods ----------
-  prompt : function(dlgTitle, text, pwrealm, savePW, defaultText, result)
-  {
-    dump("authprompt prompt! pwrealm="+pwrealm+"\n");
-    var promptServ = this.promptService;
-    if (!promptServ)
-      return false;
-    var saveCheck = {value:savePW};
-    return promptServ.prompt(window, dlgTitle, text, defaultText, pwrealm, saveCheck);
-  },
-  promptUsernameAndPassword : function(dlgTitle, text, pwrealm, savePW, user, pw)
-  {
-    dump("authprompt promptUsernameAndPassword!  "+dlgTitle+" "+text+", pwrealm="+pwrealm+"\n");
-    var promptServ = this.promptService;
-    if (!promptServ)
-      return false;
-    var saveCheck = {value:savePW};
-    return promptServ.promptUsernameAndPassword(window, dlgTitle, text, user, pw, pwrealm, saveCheck);
-  },
-  promptPassword : function(dlgTitle, text, pwrealm, savePW, pw)
-  {
-    dump("auth promptPassword!  "+dlgTitle+" "+text+", pwrealm="+pwrealm+"\n");
-    var promptServ = this.promptService;
-    if (!promptServ)
-      return false;
-
-    var saveCheck = {value:savePW};
-    return promptServ.promptPassword(window, dlgTitle, text, pw, pwrealm, saveCheck);
+    if (iid.equals(Components.interfaces.nsIAuthPrompt)) {
+      // use the window watcher service to get a nsIAuthPrompt impl
+      var ww = Components.classes["@mozilla.org/embedcomp/window-watcher;1"]
+                         .getService(Components.interfaces.nsIWindowWatcher);
+      return ww.getNewAuthPrompter(window);
+    }
+    Components.returnCode = Components.results.NS_ERROR_NO_INTERFACE;
+    return null;
   },
 
   // ---------- nsIRequestObserver methods ----------
@@ -475,7 +468,7 @@ nsHeaderSniffer.prototype = {
     try {
       if (aStatus == 0) { // NS_BINDING_SUCCEEDED, so there's something there
         var linkChecker = aRequest.QueryInterface(Components.interfaces.nsIURIChecker);
-        var channel = linkChecker.baseRequest.QueryInterface(Components.interfaces.nsIChannel);
+        var channel = linkChecker.baseChannel;
         this.contentType = channel.contentType;
         try {
           var httpChannel = channel.QueryInterface(Components.interfaces.nsIHttpChannel);
@@ -488,11 +481,9 @@ nsHeaderSniffer.prototype = {
           // corresponding to each encoding starting from the end, so the first
           // thing it returns corresponds to the outermost encoding.
           var encodingEnumerator = encodedChannel.contentEncodings;
-          if (encodingEnumerator && encodingEnumerator.hasMoreElements()) {
+          if (encodingEnumerator && encodingEnumerator.hasMore()) {
             try {
-              this.contentEncodingType =
-                encodingEnumerator.getNext().
-                  QueryInterface(Components.interfaces.nsISupportsCString).data;
+              this.contentEncodingType = encodingEnumerator.getNext();
             } catch (e) {
             }
           }
@@ -519,18 +510,9 @@ nsHeaderSniffer.prototype = {
       if (this.mData.document) {
         this.contentType = this.mData.document.contentType;
       } else {
-        try {
-          var url = this.uri.QueryInterface(Components.interfaces.nsIURL);
-          var ext = url.fileExtension;
-          if (ext) {
-            var mimeInfo = getMIMEInfoForExtension(ext);
-            if (mimeInfo)
-              this.contentType = mimeInfo.MIMEType;
-          }
-        }
-        catch (e) {
-          // Not much we can do here.  Give up.
-        }
+        var type = getMIMETypeForURI(this.uri);
+        if (type)
+          this.contentType = type;
       }
     }
     this.mCallback(this, this.mData);
@@ -551,27 +533,30 @@ nsHeaderSniffer.prototype = {
 
   get suggestedFileName()
   {
-    var filename = "";
-    var name = this.mContentDisposition;
-    if (name) {
-      const filenamePrefix = "filename=";
-      var ix = name.indexOf(filenamePrefix);
-      if (ix >= 0) {
-        // Adjust ix to point to start of actual name
-        ix += filenamePrefix.length;
-        filename = name.substr(ix, name.length);
-        if (filename != "") {
-          ix = filename.lastIndexOf(";");
-          if (ix > 0)
-            filename = filename.substr(0, ix);
-          
-          filename = filename.replace(/^"|"$/g, "");
+    var fileName = "";
+
+    if ("mContentDisposition" in this) {
+      const mhpContractID = "@mozilla.org/network/mime-hdrparam;1"
+      const mhpIID = Components.interfaces.nsIMIMEHeaderParam;
+      const mhp = Components.classes[mhpContractID].getService(mhpIID);
+      var dummy = { value: null }; // To make JS engine happy.
+      var charset = getCharsetforSave(null);
+
+      try {
+        fileName = mhp.getParameter(this.mContentDisposition, "filename", charset, true, dummy);
+      } 
+      catch (e) {
+        try {
+          fileName = mhp.getParameter(this.mContentDisposition, "name", charset, true, dummy);
+        }
+        catch (e) {
         }
       }
     }
-    return filename;
-  }  
 
+    fileName = fileName.replace(/^"|"$/g, "");
+    return fileName;
+  }
 };
 
 // We have no DOM, and can only save the URL as is.
@@ -585,7 +570,7 @@ const SAVEMODE_COMPLETE_TEXT = 0x02;
 // must be the first filter appended.  The 'save page only' counterpart
 // must be the second filter appended.  And the 'save as complete text'
 // filter must be the third filter appended.
-function appendFiltersForContentType(aFilePicker, aContentType, aSaveMode)
+function appendFiltersForContentType(aFilePicker, aContentType, aFileExtension, aSaveMode)
 {
   var bundle = getStringBundle();
   // The bundle name for saving only a specific content type.
@@ -617,7 +602,7 @@ function appendFiltersForContentType(aFilePicker, aContentType, aSaveMode)
       throw "Invalid save mode for type '" + aContentType + "'";
     }
 
-    var mimeInfo = getMIMEInfoForType(aContentType);
+    var mimeInfo = getMIMEInfoForType(aContentType, aFileExtension);
     if (mimeInfo) {
       
       var extEnumerator = mimeInfo.getFileExtensions();
@@ -658,9 +643,9 @@ function getPostData()
 {
   try {
     var sessionHistory = getWebNavigation().sessionHistory;
-    entry = sessionHistory.getEntryAtIndex(sessionHistory.index, false);
-    entry = entry.QueryInterface(Components.interfaces.nsISHEntry);
-    return entry.postData;
+    return sessionHistory.getEntryAtIndex(sessionHistory.index, false)
+                         .QueryInterface(Components.interfaces.nsISHEntry)
+                         .postData;
   }
   catch (e) {
   }
@@ -678,7 +663,7 @@ function getStringBundle()
   const lsContractID = "@mozilla.org/intl/nslocaleservice;1";
   const lsIID = Components.interfaces.nsILocaleService;
   const ls = Components.classes[lsContractID].getService(lsIID);
-  var appLocale = ls.GetApplicationLocale();
+  var appLocale = ls.getApplicationLocale();
   return sbs.createBundle(bundleURL, appLocale);    
 }
 
@@ -689,19 +674,18 @@ function makeWebBrowserPersist()
   return Components.classes[persistContractID].createInstance(persistIID);
 }
 
-function makeProgressDialog()
-{
-  const progressDialogContractID = "@mozilla.org/progressdialog;1";
-  const progressDialogIID = Components.interfaces.nsIProgressDialog;
-  return Components.classes[progressDialogContractID].createInstance(progressDialogIID);
-}
-
 function makeURL(aURL)
 {
   var ioService = Components.classes["@mozilla.org/network/io-service;1"]
                 .getService(Components.interfaces.nsIIOService);
   return ioService.newURI(aURL, null, null);
-  
+}
+
+function makeFileURL(aFile)
+{
+  var ioService = Components.classes["@mozilla.org/network/io-service;1"]
+                .getService(Components.interfaces.nsIIOService);
+  return ioService.newFileURI(aFile);
 }
 
 function makeFilePicker()
@@ -709,17 +693,6 @@ function makeFilePicker()
   const fpContractID = "@mozilla.org/filepicker;1";
   const fpIID = Components.interfaces.nsIFilePicker;
   return Components.classes[fpContractID].createInstance(fpIID);
-}
-
-function makeTempFile()
-{
-  const mimeTypes = "TmpD";
-  const flContractID = "@mozilla.org/file/directory_service;1";
-  const flIID = Components.interfaces.nsIProperties;
-  var fileLocator = Components.classes[flContractID].getService(flIID);
-  var tempFile = fileLocator.get(mimeTypes, Components.interfaces.nsIFile);
-  tempFile.append("~sav" + Math.floor(Math.random() * 1000) + ".tmp");
-  return tempFile;
 }
 
 function getMIMEService()
@@ -730,20 +703,20 @@ function getMIMEService()
   return mimeSvc;
 }
 
-function getMIMEInfoForExtension(aExtension)
+function getMIMETypeForURI(aURI)
 {
   try {  
-    return getMIMEService().GetFromExtension(aExtension);
+    return getMIMEService().getTypeFromURI(aURI);
   }
   catch (e) {
   }
   return null;
 }
 
-function getMIMEInfoForType(aMIMEType)
+function getMIMEInfoForType(aMIMEType, aExtension)
 {
   try {  
-    return getMIMEService().GetFromMIMEType(aMIMEType);
+    return getMIMEService().getFromTypeAndExtension(aMIMEType, aExtension);
   }
   catch (e) {
   }
@@ -760,7 +733,7 @@ function getDefaultFileName(aDefaultFileName, aNameFromHeaders, aDocumentURI, aD
     var url = aDocumentURI.QueryInterface(Components.interfaces.nsIURL);
     if (url.fileName != "") {
       // 2) Use the actual file name, if present
-      return unescape(url.fileName);
+      return validateFileName(decodeURIComponent(url.fileName));
     }
   } catch (e) {
     try {
@@ -768,14 +741,8 @@ function getDefaultFileName(aDefaultFileName, aNameFromHeaders, aDocumentURI, aD
       // try unescape again with a characterSet
       var textToSubURI = Components.classes["@mozilla.org/intl/texttosuburi;1"]
                                    .getService(Components.interfaces.nsITextToSubURI);
-      var charset;
-      if (aDocument)
-        charset = aDocument.characterSet;
-      else if (document.commandDispatcher.focusedWindow)
-        charset = document.commandDispatcher.focusedWindow.document.characterSet;
-      else
-        charset = window._content.document.characterSet;
-      return textToSubURI.unEscapeURIForUI(charset, url.fileName);
+      var charset = getCharsetforSave(aDocument);
+      return validateFileName(textToSubURI.unEscapeURIForUI(charset, url.fileName));
     } catch (e) {
       // This is something like a wyciwyg:, data:, and so forth
       // URI... no usable filename here.
@@ -783,9 +750,9 @@ function getDefaultFileName(aDefaultFileName, aNameFromHeaders, aDocumentURI, aD
   }
   
   if (aDocument) {
-    var docTitle = validateFileName(aDocument.title).replace(/^\s+|\s+$/g, "");
+    var docTitle = GenerateValidFilename(aDocument.title, "");
 
-    if (docTitle != "") {
+    if (docTitle) {
       // 3) Use the document title
       return docTitle;
     }
@@ -795,37 +762,27 @@ function getDefaultFileName(aDefaultFileName, aNameFromHeaders, aDocumentURI, aD
     // 4) Use the caller-provided name, if any
     return validateFileName(aDefaultFileName);
 
+  // 5) If this is a directory, use the last directory name
+  var path = aDocumentURI.path.match(/\/([^\/]+)\/$/);
+  if (path && path.length > 1) {
+      return validateFileName(path[1]);
+  }
+
   try {
     if (aDocumentURI.host)
-      // 5) Use the host.
+      // 6) Use the host.
       return aDocumentURI.host;
   } catch (e) {
     // Some files have no information at all, like Javascript generated pages
   }
   try {
-    // 6) Use the default file name
+    // 7) Use the default file name
     return getStringBundle().GetStringFromName("DefaultSaveFileName");
   } catch (e) {
     //in case localized string cannot be found
   }
-  // 7) If all else fails, use "index"
+  // 8) If all else fails, use "index"
   return "index";
-}
-
-function validateFileName(aFileName)
-{
-  var re = /[\/]+/g;
-  if (navigator.appVersion.indexOf("Windows") != -1) {
-    re = /[\\\/\|]+/g;
-    aFileName = aFileName.replace(/[\"]+/g, "'");
-    aFileName = aFileName.replace(/[\*\:\?]+/g, " ");
-    aFileName = aFileName.replace(/[\<]+/g, "(");
-    aFileName = aFileName.replace(/[\>]+/g, ")");
-  }
-  else if (navigator.appVersion.indexOf("Macintosh") != -1)
-    re = /[\:\/]+/g;
-  
-  return aFileName.replace(re, "_");
 }
 
 function getNormalizedLeafName(aFile, aDefaultExtension)
@@ -851,11 +808,6 @@ function getDefaultExtension(aFilename, aURI, aContentType)
   if (aContentType == "text/plain" || aContentType == "application/octet-stream" || aURI.scheme == "ftp")
     return "";   // temporary fix for bug 120327
 
-  // This mirrors some code in nsExternalHelperAppService::DoContent
-  // Use the filename first and then the URI if that fails
-  
-  var mimeInfo = getMIMEInfoForType(aContentType);
-
   // First try the extension from the filename
   const stdURLContractID = "@mozilla.org/network/standard-url;1";
   const stdURLIID = Components.interfaces.nsIURL;
@@ -863,6 +815,11 @@ function getDefaultExtension(aFilename, aURI, aContentType)
   url.filePath = aFilename;
 
   var ext = url.fileExtension;
+
+  // This mirrors some code in nsExternalHelperAppService::DoContent
+  // Use the filename first and then the URI if that fails
+  
+  var mimeInfo = getMIMEInfoForType(aContentType, ext);
 
   if (ext && mimeInfo && mimeInfo.ExtensionExists(ext)) {
     return ext;
@@ -906,4 +863,15 @@ function GetSaveModeForContentType(aContentType)
   }
 
   return saveMode;
+}
+
+function getCharsetforSave(aDocument)
+{
+  if (aDocument)
+    return aDocument.characterSet;
+
+  if (document.commandDispatcher.focusedWindow)
+    return document.commandDispatcher.focusedWindow.document.characterSet;
+
+  return  window._content.document.characterSet;
 }

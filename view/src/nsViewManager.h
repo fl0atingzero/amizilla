@@ -100,9 +100,9 @@ public:
 
   void RemoveReparentedView() { mReparentedView = nsnull; }
   void SetReparentedView(nsView* aView) { mReparentedView = aView; }
-  nsView* GetReparentedView() { return mReparentedView; }
+  nsView* GetReparentedView() const { return mReparentedView; }
 
-  virtual PRBool IsZPlaceholderView() { return PR_TRUE; }
+  virtual PRBool IsZPlaceholderView() const { return PR_TRUE; }
 
 protected:
   virtual ~nsZPlaceholderView() {
@@ -186,10 +186,6 @@ public:
 
   NS_IMETHOD  GetDeviceContext(nsIDeviceContext *&aContext);
 
-  NS_IMETHOD  ShowQuality(PRBool aShow);
-  NS_IMETHOD  GetShowQuality(PRBool &aResult);
-  NS_IMETHOD  SetQuality(nsContentQuality aQuality);
-
   NS_IMETHOD  DisableRefresh(void);
   NS_IMETHOD  EnableRefresh(PRUint32 aUpdateFlags);
 
@@ -206,6 +202,7 @@ public:
 
   NS_IMETHOD GetWidgetForView(nsIView *aView, nsIWidget **aWidget);
   NS_IMETHOD GetWidget(nsIWidget **aWidget);
+  nsIWidget* GetWidget() { return mRootWindow; }
   NS_IMETHOD ForceUpdate();
  
   NS_IMETHOD IsCachingWidgetChanges(PRBool* aCaching);
@@ -216,7 +213,7 @@ public:
   NS_IMETHOD SetDefaultBackgroundColor(nscolor aColor);
   NS_IMETHOD GetDefaultBackgroundColor(nscolor* aColor);
   NS_IMETHOD GetLastUserEventTime(PRUint32& aTime);
-  nsresult ProcessInvalidateEvent();
+  void ProcessInvalidateEvent();
   static PRInt32 GetViewManagerCount();
   static const nsVoidArray* GetViewManagerArray();
   static PRUint32 gLastUserEventTime;
@@ -244,7 +241,6 @@ private:
   void ReparentWidgets(nsIView* aView, nsIView *aParent);
   nsIRenderingContext *CreateRenderingContext(nsView &aView);
   void AddRectToDirtyRegion(nsView* aView, const nsRect &aRect) const;
-  void UpdateTransCnt(nsView *oldview, nsView *newview);
 
   PRBool UpdateWidgetArea(nsView *aWidgetView, const nsRect &aDamagedRect, nsView* aIgnoreWidgetView);
 
@@ -253,12 +249,14 @@ private:
   void Refresh(nsView *aView, nsIRenderingContext *aContext,
                nsIRegion *region, PRUint32 aUpdateFlags);
   void DefaultRefresh(nsView* aView, const nsRect* aRect);
-  void RenderViews(nsView *aRootView, nsIRenderingContext& aRC, const nsRegion& aRegion,
-                   PRBool &aResult);
+  PRBool BuildRenderingDisplayList(nsIView* aRootView,
+    const nsRegion& aRegion, nsVoidArray* aDisplayList);
+  void RenderViews(nsView *aRootView, nsIRenderingContext& aRC,
+                   const nsRegion& aRegion, nsDrawingSurface aRCSurface,
+                   const nsVoidArray& aDisplayList);
 
   void RenderDisplayListElement(DisplayListElement2* element,
-                                nsIRenderingContext &aRC,
-                                BlendingBuffers* aBuffers);
+                                nsIRenderingContext* aRC);
 
   void PaintView(nsView *aView, nsIRenderingContext &aRC, nscoord x, nscoord y,
                  const nsRect &aDamageRect);
@@ -267,38 +265,44 @@ private:
   void InvalidateHorizontalBandDifference(nsView *aView, const nsRect& aRect, const nsRect& aCutOut,
                                           PRUint32 aUpdateFlags, nscoord aY1, nscoord aY2, PRBool aInCutOut);
 
-  BlendingBuffers* CreateBlendingBuffers(nsIRenderingContext *aRC,
-                                         PRBool aTranslucentWindow);
+  BlendingBuffers* CreateBlendingBuffers(nsIRenderingContext *aRC, PRBool aBorrowContext,
+                                         nsDrawingSurface aBorrowSurface, PRBool aNeedAlpha,
+                                         const nsRect& aArea);
 
   void ReparentViews(DisplayZTreeNode* aNode);
-  void BuildDisplayList(nsView* aView, const nsRect& aRect, PRBool aEventProcessing, PRBool aCaptured);
-  void BuildEventTargetList(nsAutoVoidArray &aTargets, nsView* aView, nsGUIEvent* aEvent, PRBool aCaptured);
+  void BuildDisplayList(nsView* aView, const nsRect& aRect, PRBool aEventProcessing,
+                        PRBool aCaptured, nsVoidArray* aDisplayList);
+  void BuildEventTargetList(nsVoidArray &aTargets, nsView* aView, nsGUIEvent* aEvent, PRBool aCaptured);
 
-  PRBool CreateDisplayList(nsView *aView, PRBool aReparentedViewsPresent, DisplayZTreeNode* &aResult, nscoord aOriginX, nscoord aOriginY,
-                           PRBool aInsideRealView, nsView *aRealView, const nsRect *aDamageRect,
-                           nsView *aTopView, nscoord aX, nscoord aY, PRBool aPaintFloaters, PRBool aEventProcessing);
-  PRBool AddToDisplayList(nsView *aView, DisplayZTreeNode* &aParent, nsRect &aClipRect,
-    nsRect& aDirtyRect, PRUint32 aFlags, nscoord aAbsX, nscoord aAbsY, PRBool aAssumeIntersection);
-  void ReapplyClipInstructions(PRBool aHaveClip, nsRect& aClipRect, PRInt32& aIndex);
-  nsresult OptimizeDisplayList(const nsRegion& aDirtyRegion,
-                               nsRect& aFinalTransparentRect, nsRegion& aOpaqueRgn);
-    // Remove redundant PUSH/POP_CLIP pairs.
-  void ComputeViewOffset(nsView *aView, nsPoint *aOrigin);
+  PRBool CreateDisplayList(nsView *aView,
+                           PRBool aReparentedViewsPresent, DisplayZTreeNode* &aResult,
+                           nscoord aOriginX, nscoord aOriginY,
+                           nsView *aRealView, const nsRect *aDamageRect,
+                           nsView *aTopView, nscoord aX, nscoord aY,
+                           PRBool aPaintFloats, PRBool aEventProcessing);
+  PRBool AddToDisplayList(nsView *aView,
+                          DisplayZTreeNode* &aParent, nsRect &aClipRect,
+                          nsRect& aDirtyRect, PRUint32 aFlags, nscoord aAbsX, nscoord aAbsY,
+                          PRBool aAssumeIntersection);
+  void OptimizeDisplayList(const nsVoidArray* aDisplayList, const nsRegion& aDirtyRegion,
+                           nsRect& aFinalTransparentRect, nsRegion& aOpaqueRgn,
+                           PRBool aTreatUniformAsOpaque);
 
   void AddCoveringWidgetsToOpaqueRegion(nsRegion &aRgn, nsIDeviceContext* aContext,
                                         nsView* aRootView);
 
   // Predicates
   PRBool DoesViewHaveNativeWidget(nsView* aView);
-  PRBool IsClipView(nsView* aView);
 
   void PauseTimer(void);
   void RestartTimer(void);
-  void OptimizeDisplayListClipping(PRBool aHaveClip, nsRect& aClipRect, PRInt32& aIndex,
+  void OptimizeDisplayListClipping(const nsVoidArray* aDisplayList, PRBool aHaveClip,
+                                   nsRect& aClipRect, PRInt32& aIndex,
                                    PRBool& aAnyRendered);
-#ifdef NS_DEBUG
-	void ShowDisplayList(PRInt32 flatlen);
-#endif
+  nsRect OptimizeTranslucentRegions(const nsVoidArray& aDisplayList,
+                                    PRInt32* aIndex, nsRegion* aOpaqueRegion);
+
+  void ShowDisplayList(const nsVoidArray* aDisplayList);
 
   // Utilities
 
@@ -369,13 +373,17 @@ public: // NOT in nsIViewManager, so private to the view module
 
   nsresult CreateRegion(nsIRegion* *result);
 
+  // return the sum of all view offsets from aView right up to the
+  // root of this view hierarchy (the view with no parent, which might
+  // not be in this view manager).
+  static nsPoint ComputeViewOffset(const nsView *aView);
+
 private:
   nsIDeviceContext  *mContext;
   float             mTwipsToPixels;
   float             mPixelsToTwips;
   nsIViewObserver   *mObserver;
   nsIWidget         *mRootWindow;
-  PRInt32           mTransCnt;
   PRBool            mRefreshEnabled;
   PRBool            mPainting;
   PRBool            mRecursiveRefreshPending;
@@ -383,10 +391,6 @@ private:
   nsView            *mKeyGrabber;
   PRInt32           mUpdateCnt;
   PRInt32           mUpdateBatchCnt;
-  PRInt32           mDisplayListCount;
-  nsAutoVoidArray   mDisplayList;
-  PRInt32           mTranslucentViewCount;
-  nsRect            mTranslucentArea;       // bounding box of all translucent views.
   nsIScrollableView *mRootScrollable;
   PRInt32           mCachingWidgetChanges;
   nscolor           mDefaultBackgroundColor;

@@ -49,6 +49,8 @@
 #include "nsIContent.h"
 #include "nsHashtable.h"
 #include "nsIXBLDocumentInfo.h"
+#include "nsCOMArray.h"
+#include "nsIURL.h"
 
 class nsIAtom;
 class nsIDocument;
@@ -73,9 +75,9 @@ public:
   already_AddRefed<nsIContent> GetBindingElement();
   void SetBindingElement(nsIContent* aElement);
 
-  nsresult GetBindingURI(nsCString& aResult);
-  nsresult GetDocURI(nsCString& aResult);
-  nsresult GetID(nsCString& aResult) { aResult = mID; return NS_OK; }
+  nsIURI* BindingURI() const { return mBindingURI; }
+  nsIURI* DocURI() const { return mXBLDocInfoWeak->DocumentURI(); }
+  nsresult GetID(nsACString& aResult) const { return mBindingURI->GetRef(aResult); }
 
   nsresult GetAllowScripts(PRBool* aResult);
 
@@ -109,20 +111,21 @@ public:
   void SetBasePrototype(nsXBLPrototypeBinding* aBinding);
   nsXBLPrototypeBinding* GetBasePrototype() { return mBaseBinding; }
 
-  already_AddRefed<nsIXBLDocumentInfo>
-  GetXBLDocumentInfo(nsIContent* aBoundElement);
+  nsIXBLDocumentInfo* XBLDocumentInfo() const { return mXBLDocInfoWeak; }
   
   PRBool HasBasePrototype() { return mHasBaseProto; }
   void SetHasBasePrototype(PRBool aHasBase) { mHasBaseProto = aHasBase; }
 
   void SetInitialAttributes(nsIContent* aBoundElement, nsIContent* aAnonymousContent);
 
-  already_AddRefed<nsISupportsArray> GetRuleProcessors();
-  already_AddRefed<nsISupportsArray> GetStyleSheets();
+  nsCOMArray<nsIStyleRuleProcessor>* GetRuleProcessors();
+  nsCOMArray<nsICSSStyleSheet>* GetStyleSheets();
 
   PRBool HasInsertionPoints() { return mInsertionPointTable != nsnull; }
   
-  PRBool HasStyleSheets() { return mResources && mResources->mStyleSheetList; }
+  PRBool HasStyleSheets() {
+    return mResources && mResources->mStyleSheetList.Count() > 0;
+  }
 
   nsresult FlushSkinSheets();
 
@@ -148,26 +151,28 @@ public:
 
   void Initialize();
 
+  const nsCOMArray<nsXBLKeyEventHandler>* GetKeyEventHandlers()
+  {
+    if (!mKeyHandlersRegistered) {
+      CreateKeyHandlers();
+      mKeyHandlersRegistered = PR_TRUE;
+    }
+
+    return &mKeyHandlers;
+  }
+
 public:
-  nsXBLPrototypeBinding(const nsACString& aRef, nsIXBLDocumentInfo* aInfo, nsIContent* aElement);
+  nsXBLPrototypeBinding();
   ~nsXBLPrototypeBinding();
 
-  nsrefcnt AddRef() {
-    ++mRefCnt;
-    NS_LOG_ADDREF(this, mRefCnt, "nsXBLPrototypeBinding", sizeof(nsXBLPrototypeBinding));
-    return mRefCnt;
-  }
-
-  nsrefcnt Release() {
-    --mRefCnt;
-    NS_LOG_RELEASE(this, mRefCnt, "nsXBLPrototypeBinding");
-    if (mRefCnt == 0) {
-      delete this;
-      return 0;
-    }
-    return mRefCnt;
-  }
-
+  // Init must be called after construction to initialize the prototype
+  // binding.  It may well throw errors (eg on out-of-memory).  Do not confuse
+  // this with the Initialize() method, which must be called after the
+  // binding's handlers, properties, etc are all set.
+  nsresult Init(const nsACString& aRef,
+                nsIXBLDocumentInfo* aInfo,
+                nsIContent* aElement);
+  
 // Static members
   static PRUint32 gRefCnt;
  
@@ -187,6 +192,7 @@ protected:
   void ConstructInsertionTable(nsIContent* aElement);
   void GetNestedChildren(nsIAtom* aTag, nsIContent* aContent,
                          nsISupportsArray** aList);
+  void CreateKeyHandlers();
 
 protected:
   // Internal helper class for managing our IID table.
@@ -214,10 +220,9 @@ protected:
 
 // MEMBER VARIABLES
 protected:
-  char* mID;
-
+  nsCOMPtr<nsIURL> mBindingURI;
   nsCOMPtr<nsIContent> mBinding; // Strong. We own a ref to our content element in the binding doc.
-  nsXBLPrototypeHandler* mPrototypeHandler; // Strong. DocInfo owns us, and we own the handlers.
+  nsAutoPtr<nsXBLPrototypeHandler> mPrototypeHandler; // Strong. DocInfo owns us, and we own the handlers.
   
   nsXBLProtoImpl* mImplementation; // Our prototype implementation (includes methods, properties, fields,
                                    // the constructor, and the destructor).
@@ -225,10 +230,11 @@ protected:
   nsXBLPrototypeBinding* mBaseBinding; // Weak.  The docinfo will own our base binding.
   PRPackedBool mInheritStyle;
   PRPackedBool mHasBaseProto;
+  PRPackedBool mKeyHandlersRegistered;
  
   nsXBLPrototypeResources* mResources; // If we have any resources, this will be non-null.
                                       
-  nsWeakPtr mXBLDocInfoWeak; // A pointer back to our doc info.  Weak, since it owns us.
+  nsIXBLDocumentInfo* mXBLDocInfoWeak; // A pointer back to our doc info.  Weak, since it owns us.
 
   nsObjectHashtable* mAttributeTable; // A table for attribute entries.  Used to efficiently
                                       // handle attribute changes.
@@ -242,6 +248,8 @@ protected:
   nsCOMPtr<nsIAtom> mBaseTag;  // be stored in here.
 
   nsAutoRefCnt mRefCnt;
+
+  nsCOMArray<nsXBLKeyEventHandler> mKeyHandlers;
 };
 
 #endif

@@ -42,7 +42,6 @@
 #include "nsIEventListenerManager.h"
 #include "jsapi.h"
 #include "nsCOMPtr.h"
-#include "nsIPrincipal.h"
 #include "nsIDOMEventReceiver.h"
 #include "nsIDOM3EventTarget.h"
 #include "nsHashtable.h"
@@ -124,8 +123,7 @@ public:
                                        const nsAString& type,
                                        PRInt32 aFlags,
                                        nsIDOMEventGroup* aEvtGroup);
-  NS_IMETHOD AddScriptEventListener(nsIScriptContext *aContext,
-                                    nsISupports *aObject,
+  NS_IMETHOD AddScriptEventListener(nsISupports *aObject,
                                     nsIAtom *aName,
                                     const nsAString& aFunc,
                                     PRBool aDeferCompilation); 
@@ -217,19 +215,23 @@ protected:
   nsresult FlipCaptureBit(PRInt32 aEventTypes, PRBool aInitCapture);
   nsVoidArray* GetListenersByType(EventArrayType aType, nsHashKey* aKey, PRBool aCreate);
   EventArrayType GetTypeForIID(const nsIID& aIID);
+  nsresult FixContextMenuEvent(nsIPresContext* aPresContext,
+                               nsIDOMEventTarget* aCurrentTarget,
+                               nsEvent* aEvent,
+                               nsIDOMEvent** aDOMEvent);
   void GetCoordinatesFor(nsIDOMElement *aCurrentEl, nsIPresContext *aPresContext,
                          nsIPresShell *aPresShell, nsPoint& aTargetPt);
   nsresult GetDOM2EventGroup(nsIDOMEventGroup** aGroup);
 
   PRUint8 mManagerType;
+  PRPackedBool mListenersRemoved;
+
   EventArrayType mSingleListenerType;
   nsVoidArray* mSingleListener;
   nsVoidArray* mMultiListeners;
   nsHashtable* mGenericListeners;
-  PRBool mListenersRemoved;
   static PRUint32 mInstanceCount;
 
-  nsCOMPtr<nsIPrincipal> mPrincipal;
   nsISupports* mTarget;  //WEAK
 
   static jsval sAddListenerID;
@@ -274,6 +276,7 @@ protected:
 #define NS_EVENT_BITS_COMPOSITION_START     0x01
 #define NS_EVENT_BITS_COMPOSITION_END		0x02
 #define NS_EVENT_BITS_COMPOSITION_QUERY		0x04
+#define NS_EVENT_BITS_COMPOSITION_RECONVERSION 0x08
 
 //nsIDOMFocusListener
 #define NS_EVENT_BITS_FOCUS_NONE    0x00
@@ -289,11 +292,12 @@ protected:
 #define NS_EVENT_BITS_FORM_INPUT    0x10
 
 //nsIDOMLoadListener
-#define NS_EVENT_BITS_LOAD_NONE     0x00
-#define NS_EVENT_BITS_LOAD_LOAD     0x01
-#define NS_EVENT_BITS_LOAD_UNLOAD   0x02
-#define NS_EVENT_BITS_LOAD_ABORT    0x04
-#define NS_EVENT_BITS_LOAD_ERROR    0x08
+#define NS_EVENT_BITS_LOAD_NONE              0x00
+#define NS_EVENT_BITS_LOAD_LOAD              0x01
+#define NS_EVENT_BITS_LOAD_UNLOAD            0x02
+#define NS_EVENT_BITS_LOAD_ABORT             0x04
+#define NS_EVENT_BITS_LOAD_ERROR             0x08
+#define NS_EVENT_BITS_LOAD_BEFORE_UNLOAD     0x10
 
 //nsIDOMXULListener
 #define NS_EVENT_BITS_XUL_NONE               0x00

@@ -38,8 +38,8 @@
 #define nsIFrameDebug_h___
 
 #include "nsISupports.h"
+#include "nsIFrame.h"
 
-class nsIFrame;
 class nsIPresContext;
 struct PRLogModuleInfo;
 
@@ -63,9 +63,13 @@ public:
   static void RootFrameList(nsIPresContext* aPresContext, FILE* out, PRInt32 aIndent);
   /**
    * Get a printable from of the name of the frame type.
-   * XXX This should be eliminated and we use GetFrameType() instead...
+   * XXX This should be eliminated and we use GetType() instead...
    */
   NS_IMETHOD  GetFrameName(nsAString& aResult) const = 0;
+  /**
+   * Return the state bits that are relevant to regression tests (that is, those bits which indicate a real difference when they differ
+   */
+  NS_IMETHOD_(nsFrameState)  GetDebugStateBits() const = 0;
   /**
    * Called to dump out regression data that describes the layout
    * of the frame and it's children, and so on. The format of the

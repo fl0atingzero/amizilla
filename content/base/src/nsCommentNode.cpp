@@ -63,14 +63,14 @@ public:
   // Empty interface
 
   // nsIContent
-  NS_IMETHOD GetTag(nsIAtom** aResult) const;
+  virtual nsIAtom *Tag() const;
 
 #ifdef DEBUG
-  NS_IMETHOD List(FILE* out, PRInt32 aIndent) const;
-  NS_IMETHOD DumpContent(FILE* out = stdout, PRInt32 aIndent = 0,
-                         PRBool aDumpAll = PR_TRUE) const
+  virtual void List(FILE* out, PRInt32 aIndent) const;
+  virtual void DumpContent(FILE* out = stdout, PRInt32 aIndent = 0,
+                           PRBool aDumpAll = PR_TRUE) const
   {
-    return NS_OK;
+    return;
   }
 #endif
 
@@ -112,12 +112,10 @@ NS_IMPL_ADDREF_INHERITED(nsCommentNode, nsGenericDOMDataNode)
 NS_IMPL_RELEASE_INHERITED(nsCommentNode, nsGenericDOMDataNode)
 
 
-NS_IMETHODIMP
-nsCommentNode::GetTag(nsIAtom** aResult) const
+nsIAtom *
+nsCommentNode::Tag() const
 {
-  NS_ADDREF(*aResult = nsLayoutAtoms::commentTagName);
-
-  return NS_OK;
+  return nsLayoutAtoms::commentTagName;
 }
 
 NS_IMETHODIMP
@@ -125,6 +123,18 @@ nsCommentNode::GetNodeName(nsAString& aNodeName)
 {
   aNodeName.Assign(NS_LITERAL_STRING("#comment"));
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsCommentNode::GetNodeValue(nsAString& aNodeValue)
+{
+  return nsGenericDOMDataNode::GetNodeValue(aNodeValue);
+}
+
+NS_IMETHODIMP
+nsCommentNode::SetNodeValue(const nsAString& aNodeValue)
+{
+  return nsGenericDOMDataNode::SetNodeValue(aNodeValue);
 }
 
 NS_IMETHODIMP
@@ -163,7 +173,7 @@ nsCommentNode::CloneContent(PRBool aCloneText, nsITextContent** aReturn)
 }
 
 #ifdef DEBUG
-NS_IMETHODIMP
+void
 nsCommentNode::List(FILE* out, PRInt32 aIndent) const
 {
   NS_PRECONDITION(mDocument, "bad content");
@@ -178,6 +188,5 @@ nsCommentNode::List(FILE* out, PRInt32 aIndent) const
   fputs(NS_LossyConvertUCS2toASCII(tmp).get(), out);
 
   fputs("-->\n", out);
-  return NS_OK;
 }
 #endif

@@ -39,6 +39,7 @@
 
 #include "nsCOMPtr.h"
 #include "nsXBLPrototypeHandler.h"
+#include "nsXBLPrototypeBinding.h"
 #include "nsIContent.h"
 #include "nsIAtom.h"
 #include "nsIDOMKeyEvent.h"
@@ -80,6 +81,7 @@
 #include "nsUnicharUtils.h"
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
+#include "nsXBLEventHandler.h"
 
 static NS_DEFINE_CID(kDOMScriptObjectFactoryCID,
                      NS_DOM_SCRIPT_OBJECT_FACTORY_CID);
@@ -104,9 +106,12 @@ nsXBLPrototypeHandler::nsXBLPrototypeHandler(const PRUnichar* aEvent,
                                              const PRUnichar* aModifiers,
                                              const PRUnichar* aButton,
                                              const PRUnichar* aClickCount,
-                                             const PRUnichar* aPreventDefault)
+                                             const PRUnichar* aPreventDefault,
+                                             nsXBLPrototypeBinding* aBinding)
   : mHandlerText(nsnull),
-    mNextHandler(nsnull)
+    mLineNumber(0),
+    mNextHandler(nsnull),
+    mPrototypeBinding(aBinding)
 {
   ++gRefCnt;
   if (gRefCnt == 1)
@@ -119,7 +124,9 @@ nsXBLPrototypeHandler::nsXBLPrototypeHandler(const PRUnichar* aEvent,
 }
 
 nsXBLPrototypeHandler::nsXBLPrototypeHandler(nsIContent* aHandlerElement)
-  : mNextHandler(nsnull)
+  : mLineNumber(0),
+    mNextHandler(nsnull),
+    mPrototypeBinding(nsnull)
 {
   ++gRefCnt;
   if (gRefCnt == 1)
@@ -265,7 +272,7 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
         nsCOMPtr<nsIContent> elt(do_QueryInterface(aReceiver));
         nsCOMPtr<nsIDocument> doc;
         if (elt)
-          elt->GetDocument(getter_AddRefs(doc));
+          doc = elt->GetDocument();
 
         if (!doc)
           doc = do_QueryInterface(aReceiver);
@@ -273,16 +280,13 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
         if (!doc)
           return NS_ERROR_FAILURE;
 
-        nsCOMPtr<nsIScriptGlobalObject> globalObject;
-        doc->GetScriptGlobalObject(getter_AddRefs(globalObject));
-        privateWindow = do_QueryInterface(globalObject);
+        privateWindow = do_QueryInterface(doc->GetScriptGlobalObject());
       }
 
       privateWindow->GetRootFocusController(getter_AddRefs(focusController));
     }
 
-    nsCAutoString command;
-    command.AssignWithConversion(mHandlerText);
+    NS_LossyConvertUCS2toASCII command(mHandlerText);
     if (focusController)
       focusController->GetControllerForCommand(command.get(), getter_AddRefs(controller));
     else
@@ -378,12 +382,12 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
       nsCOMPtr<nsIContent> content(do_QueryInterface(aReceiver));
       if (!content)
         return NS_OK;
-      content->GetDocument(getter_AddRefs(boundDocument));
+      boundDocument = content->GetDocument();
       if (!boundDocument)
         return NS_OK;
     }
 
-    boundDocument->GetScriptGlobalObject(getter_AddRefs(boundGlobal));
+    boundGlobal = boundDocument->GetScriptGlobalObject();
   }
 
   // If we still don't have a 'boundGlobal', we're doomed. bug 95465.
@@ -391,11 +395,14 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
   if (!boundGlobal)
     return NS_OK;
 
-  nsCOMPtr<nsIScriptContext> boundContext;
-  boundGlobal->GetContext(getter_AddRefs(boundContext));
+  nsIScriptContext *boundContext = boundGlobal->GetContext();
   if (!boundContext) return NS_OK;
 
   JSObject* scriptObject = nsnull;
+
+  // strong ref to a GC root we'll need to protect scriptObject in the case
+  // where it is not the global object (!winRoot).
+  nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
 
   if (winRoot) {
     scriptObject = boundGlobal->GetGlobalJSObject();
@@ -404,9 +411,6 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
     JSContext *cx = (JSContext *)boundContext->GetNativeContext();
 
     nsCOMPtr<nsIXPConnect> xpc(do_GetService(nsIXPConnect::GetCID(), &rv));
-
-    // root
-    nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
 
     // XXX: Don't use the global object!
     rv = xpc->WrapNative(cx, global, aReceiver, NS_GET_IID(nsISupports),
@@ -419,12 +423,20 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
 
   if (isXULKey)
     boundContext->CompileEventHandler(scriptObject, onEventAtom, xulText,
+                                      nsnull, 0,
                                       PR_TRUE, &handler);
   else {
     nsDependentString handlerText(mHandlerText);
     if (handlerText.IsEmpty())
       return NS_ERROR_FAILURE;
+    
+    nsCAutoString bindingURI;
+    if (mPrototypeBinding)
+      mPrototypeBinding->DocURI()->GetSpec(bindingURI);
+    
     boundContext->CompileEventHandler(scriptObject, onEventAtom, handlerText,
+                                      bindingURI.get(),
+                                      mLineNumber,
                                       PR_TRUE, &handler);
   }
 
@@ -461,15 +473,7 @@ nsresult
 nsXBLPrototypeHandler::BindingAttached(nsIDOMEventReceiver* aReceiver)
 {
   nsresult ret;
-  nsMouseEvent event;
-  event.eventStructType = NS_EVENT;
-  event.message = NS_XUL_COMMAND;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_COMMAND);
 
   nsCOMPtr<nsIEventListenerManager> listenerManager;
   if (NS_FAILED(ret = aReceiver->GetListenerManager(getter_AddRefs(listenerManager)))) {
@@ -501,15 +505,7 @@ nsresult
 nsXBLPrototypeHandler::BindingDetached(nsIDOMEventReceiver* aReceiver)
 {
   nsresult ret;
-  nsMouseEvent event;
-  event.eventStructType = NS_EVENT;
-  event.message = NS_XUL_COMMAND;
-  event.isShift = PR_FALSE;
-  event.isControl = PR_FALSE;
-  event.isAlt = PR_FALSE;
-  event.isMeta = PR_FALSE;
-  event.clickCount = 0;
-  event.widget = nsnull;
+  nsMouseEvent event(NS_XUL_COMMAND);
 
   nsCOMPtr<nsIEventListenerManager> listenerManager;
   if (NS_FAILED(ret = aReceiver->GetListenerManager(getter_AddRefs(listenerManager)))) {
@@ -578,13 +574,9 @@ nsXBLPrototypeHandler::GetController(nsIDOMEventReceiver* aReceiver)
   return controller;
 }
 
-
 PRBool
-nsXBLPrototypeHandler::KeyEventMatched(nsIAtom* aEventType, nsIDOMKeyEvent* aKeyEvent)
+nsXBLPrototypeHandler::KeyEventMatched(nsIDOMKeyEvent* aKeyEvent)
 {
-  if (aEventType != mEventName.get())
-    return PR_FALSE;
-
   if (mDetail == -1 && mMisc == 0 && mKeyMask == 0)
     return PR_TRUE; // No filters set up. It's generic.
 
@@ -609,11 +601,8 @@ nsXBLPrototypeHandler::KeyEventMatched(nsIAtom* aEventType, nsIDOMKeyEvent* aKey
 }
 
 PRBool
-nsXBLPrototypeHandler::MouseEventMatched(nsIAtom* aEventType, nsIDOMMouseEvent* aMouseEvent)
+nsXBLPrototypeHandler::MouseEventMatched(nsIDOMMouseEvent* aMouseEvent)
 {
-  if (aEventType != mEventName.get())
-    return PR_FALSE;
-
   if (mDetail == -1 && mMisc == 0 && mKeyMask == 0)
     return PR_TRUE; // No filters set up. It's generic.
 
@@ -963,27 +952,4 @@ nsXBLPrototypeHandler::ModifiersMatchMask(nsIDOMUIEvent* aEvent,
   }
 
   return PR_TRUE;
-}
-
-
-nsresult
-nsXBLPrototypeHandler::GetTextData(nsIContent *aParent, nsString& aResult)
-{
-  aResult.Truncate(0);
-
-  nsCOMPtr<nsIContent> textChild;
-  PRInt32 textCount;
-  aParent->ChildCount(textCount);
-  nsAutoString answer;
-  for (PRInt32 j = 0; j < textCount; j++) {
-    // Get the child.
-    aParent->ChildAt(j, getter_AddRefs(textChild));
-    nsCOMPtr<nsIDOMText> text(do_QueryInterface(textChild));
-    if (text) {
-      nsAutoString data;
-      text->GetData(data);
-      aResult += data;
-    }
-  }
-  return NS_OK;
 }

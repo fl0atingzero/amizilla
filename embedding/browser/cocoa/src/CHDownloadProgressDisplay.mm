@@ -57,7 +57,6 @@ CHDownloader::CHDownloader(DownloadControllerFactory* inControllerFactory)
 , mDownloadDisplay(nil)
 , mIsFileSave(PR_FALSE)
 {
-  NS_INIT_ISUPPORTS();
   [mControllerFactory retain];
 }
 
@@ -66,7 +65,7 @@ CHDownloader::~CHDownloader()
   [mControllerFactory release];
 }
 
-NS_IMPL_ISUPPORTS1(CHDownloader, nsISupports);
+NS_IMPL_ISUPPORTS1(CHDownloader, nsISupports)
 
 void
 CHDownloader::CreateDownloadDisplay()

@@ -4,9 +4,10 @@
 <?xml-stylesheet href="chrome://global/skin" type="text/css"?>
 
 <?xul-overlay href="chrome://global/content/globalOverlay.xul"?>
-<?xul-overlay href="chrome://communicator/content/contentAreaContextOverlay.xul"?>
+<?xul-overlay href="chrome://help/content/helpContextOverlay.xul"?>
 <?xul-overlay href="chrome://communicator/content/utilityOverlay.xul"?>
 <?xul-overlay href="chrome://navigator/content/platformNavigationBindings.xul"?>
+<?xul-overlay href="chrome://communicator/content/viewZoomOverlay.xul"?>
 
 <!DOCTYPE window [
 <!ENTITY % brandDTD SYSTEM "chrome://global/locale/brand.dtd" >
@@ -21,25 +22,21 @@
 <window id="help"
    windowtype="mozilla:help"
    xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
-   width="640"
-   height="550"
+   width="480"
+   height="360"
    persist="width height screenX screenY"
-   onload="init();" >
+   onload="init();"
+   onunload="window.XULBrowserWindow.destroy();">
 
   <script type="application/x-javascript" src="chrome://help/content/help.js"/>
   <script type="application/x-javascript" src="chrome://navigator/content/sessionHistoryUI.js"/>
-  <script type="application/x-javascript" src="chrome://global/content/nsDragAndDrop.js"/>
-  <script type="application/x-javascript" src="chrome://communicator/content/contentAreaDD.js"/>
-  <script type="application/x-javascript" src="chrome://global/content/nsTransferable.js"/>
-  <script type="application/x-javascript" src="chrome://communicator/content/contentAreaClick.js"/>
-  <script type="application/x-javascript" src="chrome://communicator/content/bookmarks/bookmarks.js"/>
   <script type="application/x-javascript" src="chrome://communicator/content/findUtils.js"/>
 
   <menupopup id="backMenu" position="after_start"
      onpopupshowing="return createBackMenu(event);" oncommand="gotoHistoryIndex(event);"/>
   <menupopup id="forwardMenu" position="after_start"
      onpopupshowing="return createForwardMenu(event);" oncommand="gotoHistoryIndex(event);"/>
-  <popupset id="contentAreaContextSet"/>
+  <popupset id="helpContextSet"/>
   <broadcasterset id="helpBroadcasters">
     <broadcaster id="canGoBack"    disabled="true"/>
     <broadcaster id="canGoForward" disabled="true"/>
@@ -80,6 +77,8 @@
         oncommand="BrowserViewSource();" modifiers="accel"/>
     <key id="key_viewInfo" key="&pageInfoCmd.commandkey;"
         oncommand="BrowserPageInfo();"   modifiers="accel"/>
+    <key id="key_viewNextHelpPanel" keycode="VK_TAB" oncommand="showRelativePanel(true);" modifiers="control"/>
+    <key id="key_viewPrevHelpPanel" keycode="VK_TAB" oncommand="showRelativePanel(false);" modifiers="control,shift"/>
   </keyset>
   <stringbundle id="bundle_viewZoom"/>
   <stringbundle id="findBundle" src="chrome://global/locale/finddialog.properties"/>
@@ -115,6 +114,10 @@
         <toolbarbutton id="print" class="toolbarbutton-1"
           label="&printButton.label;" oncommand="print();"
           tooltiptext="&printButton.tooltip;"/>
+
+        <hbox id="throbber-box" align="center">
+          <button id="navigator-throbber" oncommand="goHome();" tooltiptext="&helpThrobber.tooltip;"/>
+        </hbox>
       </toolbar>
     </toolbox>
 
@@ -123,9 +126,10 @@
       <vbox id="helpsidebar-box" persist="width">
 
          <!-- glossary panel -->
-         <button id="help-glossary-btn" class="box-texttab texttab-sidebar"
-            label="&glossarytab.label;" oncommand="showPanel('help-glossary-tree')"/>
-         <tree id="help-glossary-tree" flex="1" hidecolumnpicker="true" hidden="true"
+         <button id="help-glossary-btn" class="box-texttab"
+            label="&glossarytab.label;" oncommand="showPanel('help-glossary')"
+            accesskey="&glossarytab.accesskey;"/>
+         <tree id="help-glossary-panel" flex="1" hidecolumnpicker="true" hidden="true"
                datasources="rdf:null"
                containment="http://home.netscape.com/NC-rdf#subheadings"
                ref="urn:root"
@@ -134,7 +138,7 @@
         <template>
           <rule>
           <conditions>
-            <treeitem uri="?uri"/>
+            <content uri="?uri"/>
             <triple subject="?uri"
               predicate="http://home.netscape.com/NC-rdf#subheadings"
               object="?subheadings" />
@@ -170,10 +174,11 @@
          </tree>
 
 	 <!-- index panel -->
-         <button id="help-index-btn" class="box-texttab texttab-sidebar"
-            label="&indextab.label;"  oncommand="showPanel('help-index-tree');displayIndex();"/>
+         <button id="help-index-btn" class="box-texttab"
+            label="&indextab.label;"  oncommand="showPanel('help-index');displayIndex();"
+            accesskey="&indextab.accesskey;"/>
 
-         <tree id="help-index-tree" flex="1"
+         <tree id="help-index-panel" flex="1"
                datasources="rdf:null" hidecolumnpicker="true" hidden="true"
                containment="http://home.netscape.com/NC-rdf#subheadings"
                ref="urn:root"
@@ -182,7 +187,7 @@
         <template>
           <rule>
           <conditions>
-            <treeitem uri="?uri"/>
+            <content uri="?uri"/>
             <triple subject="?uri"
               predicate="http://home.netscape.com/NC-rdf#subheadings"
               object="?subheadings" />
@@ -221,8 +226,9 @@
          </tree>
 
      <!-- search panel -->
-     <button id="help-search-btn" class="box-texttab texttab-sidebar"
-             label="&searchtab.label;" oncommand="showPanel('help-search-panel')"/>
+     <button id="help-search-btn" class="box-texttab"
+             label="&searchtab.label;" oncommand="showPanel('help-search')"
+             accesskey="&searchtab.accesskey;"/>
 
              <vbox id="help-search-panel" hidden="true" flex="1">
                 <hbox align="center">
@@ -243,7 +249,7 @@
             <template>
               <rule>
                 <conditions>
-                  <treeitem uri="?uri"/>
+                  <content uri="?uri"/>
                   <member container="?uri" child="?subheading" />
                 </conditions>
 
@@ -280,9 +286,10 @@
        </vbox>
 
        <!-- table of contents panel -->
-       <button id="help-toc-btn" class="box-texttab texttab-sidebar"
-          label="&toctab.label;" oncommand="showPanel('help-toc-tree')"/>
-          <tree id="help-toc-tree" flex="1"  hidecolumnpicker="true"
+       <button id="help-toc-btn" class="box-texttab"
+          label="&toctab.label;" oncommand="showPanel('help-toc')"
+          accesskey="&toctab.accesskey;"/>
+          <tree id="help-toc-panel" flex="1"  hidecolumnpicker="true"
                 datasources="rdf:null"
                 containment="http://home.netscape.com/NC-rdf#subheadings"
                 ref="urn:root"
@@ -291,7 +298,7 @@
           <template>
             <rule>
               <conditions>
-               <treeitem uri="?uri"/>
+               <content uri="?uri"/>
                <triple subject="?uri"
                  predicate="http://home.netscape.com/NC-rdf#subheadings"
                  object="?subheadings" />
@@ -343,10 +350,8 @@
         <hbox id="browser" flex="1">
           <!-- type attribute is used by frame construction to locate iframes
                intended to hold (html) content -->
-          <browser context="contentAreaContextMenu" type="content-primary" id="help-content"
-              src="about:blank" flex="1"
-              ondraggesture="nsDragAndDrop.startDrag(event, contentAreaDNDObserver);"
-              onclick="return contentAreaClick(event);"/>
+          <browser context="helpContextMenu" type="content-primary" id="help-content"
+              src="about:blank" flex="1"/>
         </hbox>
       </vbox>
     </hbox>

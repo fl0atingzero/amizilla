@@ -205,7 +205,7 @@ NS_IMETHODIMP nsMsgHdr::GetFlags(PRUint32 *result)
   else
     *result = m_flags;
 #ifdef DEBUG_bienvenu
-  NS_ASSERTION(! (m_flags & MSG_FLAG_ELIDED), "shouldn't be set in db");
+  NS_ASSERTION(! (*result & (MSG_FLAG_ELIDED | MSG_FLAG_IGNORED)), "shouldn't be set in db");
 #endif
   return NS_OK;
 }
@@ -213,7 +213,7 @@ NS_IMETHODIMP nsMsgHdr::GetFlags(PRUint32 *result)
 NS_IMETHODIMP nsMsgHdr::SetFlags(PRUint32 flags)
 {
 #ifdef DEBUG_bienvenu
-  NS_ASSERTION(! (m_flags & MSG_FLAG_ELIDED), "shouldn't set this flag on db");
+  NS_ASSERTION(! (flags & (MSG_FLAG_ELIDED | MSG_FLAG_IGNORED)), "shouldn't set this flag on db");
 #endif
   m_flags = flags;
   // don't write out MSG_FLAG_NEW to MDB.
@@ -223,6 +223,8 @@ NS_IMETHODIMP nsMsgHdr::SetFlags(PRUint32 flags)
 
 NS_IMETHODIMP nsMsgHdr::OrFlags(PRUint32 flags, PRUint32 *result)
 {
+  if (!(m_initedValues & FLAGS_INITED))
+    InitFlags();
   if ((m_flags & flags) != flags)
     SetFlags (m_flags | flags);
   *result = m_flags;
@@ -231,6 +233,8 @@ NS_IMETHODIMP nsMsgHdr::OrFlags(PRUint32 flags, PRUint32 *result)
 
 NS_IMETHODIMP nsMsgHdr::AndFlags(PRUint32 flags, PRUint32 *result)
 {
+  if (!(m_initedValues & FLAGS_INITED))
+    InitFlags();
   if ((m_flags & flags) != m_flags)
     SetFlags (m_flags & flags);
   *result = m_flags;
@@ -361,6 +365,11 @@ NS_IMETHODIMP nsMsgHdr::GetDate(PRTime *result)
   
   *result = m_date;
   return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgHdr::GetDateInSeconds(PRUint32 *aResult)
+{
+  return GetUInt32Column(m_mdb->m_dateColumnToken, aResult);
 }
 
 NS_IMETHODIMP nsMsgHdr::SetMessageId(const char *messageId)
@@ -506,49 +515,49 @@ NS_IMETHODIMP nsMsgHdr::SetOfflineMessageSize(PRUint32 messageSize)
 
 NS_IMETHODIMP nsMsgHdr::SetLineCount(PRUint32 lineCount)
 {
-	SetUInt32Column(lineCount, m_mdb->m_numLinesColumnToken);
-    return NS_OK;
+  SetUInt32Column(lineCount, m_mdb->m_numLinesColumnToken);
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgHdr::SetStatusOffset(PRUint32 statusOffset)
 {
-	return SetUInt32Column(statusOffset, m_mdb->m_statusOffsetColumnToken);
+  return SetUInt32Column(statusOffset, m_mdb->m_statusOffsetColumnToken);
 }
 
 NS_IMETHODIMP nsMsgHdr::SetDate(PRTime date)
 {
-	m_date = date;
-	PRUint32 seconds;
-	nsMsgDatabase::PRTime2Seconds(date, &seconds);
-    return SetUInt32Column((PRUint32) seconds, m_mdb->m_dateColumnToken);
+  m_date = date;
+  PRUint32 seconds;
+  nsMsgDatabase::PRTime2Seconds(date, &seconds);
+  return SetUInt32Column((PRUint32) seconds, m_mdb->m_dateColumnToken);
 }
 
 NS_IMETHODIMP nsMsgHdr::GetStatusOffset(PRUint32 *result)
 {
-	PRUint32 offset = 0;
-	nsresult res = GetUInt32Column(m_mdb->m_statusOffsetColumnToken, &offset);
+  PRUint32 offset = 0;
+  nsresult res = GetUInt32Column(m_mdb->m_statusOffsetColumnToken, &offset);
 
-	*result = offset;
-    return res;
+  *result = offset;
+  return res;
 }
 
 NS_IMETHODIMP nsMsgHdr::SetPriority(nsMsgPriorityValue priority)
 {
-	SetUInt32Column((PRUint32) priority, m_mdb->m_priorityColumnToken);
-	return NS_OK;
+  SetUInt32Column((PRUint32) priority, m_mdb->m_priorityColumnToken);
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgHdr::GetPriority(nsMsgPriorityValue *result)
 {
-	if (!result)
-	    return NS_ERROR_NULL_POINTER;
-
-	PRUint32 priority = 0;
-	nsresult rv = GetUInt32Column(m_mdb->m_priorityColumnToken, &priority);
-    if (NS_FAILED(rv)) return rv;
-    
-	*result = (nsMsgPriorityValue) priority;
-	return NS_OK;
+  if (!result)
+    return NS_ERROR_NULL_POINTER;
+  
+  PRUint32 priority = 0;
+  nsresult rv = GetUInt32Column(m_mdb->m_priorityColumnToken, &priority);
+  if (NS_FAILED(rv)) return rv;
+  
+  *result = (nsMsgPriorityValue) priority;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgHdr::SetLabel(nsMsgLabelValue label)
@@ -592,11 +601,11 @@ NS_IMETHODIMP nsMsgHdr::SetMessageOffset(PRUint32 offset)
 
 NS_IMETHODIMP nsMsgHdr::GetMessageSize(PRUint32 *result)
 {
-	PRUint32 size;
-	nsresult res = GetUInt32Column(m_mdb->m_messageSizeColumnToken, &size);
+  PRUint32 size;
+  nsresult res = GetUInt32Column(m_mdb->m_messageSizeColumnToken, &size);
 
-	*result = size;
-	return res;
+  *result = size;
+  return res;
 }
 
 NS_IMETHODIMP nsMsgHdr::GetLineCount(PRUint32 *result)

@@ -48,11 +48,12 @@
 #include "nsLocaleCID.h"
 #include "nsReadableUtils.h"
 #include "nsPlatformCharset.h"
+#include "nsEncoderDecoderUtils.h"
 
 static nsURLProperties *gInfo = nsnull;
 static PRInt32 gCnt = 0;
 
-NS_IMPL_ISUPPORTS1(nsPlatformCharset, nsIPlatformCharset);
+NS_IMPL_ISUPPORTS1(nsPlatformCharset, nsIPlatformCharset)
 
 nsPlatformCharset::nsPlatformCharset()
 {
@@ -71,7 +72,7 @@ nsresult nsPlatformCharset::InitInfo()
 {  
   // load the .property file if necessary
   if (gInfo == nsnull) {
-    nsURLProperties *info = new nsURLProperties( NS_LITERAL_CSTRING("resource:/res/maccharset.properties") );
+    nsURLProperties *info = new nsURLProperties( NS_LITERAL_CSTRING("resource://gre/res/maccharset.properties") );
     NS_ASSERTION(info , "cannot open properties file");
     NS_ENSURE_TRUE(info, NS_ERROR_FAILURE);
     gInfo = info;
@@ -153,25 +154,24 @@ nsPlatformCharset::GetCharset(nsPlatformCharsetSel selector, nsACString& oResult
 }
 
 NS_IMETHODIMP 
-nsPlatformCharset::GetDefaultCharsetForLocale(const PRUnichar* localeName, PRUnichar** _retValue)
+nsPlatformCharset::GetDefaultCharsetForLocale(const nsAString& localeName, nsACString &oResult)
 {
-  nsCOMPtr<nsIMacLocale>	pMacLocale;
-  nsAutoString localeAsString(localeName);
-  nsCAutoString charset(NS_LITERAL_CSTRING("x-mac-roman"));
-  short script, language, region;
-	
   nsresult rv;
+  nsCOMPtr<nsIMacLocale> pMacLocale;
   pMacLocale = do_CreateInstance(NS_MACLOCALE_CONTRACTID, &rv);
   if (NS_SUCCEEDED(rv)) {
-    rv = pMacLocale->GetPlatformLocale(&localeAsString, &script, &language, &region);
+    short script, language, region;
+    rv = pMacLocale->GetPlatformLocale(localeName, &script, &language, &region);
     if (NS_SUCCEEDED(rv)) {
-      rv = MapToCharset(script, region, charset);
+      if (NS_SUCCEEDED(MapToCharset(script, region, oResult))) {
+        return NS_OK;
+      }
     }
   }
-  *_retValue = ToNewUnicode(charset);
-  NS_ENSURE_TRUE(*_retValue, NS_ERROR_OUT_OF_MEMORY);
-  
-  return rv;
+
+  // fallback 
+  oResult.Assign(NS_LITERAL_CSTRING("x-mac-roman"));
+  return NS_SUCCESS_USING_FALLBACK_LOCALE;
 }
 
 NS_IMETHODIMP 
@@ -193,7 +193,7 @@ nsPlatformCharset::InitGetCharset(nsACString &oString)
 }
 
 nsresult
-nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAutoString& locale, nsAString& oResult)
+nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAString& locale, nsACString& oResult)
 {
   return NS_OK;
 }

@@ -136,6 +136,8 @@ function vmrg_endmm()
 
     ASSERT(this.multiMoveDepth >= 0, "mismatched multi move calls: " +
            this.multiMoveDepth);
+
+    var container;
     
     if (!this.multiMoveDepth)
     {
@@ -146,7 +148,7 @@ function vmrg_endmm()
             if (w != VMGR_MAINWINDOW)
             {
                 var window = this.windows[w];
-                var container = 
+                container = 
                     window.document.getElementById(VMGR_DEFAULT_CONTAINER);
                 if (container && container.viewCount == 0)
                     window.close();
@@ -157,9 +159,9 @@ function vmrg_endmm()
         for (var viewId in this.views)
         {
             var view = this.views[viewId];
-            if (view.currentContent)
+            if ("currentContent" in view && view.currentContent)
             {
-                var container = view.currentContent.parentNode;
+                container = view.currentContent.parentNode;
                 if (container.getAttribute("type") == "tab" &&
                     container.viewCount == 1)
                 {
@@ -202,7 +204,7 @@ function vmgr_createwindow (windowId, cb)
     }
     
     var win = openDialog ("chrome://venkman/content/venkman-floater.xul?id=" +
-                          escape(windowId), "_blank",
+                          encodeURIComponent(windowId), "_blank",
                           "chrome,menubar,toolbar,resizable,dialog=no",
                           onWindowLoaded);
     this.windows[windowId] = win;
@@ -376,7 +378,7 @@ function vmgr_parselocation (locationURL)
     parseResult = {
         url: locationURL,
         windowId: ary[1],
-        containerId: (2 in ary) ? ary[2] : VMGR_DEFAULT_CONTAINER
+        containerId: arrayHasElementAt(ary, 2) ? ary[2] : VMGR_DEFAULT_CONTAINER
     };
 
     var rest = RegExp.rightContext.substr(1);
@@ -392,7 +394,7 @@ function vmgr_parselocation (locationURL)
                    locationURL))
         {
             /* only set the property the first time we see it */
-            if (2 in ary && !(ary[1] in parseResult))
+            if (arrayHasElementAt(ary, 2) && !(ary[1] in parseResult))
                 parseResult[ary[1]] = ary[2];
         }
         ary = rest.match(/([^&]+)/);
@@ -1048,7 +1050,8 @@ function vmgr_grouttab (viewManager, container)
             
             var view = viewManager.views[viewId];
             
-            var tab = container.tabs.childNodes[container.viewCount];
+            var tab = (container.viewCount >= container.tabs.childNodes.length)
+                      ? null : container.tabs.childNodes[container.viewCount];
             var label;
             
             if (!tab || tab.hasAttribute("needinit"))

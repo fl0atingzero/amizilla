@@ -55,12 +55,13 @@
 #include "nsIPrompt.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIMsgLocalMailFolder.h"
+#include "nsIMsgImapMailFolder.h"
+
 #include "nsMsgI18N.h"
 #include "prprf.h"
 #include "nsMsgLocalFolderHdrs.h"
 
 static NS_DEFINE_CID(kCMailDB, NS_MAILDB_CID);
-static NS_DEFINE_CID(kRDFServiceCID,							NS_RDFSERVICE_CID);
 //////////////////////////////////////////////////////////////////////////////
 // nsFolderCompactState
 //////////////////////////////////////////////////////////////////////////////
@@ -69,13 +70,13 @@ NS_IMPL_ISUPPORTS5(nsFolderCompactState, nsIMsgFolderCompactor, nsIRequestObserv
 
 nsFolderCompactState::nsFolderCompactState()
 {
-  m_baseMessageUri = nsnull;
   m_fileStream = nsnull;
   m_size = 0;
   m_curIndex = -1;
   m_status = NS_OK;
   m_compactAll = PR_FALSE;
   m_compactOfflineAlso = PR_FALSE;
+  m_compactingOfflineFolders = PR_FALSE;
   m_parsingFolder=PR_FALSE;
   m_folderIndex =0;
   m_startOfMsg = PR_TRUE;
@@ -85,12 +86,6 @@ nsFolderCompactState::nsFolderCompactState()
 nsFolderCompactState::~nsFolderCompactState()
 {
   CloseOutputStream();
-
-  if (m_baseMessageUri)
-  {
-    nsCRT::free(m_baseMessageUri);
-    m_baseMessageUri = nsnull;
-  }
 
   if (NS_FAILED(m_status))
   {
@@ -163,9 +158,15 @@ nsFolderCompactState::InitDB(nsIMsgDatabase *db)
 NS_IMETHODIMP nsFolderCompactState::CompactAll(nsISupportsArray *aArrayOfFoldersToCompact, nsIMsgWindow *aMsgWindow, PRBool aCompactOfflineAlso, nsISupportsArray *aOfflineFolderArray)
 {
   nsresult rv = NS_OK;
+  m_window = aMsgWindow;
   if (aArrayOfFoldersToCompact)  
     m_folderArray =do_QueryInterface(aArrayOfFoldersToCompact, &rv);
-
+  else if (aOfflineFolderArray)
+  {
+    m_folderArray = do_QueryInterface(aOfflineFolderArray, &rv);
+    m_compactingOfflineFolders = PR_TRUE;
+    aOfflineFolderArray = nsnull;
+  }
   if (NS_FAILED(rv) || !m_folderArray)
     return rv;
  
@@ -179,14 +180,20 @@ NS_IMETHODIMP nsFolderCompactState::CompactAll(nsISupportsArray *aArrayOfFolders
                                                          m_folderIndex, &rv);
 
   if (NS_SUCCEEDED(rv) && firstFolder)
-    Compact(firstFolder, aMsgWindow);   //start with first folder from here.
+    Compact(firstFolder, m_compactingOfflineFolders, aMsgWindow);   //start with first folder from here.
   
   return rv;
 }
 
 NS_IMETHODIMP
-nsFolderCompactState::Compact(nsIMsgFolder *folder, nsIMsgWindow *aMsgWindow)
+nsFolderCompactState::Compact(nsIMsgFolder *folder, PRBool aOfflineStore, nsIMsgWindow *aMsgWindow)
 {
+  if (!m_compactingOfflineFolders && !aOfflineStore)
+{
+    nsCOMPtr <nsIMsgImapMailFolder> imapFolder = do_QueryInterface(folder);
+    if (imapFolder)
+      return folder->Compact(this, aMsgWindow);
+  }
    m_window = aMsgWindow;
    nsresult rv;
    nsCOMPtr<nsIMsgDatabase> db;
@@ -235,10 +242,26 @@ nsFolderCompactState::Compact(nsIMsgFolder *folder, nsIMsgWindow *aMsgWindow)
    NS_ENSURE_SUCCESS(rv,rv);
     
    rv = Init(folder, baseMessageURI, db, pathSpec, m_window);
-   if (NS_SUCCEEDED(rv))
-      rv = StartCompacting();
+   NS_ENSURE_SUCCESS(rv,rv);
 
-   return rv;
+   PRBool isLocked;
+   m_folder->GetLocked(&isLocked);
+   if(!isLocked)
+   {
+     nsCOMPtr <nsISupports> supports = do_QueryInterface(NS_STATIC_CAST(nsIMsgFolderCompactor*, this));
+     m_folder->AcquireSemaphore(supports);
+     return StartCompacting();
+   }
+   else
+   {
+     m_folder->NotifyCompactCompleted();
+     m_folder->ThrowAlertMsg("compactFolderDeniedLock", m_window);
+     CleanupTempFilesAfterError();
+     if (m_compactAll)
+       return CompactNextFolder();
+     else
+       return NS_OK;
+   }
 }
 
 nsresult nsFolderCompactState::ShowStatusMsg(const PRUnichar *aMsg)
@@ -260,9 +283,7 @@ nsFolderCompactState::Init(nsIMsgFolder *folder, const char *baseMsgUri, nsIMsgD
   nsresult rv;
 
   m_folder = folder;
-  m_baseMessageUri = nsCRT::strdup(baseMsgUri);
-  if (!m_baseMessageUri)
-    return NS_ERROR_OUT_OF_MEMORY;
+  m_baseMessageUri = baseMsgUri;
 
   pathSpec->GetFileSpec(&m_fileSpec);
 
@@ -318,31 +339,18 @@ NS_IMETHODIMP nsFolderCompactState::OnStopRunningUrl(nsIURI *url, nsresult statu
   {
     m_parsingFolder=PR_FALSE;
     if (NS_SUCCEEDED(status))
-      status=Compact(m_folder, m_window);
+      status=Compact(m_folder, m_compactingOfflineFolders, m_window);
     else if (m_compactAll)
       CompactNextFolder();
   }
+  else if (m_compactAll) // this should be the imap case only
+    CompactNextFolder();
   return NS_OK;
 }
 
 nsresult nsFolderCompactState::StartCompacting()
 {
   nsresult rv = NS_OK;
-  PRBool isLocked;
-  nsCOMPtr <nsISupports> supports = do_QueryInterface(NS_STATIC_CAST(nsIMsgFolderCompactor*, this));
-  m_folder->GetLocked(&isLocked);
-  if(!isLocked)
-    m_folder->AcquireSemaphore(supports);
-  else
-  {
-    m_folder->NotifyCompactCompleted();
-    m_folder->ThrowAlertMsg("compactFolderDeniedLock", m_window);
-    CleanupTempFilesAfterError();
-    if (m_compactAll)
-      return CompactNextFolder();
-    else
-      return rv;
-  }
   if (m_size > 0)
   {
     ShowCompactingStatusMsg();
@@ -365,8 +373,6 @@ nsFolderCompactState::FinishCompact()
     // All okay time to finish up the compact process
   nsresult rv = NS_OK;
   nsCOMPtr<nsIFileSpec> pathSpec;
-  nsCOMPtr<nsIFolder> parent;
-  nsCOMPtr<nsIMsgFolder> parentFolder;
   nsCOMPtr<nsIDBFolderInfo> folderInfo;
   nsFileSpec fileSpec;
 
@@ -451,6 +457,7 @@ nsFolderCompactState::CompactNextFolder()
    {
      if (m_compactOfflineAlso)
      {
+       m_compactingOfflineFolders = PR_TRUE;
        nsCOMPtr<nsIMsgFolder> folder = do_QueryElementAt(m_folderArray,
                                                          m_folderIndex-1, &rv);
        if (NS_SUCCEEDED(rv) && folder)
@@ -464,7 +471,7 @@ nsFolderCompactState::CompactNextFolder()
                                                      m_folderIndex, &rv);
 
    if (NS_SUCCEEDED(rv) && folder)
-     rv = Compact(folder, m_window);                    
+     rv = Compact(folder, m_compactingOfflineFolders, m_window);                    
    return rv;
 }
 
@@ -538,7 +545,7 @@ nsFolderCompactState::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
   {
     m_statusOffset = 0;
     m_messageUri.SetLength(0); // clear the previous message uri
-    if (NS_SUCCEEDED(BuildMessageURI(m_baseMessageUri, m_keyArray[m_curIndex],
+    if (NS_SUCCEEDED(BuildMessageURI(m_baseMessageUri.get(), m_keyArray[m_curIndex],
                                 m_messageUri)))
     {
       rv = GetMessage(getter_AddRefs(m_curSrcHdr));
@@ -645,6 +652,7 @@ nsOfflineStoreCompactState::OnStopRequest(nsIRequest *request, nsISupports *ctxt
   nsCOMPtr<nsIMsgDBHdr> msgHdr;
   nsCOMPtr<nsIMsgDBHdr> newMsgHdr;
   nsCOMPtr <nsIMsgStatusFeedback> statusFeedback;
+  ReleaseFolderLock();
 
   if (NS_FAILED(rv)) goto done;
   uri = do_QueryInterface(ctxt, &rv);
@@ -675,7 +683,7 @@ nsOfflineStoreCompactState::OnStopRequest(nsIRequest *request, nsISupports *ctxt
   else
   {
     m_messageUri.SetLength(0); // clear the previous message uri
-    rv = BuildMessageURI(m_baseMessageUri, m_keyArray[m_curIndex],
+    rv = BuildMessageURI(m_baseMessageUri.get(), m_keyArray[m_curIndex],
                                 m_messageUri);
     if (NS_FAILED(rv)) goto done;
     rv = m_messageService->CopyMessage(m_messageUri.get(), this, PR_FALSE, nsnull,
@@ -825,7 +833,7 @@ nsresult nsOfflineStoreCompactState::StartCompacting()
     AddRef(); // we own ourselves, until we're done, anyway.
     ShowCompactingStatusMsg();
     m_messageUri.SetLength(0); // clear the previous message uri
-    rv = BuildMessageURI(m_baseMessageUri,
+    rv = BuildMessageURI(m_baseMessageUri.get(),
                                 m_keyArray[0],
                                 m_messageUri);
     if (NS_SUCCEEDED(rv))
@@ -835,6 +843,7 @@ nsresult nsOfflineStoreCompactState::StartCompacting()
   }
   else
   { // no messages to copy with
+    ReleaseFolderLock();
     FinishCompact();
 //    Release(); // we don't "own" ourselves yet.
   }

@@ -20,7 +20,7 @@
    - the Initial Developer. All Rights Reserved.
    -
    - Contributor(s):
-   -  Brian Ryner <bryner@netscape.com>
+   -  Brian Ryner <bryner@brianryner.com>
    -
    - Alternatively, the contents of this file may be used under the terms of
    - either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -57,5 +57,5 @@
   <!-- Version Information.  State that we work only with major version of this
        package. -->
   <RDF:Description about="urn:mozilla:locale:en-US:forms"
-        chrome:localeVersion="1.5a"/>
+#expand         chrome:localeVersion="__MOZILLA_LOCALE_VERSION__"/>
 </RDF:RDF>

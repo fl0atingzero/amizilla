@@ -43,12 +43,6 @@ CPPSRCS		= \
 		$(NULL)
 
 
-ifeq ($(MOZ_OS2_TOOLS),VACPP)
-OS_LIBS += libuls.lib
-else
-OS_LIBS += -llibuni
-endif
-
 include $(topsrcdir)/config/rules.mk
 
 INCLUDES	+= -I$(srcdir)/..

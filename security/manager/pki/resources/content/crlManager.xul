@@ -27,7 +27,7 @@
 <?xul-overlay href="chrome://global/content/dialogOverlay.xul"?>
 
 <!-- CHANGE THIS WHEN MOVING FILES -->
-<!DOCTYPE window [
+<!DOCTYPE dialog [
     <!ENTITY % prefValDTD SYSTEM "chrome://pippki/locale/pref-validation.dtd">
     %prefValDTD;
     <!ENTITY % prefCertMgrDTD SYSTEM "chrome://pippki/locale/certManager.dtd">
@@ -39,7 +39,8 @@
         title="&validation.crlmanager.label;"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         style="width: 30em;"
-        onload="onLoad();">
+        onload="onLoad();"
+        persist="screenX screenY width height">
 
   <script type="application/x-javascript" src="chrome://global/content/strres.js"/>
   <script type="application/x-javascript" src="chrome://pippki/content/crlManager.js"/>
@@ -65,6 +66,8 @@
 
     <treechildren id="crlList"/>
   </tree>
+  <separator class="thin"/>
+
   <hbox>
     <button id="deleteCrl" disabled="true"
             label="&validation.deletecrl.label;"
@@ -80,5 +83,4 @@
             oncommand="openHelp('validation-crl-manage');"/> 
 
   </hbox>
-  <separator class="thin"/>
 </window>

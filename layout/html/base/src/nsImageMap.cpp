@@ -54,11 +54,10 @@
 #include "nsIDocument.h"
 #include "nsINameSpaceManager.h"
 #include "nsHTMLAtoms.h"
-#include "nsIHTMLContent.h"
 #include "nsIDOMEventReceiver.h"
 #include "nsIPresShell.h"
 #include "nsIFrame.h"
-#include "nsIFrameManager.h"
+#include "nsFrameManager.h"
 #include "nsIViewManager.h"
 #include "nsCoord.h"
 #include "nsIImageMap.h"
@@ -72,7 +71,7 @@ static NS_DEFINE_CID(kCStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
 
 class Area {
 public:
-  Area(nsIContent* aArea, PRBool aHasURL);
+  Area(nsIContent* aArea);
   virtual ~Area();
 
   virtual void ParseCoords(const nsAString& aSpec);
@@ -85,22 +84,18 @@ public:
   void HasFocus(PRBool aHasFocus);
 
   void GetHREF(nsAString& aHref) const;
-  void GetTarget(nsAString& aTarget) const;
-  void GetAltText(nsAString& aAltText) const;
-  PRBool GetHasURL() const { return mHasURL; }
   void GetArea(nsIContent** aArea) const;
 
   nsCOMPtr<nsIContent> mArea;
   nscoord* mCoords;
   PRInt32 mNumCoords;
-  PRPackedBool mHasURL;
   PRPackedBool mHasFocus;
 };
 
 MOZ_DECL_CTOR_COUNTER(Area)
 
-Area::Area(nsIContent* aArea, PRBool aHasURL)
-  : mArea(aArea), mHasURL(aHasURL)
+Area::Area(nsIContent* aArea)
+  : mArea(aArea)
 {
   MOZ_COUNT_CTOR(Area);
   mCoords = nsnull;
@@ -123,24 +118,6 @@ Area::GetHREF(nsAString& aHref) const
   }
 }
  
-void 
-Area::GetTarget(nsAString& aTarget) const
-{
-  aTarget.Truncate();
-  if (mArea) {
-    mArea->GetAttr(kNameSpaceID_None, nsHTMLAtoms::target, aTarget);
-  }
-}
- 
-void 
-Area::GetAltText(nsAString& aAltText) const
-{
-  aAltText.Truncate();
-  if (mArea) {
-    mArea->GetAttr(kNameSpaceID_None, nsHTMLAtoms::alt, aAltText);
-  }
-}
-
 void 
 Area::GetArea(nsIContent** aArea) const
 {
@@ -333,8 +310,7 @@ void Area::HasFocus(PRBool aHasFocus)
 
 class DefaultArea : public Area {
 public:
-  DefaultArea(nsIContent* aArea, PRBool aHasURL);
-  ~DefaultArea();
+  DefaultArea(nsIContent* aArea);
 
   virtual PRBool IsInside(nscoord x, nscoord y) const;
   virtual void Draw(nsIPresContext* aCX,
@@ -342,12 +318,8 @@ public:
   virtual void GetRect(nsIPresContext* aCX, nsRect& aRect);
 };
 
-DefaultArea::DefaultArea(nsIContent* aArea, PRBool aHasURL)
-  : Area(aArea, aHasURL)
-{
-}
-
-DefaultArea::~DefaultArea()
+DefaultArea::DefaultArea(nsIContent* aArea)
+  : Area(aArea)
 {
 }
 
@@ -368,8 +340,7 @@ void DefaultArea::GetRect(nsIPresContext* aCX, nsRect& aRect)
 
 class RectArea : public Area {
 public:
-  RectArea(nsIContent* aArea, PRBool aHasURL);
-  ~RectArea();
+  RectArea(nsIContent* aArea);
 
   virtual void ParseCoords(const nsAString& aSpec);
   virtual PRBool IsInside(nscoord x, nscoord y) const;
@@ -378,12 +349,8 @@ public:
   virtual void GetRect(nsIPresContext* aCX, nsRect& aRect);
 };
 
-RectArea::RectArea(nsIContent* aArea, PRBool aHasURL)
-  : Area(aArea, aHasURL)
-{
-}
-
-RectArea::~RectArea()
+RectArea::RectArea(nsIContent* aArea)
+  : Area(aArea)
 {
 }
 
@@ -448,16 +415,14 @@ void RectArea::ParseCoords(const nsAString& aSpec)
     if (NS_FAILED(rv))
       return;
 
-    nsCOMPtr<nsINodeInfo> nodeInfo;
-    mArea->GetNodeInfo(getter_AddRefs(nodeInfo));
+    // XXX GetOwnerDocument
+    nsINodeInfo *nodeInfo = mArea->GetNodeInfo();
     NS_ASSERTION(nodeInfo, "Element with no nodeinfo");
-    
-    nsCOMPtr<nsIDocument> doc;
-    nodeInfo->GetDocument(getter_AddRefs(doc));
+
+    nsIDocument* doc = nodeInfo->GetDocument();
     nsCAutoString urlSpec;
     if (doc) {
-      nsCOMPtr<nsIURI> uri;
-      doc->GetDocumentURL(getter_AddRefs(uri));
+      nsIURI *uri = doc->GetDocumentURI();
       if (uri) {
         uri->GetSpec(urlSpec);
       }
@@ -497,7 +462,7 @@ void RectArea::Draw(nsIPresContext* aCX, nsIRenderingContext& aRC)
   if (mHasFocus) {
     if (mNumCoords >= 4) {
       float p2t;
-      aCX->GetPixelsToTwips(&p2t);
+      p2t = aCX->PixelsToTwips();
       nscoord x1 = NSIntPixelsToTwips(mCoords[0], p2t);
       nscoord y1 = NSIntPixelsToTwips(mCoords[1], p2t);
       nscoord x2 = NSIntPixelsToTwips(mCoords[2], p2t);
@@ -516,7 +481,7 @@ void RectArea::GetRect(nsIPresContext* aCX, nsRect& aRect)
 {
   if (mNumCoords >= 4) {
     float p2t;
-    aCX->GetPixelsToTwips(&p2t);
+    p2t = aCX->PixelsToTwips();
     nscoord x1 = NSIntPixelsToTwips(mCoords[0], p2t);
     nscoord y1 = NSIntPixelsToTwips(mCoords[1], p2t);
     nscoord x2 = NSIntPixelsToTwips(mCoords[2], p2t);
@@ -532,8 +497,7 @@ void RectArea::GetRect(nsIPresContext* aCX, nsRect& aRect)
 
 class PolyArea : public Area {
 public:
-  PolyArea(nsIContent* aArea, PRBool aHasURL);
-  ~PolyArea();
+  PolyArea(nsIContent* aArea);
 
   virtual PRBool IsInside(nscoord x, nscoord y) const;
   virtual void Draw(nsIPresContext* aCX,
@@ -541,12 +505,8 @@ public:
   virtual void GetRect(nsIPresContext* aCX, nsRect& aRect);
 };
 
-PolyArea::PolyArea(nsIContent* aArea, PRBool aHasURL)
-  : Area(aArea, aHasURL)
-{
-}
-
-PolyArea::~PolyArea()
+PolyArea::PolyArea(nsIContent* aArea)
+  : Area(aArea)
 {
 }
 
@@ -617,7 +577,7 @@ void PolyArea::Draw(nsIPresContext* aCX, nsIRenderingContext& aRC)
   if (mHasFocus) {
     if (mNumCoords >= 6) {
       float p2t;
-      aCX->GetPixelsToTwips(&p2t);
+      p2t = aCX->PixelsToTwips();
       nscoord x0 = NSIntPixelsToTwips(mCoords[0], p2t);
       nscoord y0 = NSIntPixelsToTwips(mCoords[1], p2t);
       nscoord x1, y1;
@@ -639,7 +599,7 @@ void PolyArea::GetRect(nsIPresContext* aCX, nsRect& aRect)
 {
   if (mNumCoords >= 6) {
     float p2t;
-    aCX->GetPixelsToTwips(&p2t);
+    p2t = aCX->PixelsToTwips();
     nscoord x1, x2, y1, y2, xtmp, ytmp;
     x1 = x2 = NSIntPixelsToTwips(mCoords[0], p2t);
     y1 = y2 = NSIntPixelsToTwips(mCoords[1], p2t);
@@ -660,8 +620,7 @@ void PolyArea::GetRect(nsIPresContext* aCX, nsRect& aRect)
 
 class CircleArea : public Area {
 public:
-  CircleArea(nsIContent* aArea, PRBool aHasURL);
-  ~CircleArea();
+  CircleArea(nsIContent* aArea);
 
   virtual PRBool IsInside(nscoord x, nscoord y) const;
   virtual void Draw(nsIPresContext* aCX,
@@ -669,12 +628,8 @@ public:
   virtual void GetRect(nsIPresContext* aCX, nsRect& aRect);
 };
 
-CircleArea::CircleArea(nsIContent* aArea, PRBool aHasURL)
-  : Area(aArea, aHasURL)
-{
-}
-
-CircleArea::~CircleArea()
+CircleArea::CircleArea(nsIContent* aArea)
+  : Area(aArea)
 {
 }
 
@@ -703,7 +658,7 @@ void CircleArea::Draw(nsIPresContext* aCX, nsIRenderingContext& aRC)
   if (mHasFocus) {
     if (mNumCoords >= 3) {
       float p2t;
-      aCX->GetPixelsToTwips(&p2t);
+      p2t = aCX->PixelsToTwips();
       nscoord x1 = NSIntPixelsToTwips(mCoords[0], p2t);
       nscoord y1 = NSIntPixelsToTwips(mCoords[1], p2t);
       nscoord radius = NSIntPixelsToTwips(mCoords[2], p2t);
@@ -722,7 +677,7 @@ void CircleArea::GetRect(nsIPresContext* aCX, nsRect& aRect)
 {
   if (mNumCoords >= 3) {
     float p2t;
-    aCX->GetPixelsToTwips(&p2t);
+    p2t = aCX->PixelsToTwips();
     nscoord x1 = NSIntPixelsToTwips(mCoords[0], p2t);
     nscoord y1 = NSIntPixelsToTwips(mCoords[1], p2t);
     nscoord radius = NSIntPixelsToTwips(mCoords[2], p2t);
@@ -737,10 +692,12 @@ void CircleArea::GetRect(nsIPresContext* aCX, nsRect& aRect)
 //----------------------------------------------------------------------
 
 
-nsImageMap::nsImageMap()
+nsImageMap::nsImageMap() :
+  mPresShell(nsnull),
+  mImageFrame(nsnull),
+  mDocument(nsnull),
+  mContainsBlockContents(PR_FALSE)
 {
-  mDocument = nsnull;
-  mContainsBlockContents = PR_FALSE;
 }
 
 nsImageMap::~nsImageMap()
@@ -760,8 +717,8 @@ nsImageMap::~nsImageMap()
   }
 
   FreeAreas();
-  if (nsnull != mDocument) {
-    mDocument->RemoveObserver(NS_STATIC_CAST(nsIDocumentObserver*, this));
+  if (mDocument) {
+    mDocument->RemoveObserver(this);
   }
 }
 
@@ -769,7 +726,7 @@ NS_IMPL_ISUPPORTS4(nsImageMap,
                    nsIDocumentObserver,
                    nsIDOMFocusListener,
                    nsIDOMEventListener,
-                   nsIImageMap);
+                   nsIImageMap)
 
 NS_IMETHODIMP
 nsImageMap::GetBoundsForAreaContent(nsIContent *aContent, 
@@ -791,8 +748,7 @@ nsImageMap::GetBoundsForAreaContent(nsIContent *aContent,
 void
 nsImageMap::FreeAreas()
 {
-  nsCOMPtr<nsIFrameManager> frameManager;
-  mPresShell->GetFrameManager(getter_AddRefs(frameManager));
+  nsFrameManager *frameManager = mPresShell->FrameManager();
 
   PRInt32 i, n = mAreas.Count();
   for (i = 0; i < n; i++) {
@@ -816,12 +772,9 @@ nsImageMap::Init(nsIPresShell* aPresShell, nsIFrame* aImageFrame, nsIDOMHTMLMapE
   nsresult rv;
   mMap = do_QueryInterface(aMap, &rv);
   NS_ASSERTION(mMap, "aMap is not an nsIHTMLContent!");
-  rv = mMap->GetDocument(&mDocument);
-  if (NS_SUCCEEDED(rv) && mDocument) {
-    mDocument->AddObserver(NS_STATIC_CAST(nsIDocumentObserver*, this));
-    // mDocument is a weak reference, so release the reference we got
-    nsIDocument *temp = mDocument;
-    NS_RELEASE(temp);
+  mDocument = mMap->GetDocument();
+  if (mDocument) {
+    mDocument->AddObserver(this);
   }
 
   // "Compile" the areas in the map into faster access versions
@@ -834,20 +787,18 @@ nsresult
 nsImageMap::UpdateAreasForBlock(nsIContent* aParent, PRBool* aFoundAnchor)
 {
   nsresult rv = NS_OK;
-  PRInt32 i, n;
-  aParent->ChildCount(n);
+  PRUint32 i, n = aParent->GetChildCount();
+
   for (i = 0; (i < n) && NS_SUCCEEDED(rv); i++) {
-    nsCOMPtr<nsIContent> child;
-    rv = aParent->ChildAt(i, getter_AddRefs(child));
-    if (NS_SUCCEEDED(rv)) {
-      nsCOMPtr<nsIDOMHTMLAnchorElement> area = do_QueryInterface(child, &rv);
-      if (NS_SUCCEEDED(rv)) {
-        *aFoundAnchor = PR_TRUE;
-        rv = AddArea(child);
-      }
-      else {
-        rv = UpdateAreasForBlock(child, aFoundAnchor);
-      }
+    nsIContent *child = aParent->GetChildAt(i);
+
+    nsCOMPtr<nsIDOMHTMLAnchorElement> area = do_QueryInterface(child);
+    if (area) {
+      *aFoundAnchor = PR_TRUE;
+      rv = AddArea(child);
+    }
+    else {
+      rv = UpdateAreasForBlock(child, aFoundAnchor);
     }
   }
   
@@ -860,17 +811,14 @@ nsImageMap::UpdateAreas()
   // Get rid of old area data
   FreeAreas();
 
-  PRInt32 i, n;
+  PRUint32 i, n = mMap->GetChildCount();
   PRBool containsBlock = PR_FALSE, containsArea = PR_FALSE;
 
-  mMap->ChildCount(n);
   for (i = 0; i < n; i++) {
-    nsCOMPtr<nsIContent> child;
-    mMap->ChildAt(i, getter_AddRefs(child));
+    nsIContent *child = mMap->GetChildAt(i);
 
     // Only look at elements and not text, comments, etc.
-    nsCOMPtr<nsIDOMHTMLElement> element = do_QueryInterface(child);
-    if (! element)
+    if (!child->IsContentOfType(nsIContent::eHTML))
       continue;
 
     // First check if this map element contains an AREA element.
@@ -900,10 +848,9 @@ nsImageMap::UpdateAreas()
 nsresult
 nsImageMap::AddArea(nsIContent* aArea)
 {
-  nsAutoString shape, coords, baseURL, noHref;
+  nsAutoString shape, coords;
   aArea->GetAttr(kNameSpaceID_None, nsHTMLAtoms::shape, shape);
   aArea->GetAttr(kNameSpaceID_None, nsHTMLAtoms::coords, coords);
-  PRBool hasURL = (PRBool)(NS_CONTENT_ATTR_HAS_VALUE != aArea->GetAttr(kNameSpaceID_None, nsHTMLAtoms::nohref, noHref));
 
   //Add focus listener to track area focus changes
   nsCOMPtr<nsIDOMEventReceiver> rec(do_QueryInterface(aArea));
@@ -911,26 +858,24 @@ nsImageMap::AddArea(nsIContent* aArea)
     rec->AddEventListenerByIID(this, NS_GET_IID(nsIDOMFocusListener));
   }
 
-  nsCOMPtr<nsIFrameManager> frameManager;
-  mPresShell->GetFrameManager(getter_AddRefs(frameManager));
-  frameManager->SetPrimaryFrameFor(aArea, mImageFrame);
+  mPresShell->FrameManager()->SetPrimaryFrameFor(aArea, mImageFrame);
 
   Area* area;
   if (shape.IsEmpty() ||
       shape.EqualsIgnoreCase("rect") ||
       shape.EqualsIgnoreCase("rectangle")) {
-    area = new RectArea(aArea, hasURL);
+    area = new RectArea(aArea);
   }
   else if (shape.EqualsIgnoreCase("poly") ||
            shape.EqualsIgnoreCase("polygon")) {
-    area = new PolyArea(aArea, hasURL);
+    area = new PolyArea(aArea);
   }
   else if (shape.EqualsIgnoreCase("circle") ||
            shape.EqualsIgnoreCase("circ")) {
-    area = new CircleArea(aArea, hasURL);
+    area = new CircleArea(aArea);
   }
   else if (shape.EqualsIgnoreCase("default")) {
-    area = new DefaultArea(aArea, hasURL);
+    area = new DefaultArea(aArea);
   }
   else {
     // Unknown area type; bail
@@ -945,37 +890,13 @@ nsImageMap::AddArea(nsIContent* aArea)
 
 PRBool
 nsImageMap::IsInside(nscoord aX, nscoord aY,
-                     nsIContent** aContent,
-                     nsAString& aAbsURL,
-                     nsAString& aTarget,
-                     nsAString& aAltText) const
+                     nsIContent** aContent) const
 {
   NS_ASSERTION(mMap, "Not initialized");
   PRInt32 i, n = mAreas.Count();
   for (i = 0; i < n; i++) {
     Area* area = (Area*) mAreas.ElementAt(i);
     if (area->IsInside(aX, aY)) {
-      if (area->GetHasURL()) {
-        // Set the image loader's source URL and base URL
-        nsCOMPtr<nsIURI> baseUri;
-
-        mMap->GetBaseURL(getter_AddRefs(baseUri));
-
-        if (!baseUri) {
-          return PR_FALSE;
-        }
-
-        nsAutoString href;
-        area->GetHREF(href);
-        NS_MakeAbsoluteURI(aAbsURL, href, baseUri);
-      }
-
-      area->GetTarget(aTarget);
-      if (aTarget.IsEmpty())
-        mMap->GetBaseTarget(aTarget);
-
-      area->GetAltText(aAltText);
-
       area->GetArea(aContent);
 
       return PR_TRUE;
@@ -1016,114 +937,72 @@ nsImageMap::Draw(nsIPresContext* aCX, nsIRenderingContext& aRC)
   }
 }
 
-NS_IMPL_NSIDOCUMENTOBSERVER_CORE_STUB(nsImageMap)
-NS_IMPL_NSIDOCUMENTOBSERVER_LOAD_STUB(nsImageMap)
-NS_IMPL_NSIDOCUMENTOBSERVER_REFLOW_STUB(nsImageMap)
-NS_IMPL_NSIDOCUMENTOBSERVER_STATE_STUB(nsImageMap)
-NS_IMPL_NSIDOCUMENTOBSERVER_STYLE_STUB(nsImageMap)
-
-
 PRBool
 nsImageMap::IsAncestorOf(nsIContent* aContent,
                          nsIContent* aAncestorContent)
 {
-  nsCOMPtr<nsIContent> parent;
-  aContent->GetParent(getter_AddRefs(parent));
-  if (parent) {
-    return parent == aAncestorContent ||
-           IsAncestorOf(parent, aAncestorContent);
-  }
+  for (nsIContent *a = aContent->GetParent(); a; a = a->GetParent())
+    if (a == aAncestorContent)
+      return PR_TRUE;
 
   return PR_FALSE;
 }
 
-NS_IMETHODIMP
-nsImageMap::ContentChanged(nsIDocument *aDocument,
-                           nsIContent* aContent,
-                           nsISupports* aSubContent)
+void
+nsImageMap::MaybeUpdateAreas(nsIContent *aContent)
 {
-  // If the parent of the changing content node is our map then update
-  // the map.
-  nsCOMPtr<nsIContent> parent;
-  nsresult rv = aContent->GetParent(getter_AddRefs(parent));
-  if (NS_SUCCEEDED(rv) && (nsnull != parent)) {
-    if ((parent == mMap) || 
-        (mContainsBlockContents && IsAncestorOf(parent, mMap))) {
-      UpdateAreas();
-    }
+  if (aContent == mMap || 
+      (mContainsBlockContents && IsAncestorOf(aContent, mMap))) {
+    UpdateAreas();
   }
-  return NS_OK;
 }
 
-NS_IMETHODIMP
+void
 nsImageMap::AttributeChanged(nsIDocument *aDocument,
                              nsIContent*  aContent,
                              PRInt32      aNameSpaceID,
                              nsIAtom*     aAttribute,
-                             PRInt32      aModType, 
-                             nsChangeHint aHint)
+                             PRInt32      aModType)
 {
   // If the parent of the changing content node is our map then update
   // the map.
-  nsCOMPtr<nsIContent> parent;
-  aContent->GetParent(getter_AddRefs(parent));
-  if ((parent == mMap) || 
-      (mContainsBlockContents && IsAncestorOf(parent, mMap))) {
-    UpdateAreas();
-  }
-  return NS_OK;
+  MaybeUpdateAreas(aContent->GetParent());
 }
 
-NS_IMETHODIMP
+void
 nsImageMap::ContentAppended(nsIDocument *aDocument,
                             nsIContent* aContainer,
                             PRInt32     aNewIndexInContainer)
 {
-  if ((mMap == aContainer) || 
-      (mContainsBlockContents && IsAncestorOf(aContainer, mMap))) {
-    UpdateAreas();
-  }
-  return NS_OK;
+  MaybeUpdateAreas(aContainer);
 }
 
-NS_IMETHODIMP
+void
 nsImageMap::ContentInserted(nsIDocument *aDocument,
                             nsIContent* aContainer,
                             nsIContent* aChild,
                             PRInt32 aIndexInContainer)
 {
-  if ((mMap == aContainer) ||
-      (mContainsBlockContents && IsAncestorOf(aContainer, mMap))) {
-    UpdateAreas();
-  }
-  return NS_OK;
+  MaybeUpdateAreas(aContainer);
 }
 
-NS_IMETHODIMP
+void
 nsImageMap::ContentReplaced(nsIDocument *aDocument,
                             nsIContent* aContainer,
                             nsIContent* aOldChild,
                             nsIContent* aNewChild,
                             PRInt32 aIndexInContainer)
 {
-  if ((mMap == aContainer) ||
-      (mContainsBlockContents && IsAncestorOf(aContainer, mMap))) {
-    UpdateAreas();
-  }
-  return NS_OK;
+  MaybeUpdateAreas(aContainer);
 }
 
-NS_IMETHODIMP
+void
 nsImageMap::ContentRemoved(nsIDocument *aDocument,
                            nsIContent* aContainer,
                            nsIContent* aChild,
                            PRInt32 aIndexInContainer)
 {
-  if ((mMap == aContainer) ||
-      (mContainsBlockContents && IsAncestorOf(aContainer, mMap))) {
-    UpdateAreas();
-  }
-  return NS_OK;
+  MaybeUpdateAreas(aContainer);
 }
 
 nsresult
@@ -1155,11 +1034,10 @@ nsImageMap::ChangeFocus(nsIDOMEvent* aEvent, PRBool aFocus) {
             //Set or Remove internal focus
             area->HasFocus(aFocus);
             //Now invalidate the rect
-            nsCOMPtr<nsIDocument> doc;
+            nsCOMPtr<nsIDocument> doc = targetContent->GetDocument();
             //This check is necessary to see if we're still attached to the doc
-            if (NS_SUCCEEDED(targetContent->GetDocument(getter_AddRefs(doc))) && doc) {
-              nsCOMPtr<nsIPresShell> presShell;
-              doc->GetShellAt(0, getter_AddRefs(presShell));
+            if (doc) {
+              nsIPresShell *presShell = doc->GetShellAt(0);
               if (presShell) {
                 nsIFrame* imgFrame;
                 if (NS_SUCCEEDED(presShell->GetPrimaryFrameFor(targetContent, &imgFrame)) && imgFrame) {
@@ -1167,7 +1045,7 @@ nsImageMap::ChangeFocus(nsIDOMEvent* aEvent, PRBool aFocus) {
                   if (NS_SUCCEEDED(presShell->GetPresContext(getter_AddRefs(presContext))) && presContext) {
                     nsRect dmgRect;
                     area->GetRect(presContext, dmgRect);
-                    Invalidate(presContext, imgFrame, dmgRect);
+                    imgFrame->Invalidate(dmgRect, PR_TRUE);
                   }
                 }
               }
@@ -1184,30 +1062,6 @@ nsresult
 nsImageMap::HandleEvent(nsIDOMEvent* aEvent)
 {
   return NS_OK;
-}
-
-nsresult
-nsImageMap::Invalidate(nsIPresContext* aPresContext, nsIFrame* aFrame, nsRect& aRect)
-{
-  nsCOMPtr<nsIViewManager> viewManager;
-  PRUint32 flags = NS_VMREFRESH_IMMEDIATE;
-  nsIView* view;
-  nsRect damageRect(aRect);
-
-  if (aFrame->HasView()) {
-    view = aFrame->GetView(aPresContext);
-  }
-  else {
-    nsPoint offset;
-    aFrame->GetOffsetFromView(aPresContext, offset, &view);
-    NS_ASSERTION(nsnull != view, "no view");
-    damageRect += offset;
-  }
-  view->GetViewManager(*getter_AddRefs(viewManager));
-  viewManager->UpdateView(view, damageRect, flags);
-
-  return NS_OK;
-
 }
 
 void

@@ -208,6 +208,12 @@ static void output_row(gif_struct *gs)
       drow_end = gs->height - 1;
   }
 
+  /* Protect against too much image data */
+  if ((PRUintn)drow_start >= gs->height) {
+    NS_WARNING("GIF2.cpp::output_row - too much image data");
+    return;
+  }
+
   /* Check for scanline below edge of logical screen */
   if ((gs->y_offset + gs->irow) < gs->screen_height) {
     /* Clip if right edge of image exceeds limits */
@@ -301,15 +307,9 @@ static int do_lzw(gif_struct *gs, const PRUint8 *q)
   PRUint8 *rowp     = gs->rowp;
   PRUint8 *rowend   = gs->rowend;
   PRUintn rows_remaining = gs->rows_remaining;
-  PRUint8 max_index;
 
   if (rowp == rowend)
     return 0;
-
-  if (gs->is_local_colormap_defined)
-    max_index = gs->local_colormap_size - 1;
-  else
-    max_index = gs->global_colormap_size - 1;
 
 #define OUTPUT_ROW(gs)                                                  \
   PR_BEGIN_MACRO                                                        \
@@ -344,15 +344,15 @@ static int do_lzw(gif_struct *gs, const PRUint8 *q)
       }
 
       /* Check for explicit end-of-stream code */
-      if (code == (clear_code + 1))
+      if (code == (clear_code + 1)) {
+        /* end-of-stream should only appear after all image data */
+        if (rows_remaining != 0)
+          return -1;
         return 0;
+      }
 
       if (oldcode == -1) {
-        *rowp = suffix[code];
-        if (*rowp > max_index)
-          *rowp = 0;
-        rowp++;
-
+        *rowp++ = suffix[code];
         if (rowp == rowend)
           OUTPUT_ROW(gs);
 
@@ -360,28 +360,24 @@ static int do_lzw(gif_struct *gs, const PRUint8 *q)
         continue;
       }
 
-      /* Check for a code not defined in the dictionary yet. */
-      if (code > avail)
-        return -1;
-
       incode = code;
-      if (code == avail) {
-        /* the first code is always < avail */
+      if (code >= avail) {
         *stackp++ = firstchar;
         code = oldcode;
+
+        if (stackp == stack + MAX_BITS)
+          return -1;
       }
 
-      int code2 = 0;
-      while (code > clear_code)
+      while (code >= clear_code)
       {
-        code2 = code;
         if (code == prefix[code])
           return -1;
 
         *stackp++ = suffix[code];
         code = prefix[code];
 
-        if (code2 == prefix[code])
+        if (stackp == stack + MAX_BITS)
           return -1;
       }
 
@@ -406,11 +402,7 @@ static int do_lzw(gif_struct *gs, const PRUint8 *q)
 
         /* Copy the decoded data out to the scanline buffer. */
       do {
-        *rowp = *--stackp;
-        if (*rowp > max_index)
-          *rowp = 0;
-        rowp++;
-
+        *rowp++ = *--stackp;
         if (rowp == rowend) {
           OUTPUT_ROW(gs);
         }
@@ -434,18 +426,6 @@ static int do_lzw(gif_struct *gs, const PRUint8 *q)
   gs->rows_remaining = rows_remaining;
 
   return 0;
-}
-
-PRBool gif_create(gif_struct **gs)
-{
-  gif_struct *ret = PR_NEWZAP(gif_struct);
-
-  if (!ret)
-    return PR_FALSE;
-
-  *gs = ret;
-
-  return PR_TRUE;
 }
 
 static inline void *gif_calloc(size_t n, size_t s)

@@ -49,7 +49,6 @@
 #include <gdk/gdkx.h>
 
 #include "nsIWidget.h"
-#include "nsIPref.h"
 
 #include "glib.h"
 #include "nsVoidArray.h"
@@ -125,7 +124,6 @@ static unsigned long getNextRequest (void *aClosure) {
 //-------------------------------------------------------------------------
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 static NS_DEFINE_CID(kCmdLineServiceCID, NS_COMMANDLINE_SERVICE_CID);
-static NS_DEFINE_CID(kPrefServiceCID, NS_PREF_CID);
 
 
 //-------------------------------------------------------------------------
@@ -220,15 +218,6 @@ NS_IMETHODIMP nsAppShell::Create(int *bac, char **bav)
     if(NS_FAILED(rv))
       argv = bav;
   }
-
-  nsXPIDLCString cmdResult;
-
-  rv = cmdLineArgs->GetCmdLineValue("-install", getter_Copies(cmdResult));
-  if (NS_SUCCEEDED(rv) && cmdResult) {
-    gdk_rgb_set_install(TRUE);
-  }
-
-  gdk_rgb_init();
 
   return NS_OK;
 }

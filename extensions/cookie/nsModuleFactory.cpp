@@ -40,23 +40,18 @@
 #include "nsIModule.h"
 #include "nsIGenericFactory.h"
 #include "nsIServiceManager.h"
-#include "nsCCookieManager.h"
-#include "nsCookieService.h"
 #include "nsImgManager.h"
 #include "nsPermissionManager.h"
 #include "nsPopupWindowManager.h"
-#include "nsCookieHTTPNotify.h"
 #include "nsICategoryManager.h"
 #include "nsCookiePromptService.h"
 #include "nsCookiePermission.h"
 #include "nsXPIDLString.h"
 
 // Define the constructor function for the objects
-NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsCookieService, nsCookieService::GetSingleton)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsImgManager, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPermissionManager, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPopupWindowManager, Init)
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsCookieHTTPNotify, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsCookiePermission, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsCookiePromptService)
 
@@ -94,16 +89,6 @@ UnregisterContentPolicy(nsIComponentManager *aCompMgr, nsIFile *aPath,
 
 // The list of components we register
 static const nsModuleComponentInfo components[] = {
-    { "CookieManager",
-      NS_COOKIEMANAGER_CID,
-      NS_COOKIEMANAGER_CONTRACTID,
-      nsCookieServiceConstructor
-    },
-    { "CookieService",
-      NS_COOKIESERVICE_CID,
-      NS_COOKIESERVICE_CONTRACTID,
-      nsCookieServiceConstructor
-    },
     { "ImgManager",
       NS_IMGMANAGER_CID,
       NS_IMGMANAGER_CONTRACTID,
@@ -129,21 +114,7 @@ static const nsModuleComponentInfo components[] = {
       NS_COOKIEPERMISSION_CID,
       NS_COOKIEPERMISSION_CONTRACTID,
       nsCookiePermissionConstructor
-    },
-    { NS_COOKIEHTTPNOTIFY_CLASSNAME,
-      NS_COOKIEHTTPNOTIFY_CID,
-      NS_COOKIEHTTPNOTIFY_CONTRACTID,
-      nsCookieHTTPNotifyConstructor,
-      nsCookieHTTPNotify::RegisterProc,
-      nsCookieHTTPNotify::UnregisterProc
-    },
+    }
 };
 
-PR_STATIC_CALLBACK(void)
-cookieModuleDtor(nsIModule *aSelf)
-{
-  // Release our singletons
-  nsCookieService::FreeSingleton();
-}
-
-NS_IMPL_NSGETMODULE_WITH_DTOR(nsCookieModule, components, cookieModuleDtor)
+NS_IMPL_NSGETMODULE(nsCookieModule, components)

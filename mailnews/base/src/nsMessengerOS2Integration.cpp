@@ -74,8 +74,8 @@ nsMessengerOS2Integration::~nsMessengerOS2Integration()
   }
 }
 
-NS_IMPL_ADDREF(nsMessengerOS2Integration);
-NS_IMPL_RELEASE(nsMessengerOS2Integration);
+NS_IMPL_ADDREF(nsMessengerOS2Integration)
+NS_IMPL_RELEASE(nsMessengerOS2Integration)
 
 NS_INTERFACE_MAP_BEGIN(nsMessengerOS2Integration)
    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIMessengerOSIntegration)
@@ -163,7 +163,7 @@ nsMessengerOS2Integration::OnItemBoolPropertyChanged(nsISupports *aItem,
 }
 
 NS_IMETHODIMP
-nsMessengerOS2Integration::OnItemEvent(nsIFolder *, nsIAtom *)
+nsMessengerOS2Integration::OnItemEvent(nsIMsgFolder *, nsIAtom *)
 {
   return NS_OK;
 }

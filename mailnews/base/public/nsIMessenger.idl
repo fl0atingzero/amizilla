@@ -47,7 +47,7 @@ interface nsIDOMWindowInternal;
 interface nsITransactionManager;
 interface nsIMsgMessageService;
 
-[scriptable, uuid(4f7966d0-c14f-11d2-b7f2-00805f05ffa5)]
+[scriptable, uuid(74028422-7d28-4624-8fff-f8ec4288332a)]
 interface nsIMessenger : nsISupports {
 
     const long eUnknown = 0;
@@ -60,10 +60,6 @@ interface nsIMessenger : nsISupports {
     readonly attribute nsITransactionManager transactionManager;
 
     void SetWindow(in nsIDOMWindowInternal ptr, in nsIMsgWindow msgWindow);
-    void DeleteMessages(in nsIRDFCompositeDataSource database,
-                        in nsIRDFResource srcFolderResource,
-                        in nsISupportsArray messages,
-                        in boolean reallyDelete);
 
     void DeleteFolders(in nsIRDFCompositeDataSource db,
                        in nsIRDFResource parentFolder,
@@ -86,6 +82,8 @@ interface nsIMessenger : nsISupports {
       */
     void loadURL(in nsIDOMWindowInternal ptr, in string aURL); 
 
+    void launchExternalURL(in string aURL);
+
     void RenameFolder(in nsIRDFCompositeDataSource db, 
                       in nsIRDFResource folder, in wstring name);
     void CompactFolder(in nsIRDFCompositeDataSource db,
@@ -102,12 +100,15 @@ interface nsIMessenger : nsISupports {
     void Redo(in nsIMsgWindow msgWindow);
     void sendUnsentMessages(in nsIMsgIdentity aIdentity, in nsIMsgWindow aMsgWindow);
     void SetDocumentCharset(in string characterSet);
-    void saveAs(in string aURI, in boolean aAsFile, in nsIMsgIdentity aIdentity, in nsIMsgWindow aMsgWindow);
+    void saveAs(in string aURI, in boolean aAsFile, in nsIMsgIdentity aIdentity, in wstring aMsgFilename);
     void openAttachment(in string contentTpe, in string url, in string displayName, in string messageUri);
     void saveAttachment(in string contentTpe, in string url, in string displayName, in string messageUri);
     void saveAllAttachments(in unsigned long count, [array, size_is(count)] in string contentTypeArray,
                             [array, size_is(count)] in string urlArray, [array, size_is(count)] in string displayNameArray,
                             [array, size_is(count)] in string messageUriArray);
+    // saveAttachmentToFolder is used by the drag and drop code to drop an attachment to a destination folder
+	// we need to return the actual file path (including the filename).
+    nsILocalFile saveAttachmentToFolder(in string contentType, in string url, in string displayName, in string messageUri, in nsILocalFile aDestFolder);
 
     attribute boolean sendingUnsentMsgs;
 

@@ -42,6 +42,9 @@ PLSRCS		= nfspwd.pl
 
 PROGRAM		= nsinstall
 
+# Indicate that this directory builds build tools.
+INTERNAL_TOOLS  = 1
+
 
 include $(DEPTH)/coreconf/config.mk
 
@@ -49,6 +52,7 @@ ifeq (,$(filter-out OS2 WIN%,$(OS_TARGET)))
 PROGRAM		=
 else
 TARGETS		= $(PROGRAM) $(PLSRCS:.pl=)
+INSTALL		= true
 endif
 
 ifdef NATIVE_CC

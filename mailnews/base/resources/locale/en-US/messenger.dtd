@@ -51,6 +51,7 @@ Rights Reserved.
 <!ENTITY getAllNewMsgCmd.label "Get All New Messages">
 <!ENTITY getAllNewMsgCmd.key "t">
 <!ENTITY getNextNMsgCmd.label "Get Next 500 News Messages">
+<!ENTITY getNextNMsgCmd.accesskey "t">
 <!ENTITY sendUnsentCmd.label "Send Unsent Messages">
 <!ENTITY sendUnsentCmd.accesskey "d">
 <!ENTITY loadFirstDraft.label			"Load First Draft Message">
@@ -131,8 +132,6 @@ Rights Reserved.
 <!ENTITY editDraftCmd.accesskey "f">
 
 <!-- View Menu -->
-<!-- LOCALIZATION NOTE (showSidebarMenu) : Do not translate line. -->
-<!ENTITY showSidebarMenu.label ".SideBar">
 <!ENTITY showMessengerToolbarCmd.label		"Mail Toolbar">
 <!ENTITY showMessengerToolbarCmd.accesskey	"o">
 
@@ -165,17 +164,22 @@ Rights Reserved.
 <!ENTITY sortByJunkStatusCmd.accesskey "J">
 <!ENTITY sortBySubjectCmd.label "Subject">
 <!ENTITY sortBySubjectCmd.accesskey "S">
-<!-- Sender / Recipient lives in messenger.properties, since that item is dynamic -->
+<!ENTITY sortBySenderCmd.label "Sender">
+<!ENTITY sortBySenderCmd.accesskey "n">
+<!ENTITY sortByRecipientCmd.label "Recipient">
+<!ENTITY sortByRecipientCmd.accesskey "c">
 <!ENTITY sortByUnreadCmd.label "Read">
 <!ENTITY sortByUnreadCmd.accesskey "R">
-<!ENTITY sortByThreadCmd.label "Thread">
-<!ENTITY sortByThreadCmd.accesskey "T">
 <!ENTITY sortByOrderReceivedCmd.label "Order Received">
 <!ENTITY sortByOrderReceivedCmd.accesskey "O">
 <!ENTITY sortAscending.label "Ascending">
 <!ENTITY sortAscending.accesskey "A">
 <!ENTITY sortDescending.label "Descending">
 <!ENTITY sortDescending.accesskey "D">
+<!ENTITY sortThreaded.label "Threaded">
+<!ENTITY sortThreaded.accesskey "T">
+<!ENTITY sortUnthreaded.label "Unthreaded">
+<!ENTITY sortUnthreaded.accesskey "h">
 <!ENTITY msgsMenu.label "Messages">
 <!ENTITY msgsMenu.accesskey "M">
 <!ENTITY viewAll.label "All">
@@ -239,6 +243,7 @@ Rights Reserved.
 <!ENTITY findCmd.label "Find in This Message...">
 <!ENTITY findCmd.accesskey "F">
 <!ENTITY findCmd.key "f">
+<!ENTITY findCmd.key2 "VK_F19">
 <!ENTITY findAgainCmd.label "Find Again">
 <!ENTITY findAgainCmd.accesskey "g">
 <!ENTITY findAgainCmd.key "g">
@@ -380,8 +385,9 @@ Rights Reserved.
 <!ENTITY markThreadAsReadCmd.label "Thread As Read">
 <!ENTITY markThreadAsReadCmd.accesskey "T">
 <!ENTITY markThreadAsReadCmd.key "r">
-<!ENTITY markByDateCmd.label "by Date...">
-<!ENTITY markByDateCmd.accesskey "D">
+<!ENTITY markReadByDateCmd.label "As Read by Date...">
+<!ENTITY markReadByDateCmd.accesskey "D">
+<!ENTITY markReadByDateCmd.key "c">
 <!ENTITY markAllReadCmd.label "All Read">
 <!ENTITY markAllReadCmd.accesskey "A">
 <!ENTITY markAllReadCmd.key "c">
@@ -389,8 +395,12 @@ Rights Reserved.
 <!ENTITY markFlaggedCmd.accesskey "F">
 <!ENTITY markAsJunkCmd.label "As Junk">
 <!ENTITY markAsJunkCmd.accesskey "J">
+<!ENTITY markAsJunkCmd.key "j">
 <!ENTITY markAsNotJunkCmd.label "As Not Junk">
 <!ENTITY markAsNotJunkCmd.accesskey "N">
+<!ENTITY markAsNotJunkCmd.key "j">
+<!ENTITY recalculateJunkScoreCmd.label "Run Junk Mail Controls">
+<!ENTITY recalculateJunkScoreCmd.accesskey "C">
 <!ENTITY openMessageWindowCmd.label "Open Message">
 <!ENTITY openMessageWindowCmd.accesskey "O">
 <!ENTITY openMessageWindowCmd.key "o">
@@ -490,6 +500,8 @@ Rights Reserved.
 <!ENTITY folderContextUnsubscribe.accesskey "U">
 <!ENTITY folderContextMarkNewsgroupRead.label "Mark Newsgroup Read">
 <!ENTITY folderContextMarkNewsgroupRead.accesskey "k">
+<!ENTITY folderContextMarkMailFolderRead.label "Mark Folder Read">
+<!ENTITY folderContextMarkMailFolderRead.accesskey "k">
 <!ENTITY folderContextNew.label "New Subfolder...">
 <!ENTITY folderContextNew.accesskey "N">
 <!ENTITY folderContextSubscribe.label "Subscribe...">

@@ -38,9 +38,9 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsClipboard.h"
-#include <OLE2.h>
-#include <SHLOBJ.H>
-#include <INTSHCUT.H>
+#include <ole2.h>
+#include <shlobj.h>
+#include <intshcut.h>
 
 // shellapi.h is needed to build with WIN32_LEAN_AND_MEAN
 #include <shellapi.h>
@@ -857,35 +857,6 @@ nsClipboard::GetNativeClipboardData ( nsITransferable * aTransferable, PRInt32 a
 
 }
 
-
-//-------------------------------------------------------------------------
-static void PlaceDataOnClipboard(PRUint32 aFormat, char * aData, int aLength)
-{
-  HGLOBAL     hGlobalMemory;
-  PSTR        pGlobalMemory;
-
-  PRInt32 size = aLength + 1;
-
-  if (aLength) {
-    // Copy text to Global Memory Area
-    hGlobalMemory = (HGLOBAL)::GlobalAlloc(GHND, size);
-    if (hGlobalMemory != NULL) {
-      pGlobalMemory = (PSTR) ::GlobalLock(hGlobalMemory);
-
-      int i;
-
-      char * s  = aData;
-      PRInt32 len = aLength;
-      for (i=0;i< len;i++) {
-	      *pGlobalMemory++ = *s++;
-      }
-
-      // Put data on Clipboard
-      ::GlobalUnlock(hGlobalMemory);
-      ::SetClipboardData(aFormat, hGlobalMemory);
-    }
-  }  
-}
 
 //-------------------------------------------------------------------------
 NS_IMETHODIMP nsClipboard::ForceDataToClipboard ( PRInt32 aWhichClipboard )

@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: NPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -56,6 +56,7 @@
 #include "nsIDOMMouseListener.h"
 #include "nsIDOMContextMenuListener.h"
 #include "nsContentCID.h"
+#include "nsContentUtils.h"
 
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptContext.h"
@@ -67,6 +68,11 @@
 #include "nsIDOMNSUIEvent.h"
 #include "nsIDOMEventTarget.h"
 #include "nsIDOMNSEvent.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
+#include "nsIServiceManagerUtils.h"
+#include "nsIPrincipal.h"
+#include "nsIScriptSecurityManager.h"
 
 #include "nsIBoxObject.h"
 #include "nsIPopupBoxObject.h"
@@ -218,18 +224,52 @@ XULPopupListenerImpl::PreLaunchPopup(nsIDOMEvent* aMouseEvent)
     return NS_OK;
   }
 
+  // Get the node that was clicked on.
+  nsCOMPtr<nsIDOMEventTarget> target;
+  mouseEvent->GetTarget(getter_AddRefs(target));
+  nsCOMPtr<nsIDOMNode> targetNode = do_QueryInterface(target);
+
   PRBool preventDefault;
   nsUIEvent->GetPreventDefault(&preventDefault);
+  if (preventDefault && targetNode && popupType == eXULPopupType_context) {
+    // Someone called preventDefault on a context menu.
+    // Let's make sure they are allowed to do so.
+    nsCOMPtr<nsIPrefService> prefService =
+      do_GetService(NS_PREFSERVICE_CONTRACTID);
+
+    NS_ENSURE_TRUE(prefService, NS_ERROR_FAILURE);
+
+    nsCOMPtr<nsIPrefBranch> prefBranch;
+    prefService->GetBranch(nsnull, getter_AddRefs(prefBranch));
+
+    PRBool eventEnabled;
+    nsresult rv = prefBranch->GetBoolPref("dom.event.contextmenu.enabled",
+                                          &eventEnabled);
+    if (NS_SUCCEEDED(rv) && !eventEnabled) {
+      // The user wants his contextmenus.  Let's make sure that this is a website
+      // and not chrome since there could be places in chrome which don't want
+      // contextmenus.
+      nsCOMPtr<nsIDocument> doc;
+      nsCOMPtr<nsIPrincipal> prin;
+      nsContentUtils::GetDocumentAndPrincipal(targetNode,
+                                              getter_AddRefs(doc),
+                                              getter_AddRefs(prin));
+      if (prin) {
+        nsCOMPtr<nsIPrincipal> system;
+        nsContentUtils::GetSecurityManager()->GetSystemPrincipal(getter_AddRefs(system));
+        if (prin != system) {
+          // This isn't chrome.  Cancel the preventDefault() and
+          // let the event go forth.
+          preventDefault = PR_FALSE;
+        }
+      }
+    }
+  }
+
   if (preventDefault) {
     // someone called preventDefault. bail.
     return NS_OK;
   }
-
-  // Get the node that was clicked on.
-  nsCOMPtr<nsIDOMEventTarget> target;
-  mouseEvent->GetTarget( getter_AddRefs( target ) );
-  nsCOMPtr<nsIDOMNode> targetNode;
-  if (target) targetNode = do_QueryInterface(target);
 
   // This is a gross hack to deal with a recursive popup situation happening in AIM code. 
   // See http://bugzilla.mozilla.org/show_bug.cgi?id=96920.
@@ -238,24 +278,17 @@ XULPopupListenerImpl::PreLaunchPopup(nsIDOMEvent* aMouseEvent)
   // submenu of an already-showing popup.  We don't need to do anything at all.
   if (popupType == eXULPopupType_popup) {
     nsCOMPtr<nsIContent> targetContent = do_QueryInterface(target);
-    nsCOMPtr<nsIAtom> tag;
-    targetContent->GetTag(getter_AddRefs(tag));
-    if (tag && (tag.get() == nsXULAtoms::menu || tag.get() == nsXULAtoms::menuitem))
+    nsIAtom *tag = targetContent->Tag();
+    if (tag == nsXULAtoms::menu || tag == nsXULAtoms::menuitem)
       return NS_OK;
   }
 
   // Get the document with the popup.
-  nsCOMPtr<nsIDocument> document;
   nsCOMPtr<nsIContent> content = do_QueryInterface(mElement);
-  nsresult rv;
-  if (NS_FAILED(rv = content->GetDocument(getter_AddRefs(document)))) {
-    NS_ERROR("Unable to retrieve the document.");
-    return rv;
-  }
 
   // Turn the document into a XUL document so we can use SetPopupNode.
-  nsCOMPtr<nsIDOMXULDocument> xulDocument = do_QueryInterface(document);
-  if (xulDocument == nsnull) {
+  nsCOMPtr<nsIDOMXULDocument> xulDocument = do_QueryInterface(content->GetDocument());
+  if (!xulDocument) {
     NS_ERROR("Popup attached to an element that isn't in XUL!");
     return NS_ERROR_FAILURE;
   }
@@ -308,12 +341,13 @@ XULPopupListenerImpl::FireFocusOnTargetContent(nsIDOMNode* aTargetNode)
   rv = aTargetNode->GetOwnerDocument(getter_AddRefs(domDoc));
   if(NS_SUCCEEDED(rv) && domDoc)
   {
-    nsCOMPtr<nsIPresShell> shell;
     nsCOMPtr<nsIPresContext> context;
     nsCOMPtr<nsIDocument> tempdoc = do_QueryInterface(domDoc);
-    tempdoc->GetShellAt(0, getter_AddRefs(shell));  // Get nsIDOMElement for targetNode
+
+    // Get nsIDOMElement for targetNode
+    nsIPresShell *shell = tempdoc->GetShellAt(0);
     if (!shell)
-        return NS_ERROR_FAILURE;
+      return NS_ERROR_FAILURE;
 
     shell->GetPresContext(getter_AddRefs(context));
  
@@ -336,18 +370,17 @@ XULPopupListenerImpl::FireFocusOnTargetContent(nsIDOMNode* aTargetNode)
         if ((ui->mUserFocus != NS_STYLE_USER_FOCUS_IGNORE) &&
             (ui->mUserFocus != NS_STYLE_USER_FOCUS_NONE)) 
         {
-          currFrame->GetContent(getter_AddRefs(newFocus));
+          newFocus = currFrame->GetContent();
           nsCOMPtr<nsIDOMElement> domElement(do_QueryInterface(newFocus));
           if (domElement) {
             element = domElement;
             break;
           }
         }
-        currFrame->GetParent(&currFrame);
+        currFrame = currFrame->GetParent();
     } 
     nsCOMPtr<nsIContent> focusableContent = do_QueryInterface(element);
-    nsCOMPtr<nsIEventStateManager> esm;
-    context->GetEventStateManager(getter_AddRefs(esm));
+    nsIEventStateManager *esm = context->EventStateManager();
 
     if (focusableContent)
       focusableContent->SetFocus(context);
@@ -408,14 +441,10 @@ static void
 GetImmediateChild(nsIContent* aContent, nsIAtom *aTag, nsIContent** aResult) 
 {
   *aResult = nsnull;
-  PRInt32 childCount;
-  aContent->ChildCount(childCount);
+  PRInt32 childCount = aContent->GetChildCount();
   for (PRInt32 i = 0; i < childCount; i++) {
-    nsCOMPtr<nsIContent> child;
-    aContent->ChildAt(i, getter_AddRefs(child));
-    nsCOMPtr<nsIAtom> tag;
-    child->GetTag(getter_AddRefs(tag));
-    if (aTag == tag.get()) {
+    nsIContent *child = aContent->GetChildAt(i);
+    if (child->Tag() == aTag) {
       *aResult = child;
       NS_ADDREF(*aResult);
       return;
@@ -503,21 +532,17 @@ XULPopupListenerImpl::LaunchPopup(PRInt32 aClientX, PRInt32 aClientY)
   mElement->GetAttribute(type, identifier);
 
   if (identifier.IsEmpty()) {
-    if (type.EqualsIgnoreCase("popup"))
+    if (type.Equals(NS_LITERAL_STRING("popup")))
       mElement->GetAttribute(NS_LITERAL_STRING("menu"), identifier);
-    else if (type.EqualsIgnoreCase("context"))
+    else if (type.Equals(NS_LITERAL_STRING("context")))
       mElement->GetAttribute(NS_LITERAL_STRING("contextmenu"), identifier);
     if (identifier.IsEmpty())
       return rv;
   }
 
   // Try to find the popup content and the document.
-  nsCOMPtr<nsIDocument> document;
   nsCOMPtr<nsIContent> content = do_QueryInterface(mElement);
-  if (NS_FAILED(rv = content->GetDocument(getter_AddRefs(document)))) {
-    NS_ERROR("Unable to retrieve the document.");
-    return rv;
-  }
+  nsCOMPtr<nsIDocument> document = content->GetDocument();
 
   // Turn the document into a DOM document so we can use getElementById
   nsCOMPtr<nsIDOMDocument> domDocument = do_QueryInterface(document);
@@ -531,10 +556,8 @@ XULPopupListenerImpl::LaunchPopup(PRInt32 aClientX, PRInt32 aClientY)
 
   if (identifier == NS_LITERAL_STRING("_child")) {
     nsCOMPtr<nsIContent> popup;
-    
-    nsIAtom* tag = nsXULAtoms::menupopup;
 
-    GetImmediateChild(content, tag, getter_AddRefs(popup));
+    GetImmediateChild(content, nsXULAtoms::menupopup, getter_AddRefs(popup));
     if (popup)
       popupContent = do_QueryInterface(popup);
     else {
@@ -548,9 +571,10 @@ XULPopupListenerImpl::LaunchPopup(PRInt32 aClientX, PRInt32 aClientY)
         for (ctr = 0; ctr < listLength; ctr++) {
           list->Item(ctr, getter_AddRefs(node));
           nsCOMPtr<nsIContent> childContent(do_QueryInterface(node));
-          nsCOMPtr<nsIAtom> childTag;
-          childContent->GetTag(getter_AddRefs(childTag));
-          if (childTag.get() == tag) {
+
+          nsINodeInfo *ni = childContent->GetNodeInfo();
+
+          if (ni && ni->Equals(nsXULAtoms::menupopup, kNameSpaceID_XUL)) {
             popupContent = do_QueryInterface(childContent);
             break;
           }
@@ -569,39 +593,33 @@ XULPopupListenerImpl::LaunchPopup(PRInt32 aClientX, PRInt32 aClientY)
     return NS_OK;
 
   // We have some popup content. Obtain our window.
-  nsCOMPtr<nsIScriptContext> context;
-  nsCOMPtr<nsIScriptGlobalObject> global;
-  document->GetScriptGlobalObject(getter_AddRefs(global));
-  if (global) {
-    if ((NS_OK == global->GetContext(getter_AddRefs(context))) && context) {
-      // Get the DOM window
-      nsCOMPtr<nsIDOMWindowInternal> domWindow = do_QueryInterface(global);
-      if (domWindow != nsnull) {
-        // Find out if we're anchored.
-        mPopupContent = popupContent.get();
+  nsCOMPtr<nsIDOMWindowInternal> domWindow =
+    do_QueryInterface(document->GetScriptGlobalObject());
 
-        nsAutoString anchorAlignment;
-        mPopupContent->GetAttribute(NS_LITERAL_STRING("popupanchor"), anchorAlignment);
+  if (domWindow) {
+    // Find out if we're anchored.
+    mPopupContent = popupContent.get();
 
-        nsAutoString popupAlignment;
-        mPopupContent->GetAttribute(NS_LITERAL_STRING("popupalign"), popupAlignment);
+    nsAutoString anchorAlignment;
+    mPopupContent->GetAttribute(NS_LITERAL_STRING("popupanchor"), anchorAlignment);
 
-        PRInt32 xPos = aClientX, yPos = aClientY;
-        
-        ConvertPosition(mPopupContent, anchorAlignment, popupAlignment, yPos);
-        if (!anchorAlignment.IsEmpty() && !popupAlignment.IsEmpty())
-          xPos = yPos = -1;
+    nsAutoString popupAlignment;
+    mPopupContent->GetAttribute(NS_LITERAL_STRING("popupalign"), popupAlignment);
 
-        nsCOMPtr<nsIBoxObject> popupBox;
-        nsCOMPtr<nsIDOMXULElement> xulPopupElt(do_QueryInterface(mPopupContent));
-        xulPopupElt->GetBoxObject(getter_AddRefs(popupBox));
-        nsCOMPtr<nsIPopupBoxObject> popupBoxObject(do_QueryInterface(popupBox));
-        if (popupBoxObject)
-          popupBoxObject->ShowPopup(mElement, mPopupContent, xPos, yPos, 
-                                    type.get(), anchorAlignment.get(), 
-                                    popupAlignment.get());
-      }
-    }
+    PRInt32 xPos = aClientX, yPos = aClientY;
+
+    ConvertPosition(mPopupContent, anchorAlignment, popupAlignment, yPos);
+    if (!anchorAlignment.IsEmpty() && !popupAlignment.IsEmpty())
+      xPos = yPos = -1;
+
+    nsCOMPtr<nsIBoxObject> popupBox;
+    nsCOMPtr<nsIDOMXULElement> xulPopupElt(do_QueryInterface(mPopupContent));
+    xulPopupElt->GetBoxObject(getter_AddRefs(popupBox));
+    nsCOMPtr<nsIPopupBoxObject> popupBoxObject(do_QueryInterface(popupBox));
+    if (popupBoxObject)
+      popupBoxObject->ShowPopup(mElement, mPopupContent, xPos, yPos, 
+                                type.get(), anchorAlignment.get(), 
+                                popupAlignment.get());
   }
 
   return NS_OK;

@@ -47,7 +47,7 @@
 #include "nspr.h"
 #include "nsWeakReference.h"
 #include "nsWeakPtr.h"
-#include "nsIDNSListener.h"
+#include "nsIDNSService.h"
 #include "nsIRequest.h"
 
 // 0d871e30-1dd2-11b2-8ea9-831778c78e93
@@ -112,6 +112,7 @@ class nsLDAPConnection : public nsILDAPConnection,
      */
     nsresult RemovePendingOperation(nsILDAPOperation *aOperation);
 
+    void Close();                       // close the connection
     LDAP *mConnectionHandle;            // the LDAP C SDK's connection object
     nsCString mBindName;                // who to bind as
     nsCOMPtr<nsIThread> mThread;        // thread which marshals results
@@ -119,15 +120,15 @@ class nsLDAPConnection : public nsILDAPConnection,
     nsSupportsHashtable *mPendingOperations; // keep these around for callbacks
     nsLDAPConnectionLoop *mRunnable;    // nsIRunnable object
 
-    PRInt16 mPort;                      // The LDAP port we're binding to
+    PRInt32 mPort;                      // The LDAP port we're binding to
     PRBool mSSL;                        // the options
+    PRUint32 mVersion;                  // LDAP protocol version
 
     nsCString mResolvedIP;              // Preresolved list of host IPs
     nsCOMPtr<nsILDAPMessageListener> mInitListener; // Init callback
-    nsCOMPtr<nsIRequest> mDNSRequest;   // The "active" DNS request
+    nsCOMPtr<nsIDNSRequest> mDNSRequest;   // The "active" DNS request
+    nsCString               mDNSHost;   // The hostname being resolved
     nsCOMPtr<nsISupports> mClosure;     // private parameter (anything caller desires)
-    nsresult mDNSStatus;                // The status of DNS lookup (rv cache)
-    PRBool mDNSFinished;                // Flag if DNS lookup has finished
 };
 
 // This class implements the nsIRunnable interface, in this case just a

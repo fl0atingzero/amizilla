@@ -89,8 +89,8 @@
 #include "nsAppShellCIDs.h"
 
 #include "nsIDocumentViewer.h"
-#include "nsIGlobalHistory.h"
 #include "nsIBrowserHistory.h"
+#include "nsDocShellCID.h"
 
 #include "nsIObserverService.h"
 
@@ -113,14 +113,11 @@
 #define ENABLE_PAGE_CYCLER
 #endif
 
-#include "nsITimeBomb.h"
-
 /* Define Class IDs */
 static NS_DEFINE_CID(kPrefServiceCID,           NS_PREF_CID);
 static NS_DEFINE_CID(kProxyObjectManagerCID,    NS_PROXYEVENT_MANAGER_CID);
 static NS_DEFINE_CID(kAppShellServiceCID,       NS_APPSHELL_SERVICE_CID);
 static NS_DEFINE_CID(kCmdLineServiceCID,        NS_COMMANDLINE_SERVICE_CID);
-static NS_DEFINE_CID(kCGlobalHistoryCID,        NS_GLOBALHISTORY_CID);
 
 #ifdef DEBUG                                                           
 static int APP_DEBUG = 0; // Set to 1 in debugger to turn on debugging.
@@ -133,6 +130,8 @@ static int APP_DEBUG = 0; // Set to 1 in debugger to turn on debugging.
 #define PREF_HOMEPAGE_OVERRIDE_MSTONE "browser.startup.homepage_override.mstone"
 #define PREF_BROWSER_STARTUP_PAGE "browser.startup.page"
 #define PREF_BROWSER_STARTUP_HOMEPAGE "browser.startup.homepage"
+
+const char *kIgnoreOverrideMilestone = "ignore";
 
 //*****************************************************************************
 //***    PageCycler: Object Management
@@ -426,10 +425,9 @@ nsBrowserInstance::ReinitializeContentVariables()
   nsCOMPtr<nsIScriptGlobalObject> globalObj(do_QueryInterface(contentWindow));
 
   if (globalObj) {
-    nsCOMPtr<nsIDocShell> docShell;
-    globalObj->GetDocShell(getter_AddRefs(docShell));
+    nsIDocShell *docShell = globalObj->GetDocShell();
 
-    mContentAreaDocShellWeak = dont_AddRef(NS_GetWeakReference(docShell)); // Weak reference
+    mContentAreaDocShellWeak = do_GetWeakReference(docShell); // Weak reference
 
     if (APP_DEBUG) {
       nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(do_QueryInterface(docShell));
@@ -496,7 +494,7 @@ nsBrowserInstance::LoadUrl(const PRUnichar * urlToLoad)
   // Normal browser.
   rv = webNav->LoadURI( urlToLoad,                          // URI string
                         nsIWebNavigation::LOAD_FLAGS_NONE,  // Load flags
-                        nsnull,                             // Refering URI
+                        nsnull,                             // Referring URI
                         nsnull,                             // Post data
                         nsnull );                           // Extra headers
 
@@ -589,9 +587,9 @@ nsBrowserInstance::SetWebShellWindow(nsIDOMWindowInternal* aWin)
   }
 
   if (APP_DEBUG) {
-    nsCOMPtr<nsIDocShell> docShell;
-    globalObj->GetDocShell(getter_AddRefs(docShell));
-    nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(do_QueryInterface(docShell));
+    nsCOMPtr<nsIDocShellTreeItem> docShellAsItem =
+      do_QueryInterface(globalObj->GetDocShell());
+
     if (docShellAsItem) {
       // inform our top level webshell that we are its parent URI content listener...
       nsXPIDLString name;
@@ -637,8 +635,8 @@ nsBrowserInstance::Close()
 /////////////////////////////////////////////////////////////////////////
 
 
-NS_IMPL_ADDREF(nsBrowserContentHandler);
-NS_IMPL_RELEASE(nsBrowserContentHandler);
+NS_IMPL_ADDREF(nsBrowserContentHandler)
+NS_IMPL_RELEASE(nsBrowserContentHandler)
 
 NS_INTERFACE_MAP_BEGIN(nsBrowserContentHandler)
    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIContentHandler)
@@ -655,7 +653,7 @@ nsBrowserContentHandler::~nsBrowserContentHandler()
 }
 
 CMDLINEHANDLER_OTHERS_IMPL(nsBrowserContentHandler,"-chrome","general.startup.browser","Load the specified chrome.", PR_TRUE, PR_FALSE)
-CMDLINEHANDLER_REGISTERPROC_IMPL(nsBrowserContentHandler, "Browser Startup Handler", NS_BROWSERSTARTUPHANDLER_CONTRACTID);
+CMDLINEHANDLER_REGISTERPROC_IMPL(nsBrowserContentHandler, "Browser Startup Handler", NS_BROWSERSTARTUPHANDLER_CONTRACTID)
 NS_IMETHODIMP nsBrowserContentHandler::GetChromeUrlForTask(char **aChromeUrlForTask) {
 
   if (!aChromeUrlForTask)
@@ -680,25 +678,26 @@ PRBool nsBrowserContentHandler::NeedHomepageOverride(nsIPref *aPrefService)
 {
   NS_ASSERTION(aPrefService, "Null pointer to prefs service!");
 
+  // get saved milestone from user's prefs
+  nsXPIDLCString savedMilestone;
+  aPrefService->GetCharPref(PREF_HOMEPAGE_OVERRIDE_MSTONE, 
+                            getter_Copies(savedMilestone));
+  // Mozilla never saves this value, but a fed-up advanced user might
+  if (savedMilestone.Equals(kIgnoreOverrideMilestone))
+    return PR_FALSE;
+
   // get browser's current milestone
-  nsresult rv;
   nsCOMPtr<nsIHttpProtocolHandler> httpHandler(
-      do_GetService("@mozilla.org/network/protocol;1?name=http", &rv));
-  if (NS_FAILED(rv))
+      do_GetService("@mozilla.org/network/protocol;1?name=http"));
+  if (!httpHandler)
     return PR_TRUE;
+
   nsCAutoString currMilestone;
   httpHandler->GetMisc(currMilestone);
 
-  // get saved milestone from user's prefs
-  nsXPIDLCString savedMilestone;
-  rv = aPrefService->GetCharPref(PREF_HOMEPAGE_OVERRIDE_MSTONE, 
-                                 getter_Copies(savedMilestone));
-
   // failed to get pref -or- saved milestone older than current milestone, 
   // write out known current milestone and show URL this time
-  if (NS_FAILED(rv) || 
-      !(currMilestone.Equals(savedMilestone)))
-  {
+  if (!(currMilestone.Equals(savedMilestone))) {
     // update milestone in "homepage override" pref
     aPrefService->SetCharPref(PREF_HOMEPAGE_OVERRIDE_MSTONE, 
                               currMilestone.get());
@@ -752,76 +751,44 @@ NS_IMETHODIMP nsBrowserContentHandler::GetDefaultArgs(PRUnichar **aDefaultArgs)
     return NS_ERROR_NULL_POINTER;
 
   nsresult rv;
-  static PRBool timebombChecked = PR_FALSE;
-  nsAutoString args;
 
-  if (!timebombChecked) {
-    // timebomb check
-    timebombChecked = PR_TRUE;
-
-    PRBool expired;
-    nsCOMPtr<nsITimeBomb> timeBomb(do_GetService(NS_TIMEBOMB_CONTRACTID, &rv));
-    if (NS_FAILED(rv)) return rv;
-
-    rv = timeBomb->Init();
-    if (NS_FAILED(rv)) return rv;
-
-    rv = timeBomb->CheckWithUI(&expired);
-    if (NS_FAILED(rv)) return rv;
-
-    if (expired) {
-      nsXPIDLCString urlString;
-      rv = timeBomb->GetTimebombURL(getter_Copies(urlString));
-      if (NS_FAILED(rv)) return rv;
-
-      args.AssignWithConversion(urlString);
-    }
-  }
-
-  if (args.IsEmpty()) {
-    nsCOMPtr<nsIPref> prefs(do_GetService(kPrefServiceCID));
-    if (!prefs) return NS_ERROR_FAILURE;
-
+  nsCOMPtr<nsIPref> prefs(do_GetService(kPrefServiceCID));
+  if (prefs) {
     if (NeedHomepageOverride(prefs)) {
-      nsXPIDLString url;
-      rv = prefs->GetLocalizedUnicharPref(PREF_HOMEPAGE_OVERRIDE_URL, getter_Copies(url));
-      if (NS_SUCCEEDED(rv) && (const PRUnichar *)url) {
-        args = url;
-      }
+      rv = prefs->GetLocalizedUnicharPref(PREF_HOMEPAGE_OVERRIDE_URL, aDefaultArgs);
+      if (NS_SUCCEEDED(rv) && *aDefaultArgs)
+        return NS_OK;
     }
 
-    if (args.IsEmpty()) {
-      PRInt32 choice = 0;
-      rv = prefs->GetIntPref(PREF_BROWSER_STARTUP_PAGE, &choice);
-      if (NS_SUCCEEDED(rv)) {
-        switch (choice) {
-          case 1: {
-            // skip the code below
-            return GetHomePageGroup(prefs, aDefaultArgs);
-          }
-          case 2: {
-            nsCOMPtr<nsIBrowserHistory> history(do_GetService(kCGlobalHistoryCID));
-            if (history) {
-              nsXPIDLCString curl;
-              rv = history->GetLastPageVisited(getter_Copies(curl));
-              args.AssignWithConversion(curl);
+    PRInt32 choice = 0;
+    rv = prefs->GetIntPref(PREF_BROWSER_STARTUP_PAGE, &choice);
+    if (NS_SUCCEEDED(rv)) {
+      switch (choice) {
+        case 1: {
+          // skip the code below
+          rv = GetHomePageGroup(prefs, aDefaultArgs);
+          if (NS_SUCCEEDED(rv) && *aDefaultArgs)
+            return NS_OK;
+        }
+        case 2: {
+          nsCOMPtr<nsIBrowserHistory> history(do_GetService(NS_GLOBALHISTORY2_CONTRACTID));
+          if (history) {
+            nsCAutoString curl;
+            rv = history->GetLastPageVisited(curl);
+            if (NS_SUCCEEDED(rv)) {
+              *aDefaultArgs = UTF8ToNewUnicode(curl);
+              if (*aDefaultArgs) return NS_OK;
             }
-            break;
           }
-          case 0:
-          default:
-            // fall through to about:blank below
-            break;
         }
       }
-
-      // the default, in case we fail somewhere
-      if (args.IsEmpty())
-        args.Assign(NS_LITERAL_STRING("about:blank"));
     }
   }
+    
+  // the default, in case we fail somewhere
+  *aDefaultArgs = ToNewUnicode(NS_LITERAL_STRING("about:blank"));
+  if (!*aDefaultArgs) return NS_ERROR_OUT_OF_MEMORY;
 
-  *aDefaultArgs = ToNewUnicode(args);
   return NS_OK;
 }
 

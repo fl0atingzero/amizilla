@@ -54,6 +54,7 @@
 #include "nsIDOMNode.h"
 #include "nsIDOMHTMLInputElement.h"
 #include "nsITheme.h"
+#include "imgIRequest.h"
 
 
 //------------------------------------------------------------
@@ -166,7 +167,7 @@ NS_IMETHODIMP
 nsGfxCheckboxControlFrame::OnChecked(nsIPresContext* aPresContext,
                                      PRBool aChecked)
 {
-  nsFormControlHelper::ForceDrawFrame(aPresContext, this);
+  Invalidate(GetOutlineRect(), PR_FALSE);
   return aChecked;
 }
 
@@ -231,7 +232,7 @@ nsGfxCheckboxControlFrame::Paint(nsIPresContext*   aPresContext,
     if (!mCheckButtonFaceStyle && GetCheckboxState()) {
       const nsStyleBackground* myColor = mCheckButtonFaceStyle->GetStyleBackground();
 
-      if (!myColor->mBackgroundImage.IsEmpty()) {
+      if (myColor->mBackgroundImage) {
         const nsStyleBorder* myBorder = mCheckButtonFaceStyle->GetStyleBorder();
         const nsStylePadding* myPadding = mCheckButtonFaceStyle->GetStylePadding();
         const nsStylePosition* myPosition = mCheckButtonFaceStyle->GetStylePosition();

@@ -42,14 +42,14 @@
 #include "nsHTMLAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsIPresContext.h"
-#include "nsHTMLAttributes.h"
+#include "nsMappedAttributes.h"
 #include "nsRuleNode.h"
 #include "nsCSSStruct.h"
 
 // XXX wrap, variable, cols, tabstop
 
 
-class nsHTMLPreElement : public nsGenericHTMLContainerElement,
+class nsHTMLPreElement : public nsGenericHTMLElement,
                          public nsIDOMHTMLPreElement
 {
 public:
@@ -60,29 +60,28 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLElement::)
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLContainerElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLPreElement
   NS_IMETHOD GetWidth(PRInt32* aWidth);
   NS_IMETHOD SetWidth(PRInt32 aWidth);
 
-  NS_IMETHOD StringToAttribute(nsIAtom* aAttribute,
-                               const nsAString& aValue,
-                               nsHTMLValue& aResult);
-  NS_IMETHOD GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                      nsChangeHint& aHint) const;
+  virtual PRBool ParseAttribute(nsIAtom* aAttribute,
+                                const nsAString& aValue,
+                                nsAttrValue& aResult);
+  NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
   NS_IMETHOD GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const;
 };
 
 nsresult
 NS_NewHTMLPreElement(nsIHTMLContent** aInstancePtrResult,
-                     nsINodeInfo *aNodeInfo)
+                     nsINodeInfo *aNodeInfo, PRBool aFromParser)
 {
   NS_ENSURE_ARG_POINTER(aInstancePtrResult);
 
@@ -116,13 +115,12 @@ nsHTMLPreElement::~nsHTMLPreElement()
 }
 
 
-NS_IMPL_ADDREF_INHERITED(nsHTMLPreElement, nsGenericElement);
-NS_IMPL_RELEASE_INHERITED(nsHTMLPreElement, nsGenericElement);
+NS_IMPL_ADDREF_INHERITED(nsHTMLPreElement, nsGenericElement)
+NS_IMPL_RELEASE_INHERITED(nsHTMLPreElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLPreElement
-NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLPreElement,
-                                    nsGenericHTMLContainerElement)
+NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLPreElement, nsGenericHTMLElement)
   NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLPreElement)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLPreElement)
 NS_HTML_CONTENT_INTERFACE_MAP_END
@@ -147,7 +145,7 @@ nsHTMLPreElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
   if (NS_FAILED(rv))
     return rv;
 
-  CopyInnerTo(this, it, aDeep);
+  CopyInnerTo(it, aDeep);
 
   *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
 
@@ -160,57 +158,32 @@ nsHTMLPreElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
 NS_IMPL_INT_ATTR(nsHTMLPreElement, Width, width)
 
 
-NS_IMETHODIMP
-nsHTMLPreElement::StringToAttribute(nsIAtom* aAttribute,
-                                    const nsAString& aValue,
-                                    nsHTMLValue& aResult)
+PRBool
+nsHTMLPreElement::ParseAttribute(nsIAtom* aAttribute,
+                                 const nsAString& aValue,
+                                 nsAttrValue& aResult)
 {
   if (aAttribute == nsHTMLAtoms::cols) {
-    if (aResult.ParseIntWithBounds(aValue, eHTMLUnit_Integer, 0)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
+    return aResult.ParseIntWithBounds(aValue, 0);
   }
-  else if (aAttribute == nsHTMLAtoms::width) {
-    if (aResult.ParseIntWithBounds(aValue, eHTMLUnit_Integer, 0)) {
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
-  }
-  else if (aAttribute == nsHTMLAtoms::tabstop) {
-    nsAutoString val(aValue);
-
-    PRInt32 ec, tabstop = val.ToInteger(&ec);
-
-    if (tabstop <= 0) {
-      tabstop = 8;
-    }
-
-    aResult.SetIntValue(tabstop, eHTMLUnit_Integer);
-    return NS_CONTENT_ATTR_HAS_VALUE;
+  if (aAttribute == nsHTMLAtoms::width) {
+    return aResult.ParseIntWithBounds(aValue, 0);
   }
 
-  return NS_CONTENT_ATTR_NOT_THERE;
+  return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
 }
 
 static void
-MapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes,
+MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
                       nsRuleData* aData)
 {
-  if (!aData)
-    return;
-
-  if (aData->mFontData) {
-    nsRuleDataFont& font = *(aData->mFontData);
-
-    if (nsnull != aAttributes) {
-      nsHTMLValue value;
-
-      // variable: empty
-      aAttributes->GetAttribute(nsHTMLAtoms::variable, value);
-      if (value.GetUnit() == eHTMLUnit_Empty)
-        font.mFamily.SetStringValue(NS_LITERAL_STRING("serif"), eCSSUnit_String);
-    }
+  if (aData->mSID == eStyleStruct_Font) {
+    // variable
+    if (aAttributes->GetAttr(nsHTMLAtoms::variable))
+      aData->mFontData->mFamily.SetStringValue(NS_LITERAL_STRING("serif"),
+                                               eCSSUnit_String);
   }
-  else if (aData->mPositionData) {
+  else if (aData->mSID == eStyleStruct_Position) {
     // cols: int (nav4 attribute)
     nsHTMLValue value;
     if (aData->mPositionData->mWidth.GetUnit() == eCSSUnit_Null) {
@@ -224,15 +197,14 @@ MapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes,
         aData->mPositionData->mWidth.SetFloatValue((float)value.GetIntValue(), eCSSUnit_Char);
     }
   }
-  else if (aData->mTextData && aData->mSID == eStyleStruct_Text) {
+  else if (aData->mSID == eStyleStruct_Text) {
     if (aData->mTextData->mWhiteSpace.GetUnit() == eCSSUnit_Null) {
-      nsHTMLValue value;
       // wrap: empty
-      aAttributes->GetAttribute(nsHTMLAtoms::wrap, value);
-      if (value.GetUnit() != eHTMLUnit_Null)
+      if (aAttributes->GetAttr(nsHTMLAtoms::wrap))
         aData->mTextData->mWhiteSpace.SetIntValue(NS_STYLE_WHITESPACE_MOZ_PRE_WRAP, eCSSUnit_Enumerated);
       
       // cols: int (nav4 attribute)
+      nsHTMLValue value;
       aAttributes->GetAttribute(nsHTMLAtoms::cols, value);
       if (value.GetUnit() == eHTMLUnit_Integer)
         // Force wrap property on since we want to wrap at a width
@@ -251,30 +223,24 @@ MapAttributesIntoRule(const nsIHTMLMappedAttributes* aAttributes,
   nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aData);
 }
 
-NS_IMETHODIMP
-nsHTMLPreElement::GetMappedAttributeImpact(const nsIAtom* aAttribute, PRInt32 aModType,
-                                           nsChangeHint& aHint) const
+NS_IMETHODIMP_(PRBool)
+nsHTMLPreElement::IsAttributeMapped(const nsIAtom* aAttribute) const
 {
-  static const AttributeImpactEntry attributes[] = {
-    { &nsHTMLAtoms::variable, NS_STYLE_HINT_REFLOW},
-    { &nsHTMLAtoms::wrap, NS_STYLE_HINT_REFLOW},
-    { &nsHTMLAtoms::cols, NS_STYLE_HINT_REFLOW},
-    { &nsHTMLAtoms::width, NS_STYLE_HINT_REFLOW},
-    { &nsHTMLAtoms::tabstop, NS_STYLE_HINT_REFLOW},
-    { nsnull, NS_STYLE_HINT_NONE },
+  static const MappedAttributeEntry attributes[] = {
+    { &nsHTMLAtoms::variable },
+    { &nsHTMLAtoms::wrap },
+    { &nsHTMLAtoms::cols },
+    { &nsHTMLAtoms::width },
+    { nsnull },
   };
   
-  static const AttributeImpactEntry* const map[] = {
+  static const MappedAttributeEntry* const map[] = {
     attributes,
     sCommonAttributeMap,
   };
 
-  FindAttributeImpact(aAttribute, aHint, map, NS_ARRAY_LENGTH(map));
-
-  return NS_OK;
+  return FindAttributeDependence(aAttribute, map, NS_ARRAY_LENGTH(map));
 }
-
-
 
 NS_IMETHODIMP
 nsHTMLPreElement::GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const

@@ -118,12 +118,12 @@ const SEC_ASN1Template CERT_CertificateTemplate[] = {
     { SEC_ASN1_INLINE,
 	  offsetof(CERTCertificate,subjectPublicKeyInfo),
 	  CERT_SubjectPublicKeyInfoTemplate },
-    { SEC_ASN1_OPTIONAL | SEC_ASN1_CONSTRUCTED | SEC_ASN1_CONTEXT_SPECIFIC | 1,
+    { SEC_ASN1_OPTIONAL |  SEC_ASN1_CONTEXT_SPECIFIC | 1,
 	  offsetof(CERTCertificate,issuerID),
-	  SEC_ObjectIDTemplate },
-    { SEC_ASN1_OPTIONAL | SEC_ASN1_CONSTRUCTED | SEC_ASN1_CONTEXT_SPECIFIC | 2,
+	  SEC_BitStringTemplate },
+    { SEC_ASN1_OPTIONAL |  SEC_ASN1_CONTEXT_SPECIFIC | 2,
 	  offsetof(CERTCertificate,subjectID),
-	  SEC_ObjectIDTemplate },
+	  SEC_BitStringTemplate },
     { SEC_ASN1_EXPLICIT | SEC_ASN1_OPTIONAL | SEC_ASN1_CONSTRUCTED | 
 	  SEC_ASN1_CONTEXT_SPECIFIC | 3,
 	  offsetof(CERTCertificate,extensions),
@@ -565,7 +565,7 @@ cert_GetCertType(CERTCertificate *cert)
 	 * to be used for email
 	 */
 	if ( ( nsCertType & NS_CERT_TYPE_SSL_CLIENT ) &&
-	    cert->emailAddr ) {
+	    cert->emailAddr && cert->emailAddr[0]) {
 	    nsCertType |= NS_CERT_TYPE_EMAIL;
 	}
 	/*
@@ -955,16 +955,21 @@ CERT_SetSlopTime(PRInt32 slop)		/* seconds */
 SECStatus
 CERT_GetCertTimes(CERTCertificate *c, PRTime *notBefore, PRTime *notAfter)
 {
-    int rv;
+    SECStatus rv;
+
+    if (!c || !notBefore || !notAfter) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+        return SECFailure;
+    }
     
     /* convert DER not-before time */
-    rv = DER_UTCTimeToTime(notBefore, &c->validity.notBefore);
+    rv = DER_DecodeTimeChoice(notBefore, &c->validity.notBefore);
     if (rv) {
 	return(SECFailure);
     }
     
     /* convert DER not-after time */
-    rv = DER_UTCTimeToTime(notAfter, &c->validity.notAfter);
+    rv = DER_DecodeTimeChoice(notAfter, &c->validity.notAfter);
     if (rv) {
 	return(SECFailure);
     }
@@ -1015,14 +1020,14 @@ SEC_GetCrlTimes(CERTCrl *date, PRTime *notBefore, PRTime *notAfter)
     int rv;
     
     /* convert DER not-before time */
-    rv = DER_UTCTimeToTime(notBefore, &date->lastUpdate);
+    rv = DER_DecodeTimeChoice(notBefore, &date->lastUpdate);
     if (rv) {
 	return(SECFailure);
     }
     
     /* convert DER not-after time */
     if (date->nextUpdate.data) {
-	rv = DER_UTCTimeToTime(notAfter, &date->nextUpdate);
+	rv = DER_DecodeTimeChoice(notAfter, &date->nextUpdate);
 	if (rv) {
 	    return(SECFailure);
 	}
@@ -1200,32 +1205,45 @@ loser:
 SECStatus
 CERT_CheckKeyUsage(CERTCertificate *cert, unsigned int requiredUsage)
 {
-    SECKEYPublicKey *key;
-    
+    if (!cert) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+	return SECFailure;
+    }
     /* choose between key agreement or key encipherment based on key
      * type in cert
      */
     if ( requiredUsage & KU_KEY_AGREEMENT_OR_ENCIPHERMENT ) {
-	key = CERT_ExtractPublicKey(cert);
-	if (!key)
-	    return SECFailure;
-	if ( ( key->keyType == keaKey ) || ( key->keyType == fortezzaKey ) ||
-	     ( key->keyType == dhKey ) ) {
-	    requiredUsage |= KU_KEY_AGREEMENT;
-	} else {
-	    requiredUsage |= KU_KEY_ENCIPHERMENT;
-	} 
-
-	/* now turn off the special bit */
+	KeyType keyType = CERT_GetCertKeyType(&cert->subjectPublicKeyInfo);
+	/* turn off the special bit */
 	requiredUsage &= (~KU_KEY_AGREEMENT_OR_ENCIPHERMENT);
-	
-	SECKEY_DestroyPublicKey(key);
+
+	switch (keyType) {
+	case rsaKey:
+	    requiredUsage |= KU_KEY_ENCIPHERMENT;
+	    break;
+	case dsaKey:
+	    requiredUsage |= KU_DIGITAL_SIGNATURE;
+	    break;
+	case fortezzaKey:
+	case keaKey:
+	case dhKey:
+	    requiredUsage |= KU_KEY_AGREEMENT;
+	    break;
+	case ecKey:
+	    /* Accept either signature or agreement. */
+	    if (!(cert->keyUsage & (KU_DIGITAL_SIGNATURE | KU_KEY_AGREEMENT)))
+		 goto loser;
+	    break;
+	default:
+	    goto loser;
+	}
     }
 
-    if ( ( cert->keyUsage & requiredUsage ) != requiredUsage ) {
-	return(SECFailure);
-    }
-    return(SECSuccess);
+    if ( (cert->keyUsage & requiredUsage) == requiredUsage ) 
+    	return SECSuccess;
+loser:
+    PORT_SetError(SEC_ERROR_INADEQUATE_KEY_USAGE);
+    return SECFailure;
 }
 
 
@@ -1318,20 +1336,7 @@ CERT_AddOKDomainName(CERTCertificate *cert, const char *hn)
 static SECStatus
 cert_TestHostName(char * cn, const char * hn)
 {
-    char * hndomain;
-    int    regvalid;
-
-    if ((hndomain = PORT_Strchr(hn, '.')) == NULL) {
-	/* No domain in URI host name */
-	char * cndomain;
-	if ((cndomain = PORT_Strchr(cn, '.')) != NULL &&
-	    (cndomain - cn) > 0) {
-	    /* there is a domain in the cn string, so chop it off */
-	    *cndomain = '\0';
-	}
-    }
-
-    regvalid = PORT_RegExpValid(cn);
+    int regvalid = PORT_RegExpValid(cn);
     if (regvalid != NON_SXP) {
 	SECStatus rv;
 	/* cn is a regular expression, try to match the shexp */
@@ -1352,13 +1357,6 @@ cert_TestHostName(char * cn, const char * hn)
 	return SECSuccess;
     }
 	    
-    if ( hndomain ) {
-	/* compare just domain name with cert name */
-	if ( PORT_Strcasecmp(hndomain+1, cn) == 0 ) {
-	    return SECSuccess;
-	}
-    }
-
     PORT_SetError(SSL_ERROR_BAD_CERT_DOMAIN);
     return SECFailure;
 }
@@ -1922,7 +1920,7 @@ CERT_IsNewer(CERTCertificate *certa, CERTCertificate *certb)
 	return(PR_FALSE);
     }
 
-    /* get current UTC time */
+    /* get current time */
     now = PR_Now();
 
     if ( newerbefore ) {
@@ -2157,7 +2155,7 @@ CERT_SaveImportedCert(CERTCertificate *cert, SECCertUsage usage,
 		trust.emailFlags = CERTDB_VALID_CA;
 	    }
 	} else {
-	    if ( cert->emailAddr == NULL ) {
+	    if ( !cert->emailAddr || !cert->emailAddr[0] ) {
 		saveit = PR_FALSE;
 	    }
 	    
@@ -2238,7 +2236,7 @@ CERT_ImportCerts(CERTCertDBHandle *certdb, SECCertUsage usage,
     unsigned int fcerts = 0;
 
     if ( ncerts ) {
-	certs = (CERTCertificate**)PORT_ZAlloc(sizeof(CERTCertificate *) * ncerts );
+	certs = PORT_ZNewArray(CERTCertificate*, ncerts);
 	if ( certs == NULL ) {
 	    return(SECFailure);
 	}
@@ -2299,18 +2297,7 @@ CERT_ImportCerts(CERTCertDBHandle *certdb, SECCertUsage usage,
 	}
     }
 
-    return(SECSuccess);
-    
-#if 0	/* dead code here - why ?? XXX */
-loser:
-    if ( retCerts ) {
-	*retCerts = NULL;
-    }
-    if ( certs ) {
-	CERT_DestroyCertArray(certs, ncerts);
-    }    
-    return(SECFailure);
-#endif
+    return (fcerts ? SECSuccess : SECFailure);
 }
 
 /*
@@ -2573,10 +2560,7 @@ CERT_FilterCertListByUsage(CERTCertList *certList, SECCertUsage usage,
     unsigned int requiredKeyUsage;
     unsigned int requiredCertType;
     CERTCertListNode *node, *savenode;
-    PRBool bad;
     SECStatus rv;
-    unsigned int certType;
-    PRBool dummyret;
     
     if (certList == NULL) goto loser;
 
@@ -2590,26 +2574,28 @@ CERT_FilterCertListByUsage(CERTCertList *certList, SECCertUsage usage,
 	
     while ( !CERT_LIST_END(node, certList) ) {
 
-	bad = PR_FALSE;
+	PRBool bad = (PRBool)(!node->cert);
 
-	/* bad key usage */
-	if ( CERT_CheckKeyUsage(node->cert, requiredKeyUsage )
-	    != SECSuccess ) {
+	/* bad key usage ? */
+	if ( !bad && 
+	     CERT_CheckKeyUsage(node->cert, requiredKeyUsage) != SECSuccess ) {
 	    bad = PR_TRUE;
 	}
-	/* bad cert type */
-	if ( ca ) {
-	    /* This function returns a more comprehensive cert type that
-	     * takes trust flags into consideration.  Should probably
-	     * fix the cert decoding code to do this.
-	     */
-	    dummyret = CERT_IsCACert(node->cert, &certType);
-	} else {
-	    certType = node->cert->nsCertType;
-	}
-	
-	if ( ! ( certType & requiredCertType ) ) {
-	    bad = PR_TRUE;
+	/* bad cert type ? */
+	if ( !bad ) {
+	    unsigned int certType = 0;
+	    if ( ca ) {
+		/* This function returns a more comprehensive cert type that
+		 * takes trust flags into consideration.  Should probably
+		 * fix the cert decoding code to do this.
+		 */
+		(void)CERT_IsCACert(node->cert, &certType);
+	    } else {
+		certType = node->cert->nsCertType;
+	    }
+	    if ( !( certType & requiredCertType ) ) {
+		bad = PR_TRUE;
+	    }
 	}
 
 	if ( bad ) {
@@ -2629,9 +2615,10 @@ loser:
 
 PRBool CERT_IsUserCert(CERTCertificate* cert)
 {
-    if ( (cert->trust->sslFlags & CERTDB_USER ) ||
+    if ( cert->trust &&
+        ((cert->trust->sslFlags & CERTDB_USER ) ||
          (cert->trust->emailFlags & CERTDB_USER ) ||
-         (cert->trust->objectSigningFlags & CERTDB_USER ) ) {
+         (cert->trust->objectSigningFlags & CERTDB_USER )) ) {
         return PR_TRUE;
     } else {
         return PR_FALSE;
