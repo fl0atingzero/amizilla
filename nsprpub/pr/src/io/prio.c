@@ -63,6 +63,10 @@ void _PR_InitIO(void)
     _pr_stdout->secret->md.sync_file_io = PR_TRUE;
     _pr_stderr->secret->md.sync_file_io = PR_TRUE;
 #endif
+#elif defined(XP_AMIGAOS)
+    _pr_stdin = PR_AllocFileDesc(Input(), methods);
+    _pr_stdout = PR_AllocFileDesc(Output(), methods);
+    _pr_stderr = PR_AllocFileDesc(Output(), methods);
 #else
     _pr_stdin = PR_AllocFileDesc(0, methods);
     _pr_stdout = PR_AllocFileDesc(1, methods);
