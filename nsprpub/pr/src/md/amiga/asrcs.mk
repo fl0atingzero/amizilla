@@ -39,5 +39,6 @@
 MDCSRCS =             \
 	adir.c        \
 	afile.c       \
+	asocket.c       \
 	athreads.c    \
 	$(NULL)
