@@ -184,13 +184,14 @@ void _MD_INIT_IO(void) {
  * Clean up all the locks and the socket thread 
  */
 void _PR_CleanupSocket(void) {
+    PRIntervalTime waitTime = PR_SecondsToInterval(5);
     PR_Lock(communicationLock);
     PR_Lock(msgLock);
     PR_Lock(replyLock);
     msg.type = MSG_DONE;
     PR_NotifyCondVar(msgCondVar);
     PR_Unlock(msgLock);
-    PR_WaitCondVar(replyCondVar, PR_INTERVAL_NO_TIMEOUT);
+    PR_WaitCondVar(replyCondVar, waitTime);
     PR_Unlock(replyLock);
     PR_Unlock(communicationLock);
     PR_JoinThread(sockThread);
