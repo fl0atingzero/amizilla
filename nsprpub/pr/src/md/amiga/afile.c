@@ -180,9 +180,9 @@ static void mapIOErr(LONG err) {
 PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
 	/* owner mode is ignored */
 	BPTR lock = (BPTR)NULL, file = (BPTR)NULL;
-    LONG lockflags = (osflags & PR_WRONLY | osflags & PR_RDWR) ? 
+    LONG lockflags = (osflags & PR_WRONLY || osflags & PR_RDWR) ? 
         EXCLUSIVE_LOCK : SHARED_LOCK;
-    LONG openflags = (osflags & PR_WRONLY | osflags & PR_RDWR) ? 
+    LONG openflags = (osflags & PR_WRONLY || osflags & PR_RDWR) ?
         MODE_READWRITE : MODE_NEWFILE;
 
     if (strlen(name) > PATH_MAX) {
@@ -232,7 +232,7 @@ PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
             goto error;
         }
     }
-    
+
 	return file;
 
 error:
@@ -275,18 +275,18 @@ PRStatus _Delete(const char *name) {
  */
 PRStatus _GetFileInfo(const char *fn,PRFileInfo *finfo) {
 	struct FileInfoBlock *info = PR_NEWZAP(struct FileInfoBlock);
-	BPTR lock;
+	BPTR lock = (BPTR)NULL;
    
-	PRStatus status = PR_SUCCESS;
+	PRStatus status = PR_FAILURE;
 
     if (info == NULL) {
         PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
-        return PR_FAILURE;
+        goto error;
     }
 
     if (strlen(fn) > PATH_MAX) {
         PR_SetError(PR_NAME_TOO_LONG_ERROR, 0);
-        return PR_FAILURE;
+        goto error;
     }
 
 	if((lock = Lock(fn, SHARED_LOCK)) != (BPTR)NULL) {
@@ -297,13 +297,14 @@ PRStatus _GetFileInfo(const char *fn,PRFileInfo *finfo) {
             finfo->creationTime = ((info->fib_Date.ds_Days + 2922)* 1440 + 
                 info->fib_Date.ds_Minute) * 60 + 
                 info->fib_Date.ds_Tick / TICKS_PER_SECOND;
-            finfo->modifyTime = finfo->creationTime;                
+            finfo->modifyTime = finfo->creationTime;
+            status = PR_SUCCESS;
 		}
 	} else {
         mapIOErr(IoErr());
-		status = PR_FAILURE;
 	}
 
+error:
 	if(lock != (BPTR)NULL)
 		UnLock(lock);
 	if(info != (BPTR)NULL)
@@ -455,13 +456,44 @@ PRInt32 _Write(PRFileDesc *fd, const void *buf, PRInt32 amount) {
 /*
  * Gets an open file's information. File size is expressed as a 32-bit integer.
  */
-PRStatus _GetOpenFileInfo(const PRFileDesc *fd, PRFileInfo *info) {
+PRStatus _GetOpenFileInfo(const PRFileDesc *fd, PRFileInfo *finfo) {
+	struct FileInfoBlock *info = PR_NEWZAP(struct FileInfoBlock);
+    PRStatus retval = PR_FAILURE;
+    if (info) {
+        if(ExamineFH(fd->secret->md.osfd, info) != DOSFALSE) {
+            finfo->type = (info->fib_DirEntryType < 0) 
+                ? PR_FILE_FILE : PR_FILE_DIRECTORY;
+            finfo->size = info->fib_Size;
+            finfo->creationTime = ((info->fib_Date.ds_Days + 2922)* 1440 + 
+                info->fib_Date.ds_Minute) * 60 + 
+                info->fib_Date.ds_Tick / TICKS_PER_SECOND;
+            finfo->modifyTime = finfo->creationTime;
+            retval = PR_SUCCESS;
+        } else {
+            mapIOErr(IoErr());
+        }
+    } 
+    
+    if (info != NULL) {
+        PR_Free(info);
+    }
+    return retval;
 }
 
 /*
  * Gets an open file's information. File size is expressed as a 64-bit integer.
  */
 PRStatus _GetOpenFileInfo64(const PRFileDesc *fd, PRFileInfo64 *info) {
+    PRFileInfo tmp;
+    if (_GetOpenFileInfo(fd, &tmp) == PR_SUCCESS) {
+        info->type = tmp.type;
+        info->creationTime = tmp.creationTime;
+        info->modifyTime = tmp.modifyTime;
+        LL_I2L(tmp.size, info->size);
+        return PR_SUCCESS;
+    } else {
+        return PR_FAILURE;
+    }
 }
  
 /*
@@ -470,23 +502,34 @@ PRStatus _GetOpenFileInfo64(const PRFileDesc *fd, PRFileInfo64 *info) {
 PRInt32 _Seek (PRFileDesc *fd, PRInt32 offset, PRSeekWhence whence) {
     BPTR osfd = fd->secret->md.osfd;
     LONG retval = -1;
+    LONG mode = 0;
+
     switch( whence ) {
     case PR_SEEK_CUR:
-	    retval = Seek(osfd, offset, OFFSET_CURRENT );
+        mode = OFFSET_CURRENT;
 	    break;
     case PR_SEEK_END:
-	    retval = Seek(osfd, offset, OFFSET_END );
+        mode = OFFSET_END;
 	    break;
     case PR_SEEK_SET:
     default:
-	    retval = Seek(osfd, offset, OFFSET_BEGINNING );
+        mode = OFFSET_BEGINNING;
 	    break;
     }
 
+    retval = Seek(osfd, offset, mode);
     if (retval != -1) {
         retval = Seek (osfd, 0, OFFSET_CURRENT);
     } else {
-        mapIOErr(IoErr());
+        LONG t = Seek(osfd, 0, OFFSET_CURRENT);
+        PRFileInfo fi;        
+        if (_GetOpenFileInfo(fd, &fi) == PR_SUCCESS) {
+            if (fi.size < t + offset) {
+                /* File is too small, extend the file */
+                LONG size = SetFileSize(osfd, t + offset, OFFSET_BEGINNING);
+                return _Seek(fd, offset, whence);
+            }
+        }
     }
 
     return retval;
@@ -555,8 +598,13 @@ PRInt32 _MD_STAT(const char *name, struct stat *buf) {
  * (in _PR_MD_QUERY_FD_INHERITABLE) when necessary.
  */
 void _MD_INIT_FD_INHERITABLE(PRFileDesc *fd, PRBool imported) {
-#warning _MD_INIT_FD_INHERITABLE not implemented
- }
+    if (imported && fd->methods->file_type != PR_DESC_SOCKET_TCP && 
+        fd->methods->file_type != PR_DESC_SOCKET_UDP) {
+        fd->secret->inheritable = _PR_TRI_UNKNOWN;
+    } else {
+        fd->secret->inheritable = _PR_TRI_TRUE;
+    }
+}
 
 /*
  * If fd->secret->inheritable is _PR_TRI_UNKNOWN and we need to
