@@ -34,11 +34,106 @@
 
 #include "primpl.h"
 
+/*
+ * Amiga specificy includes
+ */
+#include <dos/dos.h>
+#include <exec/memory.h>
+//#include <proto/dos.h>
+#include <proto/exec.h>
+
 /* File I/O related */
 /*
  * Opens a file for reading, writing, or both. Also used to create a file.
+ *
+ * The function has the following parameters:
+ * 
+ * name             The pathname of the file to be opened.
+ * osflags          File status flags. PR_Open performs a bitwise OR of the following bit flags:
+ *
+ *  PR_RDONLY       Open for reading only.
+ *  PR_WRONLY       Open for writing only.
+ *  PR_RDWR         Open for reading and writing.
+ *  PR_CREATE_FILE  If the file does not exist, the file is created. If the file exists, this flag has no effect.
+ *  PR_APPEND       The file pointer is set to the end of the file prior to each write.
+ *  PR_TRUNCATE     If the file exists, its length is truncated to 0.
+ *  PR_SYNC         If set, each write will wait for both the file data and file status to be physically updated.
+ *  PR_EXCL         Used with PR_CREATE_FILE; if the file does not exist, the file is created. If the file already
+ *                  exists, no action and NULL is returned
+ *
+ *                  In most cases, only one of the first three flags may be used. If the flags parameter does include any
+ *                  of the first three flags (PR_RDONLY, PR_WRONLY, or PR_RDWR), the open file can't be read or written,
+ *                  which is not useful.
+ *
+ * mode             Access permission bits of the file mode, if the file is created when PR_CREATE_FILE is on.
+ * 
+ *                  The mode parameter is currently applicable only on Unix platforms. It may apply to other platforms 
+ *                  in the future. Possible values of the mode parameter include the following:
+ *
+ * 00400            Read by owner.
+ * 00200            Write by owner.
+ * 00100            Execute (search if a directory) by owner.
+ * 00040            Read by group.
+ * 00020            Write by group.
+ * 00010            Execute by group.
+ * 00004            Read by others.
+ * 00002            Write by others.
+ * 00001            Execute by others. 
  */
-PRFileDesc* _Open(const char *name, PRIntn osflags, PRIntn mode) {
+PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
+	// owner mode is ignored
+	BPTR lock,file = NULL;
+
+	// dependent if write access is wanted get exclusive lock
+	if( NULL != ( lock = ( osflags & PR_WRONLY | osflags & PR_RDWR ) ? Lock( name,EXCLUSIVE_LOCK ) : Lock( name,SHARED_LOCK ) ) ) {
+		// open file
+		if( NULL != ( file = OpenFromLock( lock ) ) ) {
+			// lock is now unusable, don't unlock or so, thus lock is set to zero
+			lock = NULL;
+
+			if( osflags & PR_TRUNCATE )
+				if( -1 == SetFileSize( file,0,OFFSET_BEGINNING ) ) {
+					// set error
+					file = NULL;
+				}
+
+			if( osflags & PR_APPEND )
+				Seek( file,OFFSET_END,0 );
+		}
+		else {
+			UnLock( lock );
+			//set error
+			file = NULL;
+		}
+	}
+	else {
+		// file does not exists, check if it should be created
+		if( osflags & PR_CREATE_FILE ) {
+			if( NULL != ( file = ( osflags & PR_RDONLY | osflags & PR_RDWR ) ? Opem( name,MODE_READWRITE ) : Open( name,MODE_NEWFILE ) ) ) {
+
+				// if PR_EXCL is set free resource after craetion and return NULL
+				if( osflags & PR_EXCL ) {
+					// we may should check for returned error code?
+					Close( file );
+					file = NULL;
+				}
+			}
+			else { 
+				// set error
+				file = NULL;
+			}
+		}
+		else { 
+			// set error
+			file = NULL;
+		}
+	}
+
+	if( file == NULL ) {
+		// TODO: error handling?
+        }                                                                      
+
+	return file;
 }
 
 /*
@@ -75,6 +170,11 @@ PRStatus _Access(const char *name, PRAccessHow how) {
  * Closes a file descriptor.
  */
 PRStatus _Close(PRFileDesc *osfd) {
+	// TODO: check for error from Close
+	if( osfd != NULL )
+		Close( (BPTR)osfd );
+
+	return PR_SUCCESS;
 }
 
 /*

@@ -205,7 +205,7 @@ struct _MDCPU {
 // NSPR_API(void) _MD_make_nonblock(PRFileDesc *fd);
 // NSPR_API(void) _MD_init_fd_inheritable(PRFileDesc *fd, PRBool imported);
 // NSPR_API(void) _MD_query_fd_inheritable(PRFileDesc *fd);
-NSPR_API(PRFileDesc *) _Open(const char *name, PRIntn osflags, PRIntn mode);
+NSPR_API(PRInt32) _Open(const char *name, PRIntn osflags, PRIntn mode);
 NSPR_API(PRStatus) _Delete(const char *name);
 NSPR_API(PRStatus) _GetFileInfo(const char *fn, PRFileInfo *info);
 NSPR_API(PRStatus) _GetFileInfo64(const char *fn, PRFileInfo64 *info);
