@@ -473,28 +473,16 @@ PR_IMPLEMENT(PRInt32) PR_SetThreadAffinityMask(PRThread *thread, PRUint32 mask )
 
 PR_IMPLEMENT(PRThreadState) PR_GetThreadState(const PRThread *thred)
 {
-	printf("athreads.c: PR_GetThreadState called, but not yet implemented\n");
-    return PR_JOINABLE_THREAD;  
-    /* not yet implemented (o1i)
-	 * return (thred->state & PT_THREAD_DETACHED) ?
-     *     PR_UNJOINABLE_THREAD : PR_JOINABLE_THREAD;
-	*/
+    /* We are always joinable threads */
+    return PR_JOINABLE_THREAD;
 }  /* PR_GetThreadState */
 
 /* The GC uses this; it is quite arguably a bad interface.  I'm just
  * duplicating it for now - XXXMB
  */
-
 PR_IMPLEMENT(PRInt32) PR_GetMonitorEntryCount(PRMonitor *mon)
 {
-	printf("athreads.c: PR_GetMonitorEntryCount called, but not yet implemented\n");
-	return 0;
-	/* not yet implemented (o1i)
-     * pthread_t self = pthread_self();
-     * if (pthread_equal(mon->owner, self))
-     *     return mon->entryCount;
-     * return 0;
-     */
+    return mon->entryCount;
 }
 
 static void _MDCreateProcessThread(void *arg) {
@@ -629,5 +617,3 @@ PRStatus _KillProcess(PRProcess *process) {
     /* I don't think this can be done */
     return PR_SUCCESS;
 }
-        
-
