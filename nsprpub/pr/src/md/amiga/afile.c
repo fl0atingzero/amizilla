@@ -563,11 +563,24 @@ PRStatus _Sync(PRFileDesc *fd) {
 }
 
 PRInt32 _MD_WRITEV(
-    PRFileDesc *fd, const struct PRIOVec *iov,
+    PRFileDesc *fd, const struct PRIOVec *tiov,
     PRInt32 iov_size, PRIntervalTime timeout) {
-#warning _MD_WRITEV not implemented
-    assert(0);
+    PRInt32 written = 0;
+    PRStatus res;
+    PRIOVec *iov = tiov;
+    
+    while (iov_size--) {
+        res = PR_Send(fd, iov->iov_base, iov->iov_len, 0, timeout);
+        if (res == -1)
+            break;
+        written += res;
+        if (res < iov->iov_len) 
+            break;
+        iov++;
+    }
+    return written;
 }
+
 
 PRStatus _MD_LOCKFILE(PRInt32 osfd) {
 #warning _MD_LOCKFILE not implemented
@@ -615,8 +628,7 @@ void _MD_INIT_FD_INHERITABLE(PRFileDesc *fd, PRBool imported) {
  * to find that out.  This typically requires a system call.
  */
 void _MD_QUERY_FD_INHERITABLE(PRFileDesc *fd) {
-#warning _MD_QUERY_FD_INHERITABLE not implemented
-    assert(0);
+    /* It is already known with the needToClose flag */
 }
 
 int _MD_ERRNO(void) {
