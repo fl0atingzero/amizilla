@@ -225,7 +225,7 @@ PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
 	} else {
 		/* file does not exists, check if it should be created */
         if(!(osflags & PR_CREATE_FILE)) {
-            _MD_MapIOErr(IoErr());
+            PR_SetError(PR_FILE_NOT_FOUND_ERROR, 0);
             goto error;
         }
 
