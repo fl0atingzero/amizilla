@@ -317,7 +317,6 @@ else
 	$(LD) $(DASH_R) -o $@ $(JSMATH_PRELINK) $(FDLIBM_LIBRARY)
 endif
 else
-else
 ifeq ($(OS_TARGET), amigaos)
 	@cp $(JSMATH_PRELINK) $@
 else
