@@ -286,19 +286,25 @@ PRStatus _GetOpenFileInfo64(const PRFileDesc *fd, PRFileInfo64 *info) {
  */
 PRInt32 _Seek (PRFileDesc *fd, PRInt32 offset, PRSeekWhence whence) {
     BPTR osfd = fd->secret->md.osfd;
-
+    LONG retval = -1;
     switch( whence ) {
     case PR_SEEK_CUR:
-	    return Seek( osfd,offset, OFFSET_CURRENT );
+	    retval = Seek(osfd, offset, OFFSET_CURRENT );
 	    break;
     case PR_SEEK_END:
-	    return Seek( osfd,offset, OFFSET_END );
+	    retval = Seek(osfd, offset, OFFSET_END );
 	    break;
     case PR_SEEK_SET:
     default:
-	    return Seek( osfd,offset, OFFSET_BEGINNING );
+	    retval = Seek(osfd, offset, OFFSET_BEGINNING );
 	    break;
     }
+
+    if (retval != -1) {
+        retval = Seek (osfd, 0, OFFSET_CURRENT);
+    }
+
+    return retval;
 }
 
 /*
