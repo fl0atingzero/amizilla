@@ -788,13 +788,12 @@ PR_IMPLEMENT(PRStatus) PR_CreatePipe(
     if (!_pr_initialized) _PR_ImplicitInitialization();
 
     me = PR_GetCurrentThread();
-    sprintf(bufferRead, "FIFO:pipe%lx-%d/r", me, mine);
-    sprintf(bufferWrite, "FIFO:pipe%lx-%d/wkme", me, mine);
-
-    file[0] = Open(bufferRead, MODE_OLDFILE);
+    sprintf(bufferRead, "FIFO:pipe%lx-%d/rs", me, mine);
+    sprintf(bufferWrite, "FIFO:pipe%lx-%d/wkKem", me, mine);
     file[1] = Open(bufferWrite, MODE_OLDFILE);
+    file[0] = Open(bufferRead, MODE_OLDFILE);
 
-    if (file[0] == NULL || file[1] == NULL) {
+    if (file[0] == (BPTR)NULL || file[1] == (BPTR)NULL) {
       PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
       return PR_FAILURE;
     }
