@@ -107,6 +107,7 @@ struct SocketMsg {
 
         struct {
             PRUint32 private_idx;
+            PRUint32 sequenceNumber;            
         } close; /* Structure used for MSG_CLOSE */
 
         struct {
@@ -174,6 +175,8 @@ void _MD_INIT_IO(void) {
                                  SocketThread, NULL, PR_PRIORITY_NORMAL, 
                                  PR_LOCAL_THREAD, 
                                  PR_JOINABLE_THREAD, 0);
+    printf("msgLock is %lx, replyLock is %lx, communicationslock is %lx, msgCondVar is %lx, replyCOndVar is %lx\n", msgLock, replyLock, communicationLock, msgCondVar, replyCondVar);
+    printf("Socket thread is %lx\n", sockThread);
 }
 
 
@@ -210,7 +213,7 @@ static int local_io_wait(int fd, int type, PRIntervalTime timeout) {
     fd_set fd_write;
     fd_set fd_except;
     PRThread *me = PR_GetCurrentThread();
-    LONG flags = 1L << me->port->mp_SigBit;
+    LONG flags = (1L << me->port->mp_SigBit) | (1L << me->interruptSignal);
     struct timeval tv;
     int sel;
 
@@ -219,7 +222,7 @@ static int local_io_wait(int fd, int type, PRIntervalTime timeout) {
         tv.tv_micro = timeout % _PR_MD_INTERVAL_PER_SEC();
     }
 
-    PR_fprintf(PR_STDERR, "Local_io_wait(%lx) fd %d, type %d, timeout %d\n", me, fd, type, timeout);
+    printf("Local_io_wait(%lx) fd %d, type %d, timeout %d, flags %lx\n", me, fd, type, timeout, me->flags);
     FD_ZERO(&fd_read);
     FD_ZERO(&fd_write);
     FD_ZERO(&fd_except);
@@ -231,15 +234,18 @@ static int local_io_wait(int fd, int type, PRIntervalTime timeout) {
         FD_SET(fd, &fd_write);
     }
 
-    sel = TCP_WaitSelect(fd + 1, &fd_read, &fd_write, &fd_except, 
-                         (timeout == PR_INTERVAL_NO_TIMEOUT) ? NULL : &tv, &flags);
+    printf("WaitSelect(%lx) flags are %d\n", me, me->flags);
+    sel = TCP_WaitSelect(fd + 1, &fd_read, &fd_write, &fd_except,
+        (timeout == PR_INTERVAL_NO_TIMEOUT) ? NULL : &tv, &flags);
 
-    PR_fprintf(PR_STDERR, "WaitSelect(%lx) returned %d, error is %d\n", me, sel, TCP_Errno());
+    printf("WaitSelect(%lx) returned %d, flags is %lx\n", me, sel, me->flags);
     if (sel < 0) {
         _PR_MD_MAP_SELECT_ERROR(TCP_Errno());
     } else if (sel == 0) {
-        if (flags & (1 << me->port->mp_SigBit)) {
-            PR_fprintf(PR_STDERR, "Interrupted\n");
+        if (flags & (1 << me->interruptSignal)) {
+            PR_Lock(me->stateLock);
+            printf("WaitSelect(%lx) Interrupted, flags are %lx\n", me, me->flags);
+            PR_Unlock(me->stateLock);
             PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
         } else {
             PR_SetError(PR_IO_TIMEOUT_ERROR, 0);
@@ -267,8 +273,9 @@ static void increaseSocketTable(void) {
  */
 static PRStatus sendSocketToThread(int fd, _MDSocket *sock) {
     PRThread *me = PR_GetCurrentThread();
-    long arg = 1;
     PRStatus retval = PR_SUCCESS;
+    PRBool isInterruptsBlocked;
+
     int fd2 = -1;
     struct SharedSocket *ss = PR_NEWZAP(struct SharedSocket);
 
@@ -278,11 +285,6 @@ static PRStatus sendSocketToThread(int fd, _MDSocket *sock) {
     }
 
     ss->fd = fd;
-
-    /*
-     * Our sockets are always nonblocking
-     */
-    TCP_IoctlSocket(fd, FIONBIO, (void *)&arg);
     fd2 = TCP_Dup2Socket(fd, -1);    
     if (fd2 < 0) {
         if (TCP_Errno() == EMFILE) {
@@ -292,11 +294,11 @@ static PRStatus sendSocketToThread(int fd, _MDSocket *sock) {
     }
 
     if (fd2 < 0) {            
-        PR_fprintf(PR_STDERR, "Dup2Socket returned %d, errno is %d\n", fd2, TCP_Errno());
+        printf("Dup2Socket returned %d, errno is %d\n", fd2, TCP_Errno());
         goto error;
     }
-            
-
+    isInterruptsBlocked = PR_IsInterruptsBlocked();
+    PR_BlockInterrupt();
     PR_Lock(communicationLock);
     PR_Lock(msgLock);
     PR_Lock(replyLock);
@@ -307,33 +309,35 @@ static PRStatus sendSocketToThread(int fd, _MDSocket *sock) {
     msg.type = MSG_RECEIVE;
     PR_NotifyCondVar(msgCondVar);
     PR_Unlock(msgLock);
-    PR_WaitCondVar(replyCondVar, PR_INTERVAL_NO_TIMEOUT);
+    PR_ASSERT(PR_WaitCondVar(replyCondVar, PR_INTERVAL_NO_TIMEOUT) == PR_SUCCESS);
     if (reply.msg.receive.private_idx != -1) {
         sock->private_idx = reply.msg.receive.private_idx;
         ss->sequenceNumber = reply.msg.receive.sequenceNumber;
-        PR_fprintf(PR_STDERR, "sendSocketToThread(%lx) fd %d, private_idx %d, sequence number is %d\n", me, fd, sock->private_idx, ss->sequenceNumber);
+        printf("sendSocketToThread(%lx) fd %d, private_idx %d, sequence number is %d\n", me, fd, sock->private_idx, ss->sequenceNumber);
         PR_SetThreadPrivate(sock->private_idx, (void *)ss);
     } else {
-        PR_fprintf(PR_STDERR, "sendSocketToThread(%lx) error %d\n", reply.errno);
+        printf("sendSocketToThread(%lx) error %d\n", reply.errno);
 
         retval = PR_FAILURE;
         PR_SetError(PR_UNKNOWN_ERROR, reply.errno);
         PR_Lock(msgLock);
         msg.type = MSG_CLOSE;
         msg.msg.close.private_idx = sock->private_idx;
+        msg.msg.close.sequenceNumber = ss->sequenceNumber;
         PR_NotifyCondVar(msgCondVar);
         PR_Unlock(msgLock);
         PR_WaitCondVar(replyCondVar, PR_INTERVAL_NO_TIMEOUT);
     }
     PR_Unlock(replyLock);
     PR_Unlock(communicationLock);
-
+    if (!isInterruptsBlocked)
+        PR_UnblockInterrupt();
     if (retval == PR_FAILURE)
         goto error;
 
     return retval;
 error:
-    PR_fprintf(PR_STDERR, "sendsocket failed, closing socket\n");
+    printf("sendsocket failed, closing socket\n");
     if (fd2 >= 0) {
         TCP_CloseSocket(fd2);
     }
@@ -356,17 +360,15 @@ static void SocketThread(void *notused) {
     int num;
     struct SharedSocket *ss;
 
-
+    printf("In socket thread\n");
     /* Max number for the thread private data */
     num = -1;
     PR_Lock(msgLock);
-
     while(!done) {
         int retval, fd;
         PR_WaitCondVar(msgCondVar,PR_INTERVAL_NO_TIMEOUT);
         PR_Lock(replyLock);
-
-        PR_fprintf(PR_STDERR, "Socket thread got msg %d\n", msg.type);
+        printf("Socket thread got msg %d\n", msg.type);
         switch (msg.type) {
         case MSG_OBTAIN:
             reply.msg.obtain.id = -1;
@@ -405,7 +407,7 @@ static void SocketThread(void *notused) {
             if (!found) {
                 rc = PR_NewThreadPrivateIndex(&idx, closeOpenSocketDTOR);
                 if (rc != PR_SUCCESS) {
-                    PR_fprintf(PR_STDERR, "NewPrivateIndex failed: %d\n", PR_GetError());
+                    printf("NewPrivateIndex failed: %d\n", PR_GetError());
                 }
             }
 
@@ -425,7 +427,7 @@ static void SocketThread(void *notused) {
                     reply.errno = TCP_Errno();
                     PR_Free(ss);
                 } else {
-                    PR_fprintf(PR_STDERR, "Socket thread assigning sequence number %d to private_idx %d\n", sequenceNumber, idx);
+                    printf("Socket thread assigning sequence number %d to private_idx %d\n", sequenceNumber, idx);
                     reply.msg.receive.private_idx = idx;
                     reply.msg.receive.sequenceNumber = sequenceNumber++;
                     ss->sequenceNumber = reply.msg.receive.sequenceNumber;
@@ -440,14 +442,16 @@ static void SocketThread(void *notused) {
         case MSG_CLOSE:
             ss = (struct SharedSocket *)
                 PR_GetThreadPrivate(msg.msg.close.private_idx);
-            PR_fprintf(PR_STDERR, "Socket thread closing private_idx %d, socket %d, sequence number %d\n", msg.msg.close.private_idx, ss->fd, ss->sequenceNumber);
-            PR_SetThreadPrivate(msg.msg.close.private_idx, NULL);
+            printf("Socket thread closing private_idx %d, socket %d, sequence number %d\n", msg.msg.close.private_idx, ss->fd, ss->sequenceNumber);
+            if (msg.msg.close.sequenceNumber == ss->sequenceNumber) {
+                PR_SetThreadPrivate(msg.msg.close.private_idx, NULL);
+            }
             break;
 
         case MSG_CHECK:
             ss = (struct SharedSocket *)
                 PR_GetThreadPrivate(msg.msg.check.private_idx);
-            PR_fprintf(PR_STDERR, "Socket check private_idx %d, seq %d(%d)\n", msg.msg.check.private_idx, msg.msg.check.sequenceNumber, (ss != NULL) ? ss->sequenceNumber : -1);
+            printf("Socket check private_idx %d, seq %d(%d)\n", msg.msg.check.private_idx, msg.msg.check.sequenceNumber, (ss != NULL) ? ss->sequenceNumber : -1);
             reply.msg.check.status = (ss != NULL && ss->sequenceNumber == 
                 msg.msg.check.sequenceNumber) ? PR_SUCCESS : PR_FAILURE;
             break;
@@ -457,10 +461,10 @@ static void SocketThread(void *notused) {
             break;
         }
         PR_NotifyCondVar(replyCondVar);
-        PR_Unlock(replyLock);
+        PR_Unlock(replyLock); 
     }
     PR_Unlock(msgLock);
-    PR_fprintf(PR_STDERR, "Socket thread all done\n");
+    printf("Socket thread all done\n");
 }
                 
 /* Obtains the socket from the thread-local variable
@@ -472,13 +476,14 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
     PRThread *me = PR_GetCurrentThread();
     struct SharedSocket *ss;
     int fd;
+    PRBool isInterruptsBlocked;
 
     if (sock == NULL || sock->private_idx == -1) {
         return -1;
     }
 
     ss = (struct SharedSocket *)PR_GetThreadPrivate(sock->private_idx);
-    PR_fprintf(PR_STDERR, "_MD_Ensure_Socket(%lx), fd from osfd %lx, private_idx %d, is %lx(%d)\n", me, osfd, sock->private_idx, ss, (ss != NULL) ? ss->fd : -1);
+    printf("_MD_Ensure_Socket(%lx), fd from osfd %lx, private_idx %d, is %lx(%d)\n", me, osfd, sock->private_idx, ss, (ss != NULL) ? ss->fd : -1);
     if (ss == NULL) {
         PRInt32 id;
 
@@ -487,6 +492,8 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
             PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
             return -1;
         }
+        isInterruptsBlocked = PR_IsInterruptsBlocked();
+        PR_BlockInterrupt();
         PR_Lock(communicationLock);
         PR_Lock(msgLock);
         PR_Lock(replyLock);
@@ -506,9 +513,11 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
             fd = -1;
         }
         PR_SetThreadPrivate(sock->private_idx, (void *)ss);
-        PR_fprintf(PR_STDERR, "_MD_Ensure_Socket(%lx), fd is now %lx(%d), sequenceNumber %d\n", me, ss, (ss!= NULL) ? ss->fd : -1, (ss != NULL) ? ss->sequenceNumber : -1);
+        printf("_MD_Ensure_Socket(%lx), fd is now %lx(%d), sequenceNumber %d\n", me, ss, (ss!= NULL) ? ss->fd : -1, (ss != NULL) ? ss->sequenceNumber : -1);
     } else {
-        PR_fprintf(PR_STDERR, "_MD_Ensure_Socket(%lx), doing socket check for fd %d, private_idx %d, sequenceNumber %d\n", me, ss->fd, sock->private_idx, ss->sequenceNumber);
+        printf("_MD_Ensure_Socket(%lx), doing socket check for fd %d, private_idx %d, sequenceNumber %d\n", me, ss->fd, sock->private_idx, ss->sequenceNumber);
+        isInterruptsBlocked = PR_IsInterruptsBlocked();
+        PR_BlockInterrupt();
         PR_Lock(communicationLock);
         PR_Lock(msgLock);
         PR_Lock(replyLock);
@@ -525,6 +534,8 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
     }
     PR_Unlock(replyLock);
     PR_Unlock(communicationLock);
+    if (!isInterruptsBlocked)
+        PR_UnblockInterrupt();      
     return fd;
 }
 
@@ -532,22 +543,34 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
 PRInt32 _MD_CLOSE_SOCKET(PRInt32 osfd) {
     _MDSocket *sock = (_MDSocket *)osfd;
     PRThread *me = PR_GetCurrentThread();
+    struct SharedSocket *ss = (struct SharedSocket *)PR_GetThreadPrivate(sock->private_idx);
+    int sequenceNumber;
     int retval;
+    PRBool isInterruptsBlocked;
 
-    PR_fprintf(PR_STDERR, "Close(%lx) for sock %lx, private_idx %d\n", me, osfd, sock->private_idx);
+    printf("Close(%lx) for sock %lx, private_idx %d, sock %lx, fd %d\n", me, osfd, sock->private_idx, ss, (ss != NULL) ? ss->fd : -1 );
 
+    if (ss == NULL) {
+        return -1;
+    }
 
+    sequenceNumber = ss->sequenceNumber;
     PR_SetThreadPrivate(sock->private_idx, NULL);
+    isInterruptsBlocked = PR_IsInterruptsBlocked();
+    PR_BlockInterrupt();
     PR_Lock(communicationLock);
     PR_Lock(msgLock);
     PR_Lock(replyLock);
     msg.type = MSG_CLOSE;
     msg.msg.close.private_idx = sock->private_idx;
+    msg.msg.close.sequenceNumber = sequenceNumber;
     PR_NotifyCondVar(msgCondVar);
     PR_Unlock(msgLock);
     PR_WaitCondVar(replyCondVar, PR_INTERVAL_NO_TIMEOUT);
     PR_Unlock(replyLock);
     PR_Unlock(communicationLock);
+    if (!isInterruptsBlocked)
+        PR_UnblockInterrupt();
     PR_SetThreadPrivate(sock->private_idx, NULL);
     PR_Free(sock);
     return 1;
@@ -563,17 +586,17 @@ PRInt32 _MD_CONNECT(
     int retval;
     PRBool doneWait = PR_FALSE;
     
-    PR_fprintf(PR_STDERR, "connect(%lx), osfd %lx fd %d\n", me, osfd->secret->md.osfd, fd);
+    printf("connect(%lx), osfd %lx fd %d\n", me, osfd->secret->md.osfd, fd);
     if (fd == -1)
         return -1;
 
     addrCopy = *addr;
     ((struct sockaddr *) &addrCopy)->sa_len = addrlen;
     ((struct sockaddr *) &addrCopy)->sa_family = addr->raw.family;
-    PR_fprintf(PR_STDERR, "addrlen %d, sin_len %d, sin_family %d, sin_port %d\n", addrlen, t->sin_len, t->sin_family, ntohl(t->sin_port));
+    printf("addrlen %d, sin_len %d, sin_family %d, sin_port %d\n", addrlen, t->sin_len, t->sin_family, ntohl(t->sin_port));
     while ((retval = TCP_Connect(fd, (struct sockaddr *)&addrCopy, addrlen)) == -1) {
         int err = TCP_Errno();
-        PR_fprintf(PR_STDERR, "Connect(%lx) returned %d, errno is %d\n", me, retval, err);
+        printf("Connect(%lx) returned %d, errno is %d\n", me, retval, err);
         /* All done */
         if (osfd->secret->nonblocking) {
             _PR_MD_MAP_CONNECT_ERROR(TCP_Errno());
@@ -589,7 +612,13 @@ PRInt32 _MD_CONNECT(
 
         doneWait = PR_TRUE;
         retval = local_io_wait(fd, TYPE_WRITE, timeout);
-        if (retval == -1) {
+        if (_PR_PENDING_INTERRUPT(me)) {
+            printf("Connect(%lx) got interrupted\n", me);
+            PR_ClearInterrupt();
+            retval = -1;
+            break;
+        }
+        if (retval < 0) {
             _PR_MD_MAP_CONNECT_ERROR(TCP_Errno());
             break;
         } else if (retval == 0) {
@@ -597,7 +626,7 @@ PRInt32 _MD_CONNECT(
             break;
         }
     }
-    PR_fprintf(PR_STDERR, "Connect returned %d, errno is %d\n", retval, TCP_Errno());
+    printf("Connect returned %d, errno is %d\n", retval, TCP_Errno());
     return retval;
     
 }
@@ -613,7 +642,7 @@ PRInt32 _MD_ACCEPT(
     int fd2;
     int retval;
 
-    PR_fprintf(PR_STDERR, "accept(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
+    printf("accept(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
 
     if (fd == -1)
         return -1;
@@ -622,32 +651,33 @@ PRInt32 _MD_ACCEPT(
     if (sock2 == NULL) {
         goto error;
     }
-
-    PR_fprintf(PR_STDERR, "Going to accept %d, %lx, %d\n", fd, addr, *addrlen);
+    printf("Going to accept %d, %lx, %d\n", fd, addr, *addrlen);
     while ((retval = TCP_Accept(fd,(struct sockaddr *)addr, addrlen)) < 0) {
         int err = TCP_Errno();
-        PR_fprintf(PR_STDERR, "Accept returned %d, errno is %d\n", retval, err);
+        printf("Accept(%lx) returned %d, errno is %d\n", me, retval, err);
         /* All done */
         if (osfd->secret->nonblocking) {
-            _PR_MD_MAP_ACCEPT_ERROR(TCP_Errno());
+            _PR_MD_MAP_ACCEPT_ERROR(err);
             goto error;
         }
 
         if (err == EAGAIN || err == EWOULDBLOCK || err == ECONNABORTED || err == EDEADLK) {
-            if ((retval = local_io_wait(fd, TYPE_READ, timeout)) <= 0) {
+            retval = local_io_wait(fd, TYPE_READ, timeout);
+            if (_PR_PENDING_INTERRUPT(me)) {
+                PR_ClearInterrupt();
+                printf("accept(%lx) got nterrupt\n", me);
+                goto error;
+            }
+            if (retval < 0) {
                 _PR_MD_MAP_ACCEPT_ERROR(TCP_Errno());
                 goto error;
             }
-#if 0
-        } else if ((err === EINTR) && (!_PR_PENDING_INTERRUPT(me))) {
-            continue;
-#endif
         } else {
             goto error;
         }
     }
 
-    PR_fprintf(PR_STDERR, "Accept[2] returned %d, errno is %d\n", retval, TCP_Errno());
+    printf("Accept2(%lx) returned %d, errno is %d\n", me, retval, TCP_Errno());
  
     sock = (_MDSocket *)osfd->secret->md.osfd;
     sock2->type = sock->type;
@@ -656,7 +686,7 @@ PRInt32 _MD_ACCEPT(
     if (sendSocketToThread(retval, sock2) == PR_FAILURE)
         goto error;
 
-    PR_fprintf(PR_STDERR, "Accept returned %d, len is %d, errno is %d, newsock is %lx, private_idx is %d\n", retval, *addrlen, TCP_Errno(), sock2, sock2->private_idx);
+    printf("Accept returned %d, len is %d, errno is %d, newsock is %lx, private_idx is %d\n", retval, *addrlen, TCP_Errno(), sock2, sock2->private_idx);
     /* ignore the sa_len field of struct sockaddr */    
     if (addr) {
         addr->raw.family = AF_INET;
@@ -668,7 +698,7 @@ error:
         PR_Free(sock2);
     }
 
-    PR_fprintf(PR_STDERR, "Accept error: closing socket %d\n", retval);
+    printf("Accept error: closing socket %d\n", retval);
     if (retval >= 0)
         TCP_CloseSocket(retval);
     return -1;
@@ -687,14 +717,14 @@ PRInt32 _MD_BIND(PRFileDesc *osfd, const PRNetAddr *addr, PRUint32 addrlen) {
     ((struct sockaddr *) &addrCopy)->sa_len = addrlen;
     ((struct sockaddr *) &addrCopy)->sa_family = addr->raw.family;
 
-    PR_fprintf(PR_STDERR, "bind(%lx), osfd %lx fd %d, port %d, len %d, size %d\n", me, osfd->secret->md.osfd, fd, ntohl(((struct sockaddr_in *)&addrCopy)->sin_port), addrlen, sizeof(struct sockaddr_in));
+    printf("bind(%lx), osfd %lx fd %d, port %d, len %d, size %d\n", me, osfd->secret->md.osfd, fd, ntohl(((struct sockaddr_in *)&addrCopy)->sin_port), addrlen, sizeof(struct sockaddr_in));
     retval = TCP_Bind(fd,(struct sockaddr *)&addrCopy, addrlen);
     if (retval == -1) {
-        PR_fprintf(PR_STDERR, "Bind failed %d\n", TCP_Errno());
+        printf("Bind failed %d\n", TCP_Errno());
         _PR_MD_MAP_BIND_ERROR(TCP_Errno());
     }
 
-    PR_fprintf(PR_STDERR, "bind(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+    printf("bind(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
     return retval;
 }
 
@@ -703,7 +733,7 @@ PRInt32 _MD_LISTEN(PRFileDesc *osfd, PRIntn backlog) {
     int fd = _MD_Ensure_Socket(osfd->secret->md.osfd);
     int retval;
 
-    PR_fprintf(PR_STDERR, "Listen(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
+    printf("Listen(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
    
     if (fd == -1)
         return -1;
@@ -723,7 +753,7 @@ PRInt32 _MD_SHUTDOWN(PRFileDesc *osfd, PRIntn how) {
     if (fd == -1)
         return -1;
 
-    PR_fprintf(PR_STDERR, "shutdown(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+    printf("shutdown(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
     retval = TCP_ShutDown(fd, how);
     if (retval == -1) {
         _PR_MD_MAP_SHUTDOWN_ERROR(TCP_Errno());
@@ -740,10 +770,10 @@ PRInt32 _MD_RECV(PRFileDesc *osfd, void *buf, PRInt32 amount,
     if (fd == -1)
         return -1;
 
-    PR_fprintf(PR_STDERR, "recv(%lx), osfd %lx fd %d, amount %d, timeout %d\n", me, osfd->secret->md.osfd, fd, amount, timeout);
+    printf("recv(%lx), osfd %lx fd %d, amount %d, timeout %d\n", me, osfd->secret->md.osfd, fd, amount, timeout);
     /* TODO Should be < 0 */
     while ((retval = TCP_Recv(fd, buf, amount, flags)) < 0) {
-        PR_fprintf(PR_STDERR, "recv(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());        
+        printf("recv(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());        
         /* All done */
         if (osfd->secret->nonblocking) {
             _PR_MD_MAP_RECV_ERROR(TCP_Errno());
@@ -751,7 +781,13 @@ PRInt32 _MD_RECV(PRFileDesc *osfd, void *buf, PRInt32 amount,
         }
 
         retval = local_io_wait(fd, TYPE_READ, timeout);
-        if (retval == -1) {            
+        if (_PR_PENDING_INTERRUPT(me)) {
+            printf("recv(%lx) got interrupted\n", me);
+            PR_ClearInterrupt();
+            retval = -1;
+            break;
+        }
+        if (retval < 0) {            
             _PR_MD_MAP_RECV_ERROR(TCP_Errno());
             break;
         } else if (retval == 0) {
@@ -759,7 +795,7 @@ PRInt32 _MD_RECV(PRFileDesc *osfd, void *buf, PRInt32 amount,
             break;
         }
     }
-    PR_fprintf(PR_STDERR, "recv(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+    printf("recv(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
     return retval;
 }
 
@@ -773,9 +809,9 @@ PRInt32 _MD_SEND(
         return -1;
    
 
-    PR_fprintf(PR_STDERR, "send(%lx), osfd %lx fd %d buf %lx, amount %d, flags %d\n", me, osfd->secret->md.osfd, fd, buf, amount, flags);
+    printf("send(%lx), osfd %lx fd %d buf %lx, amount %d, flags %d\n", me, osfd->secret->md.osfd, fd, buf, amount, flags);
     while ((retval = TCP_Send(fd, buf, amount, flags)) == -1) {
-        PR_fprintf(PR_STDERR, "Send(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
+        printf("Send(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
         /* All done */
         if (osfd->secret->nonblocking) {
             _PR_MD_MAP_SEND_ERROR(TCP_Errno());
@@ -783,7 +819,13 @@ PRInt32 _MD_SEND(
         }
 
         retval = local_io_wait,(fd, TYPE_WRITE, timeout);
-        if (retval == -1) {
+        if (_PR_PENDING_INTERRUPT(me)) {
+            printf("send(%lx) got interrupted\n", me);
+            PR_ClearInterrupt();
+            retval = -1;
+            break;
+        }
+        if (retval < 0) {
             _PR_MD_MAP_SEND_ERROR(TCP_Errno());
             break;
         } else if (retval == 0) {
@@ -792,7 +834,7 @@ PRInt32 _MD_SEND(
         }
     }
 
-    PR_fprintf(PR_STDERR, "send(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
+    printf("send(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
     return retval;
 }
 
@@ -804,7 +846,7 @@ PRStatus _MD_GETSOCKNAME(
     if (fd == -1)
         return -1;
 
-    PR_fprintf(PR_STDERR, "getsockname(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+    printf("getsockname(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
     retval = TCP_GetSockName(fd, (struct sockaddr *)addr, addrlen);
     if (retval == 0) {
         /* ignore the sa_len field of struct sockaddr */
@@ -813,7 +855,7 @@ PRStatus _MD_GETSOCKNAME(
         }
     }
 
-    PR_fprintf(PR_STDERR, "getsockname(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+    printf("getsockname(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
     if (retval == -1) {
         _PR_MD_MAP_GETSOCKNAME_ERROR(TCP_Errno());
     }
@@ -829,9 +871,9 @@ PRStatus _MD_GETPEERNAME(
     if (fd == -1)
         return -1;
 
-    PR_fprintf(PR_STDERR, "getpeername(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+    printf("getpeername(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
     retval = TCP_GetPeerName(fd, (struct sockaddr *)addr, addrlen);
-    PR_fprintf(PR_STDERR, "getpeername(%lx), retval is %d, errno is %d\n", me, retval, TCP_Errno());
+    printf("getpeername(%lx), retval is %d, errno is %d\n", me, retval, TCP_Errno());
     if (retval == -1) {
         _PR_MD_MAP_GETPEERNAME_ERROR(TCP_Errno());
     }
@@ -844,7 +886,7 @@ PRStatus _MD_GETSOCKOPT(
     int fd =_MD_Ensure_Socket(osfd->secret->md.osfd);
     int retval;
 
-    PR_fprintf(PR_STDERR, "getsockopt(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+    printf("getsockopt(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
 
     if (fd == -1)
         return -1;
@@ -853,7 +895,7 @@ PRStatus _MD_GETSOCKOPT(
     if (retval == -1) {
         _PR_MD_MAP_GETSOCKOPT_ERROR(TCP_Errno());
     }
-    PR_fprintf(PR_STDERR, "getsockopt(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+    printf("getsockopt(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
     return retval == 0 ? PR_SUCCESS: PR_FAILURE;
 
 }
@@ -865,8 +907,8 @@ PRStatus _MD_SETSOCKOPT(
     int fd =_MD_Ensure_Socket(osfd->secret->md.osfd);
     int retval;
 
-    PR_fprintf(PR_STDERR, "setsockopt(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
-    PR_fprintf(PR_STDERR, "setsockopt(%lx), level %d, optname %d, optval %lx, optlen %d\n", me ,level, optname, optval, optlen);
+    printf("setsockopt(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
+    printf("setsockopt(%lx), level %d, optname %d, optval %lx, optlen %d\n", me ,level, optname, optval, optlen);
 
     if (fd == -1)
         return -1;
@@ -875,7 +917,7 @@ PRStatus _MD_SETSOCKOPT(
     if (retval == -1) {
         _PR_MD_MAP_SETSOCKOPT_ERROR(TCP_Errno());
     }
-    PR_fprintf(PR_STDERR, "setsockopt(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
+    printf("setsockopt(%lx) returns %d, errno is %d\n", me, retval, TCP_Errno());
     return retval == 0 ? PR_SUCCESS: PR_FAILURE;
 
 
@@ -891,7 +933,7 @@ PRInt32 _MD_RECVFROM(
     if (fd == -1)
         return -1;
     while ((retval = TCP_RecvFrom(fd, buf, amount, flags, addr, addrlen)) == -1) {
-        PR_fprintf(PR_STDERR, "RecvFrom(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
+        printf("RecvFrom(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
         /* All done */
         if (osfd->secret->nonblocking) {
             _PR_MD_MAP_RECVFROM_ERROR(TCP_Errno());
@@ -899,7 +941,13 @@ PRInt32 _MD_RECVFROM(
         }
 
         retval = local_io_wait(fd, TYPE_READ, timeout);
-        if (retval == -1) {
+        if (_PR_PENDING_INTERRUPT(me)) {
+            printf("recvfrom(%lx) got interrupted\n", me);
+            PR_ClearInterrupt();
+            retval = -1;
+            break;
+        }
+        if (retval < 0) {
             _PR_MD_MAP_RECVFROM_ERROR(TCP_Errno());
             break;
         } else if (retval == 0) {
@@ -909,7 +957,7 @@ PRInt32 _MD_RECVFROM(
 
     }
 
-        PR_fprintf(PR_STDERR, "RecvFrom(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
+    printf("RecvFrom(%lx) returns %d, error is %d\n", me, retval, TCP_Errno());
     if (retval != -1) {
         /* ignore the sa_len field of struct sockaddr */
         if (addr) {
@@ -929,7 +977,7 @@ PRInt32 _MD_SENDTO(
 
     if (fd == -1)
         return -1;
-    PR_fprintf(PR_STDERR, "sendto(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+    printf("sendto(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
 
     addrCopy = *addr;
     ((struct sockaddr *) &addrCopy)->sa_len = addrlen;
@@ -943,7 +991,13 @@ PRInt32 _MD_SENDTO(
         }
 
         retval = local_io_wait(fd, TYPE_WRITE, timeout);
-        if (retval == -1) {
+        if (_PR_PENDING_INTERRUPT(me)) {
+            printf("sendto(%lx) got interrupted\n", me);
+            PR_ClearInterrupt();
+            retval = -1;
+            break;
+        }
+        if (retval < 0) {
             _PR_MD_MAP_SENDTO_ERROR(TCP_Errno());
             break;
         } else if (retval == 0) {
@@ -974,7 +1028,7 @@ PRInt32 _MD_SOCKET(int type, int domain, int protocol) {
 
   fd = TCP_Socket(type, domain, protocol);
 
-  PR_fprintf(PR_STDERR, "Socket(%lx) returns %d, errno is %d\n", me, fd, TCP_Errno());
+  printf("Socket(%lx) returns %d, errno is %d\n", me, fd, TCP_Errno());
 
   if (fd < 0) {
       _PR_MD_MAP_SOCKET_ERROR(TCP_Errno());
@@ -985,7 +1039,7 @@ PRInt32 _MD_SOCKET(int type, int domain, int protocol) {
           goto error;
   }
 
-  PR_fprintf(PR_STDERR, "socket(%lx), newsock is %lx, private_idx is %d, fd is %d\n", me, sock, sock->private_idx, fd);
+  printf("socket(%lx), newsock is %lx, private_idx is %d, fd is %d\n", me, sock, sock->private_idx, fd);
   return (PRInt32)sock;
 
 error:
@@ -994,7 +1048,7 @@ error:
       sock = (_MDSocket *)-1;
   }
 
-  PR_fprintf(PR_STDERR, "Socket error, closing socket %d\n", fd);
+  printf("Socket error, closing socket %d\n", fd);
   if (fd >= 0)
       TCP_CloseSocket(fd);
 
@@ -1009,15 +1063,15 @@ PRInt32 _MD_SOCKETAVAILABLE(PRFileDesc *osfd) {
     if (fd < 0)
         return -1;
 
-    PR_fprintf(PR_STDERR, "socketavailable(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
+    printf("socketavailable(%lx), osfd %lx %d\n", me, osfd->secret->md.osfd, fd);
 
     if (TCP_IoctlSocket(fd, FIONREAD, &result) < 0) {
-        PR_fprintf(PR_STDERR, "socketavailable(%lx), returns =1, errno is %d\n", me, TCP_Errno());        
+        printf("socketavailable(%lx), returns =1, errno is %d\n", me, TCP_Errno());        
         _PR_MD_MAP_SOCKETAVAILABLE_ERROR(TCP_Errno());
         return -1;
     }
 
-    PR_fprintf(PR_STDERR, "socketavailable(%lx), returns %d, errno is %d\n", me, result, TCP_Errno());
+    printf("socketavailable(%lx), returns %d, errno is %d\n", me, result, TCP_Errno());
 
     return result;
 }
@@ -1033,10 +1087,10 @@ PRInt32 _MD_amiga_get_nonblocking_connect_error(int osfd)
     if (fd == -1)
         return EBADF;
     if (TCP_GetSockOpt(fd, SOL_SOCKET, SO_ERROR, (char *) &err, &optlen) == -1) {
-        PR_fprintf(PR_STDERR, "unix_connect error(%lx), returns %d, errno is %d\n", me, -1, TCP_Errno());
+        printf("unix_connect error(%lx), returns %d, errno is %d\n", me, -1, TCP_Errno());
         return TCP_Errno();
     } else {
-        PR_fprintf(PR_STDERR, "unix_connect error(%lx), returns %d, errno is %d\n", me, err, TCP_Errno());
+        printf("unix_connect error(%lx), returns %d, errno is %d\n", me, err, TCP_Errno());
         return err;
     }
 }
@@ -1070,7 +1124,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
         return 0;
     }
 
-    PR_fprintf(PR_STDERR, "Poll(%lx) with #fds %d, timeout %d\n", me, npds, timeout);
+    printf("Poll(%lx) with #fds %d, timeout %d\n", me, npds, timeout);
     ready = 0;
     for (i = 0; i < npds; i++) {
         struct StandardPacket *sp = &sps[i];
@@ -1119,12 +1173,12 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                 PR_ASSERT(NULL != bottom);  /* what to do about that? */
                 if ((NULL != bottom)
                     && (_PR_FILEDESC_OPEN == bottom->secret->state)) {
-                    PR_fprintf(PR_STDERR, "Poll(%lx) Bottom fd %lx, osfd is %lx, type is %lx\n", me, bottom, bottom->secret->md.osfd, bottom->methods->file_type);
+                    printf("Poll(%lx) Bottom fd %lx, osfd is %lx, type is %lx\n", me, bottom, bottom->secret->md.osfd, bottom->methods->file_type);
                     switch (bottom->methods->file_type) {
                     case PR_DESC_PIPE:
                     case PR_DESC_FILE:
                         sp = &sps[i];
-                        PR_fprintf(PR_STDERR, "Poll(%lx) fd %d(%lx) is a file,pipe\n", me, i, pd->fd);
+                        printf("Poll(%lx) fd %d(%lx) is a file,pipe\n", me, i, pd->fd);
                         sp->sp_Msg.mn_Node.ln_Name = (char *)&sp->sp_Pkt;
                         sp->sp_Pkt.dp_Link = &sp->sp_Msg;
                         sp->sp_Pkt.dp_Res1 = NULL;
@@ -1132,7 +1186,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                         sp->sp_Pkt.dp_Port = NULL;
                         sp->sp_Msg.mn_Node.ln_Type = 0;
                         fh = (struct FileHandle *)BTOCPTR(bottom->secret->md.osfd);
-                        PR_fprintf(PR_STDERR, "Poll(%lx) sel port is %lx, BPTR is %lx, fh is %lx, packet is %lx\n", me, me->selectPort, bottom->secret->md.osfd, fh, sp);
+                        printf("Poll(%lx) sel port is %lx, BPTR is %lx, fh is %lx, packet is %lx\n", me, me->selectPort, bottom->secret->md.osfd, fh, sp);
                         sp->sp_Pkt.dp_Port = me->selectPort;
                         sp->sp_Pkt.dp_Type = ACTION_WAIT_CHAR;
                         sp->sp_Pkt.dp_Arg1 =
@@ -1142,7 +1196,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                     case PR_DESC_SOCKET_TCP:
                     case PR_DESC_SOCKET_UDP:
                         fd = _MD_Ensure_Socket(bottom->secret->md.osfd);
-                        PR_fprintf(PR_STDERR, "Poll(%lx) fd %d(%lx) is a socket, fd is %d\n", me, i, pd->fd, fd);
+                        printf("Poll(%lx) fd %d(%lx) is a socket, fd is %d\n", me, i, pd->fd, fd);
                         if (fd < 0) {
                             pd->out_flags = PR_POLL_NVAL;
                             continue;
@@ -1166,22 +1220,22 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
         }
     }
 
-    PR_fprintf(PR_STDERR, "Poll(%lx) Going to waitselect, maxfd is %d, signals are %lx\n", me, maxfd, flags);
+    printf("Poll(%lx) Going to waitselect, maxfd is %d, signals are %lx\n", me, maxfd, flags);
     retval = TCP_WaitSelect(maxfd + 1, &in, &out, &err, (timeout == PR_INTERVAL_NO_TIMEOUT) ? NULL : &tm, &flags);
     rc = retval;
 
-    PR_fprintf(PR_STDERR, "Poll(%lx) select returns %d, errno is %d\n", me, retval, TCP_Errno());
+    printf("Poll(%lx) select returns %d, errno is %d\n", me, retval, TCP_Errno());
 
     if (flags & (1 << me->selectPort->mp_SigBit)) {
         struct StandardPacket *sp;
-        PR_fprintf(PR_STDERR, "File descriptor waiting...\n");
+        printf("File descriptor waiting...\n");
 
         while ((sp = (struct StandardPacket *)GetMsg(me->selectPort)) != NULL) {
-            PR_fprintf(PR_STDERR, "Got packet %lx\n", sp);
+            printf("Got packet %lx\n", sp);
             for (i = 0; i < npds && sp != &sps[i]; i++)
                 ;
 
-            PR_fprintf(PR_STDERR, "File descriptor packet %d is waiting, res1 is %d, res2 is %d\n", i, sp->sp_Pkt.dp_Res1, sp->sp_Pkt.dp_Res2);
+            printf("File descriptor packet %d is waiting, res1 is %d, res2 is %d\n", i, sp->sp_Pkt.dp_Res1, sp->sp_Pkt.dp_Res2);
             pds[i].out_flags = 0;
 
             retval++;
@@ -1244,16 +1298,16 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                 fd = _MD_Ensure_Socket(bottom->secret->md.osfd);
                 pds[i].out_flags = 0;
                 if (FD_ISSET(fd, &in)) {
-                    PR_fprintf(PR_STDERR, "Fd %d is waiting for read\n", fd);
+                    printf("Fd %d is waiting for read\n", fd);
                     pds[i].out_flags |= PR_POLL_READ;
                 }
                 if (FD_ISSET(fd, &out)) {
-                    PR_fprintf(PR_STDERR, "Fd %d is waiting for write\n", fd);
+                    printf("Fd %d is waiting for write\n", fd);
                     pds[i].out_flags |= PR_POLL_WRITE;
                 }
 
                 if (FD_ISSET(fd, &err)) {
-                    PR_fprintf(PR_STDERR, "Fd %d is waiting for except\n", fd);
+                    printf("Fd %d is waiting for except\n", fd);
                     pds[i].out_flags |= PR_POLL_EXCEPT;
                 }
                 break;
@@ -1263,7 +1317,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
         }
     }
 error:
-    PR_fprintf(PR_STDERR, "Poll(%lx) returns %d\n", me, retval);
+    printf("Poll(%lx) returns %d\n", me, retval);
     return retval;
 }
 
@@ -1278,4 +1332,20 @@ int _MD_NATIVE_HANDLE(PRFileDesc *fd) {
         return _MD_Ensure_Socket(fd->secret->md.osfd);
     }
 }
-        
+
+void _PR_MD_MAKE_NONBLOCK(PRFileDesc *osfd) {
+    int fd;
+    PRThread *me = PR_GetCurrentThread();
+    long arg = 1;
+    switch (osfd->methods->file_type) {
+    case PR_DESC_SOCKET_TCP:
+    case PR_DESC_SOCKET_UDP:
+        fd = _MD_Ensure_Socket(osfd->secret->md.osfd);
+        printf("%lx making socket %lx (%d) nonblocking\n", me, osfd->secret->md.osfd, fd);
+        TCP_IoctlSocket(fd, FIONBIO, (void *)&arg);
+        break;
+
+    default:
+        break;
+    }        
+}
