@@ -562,6 +562,9 @@ if test "$OS_ARCH" = "OpenVMS"; then
     OS_RELEASE=`uname -v`
 fi
 
+if test "$OS_ARCH" = "amigaos"; then
+    OS_ARCH="AmigaOS";
+fi 
 #######################################################################
 # Master "Core Components" macros for getting the OS target           #
 #######################################################################
