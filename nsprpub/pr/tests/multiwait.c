@@ -254,7 +254,7 @@ static void OneOpOneThread(Shared *shared)
     PRStatus rv;
     PRRecvWait *desc_out, *desc_in = PR_NEWZAP(PRRecvWait);
 
-    desc_in->fd = PR_NewTCPSocket();
+    desc_in->fd = PR_NewUDPSocket();
     desc_in->timeout = shared->timeout;
 
     if (verbosity > chatty) PrintRecvDesc(desc_in, "Adding desc");
@@ -285,7 +285,7 @@ static void ManyOpOneThread(Shared *shared)
 
     for (index = 0; index < wait_objects; ++index)
     {
-        desc_in = CreateRecvWait(PR_NewTCPSocket(), shared->timeout);
+        desc_in = CreateRecvWait(PR_NewUDPSocket(), shared->timeout);
 
         rv = PR_AddWaitFileDesc(shared->group, desc_in);
         MW_ASSERT(PR_SUCCESS == rv);
@@ -358,7 +358,7 @@ static void SomeOpsSomeThreads(Shared *shared)
         PR_fprintf(debug, "%s: creating desc\n", shared->title);
     for (index = 0; index < wait_objects; ++index)
     {
-        desc_in = CreateRecvWait(PR_NewTCPSocket(), shared->timeout);
+        desc_in = CreateRecvWait(PR_NewUDPSocket(), shared->timeout);
         rv = PR_AddWaitFileDesc(shared->group, desc_in);
         MW_ASSERT(PR_SUCCESS == rv);
     }
