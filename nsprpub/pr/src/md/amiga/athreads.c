@@ -140,11 +140,12 @@ static PRStatus _InitThread(PRThread *pr) {
     return PR_SUCCESS;
 }
 
+
 /**
  * Clean up the NSPR-specific thread objects
  */
-static void procExit(void) {  
-    PRThread *me = PR_GetCurrentThread();
+static void procExit(PRThread *me) {  
+
     PRThread *join;
 
     Forbid();
@@ -208,7 +209,7 @@ static void procEntry(void) {
         PR_REMOVE_LINK(&pr->waitQLinks);
         Permit();
     }
-    procExit();
+    procExit(pr);
 }
 
 
@@ -262,7 +263,6 @@ PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
                                   NP_Output, Output(),
                                   NP_CloseInput, FALSE,
                                   NP_CloseOutput, FALSE,
-                                  NP_Error, Output(),
                                   NP_Priority, _PR_Map_Priority(priority),
                                   NP_CloseError, FALSE,
                                   NP_Entry, (ULONG)procEntry);
@@ -395,7 +395,6 @@ void _PR_InitStacks(void) {
 PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
 {
     PRThread *me = PR_CurrentThread();
-    PR_ASSERT(me == primordialThread);
     printf("In PR_Cleanup\n");
     if (_pr_initialized) {
         _PR_CleanupSocket();
@@ -415,7 +414,7 @@ PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
         _PR_CleanupLayerCache();
         _PR_CleanupEnv();
         /* Clean up primorial thread */
-        procExit();
+        procExit(primordialThread);
         _PR_Release_Memory();
         _pr_initialized = PR_FALSE;
     }
@@ -464,13 +463,144 @@ PR_IMPLEMENT(PRThreadScope) PR_GetThreadScope(const PRThread *thread) {
 }
 
 
-PR_IMPLEMENT(PRInt32) PR_GetThreadAffinityMask(PRThread *thread, PRUint32 *mask)
-{
+PR_IMPLEMENT(PRInt32) PR_GetThreadAffinityMask(PRThread *thread, PRUint32 *mask) {
     return 0;  /* not implemented */
 }
 
-PR_IMPLEMENT(PRInt32) PR_SetThreadAffinityMask(PRThread *thread, PRUint32 mask )
-{
+PR_IMPLEMENT(PRInt32) PR_SetThreadAffinityMask(PRThread *thread, PRUint32 mask ) {
     return 0;  /* not implemented */
 }
 
+static void _MDCreateProcessThread(void *arg) {
+    PRProcess *pr = (PRProcess *)arg;
+    LONG returnCode;
+    char *cmdLine;
+    size_t cmdLen = 0;
+    struct TagItem items[10];
+    int i;
+
+    for (i = 0; pr->md.argv[i]; i++) {
+        cmdLen += strlen(pr->md.argv[i]) + 4;
+    }
+
+    cmdLine = PR_Malloc(cmdLen);
+    if (cmdLine == NULL) {
+        pr->md.returnCode = 255;
+        return;
+    } 
+
+    cmdLine[0] = '\0';
+    for (i = 0; pr->md.argv[i]; i++) {
+        if (i > 0)
+            strcat(cmdLine, " ");
+        strcat(cmdLine, "\"");
+        strcat(cmdLine, pr->md.argv[i]);
+        strcat(cmdLine, "\"");
+    }
+
+    printf("Command line is '%s', len is %d(%d)\n", cmdLine, strlen(cmdLine), cmdLen);
+
+    /* Set up the environment */
+    if (pr->md.envp != NULL) {
+        printf("Doing environment...\n");
+        for (i = 0; pr->md.envp[i]; i++) {
+            char *equal;
+            char *tmpenv = PR_Malloc(strlen(pr->md.envp[i]) + 1);
+            /* Error check */
+            strcpy(tmpenv, pr->md.envp[i]);
+            equal = strchr(tmpenv, '=');
+            if (equal) {
+                *equal++ = '\0';
+            }
+            printf("Setting env: %s to %s\n", tmpenv, equal);
+            SetVar(tmpenv, equal, strlen(equal), GVF_LOCAL_ONLY);
+            PR_Free(tmpenv);
+        }
+    }
+
+    printf("Spawning command[0] '%s'\n", cmdLine);
+    i = 0;
+    items[i].ti_Tag = NP_CloseInput;
+    items[i++].ti_Data = FALSE;
+    items[i].ti_Tag = NP_CloseOutput;
+    items[i++].ti_Data = FALSE;
+
+    printf("Spawning command[1] '%s'\n", cmdLine);
+
+    if (pr->md.attr) {
+        items[i].ti_Tag = SYS_Input;
+        printf("Stdin fd is %lx\n", pr->md.attr->stdinFd);
+        items[i++].ti_Data = (pr->md.attr->stdinFd != NULL) ? pr->md.attr->stdinFd->secret->md.osfd : Input();
+        printf("Stdin is %lx\n", items[i-1].ti_Data);
+        items[i].ti_Tag = SYS_Output;
+        items[i++].ti_Data = (pr->md.attr->stdoutFd != NULL) ? pr->md.attr->stdoutFd->secret->md.osfd : Output();
+        printf("Stdout is %lx\n", items[i-1].ti_Data);
+        printf("Stderr fd is %lx\n", pr->md.attr->stderrFd);
+        if (pr->md.attr->stderrFd) {
+            items[i].ti_Tag = NP_Error;
+            items[i++].ti_Data = pr->md.attr->stderrFd->secret->md.osfd;
+        }
+        if (pr->md.attr->currentDirectory) {
+            printf("Current dir %s\n", pr->md.attr->currentDirectory);
+            items[i].ti_Tag = NP_CurrentDir;
+            items[i++].ti_Data = pr->md.attr->currentDirectory;
+        }
+    } else {
+        items[i].ti_Tag = NP_Input;
+        items[i++].ti_Data = Input();
+        items[i].ti_Tag = NP_Output;
+        items[i++].ti_Data = Output();
+    }
+        
+    items[i].ti_Tag = TAG_DONE;
+    items[i].ti_Data = TAG_DONE;
+
+    printf("Spawning command '%s'\n", cmdLine);
+
+    pr->md.returnCode = SystemTagList(cmdLine, items);
+    PR_Free(cmdLine);
+}
+
+PRProcess *_CreateProcess(const char *path, char *const *argv,
+    char *const *envp, const PRProcessAttr *attr) {
+    PRProcess *retval = PR_NEWZAP(PRProcess);
+    if (retval == NULL) {
+        PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+        return NULL;
+    }
+    retval->md.argv = argv;
+    retval->md.envp = envp;
+    retval->md.attr = attr;
+
+    /* Since SystemTags() waits until it is done,
+     * spawn it off on another thread
+     */
+    retval->md.executeThread = PR_CreateThread(PR_SYSTEM_THREAD, 
+        _MDCreateProcessThread, retval, PR_PRIORITY_NORMAL, PR_LOCAL_THREAD, 
+        PR_JOINABLE_THREAD, 0);
+
+    printf("Spawned thread %x\n", retval->md.executeThread);
+    printf("REturning %lx\n", retval);
+    return retval;
+}
+
+
+PRStatus _WaitProcess(PRProcess *process, PRInt32 *exitCode) {
+    PR_JoinThread(process->md.executeThread);
+    if (exitCode != NULL)
+        *exitCode = process->md.returnCode;
+
+    PR_Free(process);
+    return PR_SUCCESS;
+}
+
+PRStatus _DetachProcess(PRProcess *process) {
+    /* Maybe wait to free up process?? */
+    return PR_SUCCESS;
+}
+
+PRStatus _KillProcess(PRProcess *process) {
+    /* I don't think this can be done */
+    return PR_SUCCESS;
+}
+        
