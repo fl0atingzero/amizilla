@@ -53,20 +53,18 @@ PR_IMPLEMENT(void) PR_Lock(PRLock *lock)
 
   //printf("%lx going to lock %lx, owner is %lx\n", me, lock, lock->owner);
   Forbid();
+  PR_ASSERT(lock->owner == NULL || lock->owner != me);
   if (lock->owner != NULL && lock->owner != me) {
-      PRCList *foo = &(lock->waitQ);
+      PR_APPEND_LINK(&me->waitQLinks, &lock->waitQ);
       me->wait.lock = lock;
-      PR_APPEND_LINK(&me->waitQLinks, &(lock->waitQ));
-      //printf("%lx waiting for lock %lx\n", me, lock);
       me->state = _PR_LOCK_WAIT;
-      _PR_MD_Wait(me);
-      //printf("%lx done wait for lock %lx\n", me, lock);
+      _PR_MD_Wait(me, PR_FALSE);
       me->state = _PR_RUNNING;
   }
 
   lock->owner = me;
+  PR_APPEND_LINK(&lock->links, &me->lockList);
   Permit();
-  PR_APPEND_LINK(&lock->links, &me->lockList);  
   //printf("%lx got lock %lx, owner is %lx\n", me, lock, lock->owner);
 }
 
@@ -79,17 +77,20 @@ PR_IMPLEMENT(PRStatus) PR_Unlock(PRLock *lock)
     PRThread *me = PR_GetCurrentThread();
 
     //printf("%lx is going to unlock %lx, owner %lx\n", me, lock, lock->owner);
-    PR_ASSERT(lock->owner == me);
-
-    PR_REMOVE_LINK(&lock->links);
     Forbid();
+    PR_ASSERT(lock->owner != NULL);
+    PR_ASSERT(lock->owner == me);
+    PR_REMOVE_LINK(&lock->links);
+
     if (!PR_CLIST_IS_EMPTY(&(lock->waitQ))) {
-        PRCList *next = PR_LIST_HEAD((&lock->waitQ));
+        PRCList *next = PR_LIST_HEAD(&lock->waitQ);
         PRThread *thread = _PR_THREAD_CONDQ_PTR(next);
         PR_REMOVE_LINK(next);
         lock->owner = thread;
-        //printf("%lx signalling thread %lx for lock %lx\n",me, thread, lock);
-        _PR_MD_Signal(thread);        
+        PR_ASSERT(thread->state != _PR_RUNNING);
+        PR_ASSERT(thread->state == _PR_LOCK_WAIT);
+        PR_ASSERT(thread->wait.lock == lock);
+        _PR_MD_Signal(thread);
     } else {
         lock->owner = NULL;
     }
@@ -98,7 +99,7 @@ PR_IMPLEMENT(PRStatus) PR_Unlock(PRLock *lock)
 }
 
 PR_IMPLEMENT(void)PR_DestroyLock(PRLock *lock) {
-  PR_Free(lock);
+    PR_Free(lock);
 }
 
 void _PR_InitLocks(void){
