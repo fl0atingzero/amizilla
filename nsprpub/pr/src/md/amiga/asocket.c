@@ -51,7 +51,7 @@
 #define BTOCPTR(ptr) ((void *)((ptr) << 2))
 
 /* DEBUG sockets */
-#define DEBUG_ASOCKET
+/*#define DEBUG_ASOCKET */
 
 /*
  * Architecture:
@@ -122,7 +122,7 @@ struct SocketMsg {
 
 /* Reply from the socket thread */
 struct ReplyMsg {
-    PRInt32 errno; /* Any errors encountered */
+    PRInt32 rerrno; /* Any errors encountered */
 
     union {
         struct {
@@ -161,6 +161,9 @@ static PRThread *sockThread;
 
 /* Destructor for the ThreadPrivate socket descriptor */
 static void closeOpenSocketDTOR(void *prm) {
+#ifdef DEBUG_SOCKET
+    printf("closeOpenSocketDTOR %lx\n", prm);
+#endif
     PRThread *me = PR_GetCurrentThread();
     if (me->state != _PR_DEAD_STATE) {
         /* just a precaution */
@@ -185,7 +188,7 @@ void _PR_InitSocket(void) {
     PR_ASSERT(replyCondVar);
     PR_Lock(msgLock);
 #ifdef DEBUG_ASOCKET
-    printf("msgLock is %lx, replyLock is %lx, communicationslock is %lx, msgCondVar is %lx, replyCondVar is %lx\n", msgLock, replyLock, communicationLock, msgCondVar, replyCondVar);
+    printf("msgLock is %lx, replyLock is %lx, communicationslock is %lx, msgCondVar is %lx, replyCondVar is %lx, closeOpenSocketDTOR is %lx\n", msgLock, replyLock, communicationLock, msgCondVar, replyCondVar, closeOpenSocketDTOR);
 #endif
     sockThread = PR_CreateThread(PR_SYSTEM_THREAD, 
                                  SocketThread, NULL, PR_PRIORITY_NORMAL, 
@@ -363,10 +366,10 @@ static PRStatus sendSocketToThread(int fd, _MDSocket *sock) {
         PR_SetThreadPrivate(sock->private_idx, (void *)ss);
     } else {
 #ifdef DEBUG_ASOCKET
-        printf("sendSocketToThread(%lx) error %d\n", reply.errno);
+        printf("sendSocketToThread(%lx) error %d\n", reply.rerrno);
 #endif
         retval = PR_FAILURE;
-        PR_SetError(PR_UNKNOWN_ERROR, reply.errno);
+        PR_SetError(PR_UNKNOWN_ERROR, reply.rerrno);
         PR_Lock(msgLock);
         msg.type = MSG_CLOSE;
         msg.msg.close.private_idx = sock->private_idx;
@@ -446,13 +449,13 @@ static void SocketThread(void *notused) {
                     reply.msg.obtain.sequenceNumber = ss->sequenceNumber;
                 } else {
                     reply.msg.obtain.id = -1;
-                    reply.errno = TCP_Errno();
+                    reply.rerrno = TCP_Errno();
 #ifdef DEBUG_ASOCKET
-                    printf("Dup2socket failed: %d\n", reply.errno);
+                    printf("Dup2socket failed: %d\n", reply.rerrno);
 #endif
                 }
             } else {
-                reply.errno = EBADF;
+                reply.rerrno = EBADF;
             }
             break;
 
@@ -479,7 +482,7 @@ static void SocketThread(void *notused) {
             if (rc == PR_SUCCESS) {               
                 ss = PR_NEWZAP(struct SharedSocket);
                 if (ss == NULL) {
-                    reply.errno = ENOMEM;
+                    reply.rerrno = ENOMEM;
                     break;
                 }
 
@@ -500,7 +503,7 @@ static void SocketThread(void *notused) {
                 }
 
                 if (ss->fd < 0) {
-                    reply.errno = TCP_Errno();
+                    reply.rerrno = TCP_Errno();
                     PR_Free(ss);
                 } else {
 #ifdef DEBUG_ASOCKET
@@ -513,7 +516,7 @@ static void SocketThread(void *notused) {
                 }
             } else {
                 reply.msg.receive.private_idx = -1;
-                reply.errno = ENFILE;
+                reply.rerrno = ENFILE;
                 PR_Free(ss);
             }
             break;
@@ -614,9 +617,9 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
             }
         } else {
 #ifdef DEBUG_ASOCKET
-            printf("Obtained failed %d\n", reply.errno);
+            printf("Obtained failed %d\n", reply.rerrno);
 #endif
-            PR_SetError(PR_UNKNOWN_ERROR, reply.errno);
+            PR_SetError(PR_UNKNOWN_ERROR, reply.rerrno);
             PR_Free(ss);
             ss = NULL;
             fd = -1;
@@ -725,7 +728,7 @@ PRInt32 _MD_CONNECT(
     while ((retval = TCP_Connect(fd, (struct sockaddr *)&addrCopy, addrlen)) == -1) {
         int err = TCP_Errno();
 #ifdef DEBUG_ASOCKET
-        printf("Connect(%lx) returned %d, errno is %d\n", me, retval, err);
+        printf("Connect(%lx) returned %d, rerrno is %d\n", me, retval, err);
 #endif
         /* All done */
         if (osfd->secret->nonblocking) {
@@ -1837,4 +1840,56 @@ int _MD_UNMAP_FD(PRDescType type, int osfd) {
     default:
         return osfd;
     }
+}
+
+/* replacements for the originals */
+struct hostent *gethostbyname(const char *name) {
+    PRThread *me = PR_GetCurrentThread();
+
+    if (AMITCP_BASE_NAME) {
+        return TCP_GetHostByName(name);
+    } else {
+	return NULL;
+    }
+}
+
+struct hostent *gethostbyaddr(const char *addr, int len, int type) {
+    PRThread *me = PR_GetCurrentThread();
+    if (AMITCP_BASE_NAME) {
+        return TCP_GetHostByAddr(addr, len, type);
+    } else {
+        return NULL;
+    }
+}
+
+struct protoent *getprotobyname(const char *name) {
+    PRThread *me = PR_GetCurrentThread();
+    if (AMITCP_BASE_NAME) {
+        return TCP_GetProtoByName(name);
+    } else {
+        return NULL;
+    }
+}
+
+struct protoent *getprotobynumber(int proto) {
+    PRThread *me = PR_GetCurrentThread();
+    if (AMITCP_BASE_NAME) {
+        return TCP_GetProtoByNumber(proto);
+    } else {
+        return NULL;
+    }
+}
+
+unsigned long inet_addr(const char *cp) {
+    PRThread *me = PR_GetCurrentThread();
+    if (AMITCP_BASE_NAME) {
+        return TCP_Inet_Addr(cp);
+    } else {
+        return NULL;
+    }
+}
+
+int ami_host_errno() {
+    PRThread *me = PR_GetCurrentThread();
+    return TCP_Errno();
 }
