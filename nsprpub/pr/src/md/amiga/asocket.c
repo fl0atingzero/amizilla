@@ -1320,8 +1320,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                             printf("Poll(%lx) sel port is %lx, BPTR is %lx, fh is %lx, packet is %lx\n", me, me->selectPort, bottom->secret->md.osfd, fh, sp);
                             sp->sp_Pkt.dp_Port = me->selectPort;
                             sp->sp_Pkt.dp_Type = ACTION_WAIT_CHAR;
-                            sp->sp_Pkt.dp_Arg1 =
-                                (timeout != PR_INTERVAL_NO_TIMEOUT) ? timeout * _PR_MD_INTERVAL_PER_SEC() * 1000 : 100000;
+                            sp->sp_Pkt.dp_Arg1 = 100000;
                             PutMsg(fh->fh_Type, (struct Message *)sp);
                             break;       
                         case PR_DESC_SOCKET_TCP:
