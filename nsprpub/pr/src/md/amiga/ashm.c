@@ -76,7 +76,7 @@ PRSharedMemory * _MD_OpenSharedMemory(
     PRStatus rc = PR_SUCCESS;
     int cookie;
     PRSharedMemory *shm = NULL;
-    PRFileDesc *osfd;
+    PRFileDesc *osfd = NULL;
     char ipcname[PR_IPC_NAME_SIZE];
 
     rc = _PR_MakeNativeIPCName( name, ipcname, PR_IPC_NAME_SIZE, _PRIPCShm );
@@ -131,6 +131,7 @@ PRSharedMemory * _MD_OpenSharedMemory(
             if (shm->handle == NULL) {
                 goto error;
             }
+            shm->handle->count = 1;
             cookie = htonl(SHARED_MEMORY_MAGIC_COOKIE);
             PR_Write(osfd, &cookie, sizeof(cookie));
             sprintf(buf, "%ld", shm->handle);
@@ -140,7 +141,7 @@ PRSharedMemory * _MD_OpenSharedMemory(
         }
         PR_Close(osfd);
     } else {
-        PRFileDesc *osfd = PR_Open(ipcname, PR_RDONLY, mode);
+        osfd = PR_Open(ipcname, PR_RDONLY, mode);
         if (NULL == osfd) {
             goto error;
         }
