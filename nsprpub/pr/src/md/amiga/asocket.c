@@ -160,6 +160,7 @@ static PRThread *sockThread;
 static void closeOpenSocketDTOR(void *prm) {
     PRThread *me = PR_GetCurrentThread();
     struct SharedSocket *ss = (struct SharedSocket *)prm;
+    printf("%lx closing socket(DTOR) %d\n", me, ss->fd);
     TCP_CloseSocket(ss->fd);
     PR_Free(ss);
 }
@@ -171,12 +172,16 @@ void _MD_INIT_IO(void) {
     communicationLock = PR_NewLock();
     msgCondVar = PR_NewCondVar(msgLock = PR_NewLock());
     replyCondVar = PR_NewCondVar(replyLock = PR_NewLock());
+    PR_Lock(msgLock);
     sockThread = PR_CreateThread(PR_SYSTEM_THREAD, 
                                  SocketThread, NULL, PR_PRIORITY_NORMAL, 
                                  PR_LOCAL_THREAD, 
                                  PR_JOINABLE_THREAD, 0);
     printf("msgLock is %lx, replyLock is %lx, communicationslock is %lx, msgCondVar is %lx, replyCOndVar is %lx\n", msgLock, replyLock, communicationLock, msgCondVar, replyCondVar);
     printf("Socket thread is %lx\n", sockThread);
+    /* Wait until the socket thread wakes up */
+    PR_WaitCondVar(msgCondVar, PR_INTERVAL_NO_TIMEOUT);
+    PR_Unlock(msgLock);
 }
 
 
@@ -236,6 +241,7 @@ static int local_io_wait(int fd, int type, PRIntervalTime timeout) {
     }
 
     printf("WaitSelect(%lx) flags are %d\n", me, me->flags);
+    me->state = _PR_IO_WAIT;
     sel = TCP_WaitSelect(fd + 1, &fd_read, &fd_write, &fd_except,
         (timeout == PR_INTERVAL_NO_TIMEOUT) ? NULL : &tv, &flags);
 
@@ -245,14 +251,15 @@ static int local_io_wait(int fd, int type, PRIntervalTime timeout) {
         longjmp(me->jmpbuf, 1);
     }
 
+    me->state = _PR_RUNNING;
     printf("WaitSelect(%lx) returned %d, flags is %lx\n", me, sel, me->flags);
     if (sel < 0) {
         _PR_MD_MAP_SELECT_ERROR(TCP_Errno());
-    } else if (sel == 0) {
+    } else {
         if (flags & (1 << me->interruptSignal)) {
             printf("WaitSelect(%lx) Interrupted, flags are %lx\n", me, me->flags);
             PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
-        } else {
+        } else if (sel == 0) {
             PR_SetError(PR_IO_TIMEOUT_ERROR, 0);
         }
     }
@@ -369,6 +376,7 @@ static void SocketThread(void *notused) {
     /* Max number for the thread private data */
     num = -1;
     PR_Lock(msgLock);
+    PR_NotifyCondVar(msgCondVar);
     while(!done) {
         int retval, fd;
         PR_WaitCondVar(msgCondVar,PR_INTERVAL_NO_TIMEOUT);
@@ -641,13 +649,14 @@ PRInt32 _MD_CONNECT(
 PRInt32 _MD_ACCEPT(
     PRFileDesc *osfd, PRNetAddr *addr,
     PRUint32 *addrlen, PRIntervalTime timeout) {
+    struct sockaddr_in tmp;
     PRThread *me = PR_GetCurrentThread();
     int fd = _MD_Ensure_Socket(osfd->secret->md.osfd);
     _MDSocket *sock2 = (_MDSocket *)-1;
     _MDSocket *sock;
     PRStatus rc;
     int fd2;
-    int retval;
+    int retval = -1;
 
     printf("accept(%lx), osfd %lx, fd %d\n", me, osfd->secret->md.osfd, fd);
 
@@ -661,6 +670,7 @@ PRInt32 _MD_ACCEPT(
     printf("Going to accept %d, %lx, %d\n", fd, addr, *addrlen);
     while ((retval = TCP_Accept(fd,(struct sockaddr *)addr, addrlen)) < 0) {
         int err = TCP_Errno();
+
         printf("Accept(%lx) returned %d, errno is %d\n", me, retval, err);
         /* All done */
         if (osfd->secret->nonblocking) {
@@ -669,19 +679,20 @@ PRInt32 _MD_ACCEPT(
         }
 
         if (err == EAGAIN || err == EWOULDBLOCK || err == ECONNABORTED || err == EDEADLK) {
-            retval = local_io_wait(fd, TYPE_READ, timeout);
+            int io = local_io_wait(fd, TYPE_READ, timeout);
             if (_PR_PENDING_INTERRUPT(me)) {
                 PR_ClearInterrupt();
-                printf("accept(%lx) got nterrupt\n", me);
+                printf("accept(%lx) got interrupt\n", me);
                 goto error;
             }
-            if (retval < 0) {
+            if (io < 0) {
                 _PR_MD_MAP_ACCEPT_ERROR(TCP_Errno());
                 goto error;
-            } else if (retval == 0) {
+            } else if (io == 0) {
                 goto error;
             }
         } else {
+            _PR_MD_MAP_ACCEPT_ERROR(TCP_Errno());
             goto error;
         }
     }
@@ -702,14 +713,16 @@ PRInt32 _MD_ACCEPT(
     }
 
     return (PRInt32)sock2;
+
 error:
     if (sock2 != (_MDSocket *)-1 && sock2 != NULL) {
         PR_Free(sock2);
     }
 
-    printf("Accept error: closing socket %d\n", retval);
-    if (retval >= 0)
+    if (retval >= 0) {
+        printf("Accept error: closing socket %d\n", retval);
         TCP_CloseSocket(retval);
+    }
     return -1;
 }
 
@@ -1096,10 +1109,10 @@ PRInt32 _MD_amiga_get_nonblocking_connect_error(int osfd)
     if (fd == -1)
         return EBADF;
     if (TCP_GetSockOpt(fd, SOL_SOCKET, SO_ERROR, (char *) &err, &optlen) == -1) {
-        printf("unix_connect error(%lx), returns %d, errno is %d\n", me, -1, TCP_Errno());
+        printf("unix_connect error(%d), returns %lx, errno is %d\n", me, -1, TCP_Errno());
         return TCP_Errno();
     } else {
-        printf("unix_connect error(%lx), returns %d, errno is %d\n", me, err, TCP_Errno());
+        printf("unix_connect error(%d), returns %lx, errno is %d\n", me, err, TCP_Errno());
         return err;
     }
 }
@@ -1229,9 +1242,16 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
         }
     }
 
+    me->state = _PR_IO_WAIT;
     printf("Poll(%lx) Going to waitselect, maxfd is %d, signals are %lx\n", me, maxfd, flags);
     retval = TCP_WaitSelect(maxfd + 1, &in, &out, &err, (timeout == PR_INTERVAL_NO_TIMEOUT) ? NULL : &tm, &flags);
     rc = retval;
+
+    /* See if someone is trying to kill me by setting my state to dead */
+    if (me->state == _PR_DEAD_STATE) {
+        printf("Thread %x was forceably killed from WaitSelect in poll\n", me);
+        longjmp(me->jmpbuf, 1);
+    }
 
     printf("Poll(%lx) select returns %d, errno is %d\n", me, retval, TCP_Errno());
 
