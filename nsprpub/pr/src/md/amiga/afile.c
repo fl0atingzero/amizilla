@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; c-basic-offset: 8 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* 
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -39,7 +39,7 @@
  */
 #include <dos/dos.h>
 #include <exec/memory.h>
-//#include <proto/dos.h>
+#include <proto/dos.h>
 #include <proto/exec.h>
 
 /* File I/O related */
@@ -109,13 +109,13 @@ PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
 	else {
 		// file does not exists, check if it should be created
 		if( osflags & PR_CREATE_FILE ) {
-			if( NULL != ( file = ( osflags & PR_RDONLY | osflags & PR_RDWR ) ? Opem( name,MODE_READWRITE ) : Open( name,MODE_NEWFILE ) ) ) {
+			if( NULL != ( file = ( osflags & PR_RDONLY | osflags & PR_RDWR ) ? Open( name,MODE_READWRITE ) : Open( name,MODE_NEWFILE ) ) ) {
 
 				// if PR_EXCL is set free resource after craetion and return NULL
 				if( osflags & PR_EXCL ) {
 					// we may should check for returned error code?
 					Close( file );
-					file = NULL;
+					file = -1;
 				}
 			}
 			else { 
@@ -140,7 +140,7 @@ PRInt32 _Open(const char *name, PRIntn osflags, PRIntn mode) {
  * name             The pathname of the file to be deleted.
 */
 PRStatus _Delete(const char *name) {
-	if( DOSFALSE == DeletFile( name ) )
+	if( DOSFALSE == DeleteFile( name ) )
 		return PR_FAILURE;
 	else
 		return PR_SUCCESS;
