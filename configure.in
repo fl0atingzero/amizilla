@@ -3159,7 +3159,8 @@ MOZ_ARG_HEADER(Toolkit Options)
         -o "$_DEFAULT_TOOLKIT" = "photon" \
         -o "$_DEFAULT_TOOLKIT" = "mac" \
         -o "$_DEFAULT_TOOLKIT" = "windows" \
-        -o "$_DEFAULT_TOOLKIT" = "cocoa"
+        -o "$_DEFAULT_TOOLKIT" = "cocoa" \
+        -o "$_DEFAULT_TOOLKIT" = "amiga" 
     then
         dnl nglayout only supports building with one toolkit,
         dnl so ignore everything after the first comma (",").
