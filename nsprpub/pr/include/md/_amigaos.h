@@ -132,6 +132,9 @@ extern struct _MD_IOVector _md_iovector;
 // NSPR_API(PRInt32) _MD_stat(const char *name, struct stat *buf);
 // NSPR_API(PRInt32) _MD_pr_poll(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout);
 
+#define _MD_GET_ENV getenv
+#define _MD_PUT_ENV putenv
+
 #endif /* nspr_amigaos_h___ */
 
 
