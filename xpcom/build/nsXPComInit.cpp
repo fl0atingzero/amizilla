@@ -112,6 +112,11 @@
 
 #include "SpecialSystemDirectory.h"
 
+#ifdef XP_AMIGAOS
+#include "nspr.h"
+#include "nspr4.h"
+#endif
+
 // Registry Factory creation function defined in nsRegistry.cpp
 // We hook into this function locally to create and register the registry
 // Since noone outside xpcom needs to know about this and nsRegistry.cpp
@@ -270,6 +275,22 @@ PRBool gXPCOMShuttingDown = PR_FALSE;
 // to true.  During shutdown, this boolean with set to false.  When we startup,
 // this boolean will be checked and if the value is not true, startup will fail.
 static PRBool gXPCOMHasGlobalsBeenInitalized = PR_TRUE;
+
+#ifdef XP_AMIGAOS
+extern "C" {
+    extern void _MD_Exit(void);
+}
+static void NS_COM closeXPCOM(void) {
+    
+    if (gXPCOMHasGlobalsBeenInitalized) {
+        NS_ShutdownXPCOM(nsnull);
+    }
+    // I need to call the MD_Exit function in nspr as to call to clean up the
+    // xpcom thread privates since xpcom gets cleaned up (and deleted)
+    // before nspr
+    _MD_Exit();
+}
+#endif
 
 // For each class that wishes to support nsIClassInfo, add a line like this
 // NS_DECL_CLASSINFO(nsMyClass)
@@ -631,7 +652,10 @@ nsresult NS_COM NS_InitXPCOM2(nsIServiceManager* *result,
     NS_CreateServicesFromCategory(NS_XPCOM_STARTUP_OBSERVER_ID, 
                                   nsnull,
                                   NS_XPCOM_STARTUP_OBSERVER_ID);
-    
+
+#ifdef XP_AMIGAOS
+    atexit(closeXPCOM);
+#endif
     return NS_OK;
 }
 
