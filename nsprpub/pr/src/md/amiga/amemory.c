@@ -38,19 +38,62 @@
 
 #include "primpl.h"
 
+static PRCList memoryList;
 
-PR_IMPLEMENT(void*) PR_MD_malloc( size_t size ) {
-    struct _MDMemPtr *pr = AllocMem(size + sizeof(struct _MDMemPtr), 
-                                    MEMF_PUBLIC | MEMF_CLEAR);
+static struct SignalSemaphore memoryLock;
+
+/*
+ * Better than Forbid/Permit since it only blocks NSPR-related things 
+ */
+static void _PR_ObtainMemoryLock(void) {
+    ObtainSemaphore(&memoryLock);
+
+}
+
+static void _PR_ReleaseMemoryLock(void) {
+    ReleaseSemaphore(&memoryLock);
+}
+
+void _PR_Init_Memory(void) {
+    PR_INIT_CLIST(&memoryList);
+    InitSemaphore(&memoryLock);
+}
+
+void _PR_Release_Memory(void) {
+    if (!PR_CLIST_IS_EMPTY(&memoryList)) {
+        PRCList *next;
+        for (next = PR_LIST_HEAD(&memoryList); next != &memoryList;) {
+            struct _MDMemPtr *mp = (struct _MDMemPtr *)next;
+            PRCList *tmp = next;
+            next = PR_NEXT_LINK(next);
+            FreeMem(mp, mp->size);
+        }
+    }
+}
+            
+void *PR_MD_malloc( size_t size ) {
+    struct _MDMemPtr *pr; 
+    if (!_pr_initialized) _PR_ImplicitInitialization();
+
+    pr = AllocMem(size + sizeof(struct _MDMemPtr), 
+        MEMF_PUBLIC | MEMF_CLEAR);
+    if (pr == NULL) {
+        return NULL;
+    }
+
     pr->size = size + sizeof(struct _MDMemPtr);
+    //printf("Allocating memory %lx, size %d\n", pr, pr->size);
+    _PR_ObtainMemoryLock();
+    PR_APPEND_LINK((PRCList *)pr, &memoryList);
+    _PR_ReleaseMemoryLock();
     return ((char *)pr + sizeof(struct _MDMemPtr));
 }
 
-PR_IMPLEMENT(void*)   PR_MD_calloc( size_t n, size_t size ) {
+void *PR_MD_calloc( size_t n, size_t size ) {
     return PR_MD_malloc(n * size);
 }
 
-PR_IMPLEMENT(void*) PR_MD_realloc( void* old_blk, size_t size ) {
+void *PR_MD_realloc( void* old_blk, size_t size ) {
     if (old_blk == NULL) {
         return PR_MD_malloc(size);
     } else {
@@ -58,7 +101,8 @@ PR_IMPLEMENT(void*) PR_MD_realloc( void* old_blk, size_t size ) {
         if (newblock == NULL) {
             return old_blk;
         } else {
-            struct _MDMemPtr *ob = (char *)old_blk - sizeof(struct _MDMemPtr);
+            struct _MDMemPtr *ob = (struct _MDMemPtr *)
+                ((char *)old_blk - sizeof(struct _MDMemPtr));
             int sz = MIN(ob->size, size);
             memcpy(newblock, old_blk, sz);
             PR_MD_free(old_blk);
@@ -67,9 +111,13 @@ PR_IMPLEMENT(void*) PR_MD_realloc( void* old_blk, size_t size ) {
     }
 }
 
-PR_IMPLEMENT(void) PR_MD_free( void *ptr ) {
+void PR_MD_free( void *ptr ) {
     if (ptr != NULL) {
-        struct _MDMemPtr *mp = (char *)ptr - sizeof(struct _MDMemPtr);
+        struct _MDMemPtr *mp = (struct _MDMemPtr *)
+            ((char *)ptr - sizeof(struct _MDMemPtr));
+        _PR_ObtainMemoryLock();
+        PR_REMOVE_LINK((PRCList *)mp);
+        _PR_ReleaseMemoryLock();
         FreeMem(mp, mp->size);
     }
 }
