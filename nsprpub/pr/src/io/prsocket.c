@@ -307,6 +307,13 @@ static PRStatus PR_CALLBACK SocketConnectContinue(
         return PR_FAILURE;
     }
     return PR_SUCCESS;
+#elif defined(XP_AMIGAOS)
+    err = _MD_amiga_get_nonblocking_connect_error(osfd);
+    if (err != 0) {
+        _PR_MD_MAP_CONNECT_ERROR(err);
+        return PR_FAILURE;
+    }
+    return PR_SUCCESS;
 
 #elif defined(WIN32) || defined(WIN16)
 
@@ -713,6 +720,7 @@ static PRStatus PR_CALLBACK SocketClose(PRFileDesc *fd)
 		if (_PR_MD_CLOSE_SOCKET(fd->secret->md.osfd) < 0) {
 			return PR_FAILURE;
 		}
+        fd->secret->md.osfd = -1;
 		fd->secret->state = _PR_FILEDESC_CLOSED;
 	}
 
@@ -1586,7 +1594,12 @@ PR_FileDesc2NativeHandle(PRFileDesc *fd)
         PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);
         return -1;
     }
+
+#ifdef XP_AMIGAOS
+    return _MD_NATIVE_HANDLE(fd);
+#else
     return fd->secret->md.osfd;
+#endif
 }
 
 PR_IMPLEMENT(void)
