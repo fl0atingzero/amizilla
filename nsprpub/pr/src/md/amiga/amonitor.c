@@ -195,3 +195,11 @@ PR_IMPLEMENT(PRMonitor*) PR_NewNamedMonitor(const char* name) {
     }
     return retval;
 }
+
+/* The GC uses this; it is quite arguably a bad interface.  I'm just
+ * duplicating it for now - XXXMB
+ */
+PR_IMPLEMENT(PRInt32) PR_GetMonitorEntryCount(PRMonitor *mon)
+{
+    return mon->entryCount;
+}
