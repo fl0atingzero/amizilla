@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* 
  * The contents of this file are subject to the Mozilla Public
  * License Version 1.1 (the "License"); you may not use this file
@@ -38,8 +38,6 @@
 #include "prtypes.h"
 #include "prio.h"
 #include <dirent.h>
-//#include <errno.h>
-
 
 #define _PR_SI_ARCHITECTURE   "m68k"
 #define _PR_SI_SYSNAME        "Amiga compatible"
@@ -49,16 +47,29 @@ _PR_MD_Timeout _PR_Sleep(PRIntervalTime);
 
 struct _MDFileMap {
     PRIntn prot;
-    PRIntn flags;
-  PRBool isAnonFM; // when true, PR_CloseFileMap() must close the related fd 
+    PRBool isAnonFM; /* when true, PR_CloseFileMap() must close the related fd */
+    void *addr;
+};
+
+struct _MDMemMap {
+    PROffset64 offset;
+    PRUint32 len;
+    PRFileMap *map;
+    PRUint32 count;
 };
 
 /**
  * Used for malloc
  */
 struct _MDMemPtr {
-  PRCList list;
-  PRUint32 size;
+    PRCList list;
+    PRUint32 size;
+};
+
+struct InputData {
+	int data[5];
+	int num;
+	struct Process *p;
 };
 
 #define HAVE_BSD_FLOCK 1
@@ -67,6 +78,7 @@ struct _MDMemPtr {
 
 #define HAVE_STACK_GROWING_UP
 #undef USE_SETJMP
+#define PR_DLL_SUFFIX ".ixlibrary"
 
 #define PR_DIRECTORY_SEPARATOR          '/'
 #define PR_DIRECTORY_SEPARATOR_STR      "/"
@@ -106,6 +118,3 @@ void _PR_Release_Memory( void );
 #include <proto/exec.h>
 
 #endif /* nspr_amigaos_h___ */
-
-
-
