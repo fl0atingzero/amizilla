@@ -493,7 +493,7 @@ struct PLEvent {
 #ifdef PL_POST_TIMINGS
     PRIntervalTime      postTime;
 #endif
-#ifdef XP_UNIX
+#if defined(XP_UNIX) || defined(XP_AMIGAOS)
     unsigned long       id;
 #endif /* XP_UNIX */
     /* other fields follow... */
@@ -596,7 +596,7 @@ PL_RegisterEventIDFunc(PLEventQueue *aSelf, PLGetEventIDFunc aFunc,
 PR_EXTERN(void)
 PL_UnregisterEventIDFunc(PLEventQueue *aSelf);
 
-#endif /* XP_UNIX */
+#endif /* XP_UNIX || XP_AMIGAOS */
 
 
 /* ----------------------------------------------------------------------- */
