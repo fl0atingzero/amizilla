@@ -38,7 +38,7 @@
 
 #define DAYS_SINCE_1970 (8*365+2)
 
-static _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
+_PR_MD_Timeout _PR_MD_Sleep(PRIntervalTime timeout) {
 
     PRThread *thread = PR_GetCurrentThread();
     struct timerequest *timerIO = thread->sleepRequest;
@@ -66,7 +66,10 @@ static _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
 
     thread->sleepRequestUsed = PR_TRUE;
     SendIO((struct IORequest *)timerIO);
-    _PR_MD_Wait(thread, PR_TRUE);
+    /* Don't clear the signal on Waiting since I could get notified before
+     * I clear it (and become livelocked)
+     */
+    _PR_MD_Wait(thread, PR_TRUE, PR_FALSE);
 
     if (_PR_PENDING_INTERRUPT(thread)) {
         PR_ClearInterrupt();
@@ -83,15 +86,16 @@ static _PR_MD_Timeout _PR_Sleep(PRIntervalTime timeout) {
 
     if (!(CheckIO((struct IORequest *)timerIO))) {
         AbortIO((struct IORequest *)timerIO);
-        WaitIO((struct IORequest *)timerIO);
     }
+    WaitIO((struct IORequest *)timerIO);
+
     thread->io_pending = PR_FALSE;
  done:
     return retval;
 }
 
 PR_IMPLEMENT(PRStatus) PR_Sleep(PRIntervalTime timeout) { 
-    _PR_MD_Timeout retval = _PR_Sleep(timeout);
+    _PR_MD_Timeout retval = _PR_MD_Sleep(timeout);
     return (retval == SUCCESS || retval == TIMEDOUT) ? PR_SUCCESS : PR_FAILURE;
 }
 
@@ -130,13 +134,15 @@ PR_IMPLEMENT(PRTime)
          * ( Amiga's time is based upon Jan 1, 1978)
          */
         LL_I2L(secs, tv.tv_sec);
-        LL_I2L(mil, 1000000);
+        LL_I2L(mil, PR_USEC_PER_SEC);
         LL_MUL(secs, secs, mil);
         LL_I2L(mil, tv.tv_usec);
         LL_ADD(retval, secs, mil);
         LL_I2L(offset, DAYS_SINCE_1970);
-        LL_MUL(offset, offset, 86400);
-        LL_MUL(offset, offset, 1000000);
+        LL_I2L(mil, 86400);
+        LL_MUL(offset, offset, mil);
+        LL_I2L(mil, PR_USEC_PER_SEC);
+        LL_MUL(offset, offset, mil);
         LL_ADD(retval, retval, offset);
         CloseDevice((struct IORequest *)tr);
     }
