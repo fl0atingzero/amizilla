@@ -60,7 +60,7 @@
  * This can lead to infinite recursion.
  */
 static PRLock *_pr_logLock;
-#if defined(_PR_PTHREADS) || defined(_PR_BTHREADS)
+#if defined(_PR_PTHREADS) || defined(_PR_BTHREADS) || defined(_PR_ATHREADS)
 #define _PR_LOCK_LOG() PR_Lock(_pr_logLock);
 #define _PR_UNLOCK_LOG() PR_Unlock(_pr_logLock);
 #elif defined(_PR_GLOBAL_THREADS_ONLY)
@@ -427,6 +427,8 @@ PR_IMPLEMENT(void) PR_LogPrint(const char *fmt, ...)
                      me ? &(me->id): 0L, me);
 #elif defined(_PR_BTHREADS)
 		     me, me);
+#elif defined(_PR_ATHREADS)
+             me, me);
 #else
                      me ? me->id : 0L, me);
 #endif
@@ -508,7 +510,7 @@ static void DebugBreak(void) { }
 PR_IMPLEMENT(void) PR_Assert(const char *s, const char *file, PRIntn ln)
 {
     PR_LogPrint("Assertion failure: %s, at %s:%d\n", s, file, ln);
-#if defined(XP_UNIX) || defined(XP_OS2) || defined(XP_BEOS)
+#if defined(XP_UNIX) || defined(XP_OS2) || defined(XP_BEOS) || defined(XP_AMIGAOS)
     fprintf(stderr, "Assertion failure: %s, at %s:%d\n", s, file, ln);
 #endif
 #ifdef XP_MAC
