@@ -667,8 +667,10 @@ PRInt32 _MD_CONNECT(
             retval = 0;
             break;
         } else if (err == ECONNREFUSED && doneWait) {
+            _PR_MD_MAP_CONNECT_ERROR(err);
             break;
         } else if (err == EINVAL) {
+            _PR_MD_MAP_CONNECT_ERROR(err);
             break;
         }
 
@@ -1606,11 +1608,19 @@ int _MD_UNMAP_FD(PRDescType type, int osfd) {
             s2->domain = sock->domain;
             s2->protocol = sock->protocol;
             s = TCP_ObtainSocket(sock->private_idx, s2->type, s2->domain, s2->protocol);
+            if (s == -1) {
+                increaseSocketSize();
+                s = TCP_ObtainSocket(sock->private_idx, s2->type, s2->domain, s2->protocol);
+            }
             FreeVec(sock);
-            if (sendSocketToThread(s, s2) == PR_FAILURE) {
+            if (s != -1) {
+                if (sendSocketToThread(s, s2) == PR_FAILURE) {
+                    return -1;
+                }
+                return (int)s2;
+            } else {
                 return -1;
             }
-            return (int)s2;
         } else {
             return -1;
         }
