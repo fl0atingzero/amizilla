@@ -402,6 +402,9 @@ else
 
 LINK_LIB        = $(RM) $@; $(AR) $(AR_FLAGS) $(OBJS); $(RANLIB) $@
 LINK_LIB2       = $(RM) $@; $(AR) $@ $(OBJS2); $(RANLIB) $@
+ifeq ($(OS_ARCH), AmigaOS)
+LINK_DLL = a2ixlibrary -32 $(ALDFLAGS) $(DLL_LDFLAGS)   $(DLL_EXPORT_FLAGS) -o $@ $(OBJS)
+else
 ifdef SONAMEFLAG_PREFIX
 LINK_DLL        = $(LD) $(DSO_LDOPTS) $(ALDFLAGS) $(DLL_LDFLAGS) $(DLL_EXPORT_FLAGS) \
                         -o $@ $(SONAMEFLAG_PREFIX)$(notdir $@) $(OBJS)
@@ -409,6 +412,7 @@ else # SONAMEFLAG_PREFIX
 LINK_DLL        = $(LD) $(DSO_LDOPTS) $(ALDFLAGS) $(DLL_LDFLAGS) $(DLL_EXPORT_FLAGS) \
                         -o $@ $(OBJS)
 endif # SONAMEFLAG_PREFIX
+endif # AmigaOS
 endif #!os2
 
 ifeq ($(OS_ARCH), OSF1)

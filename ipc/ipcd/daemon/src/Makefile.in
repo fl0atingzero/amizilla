@@ -72,6 +72,10 @@ LOCAL_INCLUDES  = \
             -I$(srcdir)/../../shared/src \
             $(NULL)
 
+ifeq ($(OS_ARCH), AmigaOS)
+FORCE_NO_PIC=1
+endif
+
 include $(topsrcdir)/config/config.mk
 
 LIBS		= \

@@ -62,6 +62,10 @@ LIBS		= \
 		$(MOZ_COMPONENT_LIBS) \
 		$(NULL)
 
+ifeq ($(OS_ARCH), AmigaOS)
+FORCE_NO_PIC=1
+endif
+
 include $(topsrcdir)/config/rules.mk
 
 DEFINES		+= -DJS_THREADSAFE -DJSFILE

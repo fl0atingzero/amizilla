@@ -70,7 +70,11 @@ SDK_LIBRARY     	= \
 FORCE_STATIC_LIB = 1
 
 # Force use of PIC
-FORCE_USE_PIC	= 1
+ifeq ($(OS_ARCH),AmigaOS)
+FORCE_NO_PIC    = 1
+else
+FORCE_USE_PIC   = 1
+endif
 
 GARBAGE         += $(XPCOM_GLUE_SRC_LCSRCS) $(wildcard *.$(OBJ_SUFFIX))
 

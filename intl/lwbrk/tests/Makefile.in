@@ -35,6 +35,10 @@ CPPSRCS		= TestLineBreak.cpp
 
 LIBS		= $(XPCOM_LIBS) $(NSPR_LIBS)
 
+ifeq ($(OS_ARCH), AmigaOS)
+FORCE_NO_PIC=1
+endif
+
 include $(topsrcdir)/config/rules.mk
 
 LOCAL_INCLUDES	= -I$(srcdir)/../public

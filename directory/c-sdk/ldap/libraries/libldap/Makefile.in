@@ -172,6 +172,10 @@ ifeq ($(OS_ARCH), Linux)
 EXTRA_LIBS = -L$(dist_libdir) -l$(LBER_LIBNAME)
 endif
 
+ifeq ($(OS_ARCH), AmigaOS)
+EXTRA_LIBS = -L$(dist_libdir) -l$(LBER_LIBNAME) -lsocket
+endif
+
 ifeq ($(OS_ARCH), WINNT)
 ifdef NS_USE_GCC
 EXTRA_DLL_LIBS=-L$(dist_libdir) -l$(LBER_LIBNAME)
@@ -286,7 +290,7 @@ $(LIBLDAP): $(OBJS) $(LIBDIR) $(LDAP_EXPORT_DEFS)
 ifdef SO_FILES_TO_REMOVE
 	-$(RM) $(SO_FILES_TO_REMOVE)
 endif
-ifneq (,$(filter AIX Linux HP-UX Darwin BeOS QNX NetBSD OSF1 OpenBSD, $(OS_ARCH)))
+ifneq (,$(filter AIX Linux HP-UX Darwin BeOS QNX NetBSD OSF1 OpenBSD AmigaOS, $(OS_ARCH)))
 	$(LINK_LIB) ../liblber/$(OBJDIR_NAME)/*.a
 else
 ifeq ($(OS_ARCH),OS2)
@@ -331,4 +335,9 @@ ifeq ($(OS_ARCH), WINNT)
 	$(INSTALL) -m 444 $(LIBLDAP) $(dist_libdir)
 	$(INSTALL) -m 444 $(DLLLDAP) $(dist_libdir)
 endif
+ifeq ($(OS_ARCH), AmigaOS)
+	$(INSTALL) -m 444 lib$(LDAP_LIBNAME)_ixlibrary.a $(dist_libdir)
+	$(INSTALL) -m 444 $(LDAP_LIBNAME).x $(dist_libdir)
+endif
+
 	$(INSTALL) -m 444 $(ETCFILES) $(ETCDIR)

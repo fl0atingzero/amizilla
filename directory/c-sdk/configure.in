@@ -528,6 +528,7 @@ if test -n "$CROSS_COMPILE"; then
         linux*)       OS_ARCH=Linux ;;
         solaris*)     OS_ARCH=SunOS OS_RELEASE=5 ;;
         mingw*)     OS_ARCH=WINNT ;;
+        amigaos*)   OS_ARCH=AmigaOS OS_RELEASE=3.1;;
     esac
 else
     OS_ARCH=`uname -s | sed -e 's|/|_|g'`
@@ -1779,6 +1780,13 @@ mips-sony-newsos*)
     CPU_ARCH=x86
     ;;
 
+*-amigaos)
+    AC_DEFINE(XP_AMIGAOS)
+    MKSHLIB='a2ixlibrary -32 -o $@'
+    DSO_CFLAGS=-"m68020 -fbaserel32 -malways-restore-a4 -Uerrno"
+    LDFLAGS="-noixemul"
+    DLL_SUFFIX=ixlibrary
+    ;;
 *)
     AC_DEFINE(XP_UNIX)
     ;;

@@ -113,7 +113,9 @@ endif
 # Force use of PIC
 FORCE_USE_PIC	= 1 
 
+ifneq ($(OS_ARCH), AmigaOS)
 FORCE_SHARED_LIB = 1
+endif
 
 # UNIX98 iconv support
 OS_LIBS += $(LIBICONV)

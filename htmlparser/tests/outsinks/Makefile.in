@@ -66,6 +66,10 @@ TEST_FILES      = \
 		simplemail.out \
 		$(NULL)
 
+ifeq ($(OS_ARCH), AmigaOS)
+FORCE_NO_PIC=1
+endif
+
 include $(topsrcdir)/config/rules.mk
 
 libs:: 
