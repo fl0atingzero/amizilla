@@ -398,17 +398,13 @@ PRInt32 _MD_ACCEPT(
     if (fd == -1)
         return -1;
 
-    sock2 = PR_NEWZAP(_MDSocket);
-    if (sock2 == NULL) {
-        return -1;
-    }
     
     PR_fprintf(PR_STDERR, "Going to accept %d, %lx, %lx\n", fd, addr, addrlen);
     while ((retval = TCP_Accept(fd,(struct sockaddr *)addr, addrlen)) == -1) {
         int err = TCP_Errno();
         PR_fprintf(PR_STDERR, "Accept returned %d, errno is %d\n", retval, err);
         if (err == EAGAIN || err == EWOULDBLOCK || err == ECONNABORTED || err == EDEADLK) {
-            if ((retval = local_io_wait(fd, TYPE_READ, timeout)) < 0) {
+            if ((retval = local_io_wait(fd, TYPE_READ, timeout)) <= 0) {
                 sock2 = (_MDSocket *)-1;
                 goto done;
             }
@@ -419,6 +415,11 @@ PRInt32 _MD_ACCEPT(
         } else {
             goto done;
         }
+    }
+
+    sock2 = PR_NEWZAP(_MDSocket);
+    if (sock2 == NULL) {
+        return -1;
     }
  
     sock = (_MDSocket *)osfd->secret->md.osfd;
@@ -542,13 +543,6 @@ PRInt32 _MD_SEND(
 
     PR_fprintf(PR_STDERR, "Send returns %d, error is %d\n", retval, TCP_Errno());
     return retval;
-}
-
-PRInt32 _MD_SENDFILE(
-    PRFileDesc *sock, PRSendFileData *sfd, 
-    PRInt32 flags, PRIntervalTime timeout) {
-#warning _MD_SENDFILE not implemented
-    assert(0);
 }
 
 PRStatus _MD_GETSOCKNAME(
@@ -724,22 +718,23 @@ PRInt32 _MD_SOCKET(int type, int domain, int protocol) {
   return (PRInt32)sock;
 }
 
-PRInt32 _MD_SOCKETAVAILABLE(PRFileDesc *fd) {
-#warning _MD_SOCKETAVAILABLE not implemented
-    assert(0);
+PRInt32 _MD_SOCKETAVAILABLE(PRFileDesc *osfd) {
+    PRThread *me = PR_GetCurrentThread();
+    int fd =_MD_Ensure_Socket(osfd->secret->md.osfd);
+    PRInt32 result;
+
+    if (fd == -1)
+        return -1;
+
+    if (TCP_IoctlSocket(fd, FIONREAD, &result) < 0) {
+        _PR_MD_MAP_SOCKETAVAILABLE_ERROR(TCP_Errno());
+        return -1;
+    }
+    return result;
 }
 
-PRInt32 _PR_MD_PIPEAVAILABLE(PRFileDesc *fd) {
-#warning _MD_PIPEAVAILABLE not implemented
-    assert(0);
-}
 
 PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout) {
 #warning _MD_PR_POLL not implemented
-    assert(0);
-}
-
-void *_MD_GET_SP(PRThread *thread) {
-#warning _MD_GET_SP not implemented
     assert(0);
 }
