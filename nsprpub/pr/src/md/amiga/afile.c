@@ -48,13 +48,9 @@
 #include "primpl.h"
 
 PRInt32 _PR_MD_PIPEAVAILABLE(PRFileDesc *fd) {
-    PRInt32 result;
-    /* TODO: This isn't right */
-    if (ioctl(fd->secret->md.osfd, FIONREAD, &result) < 0) {
-        _PR_MD_MAP_SOCKETAVAILABLE_ERROR(errno);
-        return -1;
-    }
-    return result;
+    if (WaitForChar(fd->secret->md.osfd, 0) == TRUE)
+        return 1;
+    return 0;
 }
 
 /**
