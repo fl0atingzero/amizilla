@@ -62,4 +62,10 @@ CPPSRCS		= \
 			ipcIDList.cpp \
 			ipcm.cpp
 
+
+ifeq ($(OS_ARCH), AmigaOS)
+# HELP!!, There are baserel and non-baserel sources which use this directory
+FORCE_NO_PIC=1
+endif
+
 include $(topsrcdir)/config/rules.mk
