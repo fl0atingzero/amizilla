@@ -41,11 +41,13 @@
  * is returned in the global variable h_errno, instead of the usual
  * errno.
  */
-#if defined(XP_UNIX) || defined(XP_AMIGAOS)
+#if defined(XP_UNIX)
 #if defined(_PR_NEED_H_ERRNO)
 extern int h_errno;
 #endif
 #define _MD_GETHOST_ERRNO() h_errno
+#elif defined(XP_AMIGAOS)
+#define _MD_GETHOST_ERRNO() ami_host_errno()
 #else
 #define _MD_GETHOST_ERRNO() _MD_ERRNO()
 #endif
