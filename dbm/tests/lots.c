@@ -70,7 +70,12 @@
 #include <memory.h>
 #endif
 #include <string.h>
+
 #include <assert.h>
+#if defined (amigaos)
+	#include "md/_amigaos_assert.h"
+#endif
+
 #include "mcom_db.h"
 
 DB *database=0;
