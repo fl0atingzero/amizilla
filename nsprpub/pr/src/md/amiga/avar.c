@@ -34,21 +34,8 @@
 
 #include "primpl.h"
 
-
-static void PrintLinks(PRCondVar *condVar) {
-    PRCList *link;
-    PRCList *list = &(condVar->condQ);
-    PRThread *me = PR_CurrentThread();
-    if (!PR_CLIST_IS_EMPTY(list)) {
-        for (link = PR_LIST_HEAD(list); link != list; 
-             link = PR_NEXT_LINK(link)) {
-            PRThread *thread = _PR_THREAD_CONDQ_PTR(link);
-            printf("%lx\tfor %lx, thread %lx is on the queue\n", me, condVar, thread);
-        }
-    } else {
-        printf("Nobody on queue %lx\n", list);
-    }
-}
+/* Debug condition variables */
+/* #define DEBUG_AVAR */
 
 /*
 ** Create a new condition variable.
@@ -115,21 +102,28 @@ PR_IMPLEMENT(void) PR_DestroyCondVar(PRCondVar *cvar) {
 PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
     PRThread *me = PR_GetCurrentThread();
     PRStatus slp = PR_SUCCESS;
+    PRInt32 priority = PR_GetThreadPriority(me);
     PR_ASSERT(cvar->lock->owner == me);
     if (_PR_PENDING_INTERRUPT(me)) {
+#ifdef DEBUG_AVAR
         printf("WaitCondVar(%lx) got interrupted\n", me);
+#endif
         PR_ClearInterrupt();
         PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
         return PR_FAILURE;
     }
 
-
+#ifdef DEBUG_AVAR
     printf("(%lx) For cvar %lx, lock owner is %lx, timeout is %d\n", me, cvar, cvar->lock->owner, timeout);
+#endif
 
     /* I need to forbid when unlocking so I can make sure I am waiting 
      * if someone quickly grabs the lock and tries to notify me
+     * I also noticed that we can get a task switch on a Signal
+     * so set my priority at the highest for the period of time of the forbid 
      */
     Forbid();
+    PR_SetThreadPriority(me, PR_PRIORITY_URGENT);
     me->state = _PR_COND_WAIT;
     me->wait.cvar = cvar;
     PR_APPEND_LINK(&me->waitQLinks, &(cvar->condQ));
@@ -146,20 +140,30 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
     me->state = _PR_RUNNING;
     /* Remove myself regardless if I got notified or not */
     PR_REMOVE_LINK(&me->waitQLinks);
+    PR_SetThreadPriority(me, priority);    
     Permit();
 
+#ifdef DEBUG_ASOCKET
     printf("%lx woke up from condvar sleep on %lx, flags are %lx\n", me, cvar, me->flags);
+#endif
+
     PR_Lock(cvar->lock);
 
     if (slp != PR_SUCCESS) {
+#ifdef DEBUG_AVAR
         printf("%lx, sleep failed, returning\n", me);
+#endif
         return slp;
     }
 
+#ifdef DEBUG_AVAR
     printf("%lx got cvar lock %lx, owner is now %lx, cvar is %lx, flags are %lx\n", me, cvar->lock, cvar->lock->owner, cvar, me->flags);
+#endif
 
     if (_PR_PENDING_INTERRUPT(me)) {
+#ifdef DEBUG_AVAR
         printf("WaitCondVar(%lx) end caught interrupt\n", me);
+#endif
         PR_ClearInterrupt();
         PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
         return PR_FAILURE;
@@ -182,21 +186,23 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
 */
 PR_IMPLEMENT(PRStatus) PR_NotifyCondVar(PRCondVar *cvar) {
     PRThread *me = PR_GetCurrentThread();
-    PR_ASSERT(cvar->lock->owner == me);
 
-    printf("%lx going to notify thread of cond var %lx, owner is %lx\n", me, cvar, cvar->lock->owner);
+#ifdef DEBUG_AVAR
+    printf("%lx going to notify thread of cond var %lx, lock %lx, owner is %lx\n", me, cvar, cvar->lock, cvar->lock->owner);
+#endif
+    PR_ASSERT(cvar->lock->owner == me);
 
     if (!PR_CLIST_IS_EMPTY(&(cvar->condQ))) {
         PRCList *next = cvar->condQ.next;
         PRThread *thread = _PR_THREAD_CONDQ_PTR(next);
 
         PR_REMOVE_LINK(next);
+#ifdef DEBUG_AVAR
         printf("%lx notifying thread %lx of condvar %lx, state is %x\n", me, thread, cvar, thread->state);
-
-
+#endif 
         PR_ASSERT(thread->state != _PR_RUNNING);
         PR_ASSERT(thread->state != _PR_LOCK_WAIT);
-        PR_ASSERT(thread->state != _PR_SUSPENDED);        
+        PR_ASSERT(thread->state != _PR_SUSPENDED);
         PR_ASSERT(thread->state == _PR_COND_WAIT);
         PR_ASSERT(thread->wait.cvar == cvar);
 
@@ -216,7 +222,9 @@ PR_IMPLEMENT(PRStatus) PR_NotifyCondVar(PRCondVar *cvar) {
 PR_IMPLEMENT(PRStatus) PR_NotifyAllCondVar(PRCondVar *cvar) {
     PRThread *me = PR_GetCurrentThread();
  
+#ifdef DEBUG_AVAR
     printf("%lx going to notify all threads for cv %lx\n", me, cvar);
+#endif
 
     PR_ASSERT(cvar->lock->owner == me);
 
@@ -228,17 +236,16 @@ PR_IMPLEMENT(PRStatus) PR_NotifyAllCondVar(PRCondVar *cvar) {
             PRThread *thread = _PR_THREAD_CONDQ_PTR(tmp);
             next = PR_NEXT_LINK(next);
             PR_REMOVE_LINK(tmp);
-
+#ifdef DEBUG_AVAR
             printf("%lx notifying thread %lx of condvar %lx, state is %x\n", me, thread, cvar, thread->state);      
-
+#endif
             PR_ASSERT(thread->state != _PR_RUNNING);
             PR_ASSERT(thread->state != _PR_LOCK_WAIT);
-            PR_ASSERT(thread->state != _PR_SUSPENDED);        
+            PR_ASSERT(thread->state != _PR_SUSPENDED);
             PR_ASSERT(thread->state == _PR_COND_WAIT);
             PR_ASSERT(thread->wait.cvar == cvar);
             _PR_MD_Signal(thread);
         }
     }
-    //  PrintLinks(cvar);
     return PR_SUCCESS;
 }
