@@ -34,11 +34,15 @@
  */
 
 #include <primpl.h>
+extern struct Library *A4Base;
+#include <proto/a4.h>
 
 /* DEBUG threads */
-/* #define DEBUG_ATHREADS*/
+/*#define DEBUG_ATHREADS*/
 
 static PRStatus _InitThread(PRThread *pr);
+static PRStatus PR_JoinThreadInternal(PRThread *thread, PRBool);
+
 void _MD_Exit();
 
 static void killThread (PRThread *thread, PRBool kill) {
@@ -51,10 +55,10 @@ static void killThread (PRThread *thread, PRBool kill) {
         thread->state = _PR_DEAD_STATE;
         _PR_MD_Signal(thread);
         Permit();
-        PR_JoinThread(thread);
+        PR_JoinThreadInternal(thread, PR_TRUE);
     } else if (!thread->daemon) {
-        PR_Interrupt(thread);
-        PR_JoinThread(thread);
+        /*        PR_Interrupt(thread);*/
+        PR_JoinThreadInternal(thread, PR_TRUE);
     }
 #ifdef DEBUG_ATHREADS
     printf("All done killing %x\n", thread);
@@ -87,12 +91,10 @@ static PRThread *primordialThread = NULL;
 
 void _MD_Early_Init(void) {
     PRThread *thread;
-    Printf("MD_Early_Init\n");
-    Flush(Output());
+
     thread = PR_NEWZAP(PRThread);
     primordialThread = thread;
     thread->p = (struct Process *)FindTask(NULL);
-    thread->primordialThread = thread->p;
     thread->parent = NULL;
     thread->p->pr_Task.tc_UserData = thread;
     _InitThread(thread);
@@ -104,6 +106,7 @@ void _MD_Early_Init(void) {
 
     setvbuf(stdout, NULL, _IONBF, 0);
     atexit(_MD_Exit);
+    atexit(PR_Cleanup);
     _PR_InitSocket();
     _PR_InitRandom();
 }
@@ -148,7 +151,6 @@ static PRStatus _InitThread(PRThread *pr) {
     pr->selectPort = CreateMsgPort();
     PR_ASSERT(pr->selectPort);
     pr->interruptSignal = AllocSignal(-1);
-    pr->primordialThread = primordialThread->p;
     PR_ASSERT(pr->interruptSignal != -1);
 
     pr->sleepRequest =
@@ -165,6 +167,7 @@ static PRStatus _InitThread(PRThread *pr) {
     PR_INIT_CLIST(&pr->lockList);
     /* Just in case */
     PR_INIT_CLIST(&pr->waitQLinks);
+
     return PR_SUCCESS;
 }
 
@@ -205,7 +208,8 @@ static void procExit(PRThread *me) {
 
     if (join != NULL) {
 #ifdef DEBUG_ATHREADS
-        printf("%lx done, signalling parent %lx\n", me, join);
+        printf("%lx done, signalling parent %lx,state is %d\n", me, join, join->state);
+        fflush(stdout);
 #endif
         PR_ASSERT(join->state == _PR_JOIN_WAIT);
         _PR_MD_Signal(join);
@@ -214,23 +218,31 @@ static void procExit(PRThread *me) {
      * let the memory allocater at the end handle it
      * PR_Free(me);
      */
+    if (primordialThread != me) {
+        UnregisterThread(me->p);
+    }
 }
 
 /**
  * First code called when the thread starts
  */
-static void procEntry(void) {	
-    PRThread *pr;
-    struct Library *ixemulbase;
-
-#ifdef DEBUG_ATHREADS
-    printf("In procEntry\n");
-    fflush(stdout);
+static void 
+#if 0
+__attribute__((saveds))
 #endif
+procEntry(void) {
+    /* It may be possible for me to start (and restore a4) before the parent
+     * can register my thread. That is why I have a local copy of SysBase
+     * and DOSBase here -- so I don't reference any a4-relative variables
+     */
+    PRThread *pr;
+    struct ExecBase *SysBase = *(struct ExecBase **)4L;
+    struct Library *DOSBase = OpenLibrary("dos.library", 0);
+
     /* Hack. I need to wait for the parent to initialize some things for me */
     Wait(SIGBREAKF_CTRL_F);
+
     pr = PR_GetCurrentThread();
-    //  ixemulbase = OpenLibrary("ixemul.library", 0);
     _InitThread(pr);
     /* We are done initialization, signal the parent */
     PR_ASSERT(pr->parent->state == _PR_SUSPENDED);
@@ -244,6 +256,7 @@ static void procEntry(void) {
         Permit();
     }
     procExit(pr);
+    CloseLibrary(DOSBase);
 }
 
 
@@ -290,7 +303,17 @@ PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
     thread->threadState = state;
 
     if (stackSize < 32768) stackSize = 32768;
+
     Forbid();
+    thread->parent = me;
+    /* Add this thread to our list of threads */
+    thread->next = me->next;
+    if (me->next) {
+        me->next->prev = thread;
+    }        
+    me->next = thread;
+    thread->prev = me;
+
     thread->p = CreateNewProcTags(NP_StackSize, stackSize,
                                   NP_Name, "NSPR Thread",
                                   NP_Input, Input(),
@@ -302,31 +325,26 @@ PR_IMPLEMENT(PRThread*) PR_CreateThread(PRThreadType type,
                                   NP_Entry, (ULONG)procEntry);
 
     if(thread->p != NULL) {
+        /*
+         * Need to register the a4 context for the thread
+         */
+        RegisterThread(thread->p, primordialThread->p);
+
         thread->p->pr_Task.tc_UserData = thread;
         /* Hack for ixemul.library to work */
         thread->p->pr_Task.tc_TrapCode = me->p->pr_Task.tc_TrapCode;
         thread->p->pr_Task.tc_TrapData = me->p->pr_Task.tc_TrapData;
 
-        thread->parent = me;
-        thread->primordialThread = primordialThread->p;
-
-        /* Add this thread to our list of threads */
-        thread->next = me->next;
-        if (me->next) {
-            me->next->prev = thread;
-        }        
-        me->next = thread;
-        thread->prev = me;
-
         /* Put this before signal just in case */
         me->state = _PR_SUSPENDED;        
+
         /* Hack because the new thread is waiting for us to do this */
         Signal((struct Task *)thread->p, SIGBREAKF_CTRL_F); 
         /* Need to wait for the other thread to do some init so there
          * isn't a race condition when we do a PR_CreateThread and do 
          * a PR_JoinThread before the thread comes up fully 
          */
-        _PR_MD_Wait(me, PR_FALSE);
+        _PR_MD_Wait(me, PR_FALSE, PR_TRUE);
         me->state = _PR_RUNNING;
 
     } else {
@@ -347,12 +365,19 @@ PR_IMPLEMENT(PRThread*) PR_GetCurrentThread(void) {
     return (PRThread *)p->pr_Task.tc_UserData;
 }
 
+
 PR_IMPLEMENT(PRStatus) PR_JoinThread(PRThread *thread) {
+    return PR_JoinThreadInternal(thread, PR_FALSE);
+}
+
+static PRStatus PR_JoinThreadInternal(PRThread *thread, 
+    PRBool allowJoinsOnUnjoinableThreads) {
     PRThread *me = PR_GetCurrentThread();
     char buf[50];
     struct MsgPort *port;
   
-    if (thread->threadState == PR_UNJOINABLE_THREAD)
+    if (thread->threadState == PR_UNJOINABLE_THREAD && 
+        !allowJoinsOnUnjoinableThreads)
         return PR_FAILURE;
 
     sprintf(buf, "NSPRPORT-%lx\n", thread);
@@ -365,11 +390,15 @@ PR_IMPLEMENT(PRStatus) PR_JoinThread(PRThread *thread) {
         Permit();
         return PR_SUCCESS;
     }
-    thread->join = me;
-
     me->state = _PR_JOIN_WAIT;
+    thread->join = me;
+    /*
+     * Don't clear the signal since the thread may finish by the
+     * time I get to waiting
+     */
+    _PR_MD_Wait(me, PR_FALSE, PR_FALSE);
     Permit();
-    _PR_MD_Wait(me, PR_FALSE);
+
     me->state = _PR_RUNNING;
     return PR_SUCCESS;
 }
@@ -435,6 +464,10 @@ void _PR_InitStacks(void) {
 }
 
 void _MD_Exit(void) {
+#ifdef DEBUG_ATHREADS
+    Printf("_MD_Exit\n");
+    Flush(Output());
+#endif
     if (_pr_initialized) {
         /* I need to kill the socket thread before killing off
          * all of the other threads
@@ -470,9 +503,8 @@ PR_IMPLEMENT(PRStatus) PR_Cleanup(void)
     return PR_SUCCESS;
 }  /* PR_Cleanup */
 
-void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
+void _PR_MD_Wait(PRThread *thread, PRBool interruptable, PRBool clearSignal) {
     ULONG mySig = 1 << thread->port->mp_SigBit;
-    PRBool blocked;
 
     /* See if someone is trying to kill me by setting my state to dead */
     if (thread->state == _PR_DEAD_STATE) {
@@ -483,12 +515,12 @@ void _PR_MD_Wait(PRThread *thread, PRBool interruptable) {
     }
 
     Forbid();
-    SetSignal(0, mySig);
+    if (clearSignal)
+        SetSignal(0, mySig);
     if (interruptable == PR_TRUE) {
         ULONG interruptSig =  1 << thread->interruptSignal;
         ULONG sigs = mySig | interruptSig;
         PR_ASSERT(thread->state != _PR_RUNNING);
-        blocked = (thread->flags & _PR_INTERRUPT_BLOCKED) ? PR_TRUE : PR_FALSE;
         Wait(sigs);
     } else {        
         Wait(mySig);
@@ -547,7 +579,7 @@ static void _MDPollThread(void *arg) {
     PRIntn numfds;
     PRBool done = PR_FALSE;
 #ifdef DEBUG_ATHREADS
-    printf("FD polling thread started, numfds is %d\n", numfds);
+    printf("FD polling thread started, numfds is %d\n", mpp->numfds);
 #endif
     while (!done) {
         char chr[1024];
@@ -686,10 +718,10 @@ static void _MDCreateProcessThread(void *arg) {
             items[i].ti_Tag = SYS_Output;
             items[i++].ti_Data = pipeout->secret->md.osfd;
         } else {
-            items[i].ti_Tag = NP_CloseInput;
+            items[i].ti_Tag = NP_CloseOutput;
             items[i++].ti_Data = FALSE;
-            items[i].ti_Tag = SYS_Input;
-            items[i++].ti_Data = Input();
+            items[i].ti_Tag = SYS_Output;
+            items[i++].ti_Data = Output();
         }
 
         if (pr->md.attr->stderrFd) {
@@ -770,8 +802,8 @@ static void _MDCreateProcessThread(void *arg) {
 PRProcess *_CreateProcess(const char *path, char *const *argv,
     char *const *envp, const PRProcessAttr *attr) {
     PRProcess *retval = PR_NEWZAP(PRProcess);
-    PRLock *lock;
-    PRCondVar *cv;
+    PRLock *lock = NULL;
+    PRCondVar *cv = NULL;
     if (retval == NULL) {
         PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
         goto error;
