@@ -1609,7 +1609,7 @@ int _MD_UNMAP_FD(PRDescType type, int osfd) {
             s2->protocol = sock->protocol;
             s = TCP_ObtainSocket(sock->private_idx, s2->type, s2->domain, s2->protocol);
             if (s == -1) {
-                increaseSocketSize();
+                increaseSocketTable();
                 s = TCP_ObtainSocket(sock->private_idx, s2->type, s2->domain, s2->protocol);
             }
             FreeVec(sock);
