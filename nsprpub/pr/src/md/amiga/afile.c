@@ -41,6 +41,8 @@
  * devices/timer.h does not, hence we must include device/timer.h first.
  */
 #include <devices/timer.h>
+#include <sys/ioctl.h>
+#include <errno.h>
 
 #include "primpl.h"
 
@@ -56,6 +58,16 @@ extern void _MD_INIT_FILEDESC(PRFileDesc *fd) {
 void _PR_MD_MAKE_NONBLOCK(PRFileDesc *fd) {
 #warning _MD_MAKE_NONBLOCK not implemented
   /*   assert(0); */
+}
+
+PRInt32 _PR_MD_PIPEAVAILABLE(PRFileDesc *fd) {
+    PRInt32 result;
+
+    if (ioctl(fd->secret->md.osfd, FIONREAD, &result) < 0) {
+        _PR_MD_MAP_SOCKETAVAILABLE_ERROR(errno);
+        return -1;
+    }
+    return result;
 }
 
 /* File I/O related */
