@@ -136,9 +136,11 @@ struct PLEventQueue {
     PRPackedBool        timerSet;
 #endif
 
-#if defined(XP_UNIX) && !defined(XP_MACOSX) || defined (XP_AMIGAOS)
+#if (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined (XP_AMIGAOS)
 #if defined(VMS)
     int                 efn;
+#elif defined(XP_AMIGAOS)
+    PRFileDesc          *eventPipe[2];
 #else
     PRInt32             eventPipe[2];
 #endif
@@ -324,7 +326,7 @@ PL_PostEvent(PLEventQueue* self, PLEvent* event)
     mon = self->monitor;
     PR_EnterMonitor(mon);
 
-#if defined(XP_UNIX) && !defined(XP_MACOSX)
+#if (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined(XP_AMIGAOS)
     if (self->idFunc && event)
         event->id = self->idFunc(self->idFuncClosure);
 #endif
@@ -649,7 +651,7 @@ PL_InitEvent(PLEvent* self, void* owner,
     self->handled = PR_FALSE;
     self->lock = NULL;
     self->condVar = NULL;
-#if defined(XP_UNIX) && !defined(XP_MACOSX)
+#if (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined (XP_AMIGAOS)
     self->id = 0;
 #endif
 }
@@ -904,6 +906,12 @@ failed:
     }
 
     return PR_SUCCESS;
+#elif defined(XP_AMIGAOS)
+
+    self->idFunc = 0;
+    self->idFuncClosure = 0;
+
+    return PR_CreatePipe(&self->eventPipe[0], &self->eventPipe[1]);
 #else
     return PR_SUCCESS;
 #endif
@@ -950,6 +958,9 @@ _pl_CleanupNativeNotifier(PLEventQueue* self)
     }
     DisposeEventHandlerUPP(self->eventHandlerUPP);
     RemoveEventHandler(self->eventHandlerRef);
+#elif defined(XP_AMIGAOS)
+    PR_Close(self->eventPipe[0]);
+    PR_Close(self->eventPipe[1]);
 #endif
 }
 
@@ -1211,14 +1222,20 @@ _pl_NativeNotify(PLEventQueue* self)
     PR_LOG(event_lm, PR_LOG_DEBUG,
            ("_pl_NativeNotify: self=%p",
             self));
+#ifdef XP_AMIGAOS
+    count = PR_Write(self->eventPipe[1], buf, 1);
+#else
     count = write(self->eventPipe[1], buf, 1);
+#endif
     if (count == 1)
         return PR_SUCCESS;
+#ifndef XP_AMIGAOS
     if (count == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))
         return PR_SUCCESS;
+#endif
     return PR_FAILURE;
 }/* --- end _pl_NativeNotify() --- */
-#endif /* defined(XP_UNIX) && !defined(XP_MACOSX) */
+#endif /* (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined(XP_AMIGAOS) */
 
 #if defined(XP_BEOS)
 struct ThreadInterfaceData
@@ -1545,7 +1562,7 @@ static void _md_CreateEventQueue( PLEventQueue *eventQueue )
     */
     return;
 } /* end _md_CreateEventQueue() */
-#endif /* (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined(XP_BEOS) */
+#endif /* (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined(XP_BEOS) ||| defined(XP_AMIGAOS) */
 
 #if defined(MAC_USE_CARBON_EVENT)
 /*
@@ -1615,7 +1632,7 @@ static void _md_CreateEventQueue( PLEventQueue *eventQueue )
 
 /* extra functions for unix */
 
-#if defined(XP_UNIX) && !defined(XP_MACOSX)
+#if (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined(XP_AMIGAOS)
 
 PR_IMPLEMENT(PRInt32)
 PL_ProcessEventsBeforeID(PLEventQueue *aSelf, unsigned long aID)
@@ -1706,6 +1723,6 @@ PL_UnregisterEventIDFunc(PLEventQueue *aSelf)
     aSelf->idFuncClosure = 0;
 }
 
-#endif /* defined(XP_UNIX) && !defined(XP_MACOSX) */
+#endif /* (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined(XP_AMIGAOS) */
 
 /* --- end plevent.c --- */
