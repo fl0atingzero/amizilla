@@ -217,8 +217,10 @@ PRSize _PR_MD_GetRandomNoise( void *buf, PRSize size ) {
     PR_Lock(listLock);
 	while (size) {
 		while ((front - back) % BUFFERSIZE == 0) {
+#ifdef DEBUG_RANDOM
 			printf("Buffer empty, waiting...\n");
             fflush(stdout);
+#endif
 			PR_WaitCondVar(emptycv, PR_INTERVAL_NO_TIMEOUT);
 		}
 		((char *)buf)[size-1] = randomdata[back];
