@@ -274,6 +274,7 @@ static PRStatus sendSocketToThread(int fd, _MDSocket *sock) {
 
     if (ss == NULL) {
         PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+        goto error;
     }
 
     ss->fd = fd;
@@ -331,7 +332,7 @@ static PRStatus sendSocketToThread(int fd, _MDSocket *sock) {
         goto error;
 
     return retval;
- error:
+error:
     PR_fprintf(PR_STDERR, "sendsocket failed, closing socket\n");
     if (fd2 >= 0) {
         TCP_CloseSocket(fd2);
@@ -504,10 +505,8 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
             ss = NULL;
             fd = -1;
         }
-        PR_Unlock(replyLock);
-        PR_Unlock(communicationLock);
         PR_SetThreadPrivate(sock->private_idx, (void *)ss);
-        PR_fprintf(PR_STDERR, "_MD_Ensure_Socket(%lx), fd is now %lx(%d), sequenceNumber %d\n", me, ss, ss->fd, ss->sequenceNumber);
+        PR_fprintf(PR_STDERR, "_MD_Ensure_Socket(%lx), fd is now %lx(%d), sequenceNumber %d\n", me, ss, (ss!= NULL) ? ss->fd : -1, (ss != NULL) ? ss->sequenceNumber : -1);
     } else {
         PR_fprintf(PR_STDERR, "_MD_Ensure_Socket(%lx), doing socket check for fd %d, private_idx %d, sequenceNumber %d\n", me, ss->fd, sock->private_idx, ss->sequenceNumber);
         PR_Lock(communicationLock);
@@ -523,9 +522,9 @@ static int _MD_Ensure_Socket(PRInt32 osfd) {
             fd = ss->fd;
         else
             fd = -1;
-        PR_Unlock(replyLock);
-        PR_Unlock(communicationLock);
     }
+    PR_Unlock(replyLock);
+    PR_Unlock(communicationLock);
     return fd;
 }
 
@@ -667,7 +666,6 @@ PRInt32 _MD_ACCEPT(
 error:
     if (sock2 != (_MDSocket *)-1 && sock2 != NULL) {
         PR_Free(sock2);
-        sock2 = (_MDSocket *)-1;
     }
 
     PR_fprintf(PR_STDERR, "Accept error: closing socket %d\n", retval);
@@ -1121,7 +1119,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                 PR_ASSERT(NULL != bottom);  /* what to do about that? */
                 if ((NULL != bottom)
                     && (_PR_FILEDESC_OPEN == bottom->secret->state)) {
-                    PR_fprintf(PR_STDERR, "Bottom fd %lx\n", bottom);
+                    PR_fprintf(PR_STDERR, "Poll(%lx) Bottom fd %lx, osfd is %lx, type is %lx\n", me, bottom, bottom->secret->md.osfd, bottom->methods->file_type);
                     switch (bottom->methods->file_type) {
                     case PR_DESC_PIPE:
                     case PR_DESC_FILE:
@@ -1143,7 +1141,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
                         break;       
                     case PR_DESC_SOCKET_TCP:
                     case PR_DESC_SOCKET_UDP:
-                        fd = _MD_Ensure_Socket(pd->fd->secret->md.osfd);
+                        fd = _MD_Ensure_Socket(bottom->secret->md.osfd);
                         PR_fprintf(PR_STDERR, "Poll(%lx) fd %d(%lx) is a socket, fd is %d\n", me, i, pd->fd, fd);
                         if (fd < 0) {
                             pd->out_flags = PR_POLL_NVAL;
@@ -1243,7 +1241,7 @@ PRInt32 _MD_PR_POLL(PRPollDesc *pds, PRIntn npds, PRIntervalTime timeout)
             case PR_DESC_SOCKET_UDP:
                 if (rc < 0)
                     continue;
-                fd = _MD_Ensure_Socket(pds[i].fd->secret->md.osfd);
+                fd = _MD_Ensure_Socket(bottom->secret->md.osfd);
                 pds[i].out_flags = 0;
                 if (FD_ISSET(fd, &in)) {
                     PR_fprintf(PR_STDERR, "Fd %d is waiting for read\n", fd);
