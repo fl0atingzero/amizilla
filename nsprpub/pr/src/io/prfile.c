@@ -430,10 +430,7 @@ PRInt32 PR_GetSysfdTableMax(void)
     return 16384;
 #elif defined (WIN16)
     return FOPEN_MAX;
-#elif defined (XP_MAC) || defined(XP_BEOS) || defined(AMIGA)
-    PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
-   return -1;
-#elif defined(AMIGA)
+#elif defined (XP_MAC) || defined(XP_BEOS) || defined(XP_AMIGAOS)
     PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
    return -1;
 #else
@@ -476,7 +473,7 @@ PRInt32 PR_SetSysfdTableSize(int table_size)
 #pragma unused (table_size)
     PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
    return -1;
-#elif defined (AMIGA)
+#elif defined (XP_AMIGAOS)
     PR_SetError(PR_NOT_IMPLEMENTED_ERROR, 0);
    return -1;
 #else
@@ -786,9 +783,13 @@ PR_IMPLEMENT(PRStatus) PR_CreatePipe(
     BPTR file[2];
     char bufferRead[30];
     char bufferWrite[30];
-    PRThread *me = PR_GetCurrentThread();
-    sprintf(bufferRead, "FIFO:pipe%lx%d/r", me, mine);
-    sprintf(bufferWrite, "FIFO:pipe%lx%d/wkme", me, mine);
+    PRThread *me;
+
+    if (!_pr_initialized) _PR_ImplicitInitialization();
+
+    me = PR_GetCurrentThread();
+    sprintf(bufferRead, "FIFO:pipe%lx-%d/r", me, mine);
+    sprintf(bufferWrite, "FIFO:pipe%lx-%d/wkme", me, mine);
 
     file[0] = Open(bufferRead, MODE_OLDFILE);
     file[1] = Open(bufferWrite, MODE_OLDFILE);
