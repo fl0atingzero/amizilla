@@ -39,7 +39,7 @@
 
 /* Code dealing with random numbers */
 
-/* CondVars and locks guarding randomdata/front/back
+/* CondVars and locks guarding randomdata/front/back */
 static PRLock *listLock;
 static PRCondVar *fullcv;
 static PRCondVar *emptycv;
