@@ -106,7 +106,7 @@ PR_IMPLEMENT(PRStatus) PR_WaitCondVar(PRCondVar *cvar, PRIntervalTime timeout) {
 
 PR_IMPLEMENT(PRStatus) PRP_NakedWait(PRCondVar *cvar, PRLock *lock, PRIntervalTime timeout) {
     PRThread *me = PR_GetCurrentThread();
-    PRStatus slp = PR_SUCCESS;
+    _PR_MD_Timeout slp = SUCCESS;
     PRInt32 priority = PR_GetThreadPriority(me);
 
     if (lock == _PR_NAKED_CV_LOCK) {
@@ -141,11 +141,11 @@ PR_IMPLEMENT(PRStatus) PRP_NakedWait(PRCondVar *cvar, PRLock *lock, PRIntervalTi
     PR_Unlock(lock);
     
     if (timeout == PR_INTERVAL_NO_WAIT) {
-        slp = PR_Sleep(0);
+        slp = _PR_MD_Sleep(0);
     } else if (timeout == PR_INTERVAL_NO_TIMEOUT) {
         _PR_MD_Wait(me, PR_TRUE, PR_TRUE);
     } else {
-        slp = PR_Sleep(timeout);
+        slp = _PR_MD_Sleep(timeout);
     }
     me->state = _PR_RUNNING;
     /* Remove myself regardless if I got notified or not */
@@ -159,11 +159,13 @@ PR_IMPLEMENT(PRStatus) PRP_NakedWait(PRCondVar *cvar, PRLock *lock, PRIntervalTi
 
     PR_Lock(lock);
 
-    if (slp != PR_SUCCESS) {
+    if (slp == TIMEDOUT) {
+        PR_SetError(PR_IO_TIMEOUT_ERROR, 0);
+    } else if (slp != SUCCESS) {
 #ifdef DEBUG_AVAR
         printf("%lx, sleep failed, returning\n", me);
 #endif
-        return slp;
+        return PR_FAILURE;
     }
 
 #ifdef DEBUG_AVAR
@@ -260,7 +262,7 @@ PR_IMPLEMENT(PRStatus) PR_NotifyAllCondVar(PRCondVar *cvar) {
     return PR_SUCCESS;
 }
 
-PR_IMPLEMENT(PRCondVar *) PR_NewNakedCondVar(void) {
+PR_IMPLEMENT(PRCondVar *) PRP_NewNakedCondVar(void) {
     PRCondVar *retval;
 
     if (!_pr_initialized) _PR_ImplicitInitialization();
@@ -273,7 +275,7 @@ PR_IMPLEMENT(PRCondVar *) PR_NewNakedCondVar(void) {
     return retval;
 }
 
-PR_IMPLEMENT(void) PR_DestroyNakedCondVar(PRCondVar *cvar) {
+PR_IMPLEMENT(void) PRP_DestroyNakedCondVar(PRCondVar *cvar) {
     return PR_Free(cvar);
 }
 

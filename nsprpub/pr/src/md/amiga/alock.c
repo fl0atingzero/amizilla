@@ -120,11 +120,20 @@ void _PR_InitLocks(void){
 NSPR_API(PRStatus)PRP_TryLock(PRLock *lock) {
     PRThread *me = PR_GetCurrentThread();
     PRStatus rv = PR_SUCCESS;
+
+#ifdef DEBUG_ALOCK
+    printf("%lx, PRP_TryLock for %x, owner is %lx\n", me, lock, lock->owner);
+#endif
+
     Forbid();
-    if (lock->owner != NULL) {
+    if (lock->owner == me) {
         rv = PR_FAILURE;
+    } else {
+        if (lock->owner != NULL) {
+            rv = PR_FAILURE;
+        } 
+        PR_Lock(lock);
     }
-    PR_Lock(lock);
 end:
     Permit();
     return rv;
