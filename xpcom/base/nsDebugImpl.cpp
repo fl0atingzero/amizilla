@@ -286,7 +286,11 @@ nsDebugImpl::Break(const char *aFile, PRInt32 aLine)
   fprintf(stderr, "Break: at file %s, line %d\n",aFile, aLine);  fflush(stderr);
   fflush(stderr);
 
-#if defined(_WIN32)
+#if defined(XP_AMIGAOS)
+  // Maybe add something more usefull here later.
+  Abort(aFile, aLine);
+
+#elif defined(_WIN32)
 #ifdef _M_IX86
    ::DebugBreak();
 #endif
