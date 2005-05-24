@@ -39,6 +39,11 @@ EXPORTS		= \
 		nsCacheService.h \
 		$(NULL)
 
+# AmigaOS special ftruncate
+ifneq (,$(filter AmigaOS,$(OS_ARCH)))
+CSRCS = ../../base/src/amigaSetFileSize.c
+endif
+
 CPPSRCS		= \
 	nsCache.cpp \
 	nsCacheEntry.cpp \
