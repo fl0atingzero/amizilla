@@ -36,6 +36,12 @@ REQUIRES	= xpcom \
 		  pref \
 		  $(NULL)
 
+
+# AmigaOS special ftruncate
+ifneq (,$(filter AmigaOS,$(OS_ARCH)))
+CSRCS = amigaSetFileSize.c
+endif
+
 CPPSRCS		= \
 		nsIOThreadPool.cpp \
 		nsTransportUtils.cpp \
