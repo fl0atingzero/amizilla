@@ -35,7 +35,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#if defined(XP_UNIX) || defined(XP_BEOS)
+#if (defined(XP_UNIX) || defined(XP_BEOS)) && !(defined XP_AMIGAOS)
 #include <unistd.h>
 #elif defined(XP_MAC)
 #include <Files.h>
@@ -44,6 +44,8 @@
 #elif defined(XP_OS2)
 #define INCL_DOSERRORS
 #include <os2.h>
+#elif defined (XP_AMIGAOS)
+#include "amigaSetFileSize.h"
 #else
 // XXX add necessary include file for ftruncate (or equivalent)
 #endif
@@ -168,7 +170,7 @@ nsFileStream::SetEOF()
     if (NS_FAILED(rv)) return rv;
 #endif
 
-#if defined(XP_UNIX) || defined(XP_BEOS)
+#if (defined(XP_UNIX) || defined(XP_BEOS)) && !(defined XP_AMIGAOS)
     if (ftruncate(PR_FileDesc2NativeHandle(mFD), offset) != 0) {
         NS_ERROR("ftruncate failed");
         return NS_ERROR_FAILURE;
@@ -187,6 +189,11 @@ nsFileStream::SetEOF()
     if (DosSetFileSize((HFILE) PR_FileDesc2NativeHandle(mFD), offset) != NO_ERROR) {
         NS_ERROR("DosSetFileSize failed");
         return NS_ERROR_FAILURE;
+    }
+#elif defined(XP_AMIGAOS)
+    if (AmigaSetFileSize(PR_FileDesc2NativeHandle(mFD),offset) == -1 ) {
+      NS_ERROR("AmigaSetFileSize failed");
+      return NS_ERROR_FAILURE;
     }
 #else
     // XXX not implemented
